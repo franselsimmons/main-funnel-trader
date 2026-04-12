@@ -1,27 +1,40 @@
+import Navbar from "../components/Navbar"
 import Link from "next/link"
 
 export default function Home() {
   return (
-    <div style={{ padding: 40 }}>
-      <h1>MAIN V6 Control Center</h1>
+    <>
+      <Navbar />
+      <div className="container">
 
-      <div style={{ marginTop: 30 }}>
-        <Link href="/bull">
-          <button>Open Bull Dashboard</button>
-        </Link>
-      </div>
+        <h1>MAIN V6 Control Center</h1>
 
-      <div style={{ marginTop: 20 }}>
-        <Link href="/bear">
-          <button>Open Bear Dashboard</button>
-        </Link>
-      </div>
+        <div className="card-grid">
 
-      <div style={{ marginTop: 20 }}>
-        <Link href="/analyse">
-          <button>Open Analyse Meester</button>
-        </Link>
+          <div className="card">
+            <h3>Bull Funnel</h3>
+            <Link href="/bull">
+              <button className="button">Open Bull Dashboard</button>
+            </Link>
+          </div>
+
+          <div className="card">
+            <h3>Bear Funnel</h3>
+            <Link href="/bear">
+              <button className="button">Open Bear Dashboard</button>
+            </Link>
+          </div>
+
+          <div className="card">
+            <h3>Analyse Meester</h3>
+            <Link href="/analyse">
+              <button className="button">Open Analyse</button>
+            </Link>
+          </div>
+
+        </div>
+
       </div>
-    </div>
+    </>
   )
 }
