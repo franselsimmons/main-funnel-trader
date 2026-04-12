@@ -1,17 +1,22 @@
 import { kv } from "@vercel/kv"
 
 export default async function handler(req, res) {
-  const bull = await kv.get("bull:scanner:candidates") || []
-  const bear = await kv.get("bear:scanner:candidates") || []
+  const bullCoins = await kv.get("bull:scanner:candidates") || []
+  const bearCoins = await kv.get("bear:scanner:candidates") || []
+
+  const bullLast = await kv.get("bull:scanner:lastScan")
+  const bearLast = await kv.get("bear:scanner:lastScan")
 
   res.json({
     bull: {
-      count: bull.length,
-      coins: bull.slice(0, 50)
+      coins: bullCoins.slice(0, 50),
+      count: bullCoins.length,
+      lastScan: bullLast
     },
     bear: {
-      count: bear.length,
-      coins: bear.slice(0, 50)
+      coins: bearCoins.slice(0, 50),
+      count: bearCoins.length,
+      lastScan: bearLast
     }
   })
 }
