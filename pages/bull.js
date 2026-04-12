@@ -1,22 +1,8 @@
 import Navbar from "../components/Navbar"
-import { kv } from "@vercel/kv"
 
-export async function getServerSideProps() {
-  const candidates = await kv.get("bull:scanner:candidates") || []
-  const approved = await kv.get("bull:funnel:approved") || []
-  const positions = await kv.get("positions:open") || []
+export default function Bull({ scannerCount }) {
 
-  return {
-    props: {
-      scannerCount: candidates.length,
-      approvedCount: approved.length,
-      openPositions: positions.length,
-      regime: "TREND"
-    }
-  }
-}
-
-export default function Bull({ regime, scannerCount, approvedCount, openPositions }) {
+  const regime = "TREND"
 
   function getBadgeClass() {
     if (regime === "EXPANSION" || regime === "TREND")
@@ -29,6 +15,7 @@ export default function Bull({ regime, scannerCount, approvedCount, openPosition
   return (
     <>
       <Navbar />
+
       <div className="container">
 
         <h1>Bull Dashboard</h1>
@@ -48,12 +35,12 @@ export default function Bull({ regime, scannerCount, approvedCount, openPosition
 
           <div className="card">
             <h3>Approved Trades</h3>
-            <div className="metric">{approvedCount}</div>
+            <div className="metric">0</div>
           </div>
 
           <div className="card">
             <h3>Open Positions</h3>
-            <div className="metric">{openPositions}</div>
+            <div className="metric">0</div>
           </div>
 
         </div>
@@ -61,4 +48,17 @@ export default function Bull({ regime, scannerCount, approvedCount, openPosition
       </div>
     </>
   )
+}
+
+export async function getServerSideProps() {
+  const base = process.env.NEXT_PUBLIC_BASE_URL || "https://main-funnel-trader.vercel.app"
+
+  const res = await fetch(base + "/api/debug")
+  const data = await res.json()
+
+  return {
+    props: {
+      scannerCount: data.bullCount || 0
+    }
+  }
 }
