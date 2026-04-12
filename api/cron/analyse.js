@@ -1,13 +1,9 @@
 export default async function handler(req, res) {
-  try {
-    const protocol = req.headers["x-forwarded-proto"] || "https"
-    const host = req.headers.host
-    const base = `${protocol}://${host}`
+  const base = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : process.env.NEXT_PUBLIC_BASE_URL
 
-    await fetch(base + "/api/analyse")
+  await fetch(`${base}/api/analyse`)
 
-    return res.json({ ok: true, job: "analyse" })
-  } catch (e) {
-    return res.status(500).json({ error: e.message })
-  }
+  res.json({ ok: true, job: "analyse" })
 }
