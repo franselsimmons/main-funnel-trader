@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/engine",
-      "schedule": "*/15 * * * * *"
+      "schedule": "*/1 * * * *"
     },
     {
       "path": "/api/cron/analyse",
