@@ -1,5 +1,5 @@
 import useSWR from "swr"
-import Layout from "../components/Layout"
+import Navbar from "../components/Navbar"
 
 const fetcher = (url) => fetch(url).then(res => res.json())
 
@@ -9,41 +9,59 @@ export default function Bull() {
     refreshInterval: 5000
   })
 
-  const coins = data?.bull?.coins || []
+  const scanner = data?.bull?.scanner || []
   const lastScan = data?.bull?.lastScan
 
+  const formatTime = (timestamp) => {
+    if (!timestamp) return "Never"
+    return new Date(timestamp).toLocaleString()
+  }
+
   return (
-    <Layout title="Bull Dashboard" lastScan={lastScan}>
+    <>
+      <Navbar />
 
-      <div className="section-header">
-        Scanner Candidates ({coins.length})
+      <div className="page">
+        <div className="page-inner">
+
+          <div className="page-header">
+            <h1>Bull Dashboard</h1>
+            <div className="scan-time">
+              Last Scan: {formatTime(lastScan)}
+            </div>
+          </div>
+
+          <div className="section-header">
+            Scanner Candidates ({scanner.length})
+          </div>
+
+          <div className="table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Price</th>
+                  <th>Volume</th>
+                  <th>24h %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scanner.map((coin) => (
+                  <tr key={coin.symbol}>
+                    <td>{coin.symbol}</td>
+                    <td>${coin.price}</td>
+                    <td>${coin.volume.toLocaleString()}</td>
+                    <td className={coin.change24h >= 0 ? "pos" : "neg"}>
+                      {coin.change24h.toFixed(2)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+        </div>
       </div>
-
-      <div className="table-wrapper">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Price</th>
-              <th>Volume</th>
-              <th>24h %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {coins.map(c => (
-              <tr key={c.symbol}>
-                <td>{c.symbol}</td>
-                <td>${c.price?.toLocaleString()}</td>
-                <td>${c.volume?.toLocaleString()}</td>
-                <td className={c.change24h > 0 ? "pos" : "neg"}>
-                  {c.change24h?.toFixed(2)}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-    </Layout>
+    </>
   )
 }
