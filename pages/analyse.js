@@ -1,34 +1,56 @@
-import { useEffect, useState } from "react"
+import Navbar from "../components/Navbar"
 
-export default function AnalysePage() {
+export default function Analyse() {
 
-  const [analysis, setAnalysis] = useState(null)
+  const stats = {
+    winrate: "67%",
+    avgRR: "1.42",
+    expectancy: "+0.38R"
+  }
 
-  useEffect(() => {
-    fetch("/api/analyse")
-      .then(r => r.json())
-      .then(setAnalysis)
-  }, [])
+  const suggestions = [
+    "Increase minimum confidence to 0.74 in Chop regime",
+    "Reduce risk to 0.5% when portfolio beta > 1.5",
+    "Tighten spread stability threshold by 10%"
+  ]
 
   return (
-    <div style={{ padding: 40 }}>
-      <h1>Analyse Meester</h1>
+    <>
+      <Navbar />
+      <div className="container">
 
-      <h2>Stats</h2>
-      <pre>
-        {JSON.stringify(analysis?.stats, null, 2)}
-      </pre>
+        <h1>Analyse Meester</h1>
 
-      <h2>Suggestions</h2>
+        <div className="card-grid">
 
-      {analysis?.suggestions?.map((s, i) => (
-        <div key={i} style={{ marginBottom: 20 }}>
-          <strong>{s.type}</strong>
-          <div>{s.message}</div>
-          <div>Suggestion: {s.suggestedChange}</div>
-          <div>Confidence: {Math.round(s.confidence * 100)}%</div>
+          <div className="card">
+            <h3>Winrate</h3>
+            <div className="metric">{stats.winrate}</div>
+          </div>
+
+          <div className="card">
+            <h3>Average RR</h3>
+            <div className="metric">{stats.avgRR}</div>
+          </div>
+
+          <div className="card">
+            <h3>Expectancy</h3>
+            <div className="metric">{stats.expectancy}</div>
+          </div>
+
         </div>
-      ))}
-    </div>
+
+        <div style={{ marginTop: 40 }}>
+          <h2>Suggestions</h2>
+
+          <div className="card" style={{ marginTop: 20 }}>
+            {suggestions.map((s, i) => (
+              <p key={i} style={{ marginBottom: 12 }}>{s}</p>
+            ))}
+          </div>
+        </div>
+
+      </div>
+    </>
   )
 }
