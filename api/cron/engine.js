@@ -1,17 +1,15 @@
-let lastRun = 0
-
 export default async function handler(req, res) {
+  try {
+    const base =
+      process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : "http://localhost:3000"
 
-  const now = Date.now()
+    await fetch(base + "/api/bull/engine")
+    await fetch(base + "/api/bear/engine")
 
-  if (now - lastRun < 15000) {
-    return res.json({ skipped: true })
+    return res.json({ ok: true, job: "engine" })
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
   }
-
-  lastRun = now
-
-  await fetch(process.env.BASE_URL + "/api/bull/engine")
-  await fetch(process.env.BASE_URL + "/api/bear/engine")
-
-  res.json({ ok: true })
 }
