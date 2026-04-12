@@ -16,9 +16,11 @@ export default function Layout({ title, lastScan, children }) {
 
           <div className="page-header">
             <h1>{title}</h1>
-            <div className="scan-time">
-              Last Scan: {formatTime(lastScan)}
-            </div>
+            {lastScan && (
+              <div className="scan-time">
+                Last Scan: {formatTime(lastScan)}
+              </div>
+            )}
           </div>
 
           {children}
