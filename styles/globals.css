@@ -1,0 +1,83 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0f1117;
+  color: #e6e6e6;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+h1, h2, h3 {
+  margin: 0;
+}
+
+.container {
+  padding: 30px;
+  max-width: 1200px;
+  margin: auto;
+}
+
+.navbar {
+  background: #161a23;
+  padding: 16px 30px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #222;
+}
+
+.nav-links a {
+  margin-left: 20px;
+  text-decoration: none;
+  color: #aaa;
+  font-weight: 500;
+}
+
+.nav-links a:hover {
+  color: #fff;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 30px;
+}
+
+.card {
+  background: #161a23;
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid #222;
+}
+
+.metric {
+  font-size: 28px;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+.badge {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.badge-bull { background: #1f4d2b; color: #5cff9c; }
+.badge-neutral { background: #4a3d1f; color: #ffd35c; }
+.badge-bear { background: #4d1f1f; color: #ff5c5c; }
+
+.button {
+  margin-top: 20px;
+  padding: 10px 16px;
+  background: #1e2430;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: #2a3242;
+}
