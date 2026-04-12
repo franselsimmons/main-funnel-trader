@@ -11,10 +11,6 @@ async function fetchUniverse() {
 
   const data = await res.json()
 
-  if (!Array.isArray(data)) {
-    return []
-  }
-
   return data.map(c => ({
     symbol: c.symbol.toUpperCase(),
     price: c.current_price,
@@ -36,6 +32,7 @@ export default async function handler(req, res) {
       .slice(0, 100)
 
     await kv.set("bull:scanner:candidates", filtered)
+    await kv.set("bear:scanner:candidates", filtered)
 
     return res.json({
       ok: true,
