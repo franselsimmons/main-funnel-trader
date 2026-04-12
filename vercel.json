@@ -3,18 +3,6 @@
   "crons": [
     {
       "path": "/api/cron/scanner",
-      "schedule": "*/2 * * * *"
-    },
-    {
-      "path": "/api/cron/funnel",
-      "schedule": "*/2 * * * *"
-    },
-    {
-      "path": "/api/cron/engine",
-      "schedule": "*/1 * * * *"
-    },
-    {
-      "path": "/api/cron/analyse",
       "schedule": "*/5 * * * *"
     }
   ]
