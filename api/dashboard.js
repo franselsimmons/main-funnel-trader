@@ -1,29 +1,26 @@
 import { kv } from "@vercel/kv"
 
 export default async function handler(req, res) {
-  try {
 
-    const bullScanner = await kv.get("bull:scanner:candidates")
-    const bearScanner = await kv.get("bear:scanner:candidates")
+  const bullScanner = await kv.get("bull:scanner:candidates") || []
+  const bearScanner = await kv.get("bear:scanner:candidates") || []
 
-    const bullLastScan = await kv.get("bull:scanner:lastScan")
-    const bearLastScan = await kv.get("bear:scanner:lastScan")
+  const bullApproved = await kv.get("bull:approved") || []
+  const bearApproved = await kv.get("bear:approved") || []
 
-    return res.json({
-      bull: {
-        scanner: bullScanner || [],
-        approved: 0,
-        lastScan: bullLastScan || null
-      },
-      bear: {
-        scanner: bearScanner || [],
-        approved: 0,
-        lastScan: bearLastScan || null
-      }
-    })
+  const bullLastScan = await kv.get("bull:scanner:lastScan")
+  const bearLastScan = await kv.get("bear:scanner:lastScan")
 
-  } catch (e) {
-    console.error("Dashboard error:", e)
-    return res.status(500).json({ error: e.message })
-  }
+  res.json({
+    bull: {
+      scanner: bullScanner,
+      approved: bullApproved.length,
+      lastScan: bullLastScan
+    },
+    bear: {
+      scanner: bearScanner,
+      approved: bearApproved.length,
+      lastScan: bearLastScan
+    }
+  })
 }
