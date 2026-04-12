@@ -1,48 +1,54 @@
-import { useEffect, useState } from "react"
+import Navbar from "../components/Navbar"
 
-export default function BullDashboard() {
+export default function Bull() {
 
-  const [scanner, setScanner] = useState(null)
-  const [funnel, setFunnel] = useState(null)
-  const [portfolio, setPortfolio] = useState([])
+  const regime = "TREND" // later dynamic
+  const scannerCount = 0
+  const approvedCount = 0
+  const openPositions = 0
 
-  useEffect(() => {
-    fetch("/api/bull/scanner").then(r => r.json()).then(setScanner)
-    fetch("/api/bull/funnel").then(r => r.json()).then(setFunnel)
-    fetch("/api/bull/engine").then(r => r.json()).then(data => {
-      fetch("/api/state/bullPortfolio")
-        .then(r => r.json())
-        .then(setPortfolio)
-    })
-  }, [])
+  function getBadgeClass() {
+    if (regime === "EXPANSION" || regime === "TREND")
+      return "badge badge-bull"
+    if (regime === "NEUTRAL")
+      return "badge badge-neutral"
+    return "badge badge-bear"
+  }
 
   return (
-    <div style={{ padding: 30 }}>
-      <h1>Bull Dashboard</h1>
+    <>
+      <Navbar />
 
-      <section>
-        <h2>Regime</h2>
-        <div>{scanner?.regime}</div>
-      </section>
+      <div className="container">
 
-      <section>
-        <h2>Scanner Candidates</h2>
-        <div>{scanner?.candidates?.length || 0}</div>
-      </section>
+        <h1>Bull Dashboard</h1>
 
-      <section>
-        <h2>Approved Trades</h2>
-        <div>{funnel?.approved?.length || 0}</div>
-      </section>
+        <div style={{ marginTop: 20 }}>
+          <span className={getBadgeClass()}>
+            {regime}
+          </span>
+        </div>
 
-      <section>
-        <h2>Open Positions</h2>
-        {portfolio.map(p => (
-          <div key={p.symbol}>
-            {p.symbol} | Entry: {p.entry} | SL: {p.sl}
+        <div className="card-grid">
+
+          <div className="card">
+            <h3>Scanner Candidates</h3>
+            <div className="metric">{scannerCount}</div>
           </div>
-        ))}
-      </section>
-    </div>
+
+          <div className="card">
+            <h3>Approved Trades</h3>
+            <div className="metric">{approvedCount}</div>
+          </div>
+
+          <div className="card">
+            <h3>Open Positions</h3>
+            <div className="metric">{openPositions}</div>
+          </div>
+
+        </div>
+
+      </div>
+    </>
   )
 }
