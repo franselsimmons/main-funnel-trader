@@ -1,14 +1,23 @@
+import useSWR from "swr"
 import Navbar from "../components/Navbar"
 
-export default function Bull({ scannerCount }) {
+const fetcher = (url) => fetch(url).then(res => res.json())
+
+export default function Bull() {
+
+  const { data } = useSWR("/api/dashboard", fetcher, {
+    refreshInterval: 5000
+  })
 
   const regime = "TREND"
 
+  const scannerCount = data?.bull?.scanner || 0
+  const approvedCount = data?.bull?.approved || 0
+  const openPositions = data?.bull?.open || 0
+
   function getBadgeClass() {
-    if (regime === "EXPANSION" || regime === "TREND")
-      return "badge badge-bull"
-    if (regime === "NEUTRAL")
-      return "badge badge-neutral"
+    if (regime === "TREND") return "badge badge-bull"
+    if (regime === "NEUTRAL") return "badge badge-neutral"
     return "badge badge-bear"
   }
 
@@ -17,17 +26,13 @@ export default function Bull({ scannerCount }) {
       <Navbar />
 
       <div className="container">
-
         <h1>Bull Dashboard</h1>
 
         <div style={{ marginTop: 20 }}>
-          <span className={getBadgeClass()}>
-            {regime}
-          </span>
+          <span className={getBadgeClass()}>{regime}</span>
         </div>
 
         <div className="card-grid">
-
           <div className="card">
             <h3>Scanner Candidates</h3>
             <div className="metric">{scannerCount}</div>
@@ -35,30 +40,15 @@ export default function Bull({ scannerCount }) {
 
           <div className="card">
             <h3>Approved Trades</h3>
-            <div className="metric">0</div>
+            <div className="metric">{approvedCount}</div>
           </div>
 
           <div className="card">
             <h3>Open Positions</h3>
-            <div className="metric">0</div>
+            <div className="metric">{openPositions}</div>
           </div>
-
         </div>
-
       </div>
     </>
   )
-}
-
-export async function getServerSideProps() {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "https://main-funnel-trader.vercel.app"
-
-  const res = await fetch(base + "/api/debug")
-  const data = await res.json()
-
-  return {
-    props: {
-      scannerCount: data.bullCount || 0
-    }
-  }
 }
