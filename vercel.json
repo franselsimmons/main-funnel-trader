@@ -1,20 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/scanner",
-      "schedule": "*/3 * * * *"
-    },
-    {
-      "path": "/api/cron/funnel",
-      "schedule": "*/1 * * * *"
-    },
-    {
-      "path": "/api/cron/engine",
-      "schedule": "*/1 * * * *"
-    },
-    {
-      "path": "/api/cron/analyse",
-      "schedule": "*/30 * * * *"
-    }
-  ]
+  "framework": "nextjs"
 }
