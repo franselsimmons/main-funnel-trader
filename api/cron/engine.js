@@ -1,9 +1,8 @@
 export default async function handler(req, res) {
   try {
-    const base =
-      process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : "http://localhost:3000"
+    const protocol = req.headers["x-forwarded-proto"] || "https"
+    const host = req.headers.host
+    const base = `${protocol}://${host}`
 
     await fetch(base + "/api/bull/engine")
     await fetch(base + "/api/bear/engine")
