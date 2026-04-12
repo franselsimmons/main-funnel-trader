@@ -1,24 +1,14 @@
-import { getKey, setKey } from "../../storage/kv.js"
-import { funnelKey } from "../../storage/stateManager.js"
-import { runBearEngine } from "../../engine/engineBear.js"
+import { kv } from "@vercel/kv"
 
 export default async function handler(req, res) {
 
-  const funnelOutput = await getKey(funnelKey("bear")) || { approved: [] }
-  const openPositions = await getKey("portfolio:bear") || []
+  const scanner = await kv.get("bear:scanner:candidates") || []
 
-  const marketLiveData = {}
+  const signals = scanner
+    .filter(c => c.change24h < -1.5)
+    .slice(0, 10)
 
-  const result = runBearEngine({
-    funnelOutput,
-    openPositions,
-    marketLiveData
-  })
+  await kv.set("bear:engine:signals", signals)
 
-  await setKey("portfolio:bear", [
-    ...result.updatedPositions,
-    ...result.newPositions
-  ])
-
-  res.json(result)
+  res.json({ ok: true, signals: signals.length })
 }
