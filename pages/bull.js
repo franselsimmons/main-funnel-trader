@@ -29,7 +29,6 @@ export default function Bull({ regime, scannerCount, approvedCount, openPosition
   return (
     <>
       <Navbar />
-
       <div className="container">
 
         <h1>Bull Dashboard</h1>
