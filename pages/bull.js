@@ -9,45 +9,38 @@ export default function Bull() {
     refreshInterval: 5000
   })
 
-  const regime = "TREND"
-
-  const scannerCount = data?.bull?.scanner || 0
-  const approvedCount = data?.bull?.approved || 0
-  const openPositions = data?.bull?.open || 0
-
-  function getBadgeClass() {
-    if (regime === "TREND") return "badge badge-bull"
-    if (regime === "NEUTRAL") return "badge badge-neutral"
-    return "badge badge-bear"
-  }
+  const coins = data?.bull?.coins || []
 
   return (
     <>
       <Navbar />
-
       <div className="container">
+
         <h1>Bull Dashboard</h1>
 
-        <div style={{ marginTop: 20 }}>
-          <span className={getBadgeClass()}>{regime}</span>
+        <h2 style={{marginTop:40}}>Scanner Candidates ({coins.length})</h2>
+
+        <div className="table">
+          <div className="table-header">
+            <div>Symbol</div>
+            <div>Price</div>
+            <div>Volume</div>
+            <div>24h %</div>
+          </div>
+
+          {coins.map(c => (
+            <div key={c.symbol} className="table-row">
+              <div>{c.symbol}</div>
+              <div>${c.price?.toLocaleString()}</div>
+              <div>${c.volume?.toLocaleString()}</div>
+              <div style={{color: c.change24h > 0 ? "#1e7f3f" : "#8a2a2a"}}>
+                {c.change24h?.toFixed(2)}%
+              </div>
+            </div>
+          ))}
+
         </div>
 
-        <div className="card-grid">
-          <div className="card">
-            <h3>Scanner Candidates</h3>
-            <div className="metric">{scannerCount}</div>
-          </div>
-
-          <div className="card">
-            <h3>Approved Trades</h3>
-            <div className="metric">{approvedCount}</div>
-          </div>
-
-          <div className="card">
-            <h3>Open Positions</h3>
-            <div className="metric">{openPositions}</div>
-          </div>
-        </div>
       </div>
     </>
   )
