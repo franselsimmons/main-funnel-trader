@@ -29,7 +29,6 @@ export default function Bear({ regime, scannerCount, approvedCount, openPosition
   return (
     <>
       <Navbar />
-
       <div className="container">
 
         <h1>Bear Dashboard</h1>
