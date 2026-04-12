@@ -1,68 +1,21 @@
-body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-  background: #0f1117;
-  color: white;
-}
-
-.navbar {
-  background: #141824;
-  padding: 15px 30px;
-}
-
-.nav-inner {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.links a {
-  margin-left: 20px;
-  text-decoration: none;
-  color: #ccc;
-}
-
-.links a:hover {
-  color: white;
-}
-
-.container {
-  padding: 40px;
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 25px;
-  margin-top: 40px;
-}
-
-.card {
+.table {
+  margin-top: 20px;
   background: #1b2130;
-  padding: 30px;
   border-radius: 10px;
+  overflow: hidden;
 }
 
-.metric {
-  font-size: 42px;
+.table-header, .table-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  padding: 12px 20px;
+}
+
+.table-header {
+  background: #141824;
   font-weight: bold;
-  margin-top: 10px;
 }
 
-.badge {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-weight: bold;
-}
-
-.badge-bull {
-  background: #1e7f3f;
-}
-
-.badge-bear {
-  background: #8a2a2a;
-}
-
-.badge-neutral {
-  background: #666;
+.table-row:nth-child(even) {
+  background: #161c28;
 }
