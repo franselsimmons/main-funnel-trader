@@ -1,5 +1,5 @@
 import useSWR from "swr"
-import Navbar from "../components/Navbar"
+import Layout from "../components/Layout"
 
 const fetcher = (url) => fetch(url).then(res => res.json())
 
@@ -9,46 +9,41 @@ export default function Bear() {
     refreshInterval: 5000
   })
 
-  const regime = "NEUTRAL"
-
-  const scannerCount = data?.bear?.scanner || 0
-  const approvedCount = data?.bear?.approved || 0
-  const openPositions = data?.bear?.open || 0
-
-  function getBadgeClass() {
-    if (regime === "TREND") return "badge badge-bull"
-    if (regime === "NEUTRAL") return "badge badge-neutral"
-    return "badge badge-bear"
-  }
+  const coins = data?.bear?.coins || []
+  const lastScan = data?.bear?.lastScan
 
   return (
-    <>
-      <Navbar />
+    <Layout title="Bear Dashboard" lastScan={lastScan}>
 
-      <div className="container">
-        <h1>Bear Dashboard</h1>
-
-        <div style={{ marginTop: 20 }}>
-          <span className={getBadgeClass()}>{regime}</span>
-        </div>
-
-        <div className="card-grid">
-          <div className="card">
-            <h3>Scanner Candidates</h3>
-            <div className="metric">{scannerCount}</div>
-          </div>
-
-          <div className="card">
-            <h3>Approved Trades</h3>
-            <div className="metric">{approvedCount}</div>
-          </div>
-
-          <div className="card">
-            <h3>Open Positions</h3>
-            <div className="metric">{openPositions}</div>
-          </div>
-        </div>
+      <div className="section-header">
+        Scanner Candidates ({coins.length})
       </div>
-    </>
+
+      <div className="table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Price</th>
+              <th>Volume</th>
+              <th>24h %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {coins.map(c => (
+              <tr key={c.symbol}>
+                <td>{c.symbol}</td>
+                <td>${c.price?.toLocaleString()}</td>
+                <td>${c.volume?.toLocaleString()}</td>
+                <td className={c.change24h > 0 ? "pos" : "neg"}>
+                  {c.change24h?.toFixed(2)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+    </Layout>
   )
 }
