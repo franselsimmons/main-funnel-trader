@@ -1,11 +1,22 @@
 import Navbar from "../components/Navbar"
+import { kv } from "@vercel/kv"
 
-export default function Bear() {
+export async function getServerSideProps() {
+  const candidates = await kv.get("bear:scanner:candidates") || []
+  const approved = await kv.get("bear:funnel:approved") || []
+  const positions = await kv.get("positions:open") || []
 
-  const regime = "NEUTRAL"
-  const scannerCount = 0
-  const approvedCount = 0
-  const openPositions = 0
+  return {
+    props: {
+      scannerCount: candidates.length,
+      approvedCount: approved.length,
+      openPositions: positions.length,
+      regime: "NEUTRAL"
+    }
+  }
+}
+
+export default function Bear({ regime, scannerCount, approvedCount, openPositions }) {
 
   function getBadgeClass() {
     if (regime === "TREND")
@@ -18,6 +29,7 @@ export default function Bear() {
   return (
     <>
       <Navbar />
+
       <div className="container">
 
         <h1>Bear Dashboard</h1>
