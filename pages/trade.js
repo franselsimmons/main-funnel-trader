@@ -1,62 +1,72 @@
-import useSWR from "swr"
-import Navbar from "../components/Navbar"
-
-const fetcher = (url) => fetch(url).then(res => res.json())
+import { useEffect, useState } from "react"
+import Layout from "../components/layout"
 
 export default function Trade() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
 
-  const { data } = useSWR("/api/dashboard", fetcher, {
-    refreshInterval: 5000
-  })
+  useEffect(() => {
+    fetch("/api/dashboard?side=bull")
+      .then(res => res.json())
+      .then(bullData => {
+        fetch("/api/dashboard?side=bear")
+          .then(res => res.json())
+          .then(bearData => {
+            setData({
+              bullTrades: bullData.trades || [],
+              bearTrades: bearData.trades || []
+            })
+          })
+      })
+      .catch(() => setError("Fout bij laden trades"))
+  }, [])
 
-  const bullTrades = data?.bull?.approved || []
-  const bearTrades = data?.bear?.approved || []
+  if (error) {
+    return (
+      <Layout>
+        <div className="dashboard-header">
+          <h1>Live Trade Signals</h1>
+          <div className="status error">{error}</div>
+        </div>
+      </Layout>
+    )
+  }
 
-  const allTrades = [...bullTrades, ...bearTrades]
+  if (!data) return null
+
+  const allTrades = [
+    ...data.bullTrades.map(t => ({ ...t, side: "LONG" })),
+    ...data.bearTrades.map(t => ({ ...t, side: "SHORT" }))
+  ]
 
   return (
-    <>
-      <Navbar />
-
-      <div className="page">
-        <div className="page-inner">
-
-          <h1>Live Trade Signals</h1>
-
-          <div className="table-wrapper" style={{marginTop:30}}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Direction</th>
-                  <th>Entry</th>
-                  <th>24h %</th>
-                  <th>Volume</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allTrades.map((trade, i) => (
-                  <tr key={i}>
-                    <td>{trade.symbol}</td>
-                    <td style={{
-                      color: trade.direction === "LONG" ? "#22c55e" : "#ef4444",
-                      fontWeight:600
-                    }}>
-                      {trade.direction}
-                    </td>
-                    <td>${trade.price}</td>
-                    <td className={trade.change24h >= 0 ? "pos" : "neg"}>
-                      {trade.change24h.toFixed(2)}%
-                    </td>
-                    <td>${trade.volume.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
+    <Layout>
+      <div className="dashboard-header">
+        <h1>Live Trade Signals</h1>
+        <div className="status">
+          Actieve trades van de engine
         </div>
       </div>
-    </>
+
+      <div className="bucket-card">
+        <div className="bucket-inner">
+          {allTrades.length === 0 ? (
+            <div className="empty">Geen actieve trades.</div>
+          ) : (
+            allTrades.map((trade, index) => (
+              <div key={index} className="coin-row">
+                <div className="coin-left">
+                  <strong>{trade.symbol}</strong>
+                  <span>{trade.side}</span>
+                </div>
+                <div className="coin-right">
+                  Entry: {trade.entry?.toFixed(4)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </Layout>
   )
 }
