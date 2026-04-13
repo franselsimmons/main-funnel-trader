@@ -1,91 +1,61 @@
-import { useEffect, useState } from "react"
-import Layout from "../components/layout"
-
-function Bucket({ title, subtitle, coins }) {
-  return (
-    <div className="bucket-card bear">
-      <div className="bucket-header">
-        <h2>{title}</h2>
-        <p>{subtitle}</p>
-      </div>
-
-      <div className="bucket-inner">
-        {coins.length === 0 ? (
-          <div className="empty">Geen coins.</div>
-        ) : (
-          coins.map((coin) => (
-            <div key={coin.symbol} className="coin-row">
-              <div className="coin-left">
-                <strong>{coin.symbol}</strong>
-                <span>{(coin.score * 100).toFixed(1)}%</span>
-              </div>
-              <div className="coin-right">
-                {coin.entry ? coin.entry.toFixed(4) : "-"}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
+import { useEffect, useState } from "react";
+import Nav from "../components/Nav";
 
 export default function Bear() {
-  const [data, setData] = useState(null)
-  const [error, setError] = useState(null)
+  const [data, setData] = useState(null);
 
   useEffect(() => {
     fetch("/api/dashboard?side=bear")
-      .then(res => {
-        if (!res.ok) throw new Error("API error")
-        return res.json()
-      })
-      .then(setData)
-      .catch(() => setError("Fout bij laden dashboard"))
-  }, [])
-
-  if (error) {
-    return (
-      <Layout>
-        <div className="dashboard-header">
-          <h1>Bear Dashboard</h1>
-          <div className="status error">{error}</div>
-        </div>
-      </Layout>
-    )
-  }
-
-  if (!data) return null
-
-  const lastScan =
-    data.lastScan
-      ? new Date(data.lastScan).toLocaleTimeString()
-      : "Never"
+      .then((res) => res.json())
+      .then(setData);
+  }, []);
 
   return (
-    <Layout>
-      <div className="dashboard-header">
+    <div className="container">
+      <header>
         <h1>Bear Dashboard</h1>
-        <div className="status">Last Scan: {lastScan}</div>
-      </div>
+      </header>
 
-      <Bucket
-        title="TRADE READY"
-        subtitle="Short entry-ready signalen."
-        coins={data.tradeReady || []}
-      />
+      <Nav active="bear" />
 
-      <Bucket
-        title="SETUP"
-        subtitle="Bijna short-ready."
-        coins={data.setup || []}
-      />
+      <div className="section-title">Scanner & Trade Buckets</div>
 
-      <Bucket
-        title="WARMUP"
-        subtitle="Momentum bouwt neerwaarts."
-        coins={data.warmup || []}
-      />
-    </Layout>
-  )
+      {!data ? (
+        <p>Loading…</p>
+      ) : (
+        <>
+          <div className="bucket-grid">
+
+            <div className="card">
+              <div className="title">Trade Ready</div>
+              {data.tradeReady.map((c) => (
+                <div key={c.symbol} className="meta">
+                  {c.symbol} — {(c.score * 100).toFixed(1)}%
+                </div>
+              ))}
+            </div>
+
+            <div className="card">
+              <div className="title">Setup</div>
+              {data.setup.map((c) => (
+                <div key={c.symbol} className="meta">
+                  {c.symbol} — {(c.score * 100).toFixed(1)}%
+                </div>
+              ))}
+            </div>
+
+            <div className="card">
+              <div className="title">Warmup</div>
+              {data.warmup.map((c) => (
+                <div key={c.symbol} className="meta">
+                  {c.symbol} — {(c.score * 100).toFixed(1)}%
+                </div>
+              ))}
+            </div>
+
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
