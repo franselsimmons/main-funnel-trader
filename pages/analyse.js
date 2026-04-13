@@ -1,46 +1,66 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 
 export default function Analyse(){
   const [data,setData]=useState(null);
+  const canvasRef = useRef(null);
 
   useEffect(()=>{
     fetch("/api/metrics").then(r=>r.json()).then(setData);
   },[]);
+
+  useEffect(()=>{
+    if(!data || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0,0,800,300);
+
+    let equity = 100;
+    ctx.beginPath();
+    ctx.moveTo(0,150);
+
+    (data.trades?.history||[]).forEach((p,i)=>{
+      equity += p;
+      ctx.lineTo(i*10,150 - equity);
+    });
+
+    ctx.strokeStyle="#3B82F6";
+    ctx.stroke();
+  },[data]);
 
   return(
     <>
       <header className="topbar">
         <div>
           <div className="brand">ANALYSE</div>
-          <div className="sub">Funnel leaks & performance</div>
-        </div>
-        <div className="nav">
-          <Link href="/bull"><button className="btn">Bull</button></Link>
-          <Link href="/bear"><button className="btn">Bear</button></Link>
-          <Link href="/analyse"><button className="btn active">Analyse</button></Link>
-          <Link href="/trade"><button className="btn">Trade</button></Link>
+          <div className="sub">Heatmap & Equity Curve</div>
         </div>
       </header>
 
       <main className="grid">
         <section className="panel">
-          <div className="panelTitle">FUNNEL LEAKS</div>
+          <div className="panelTitle">FUNNEL HEATMAP</div>
 
-          <div className={`kvRow ${(data?.conversion?.r2w||0)<20?"leakBad":"leakGood"}`}>
-            <span>Radar → Warmup</span>
-            <span>{data?.conversion?.r2w||0}%</span>
+          <div style={{
+            display:"grid",
+            gridTemplateColumns:"repeat(4,1fr)",
+            gap:"8px"
+          }}>
+            {Object.entries(data?.conversion||{}).map(([k,v])=>(
+              <div key={k}
+                style={{
+                  padding:"12px",
+                  background:`rgba(59,130,246,${v/100})`,
+                  borderRadius:"6px"
+                }}>
+                {k} {v}%
+              </div>
+            ))}
           </div>
+        </section>
 
-          <div className={`kvRow ${(data?.conversion?.w2s||0)<20?"leakBad":"leakGood"}`}>
-            <span>Warmup → Setup</span>
-            <span>{data?.conversion?.w2s||0}%</span>
-          </div>
-
-          <div className={`kvRow ${(data?.conversion?.s2e||0)<20?"leakBad":"leakGood"}`}>
-            <span>Setup → Entry</span>
-            <span>{data?.conversion?.s2e||0}%</span>
-          </div>
+        <section className="panel">
+          <div className="panelTitle">EQUITY CURVE</div>
+          <canvas ref={canvasRef} width={800} height={300}/>
         </section>
       </main>
     </>
