@@ -2,62 +2,117 @@ import { useEffect, useState } from "react";
 
 export default function Bear() {
   const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
 
   async function load() {
     try {
-      const res = await fetch("/api/state?mode=bear");
-      const json = await res.json();
-      setData(json);
-    } catch {
-      setData({ error: true });
+      const r = await fetch("/api/state?mode=bear", {
+        cache: "no-store",
+      });
+
+      const j = await r.json();
+
+      if (!r.ok) {
+        throw new Error(j?.error || "API error");
+      }
+
+      setData(j);
+      setError(null);
+    } catch (e) {
+      setError(String(e.message || e));
     }
   }
 
   useEffect(() => {
     load();
-    const i = setInterval(load, 8000);
-    return () => clearInterval(i);
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
   }, []);
 
-  if (!data) return <div className="page">Loading market data...</div>;
-  if (data.error) return <div className="page error">Scanner offline</div>;
+  function renderStage(arr) {
+    if (!arr || arr.length === 0) {
+      return <div className="empty">Geen coins</div>;
+    }
 
-  return (
-    <MarketView title="Bear Market" funnel={data.funnel} />
-  );
-}
-
-function MarketView({ title, funnel }) {
-  return (
-    <div className="page">
-      <h1 className="headline">{title}</h1>
-
-      <Stage title="ENTRY READY" coins={funnel.entry_ready} />
-      <Stage title="SETUP" coins={funnel.setup} />
-      <Stage title="WARMUP" coins={funnel.warmup} />
-      <Stage title="RADAR" coins={funnel.radar} />
-    </div>
-  );
-}
-
-function Stage({ title, coins }) {
-  return (
-    <section className="section">
-      <div className="sectionHeader">
-        <h2>{title}</h2>
-        <span>{coins.length}</span>
-      </div>
-
-      <div className="table">
-        {coins.map(c => (
-          <div key={c.symbol} className="row">
+    return arr.map((c) => (
+      <div className="coin" key={c.symbol}>
+        <div className="coinTop">
+          <div>
             <div className="symbol">{c.symbol}</div>
-            <div>${c.price}</div>
-            <div>{c.confidence}</div>
-            <div>{c.aiScore}</div>
+            <div className="price">
+              ${Number(c.price || 0).toFixed(6)}
+            </div>
           </div>
-        ))}
+
+          <div className="score">
+            {Math.round(Number(c.aiScore || 0))}/100
+          </div>
+        </div>
+
+        <div className="meta">
+          <span>mom {Number(c.momentum || 0).toFixed(2)}%</span>
+          <span>volAcc {Number(c.volAcc || 0).toFixed(2)}</span>
+          <span>spread {Number(c.ob?.spreadPct || 0).toFixed(2)}%</span>
+        </div>
+
+        {c.tradePlan && (
+          <div className="plan">
+            Entry ${Number(c.tradePlan.entry).toFixed(6)}
+            {" • "}
+            SL ${Number(c.tradePlan.sl).toFixed(6)}
+            {" • "}
+            TP ${Number(c.tradePlan.tp).toFixed(6)}
+          </div>
+        )}
       </div>
-    </section>
+    ));
+  }
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <div className="brand">BEAR MARKET</div>
+          <div className="sub">
+            Regime: {data?.regime?.regime || "—"}{" "}
+            ({data?.regime?.score || 0})
+          </div>
+        </div>
+      </header>
+
+      {error && (
+        <div style={{ padding: 40, color: "#EF4444" }}>
+          Error: {error}
+        </div>
+      )}
+
+      {!data && !error && (
+        <div style={{ padding: 40 }}>Laden…</div>
+      )}
+
+      {data && (
+        <main className="grid">
+          <section className="panel">
+            <div className="panelTitle">ENTRY READY</div>
+            {renderStage(data?.funnel?.entry_ready)}
+          </section>
+
+          <section className="panel">
+            <div className="panelTitle">SETUP</div>
+            {renderStage(data?.funnel?.setup)}
+          </section>
+
+          <section className="panel">
+            <div className="panelTitle">WARMUP</div>
+            {renderStage(data?.funnel?.warmup)}
+          </section>
+
+          <section className="panel">
+            <div className="panelTitle">RADAR</div>
+            {renderStage(data?.funnel?.radar)}
+          </section>
+        </main>
+      )}
+    </>
   );
 }
