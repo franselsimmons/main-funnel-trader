@@ -1,15 +1,12 @@
+import { runBullScanner } from "../../scanner/scannerBull.js"
+import { fetchUniverse } from "../../scanner/universeFetcher.js"
+
 export default async function handler(req, res) {
+  const universe = await fetchUniverse()
+  const result = await runBullScanner(universe)
 
-  const base =
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    process.env.VERCEL_URL
-
-  const url = base.startsWith("http")
-    ? base
-    : `https://${base}`
-
-  await fetch(`${url}/api/bull/scanner`)
-  await fetch(`${url}/api/bear/scanner`)
-
-  res.json({ ok: true })
+  res.json({
+    ok: true,
+    count: result.length
+  })
 }
