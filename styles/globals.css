@@ -12,11 +12,11 @@ html, body {
 
 /* ===== TOPBAR ===== */
 .topbar {
-  height: 78px;
+  height: 80px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 32px;
+  padding: 0 36px;
   background: #0E1627;
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
@@ -28,7 +28,7 @@ html, body {
 
 .sub {
   font-size: 12px;
-  opacity: 0.6;
+  opacity: .6;
   margin-top: 4px;
 }
 
@@ -41,7 +41,7 @@ html, body {
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.08);
   color: white;
-  padding: 8px 14px;
+  padding: 9px 16px;
   border-radius: 8px;
   cursor: pointer;
   transition: .2s ease;
@@ -80,7 +80,7 @@ html, body {
   margin-bottom: 18px;
 }
 
-/* ===== COIN CARD ===== */
+/* ===== COIN ===== */
 .coin {
   background: #16213A;
   border-radius: 10px;
@@ -174,4 +174,43 @@ html, body {
 
 .closeBtn {
   margin-top: 20px;
+}
+
+/* ===== HOME HERO ===== */
+.hero {
+  padding: 80px 40px;
+  text-align: center;
+}
+
+.heroTitle {
+  font-size: 42px;
+  font-weight: 700;
+}
+
+.heroSub {
+  margin-top: 18px;
+  opacity: .6;
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.heroGrid {
+  margin-top: 60px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px,1fr));
+  gap: 28px;
+}
+
+.heroCard {
+  background: #111A2E;
+  padding: 32px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: .25s ease;
+  cursor: pointer;
+}
+
+.heroCard:hover {
+  background: #16213A;
 }
