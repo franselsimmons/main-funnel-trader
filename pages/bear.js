@@ -6,9 +6,13 @@ export default function Bear() {
   const [selected, setSelected] = useState(null);
 
   async function load() {
-    const r = await fetch("/api/state?mode=bear", { cache: "no-store" });
-    const j = await r.json();
-    setData(j);
+    try {
+      const r = await fetch("/api/state?mode=bear", { cache: "no-store" });
+      const j = await r.json();
+      setData(j);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   useEffect(() => {
@@ -22,7 +26,7 @@ export default function Bear() {
       return <div className="empty">Geen coins</div>;
     }
 
-    return arr.map(c => (
+    return arr.map((c) => (
       <div className="coin" key={c.symbol} onClick={() => setSelected(c)}>
         <div className="coinTop">
           <div>
@@ -40,8 +44,8 @@ export default function Bear() {
 
         {c.tradePlan && (
           <div className="plan">
-            SL ${c.tradePlan.sl.toFixed(6)} •
-            TP ${c.tradePlan.tp.toFixed(6)}
+            SL ${c.tradePlan.sl?.toFixed(6)} •
+            TP ${c.tradePlan.tp?.toFixed(6)}
           </div>
         )}
       </div>
@@ -92,22 +96,17 @@ export default function Bear() {
 
       {selected && (
         <div className="modalBackdrop" onClick={() => setSelected(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modalTitle">
-              {selected.symbol} Details
-            </div>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modalTitle">{selected.symbol}</div>
 
             <div className="modalSection">
               <div className="kvRow"><span>Price</span><span>${selected.price}</span></div>
               <div className="kvRow"><span>Momentum</span><span>{selected.momentum}%</span></div>
               <div className="kvRow"><span>Volume Accel</span><span>{selected.volAcc}</span></div>
               <div className="kvRow"><span>AI Score</span><span>{selected.aiScore}</span></div>
-            </div>
-
-            <div className="modalSection">
               <div className="kvRow"><span>Spread</span><span>{selected.ob?.spreadPct}%</span></div>
-              <div className="kvRow"><span>Depth 1%</span><span>${selected.ob?.depthMinUsd1p}</span></div>
-              <div className="kvRow"><span>Orderbook Score</span><span>{selected.ob?.score}</span></div>
+              <div className="kvRow"><span>Depth</span><span>${selected.ob?.depthMinUsd1p}</span></div>
+              <div className="kvRow"><span>OB Score</span><span>{selected.ob?.score}</span></div>
             </div>
 
             {selected.tradePlan && (
