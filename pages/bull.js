@@ -1,67 +1,77 @@
-import useSWR from "swr"
-import Navbar from "../components/Navbar"
+import { useEffect, useState } from "react"
+import Layout from "../components/layout"
 
-const fetcher = (url) => fetch(url).then(res => res.json())
+function Bucket({ title, subtitle, coins }) {
+  return (
+    <div className="bucket-card">
+      <div className="bucket-header">
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+
+      <div className="bucket-inner">
+        {coins.length === 0 ? (
+          <div className="empty">Geen coins.</div>
+        ) : (
+          coins.map(c => (
+            <div key={c.symbol} className="coin-row">
+              <div className="coin-left">
+                <strong>{c.symbol}</strong>
+                <span>{(c.score * 100).toFixed(1)}%</span>
+              </div>
+              <div className="coin-right">
+                {c.entry?.toFixed?.(4) || "-"}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
 
 export default function Bull() {
+  const [data, setData] = useState(null)
 
-  const { data } = useSWR("/api/dashboard", fetcher, {
-    refreshInterval: 5000
-  })
+  useEffect(() => {
+    fetch("/api/dashboard?side=bull")
+      .then(r => r.json())
+      .then(setData)
+  }, [])
 
-  const scanner = data?.bull?.scanner || []
-  const lastScan = data?.bull?.lastScan
+  if (!data) return null
 
-  const formatTime = (timestamp) => {
-    if (!timestamp) return "Never"
-    return new Date(timestamp).toLocaleString()
-  }
+  const lastScan =
+    data.lastScan
+      ? new Date(data.lastScan).toLocaleTimeString()
+      : "Never"
 
   return (
-    <>
-      <Navbar />
-
-      <div className="page">
-        <div className="page-inner">
-
-          <div className="page-header">
-            <h1>Bull Dashboard</h1>
-            <div className="scan-time">
-              Last Scan: {formatTime(lastScan)}
-            </div>
-          </div>
-
-          <div className="section-header">
-            Scanner Candidates ({scanner.length})
-          </div>
-
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Price</th>
-                  <th>Volume</th>
-                  <th>24h %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scanner.map((coin) => (
-                  <tr key={coin.symbol}>
-                    <td>{coin.symbol}</td>
-                    <td>${coin.price}</td>
-                    <td>${coin.volume.toLocaleString()}</td>
-                    <td className={coin.change24h >= 0 ? "pos" : "neg"}>
-                      {coin.change24h.toFixed(2)}%
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
+    <Layout>
+      <div className="dashboard-header">
+        <h1>Bull Dashboard</h1>
+        <div className="status">
+          Last Scan: {lastScan}
         </div>
       </div>
-    </>
+
+      <Bucket
+        title="TRADE READY"
+        subtitle="Scanner-signalen die entry-ready zijn."
+        coins={data.tradeReady}
+      />
+
+      <Bucket
+        title="SETUP"
+        subtitle="Bijna trade-ready — mist nog 1–2 gates."
+        coins={data.setup}
+      />
+
+      <Bucket
+        title="WARMUP"
+        subtitle="Momentum bouwt op."
+        coins={data.warmup}
+      />
+    </Layout>
   )
 }
