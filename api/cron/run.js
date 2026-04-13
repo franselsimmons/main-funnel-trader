@@ -1,20 +1,23 @@
+import { runBullScanner } from "../../scanner/scannerBull.js"
+import { runBearScanner } from "../../scanner/scannerBear.js"
+import { runBullFunnel } from "../../funnel/funnelBull.js"
+import { runBearFunnel } from "../../funnel/funnelBear.js"
+import { runBullEngine } from "../../engine/engineBull.js"
+import { runBearEngine } from "../../engine/engineBear.js"
+import { fetchUniverse } from "../../scanner/universeFetcher.js"
+
 export default async function handler(req, res) {
 
-  const base =
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    `https://${process.env.VERCEL_URL}`
+  const universe = await fetchUniverse()
 
-  // 1️⃣ Scanner
-  await fetch(`${base}/api/bull/scanner`)
-  await fetch(`${base}/api/bear/scanner`)
+  await runBullScanner(universe)
+  await runBearScanner(universe)
 
-  // 2️⃣ Engine
-  await fetch(`${base}/api/bull/engine`)
-  await fetch(`${base}/api/bear/engine`)
+  await runBullFunnel()
+  await runBearFunnel()
 
-  // 3️⃣ Funnel
-  await fetch(`${base}/api/bull/funnel`)
-  await fetch(`${base}/api/bear/funnel`)
+  await runBullEngine()
+  await runBearEngine()
 
   res.json({ ok: true })
 }
