@@ -1,15 +1,24 @@
-export function scannerKey(mode) {
-  return `main:v6:${mode}:scanner`
+import { kv } from "@vercel/kv";
+
+export async function loadState(mode) {
+  return (await kv.get(`main:v6:state:${mode}`)) || {};
 }
 
-export function funnelKey(mode) {
-  return `main:v6:${mode}:funnel`
+export async function saveState(mode, state) {
+  await kv.set(`main:v6:state:${mode}`, state, { ex: 60 * 60 * 24 * 3 });
 }
 
-export function portfolioKey(mode) {
-  return `main:v6:${mode}:portfolio`
-}
+export function updateCoinState(prev = {}, nextStage, now) {
+  const prevStage = prev.stage || "UNIVERSE";
+  const cycles =
+    prevStage === nextStage
+      ? (prev.cycles || 0) + 1
+      : 1;
 
-export function analyticsKey(mode) {
-  return `main:v6:${mode}:analytics`
+  return {
+    ...prev,
+    stage: nextStage,
+    cycles,
+    lastUpdate: now,
+  };
 }
