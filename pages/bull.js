@@ -2,8 +2,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 export default function Bull() {
-  const mode = "bull";
+  return <ScannerPage mode="bull" />;
+}
+
+function ScannerPage({ mode }) {
   const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(null);
 
   useEffect(() => {
     load();
@@ -14,8 +18,13 @@ export default function Bull() {
   function load() {
     fetch(`/api/state?mode=${mode}`)
       .then(r => r.json())
-      .then(setData)
-      .catch(() => {});
+      .then(setData);
+  }
+
+  function pctColor(v) {
+    if (v > 0) return "#22C55E";
+    if (v < 0) return "#EF4444";
+    return "#94A3B8";
   }
 
   function confColor(v) {
@@ -26,28 +35,29 @@ export default function Bull() {
   }
 
   function Stage({ title, items }) {
-    const count = items?.length || 0;
-
     return (
       <section className="stagePanel">
         <div className="stageHeader">
           <div>{title}</div>
-          <div className="stageCount">{count}</div>
+          <div className="stageCount">{items?.length || 0}</div>
         </div>
 
-        {!count && <div className="empty">Geen coins</div>}
+        {!items?.length && <div className="empty">Geen coins</div>}
 
         {items?.map(c => {
           const conf = Math.round(c.aiScore || 0);
 
           return (
-            <div key={c.symbol} className="coinCard">
+            <div
+              key={c.symbol}
+              className="coinCard"
+              onClick={() => setSelected(c)}
+            >
               <div className="coinRow">
                 <div>
                   <div className="symbol">{c.symbol}</div>
                   <div className="price">${c.price}</div>
                 </div>
-
                 <div className="confText">{conf}/100</div>
               </div>
 
@@ -62,8 +72,9 @@ export default function Bull() {
               </div>
 
               <div className="coinMeta">
-                <span>mom {c.momentum}%</span>
-                <span>volAcc {c.volumeAcceleration}</span>
+                <span style={{ color: pctColor(c.momentum) }}>
+                  mom {c.momentum}%
+                </span>
                 <span>spread {c.ob?.spreadPct}%</span>
               </div>
             </div>
@@ -75,40 +86,7 @@ export default function Bull() {
 
   return (
     <>
-      <header className="scannerHeader">
-        <div>
-          <div className="scannerTitle">SCANNER</div>
-          <div className="scannerSub">
-            Last scan: {data?.ts ? new Date(data.ts).toLocaleString() : "—"}
-          </div>
-
-          <div className="regimeWrap">
-            <div className="regimeBar">
-              <div
-                className="regimeFill"
-                style={{
-                  width: Math.abs(data?.regime?.score || 0) + "%",
-                  background:
-                    (data?.regime?.score || 0) >= 0
-                      ? "#22C55E"
-                      : "#EF4444"
-                }}
-              />
-            </div>
-
-            <div className="regimeLabel">
-              {data?.regime?.label || "NEUTRAL"}
-            </div>
-          </div>
-        </div>
-
-        <div className="navButtons">
-          <Link href="/bull"><button className="navBtn active">Bull</button></Link>
-          <Link href="/bear"><button className="navBtn">Bear</button></Link>
-          <Link href="/analyse"><button className="navBtn">Analyse</button></Link>
-          <Link href="/trade"><button className="navBtn">Trade</button></Link>
-        </div>
-      </header>
+      <Header data={data} mode={mode} />
 
       <main className="scannerGrid">
         <Stage title="ENTRY READY" items={data?.funnel?.entry_ready} />
@@ -116,6 +94,10 @@ export default function Bull() {
         <Stage title="WARMUP" items={data?.funnel?.warmup} />
         <Stage title="RADAR" items={data?.funnel?.radar} />
       </main>
+
+      {selected && (
+        <Modal coin={selected} onClose={() => setSelected(null)} />
+      )}
     </>
   );
 }
