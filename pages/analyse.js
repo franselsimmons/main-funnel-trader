@@ -4,32 +4,34 @@ export default function Analyse() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    fetch("/api/analyse?mode=bull")
+    fetch("/api/state?mode=bull")
       .then(r => r.json())
-      .then(setData)
-      .catch(() => setData({ error: true }));
+      .then(setData);
   }, []);
 
-  if (!data) return <div className="page">Loading analyse...</div>;
-  if (data.error) return <div className="page error">Analyse offline</div>;
+  if (!data) return <div>Loading...</div>;
 
-  const perf = data.perf || {};
+  const f = data.funnel;
+
+  const total = Object.values(f)
+    .reduce((a, b) => a + b.length, 0);
+
+  const conv = (a, b) =>
+    a && b ? ((b.length / a.length) * 100).toFixed(1) : 0;
 
   return (
-    <div className="page">
-      <h1 className="headline">System Analyse</h1>
+    <div style={{ padding: 40, fontFamily: "Inter" }}>
+      <h1>Funnel Analysis</h1>
 
-      <div className="stats">
-        <div>Trades: {perf.trades || 0}</div>
-        <div>Winrate: {perf.winrate || 0}%</div>
-        <div>Avg PnL: {perf.avgPnL || 0}%</div>
-      </div>
+      <p>Radar: {f.radar.length}</p>
+      <p>Warmup: {f.warmup.length}</p>
+      <p>Setup: {f.setup.length}</p>
+      <p>Entry Ready: {f.entry_ready.length}</p>
 
-      <div className="suggestions">
-        {(perf.suggestions || []).map((s, i) => (
-          <div key={i}>{s}</div>
-        ))}
-      </div>
+      <h2>Conversion</h2>
+      <p>Radar → Warmup: {conv(f.radar, f.warmup)}%</p>
+      <p>Warmup → Setup: {conv(f.warmup, f.setup)}%</p>
+      <p>Setup → Entry: {conv(f.setup, f.entry_ready)}%</p>
     </div>
   );
 }
