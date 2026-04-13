@@ -1,35 +1,48 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 
 export default function Bull() {
   const mode = "bull";
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
+  const canvasRef = useRef(null);
 
   useEffect(() => {
     fetch(`/api/state?mode=${mode}`).then(r=>r.json()).then(setData);
-
-    const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@trade");
-    ws.onmessage = () => {
-      fetch(`/api/state?mode=${mode}`).then(r=>r.json()).then(setData);
-    };
-    return () => ws.close();
   }, []);
 
-  function confColor(v){
-    if(v>80) return "#22C55E";
-    if(v>60) return "#3B82F6";
-    if(v>40) return "#F59E0B";
-    return "#EF4444";
-  }
+  useEffect(() => {
+    if (!selected || !canvasRef.current) return;
+
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0,0,600,300);
+
+    const bids = selected.ob?.bids || [];
+    const asks = selected.ob?.asks || [];
+
+    ctx.strokeStyle = "#22C55E";
+    ctx.beginPath();
+    bids.forEach((b,i)=>{
+      ctx.lineTo(i*10,300-b[1]);
+    });
+    ctx.stroke();
+
+    ctx.strokeStyle = "#EF4444";
+    ctx.beginPath();
+    asks.forEach((a,i)=>{
+      ctx.lineTo(i*10,300-a[1]);
+    });
+    ctx.stroke();
+
+  }, [selected]);
 
   function renderStage(arr){
     if(!arr?.length) return <div className="empty">Geen coins</div>;
 
     return arr.map(c=>{
       const conf = Math.round(c.aiScore||0);
-      return (
-        <div className="coin" key={c.symbol} onClick={()=>setSelected(c)}>
+      return(
+        <div className="coin fadeUp" key={c.symbol} onClick={()=>setSelected(c)}>
           <div className="coinTop">
             <div>
               <div className="symbol">{c.symbol}</div>
@@ -39,22 +52,19 @@ export default function Bull() {
           </div>
 
           <div className="confBarWrap">
-            <div className="confBar" style={{
-              width:conf+"%",
-              background:confColor(conf)
-            }} />
-          </div>
-
-          <div className="meta">
-            <span>mom {c.momentum}%</span>
-            <span>spread {c.ob?.spreadPct}%</span>
+            <div className="confBar animateWidth"
+              style={{
+                width:conf+"%",
+                background:conf>70?"#22C55E":"#F59E0B"
+              }}
+            />
           </div>
         </div>
       )
     })
   }
 
-  return (
+  return(
     <>
       <header className="topbar">
         <div>
@@ -64,7 +74,7 @@ export default function Bull() {
           </div>
 
           <div className="regimeBar">
-            <div className="regimeFill"
+            <div className="regimeFill animateWidth"
               style={{
                 width:Math.abs(data?.regime?.score||0)+"%",
                 background:(data?.regime?.score||0)>0?"#22C55E":"#EF4444"
@@ -86,36 +96,13 @@ export default function Bull() {
           <div className="panelTitle">ENTRY READY</div>
           {renderStage(data?.funnel?.entry_ready)}
         </section>
-
-        <section className="panel">
-          <div className="panelTitle">SETUP</div>
-          {renderStage(data?.funnel?.setup)}
-        </section>
-
-        <section className="panel">
-          <div className="panelTitle">WARMUP</div>
-          {renderStage(data?.funnel?.warmup)}
-        </section>
-
-        <section className="panel">
-          <div className="panelTitle">RADAR</div>
-          {renderStage(data?.funnel?.radar)}
-        </section>
       </main>
 
       {selected && (
         <div className="modalBackdrop" onClick={()=>setSelected(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="modalTitle">{selected.symbol}</div>
-
-            <div className="modalSection">
-              <div className="kvRow"><span>Price</span><span>{selected.price}</span></div>
-              <div className="kvRow"><span>Momentum</span><span>{selected.momentum}%</span></div>
-              <div className="kvRow"><span>AI Score</span><span>{selected.aiScore}</span></div>
-              <div className="kvRow"><span>Spread</span><span>{selected.ob?.spreadPct}%</span></div>
-              <div className="kvRow"><span>Depth</span><span>{selected.ob?.depthMinUsd1p}</span></div>
-            </div>
-
+            <div className="modalTitle">{selected.symbol} Orderbook</div>
+            <canvas ref={canvasRef} width={600} height={300} />
             <button className="btn closeBtn" onClick={()=>setSelected(null)}>
               Sluiten
             </button>
