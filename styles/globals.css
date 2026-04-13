@@ -1,56 +1,78 @@
 body {
   margin: 0;
-  background: linear-gradient(135deg, #081020, #0f1f38);
-  color: white;
+  background: #0f172a;
+  color: #e2e8f0;
   font-family: Inter, sans-serif;
 }
 
-.layout {
-  padding: 40px;
-  max-width: 1200px;
+.page {
+  padding: 60px;
+  max-width: 1400px;
   margin: auto;
 }
 
-.title {
-  font-size: 42px;
-  margin-bottom: 10px;
+.headline {
+  font-size: 40px;
+  font-weight: 600;
+  margin-bottom: 40px;
 }
 
-.subtitle {
-  opacity: 0.7;
-  margin-bottom: 30px;
+.sub {
+  opacity: 0.6;
+  margin-bottom: 40px;
 }
 
-.grid {
+.navGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
 }
 
-.card {
-  background: rgba(255,255,255,0.05);
-  backdrop-filter: blur(10px);
-  padding: 20px;
-  border-radius: 14px;
+.navCard {
+  padding: 30px;
+  background: #1e293b;
+  border-radius: 10px;
+  text-align: center;
+  text-decoration: none;
+  color: white;
   transition: 0.3s ease;
+}
+
+.navCard:hover {
+  background: #334155;
+}
+
+.section {
+  margin-bottom: 50px;
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
+
+.table {
   border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.card:hover {
-  transform: translateY(-4px);
-  background: rgba(255,255,255,0.08);
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
-.stageTag {
-  margin-top: 10px;
-  font-size: 12px;
-  opacity: 0.6;
+.row:hover {
+  background: #1e293b;
 }
 
-.stage {
-  margin-top: 40px;
+.symbol {
+  font-weight: 600;
 }
 
 .error {
-  color: #ff6b6b;
+  color: #ef4444;
 }
