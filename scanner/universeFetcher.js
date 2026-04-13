@@ -1,60 +1,57 @@
-import { fetchJsonWithTimeout } from "../core/fetcher.js"
-import { computeRegime } from "../core/regimeEngine.js"
+export async function fetchUniverse() {
 
-export async function fetchAdaptiveUniverse(btcData) {
-
-  const regime = computeRegime(btcData)
-
-  const sizeMap = {
-    EXPANSION: 300,
-    TREND: 200,
-    NEUTRAL: 150,
-    CHOP: 100,
-    RISK_OFF: 80
-  }
-
-  const volumeMap = {
-    EXPANSION: 1000000,
-    TREND: 2000000,
-    NEUTRAL: 3000000,
-    CHOP: 5000000,
-    RISK_OFF: 8000000
-  }
-
-  const limit = sizeMap[regime]
-  const minVolume = volumeMap[regime]
-
-  const cg = await fetchJsonWithTimeout(
-    `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=volume_desc&per_page=${limit}&page=1&price_change_percentage=1h,24h`
+  const res = await fetch(
+    "https://api.binance.com/api/v3/ticker/24hr"
   )
 
-  const bitgetContracts = await fetchJsonWithTimeout(
-    "https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES"
+  const data = await res.json()
+
+  const filtered =
+    data
+      .filter(c => c.symbol.endsWith("USDT"))
+      .sort((a, b) => b.quoteVolume - a.quoteVolume)
+      .slice(0, 50)
+
+  return Promise.all(
+    filtered.map(async (coin) => {
+
+      const candleRes = await fetch(
+        `https://api.binance.com/api/v3/klines?symbol=${coin.symbol}&interval=15m&limit=100`
+      )
+
+      const candlesRaw = await candleRes.json()
+
+      const candles = candlesRaw.map(c => ({
+        open: parseFloat(c[1]),
+        high: parseFloat(c[2]),
+        low: parseFloat(c[3]),
+        close: parseFloat(c[4]),
+        volume: parseFloat(c[5])
+      }))
+
+      const avgVolume =
+        candles.reduce((a, b) => a + b.volume, 0) / candles.length
+
+      const atr =
+        candles
+          .slice(1)
+          .map((c, i) =>
+            Math.max(
+              c.high - c.low,
+              Math.abs(c.high - candles[i].close),
+              Math.abs(c.low - candles[i].close)
+            )
+          )
+          .reduce((a, b) => a + b, 0) / (candles.length - 1)
+
+      return {
+        symbol: coin.symbol,
+        candles,
+        metrics: {
+          avgVolume,
+          atr
+        }
+      }
+    })
   )
-
-  const futuresSet = new Set(
-    bitgetContracts?.data?.map(c =>
-      c.symbol.replace("USDT", "")
-    ) || []
-  )
-
-  const filtered = cg
-    .filter(c =>
-      c.total_volume > minVolume &&
-      futuresSet.has(c.symbol.toUpperCase())
-    )
-    .map(c => ({
-      symbol: c.symbol.toUpperCase(),
-      price: c.current_price,
-      change1h: c.price_change_percentage_1h || 0,
-      change24h: c.price_change_percentage_24h || 0,
-      marketcap: c.market_cap,
-      volume: c.total_volume
-    }))
-
-  return {
-    regime,
-    universeSize: filtered.length,
-    coins: filtered
-  }
 }
