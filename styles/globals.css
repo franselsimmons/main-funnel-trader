@@ -1,78 +1,83 @@
-.dashboard-header {
-  margin-bottom: 30px;
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  font-family: "Inter", sans-serif;
+  background: #0a0e1a;
+  color: #ffffff;
 }
 
-.dashboard-header h1 {
-  font-size: 34px;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-
-.status {
-  color: #9ca3af;
-  font-size: 14px;
-}
-
-.status.error {
-  color: #ef4444;
-}
-
-.bucket-card {
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 20px;
-  padding: 25px;
-  margin-bottom: 25px;
-}
-
-.bucket-card.bear {
-  border-color: #7f1d1d;
-}
-
-.bucket-header h2 {
-  font-size: 20px;
-  margin-bottom: 5px;
-}
-
-.bucket-header p {
-  font-size: 14px;
-  color: #94a3b8;
-  margin-bottom: 20px;
-}
-
-.bucket-inner {
-  border: 1px dashed #334155;
-  border-radius: 16px;
-  padding: 20px;
-}
-
-.empty {
-  color: #64748b;
-  font-size: 14px;
-}
-
-.coin-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid #1e293b;
-}
-
-.coin-row:last-child {
-  border-bottom: none;
-}
-
-.coin-left {
-  display: flex;
-  flex-direction: column;
-}
-
-.coin-left span {
-  font-size: 12px;
+a {
+  text-decoration: none;
   color: #38bdf8;
 }
 
-.coin-right {
+.container {
+  padding: 20px;
+  max-width: 1000px;
+  margin: auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+header h1 {
+  font-size: 32px;
+  margin: 0;
+}
+
+nav a {
+  margin-right: 18px;
+  font-size: 16px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+nav a.active {
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.section-title {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-size: 20px;
   font-weight: 600;
+  border-bottom: 2px solid #1e293b;
+  padding-bottom: 6px;
+}
+
+.bucket-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  background: #11243b;
+  border-radius: 10px;
+  padding: 14px;
+  border: 1px solid #1e2a44;
+}
+
+.card .title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #38bdf8;
+}
+
+.card .meta {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.card .value {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 6px;
+  color: #e2e8f0;
 }
