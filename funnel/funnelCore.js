@@ -1,56 +1,21 @@
-import { SHARED_CONFIG } from "../config/shared.js"
-import { BULL_CONFIG } from "../config/bull.js"
-import { BEAR_CONFIG } from "../config/bear.js"
+export function checkExposure(portfolio, maxExposure = 0.2) {
+  const totalExposure =
+    portfolio.reduce((a, b) => a + b.size, 0)
 
-export function runFunnel({
-  mode,
-  scannerOutput,
-  openPositions,
-  portfolioState
-}) {
+  return totalExposure < maxExposure
+}
 
-  const config = mode === "bull" ? BULL_CONFIG : BEAR_CONFIG
-  const shared = SHARED_CONFIG
+export function applyKelly(probability, rr) {
+  const edge = (probability * rr) - (1 - probability)
+  const kelly = edge / rr
 
-  const regime = scannerOutput.regime
-  const candidates = scannerOutput.candidates || []
+  return Math.max(0, Math.min(kelly, 0.02))
+}
 
-  const approved = []
+export function correlationBlock(portfolio, symbol) {
+  const cluster = portfolio.filter(p =>
+    p.symbol.slice(0, 3) === symbol.slice(0, 3)
+  )
 
-  const currentBetaExposure = calculateBetaExposure(openPositions)
-  const capacityLeft =
-    shared.maxOpenPositions - openPositions.length
-
-  if (capacityLeft <= 0) {
-    return {
-      approved: [],
-      blockedReason: "capacity_full"
-    }
-  }
-
-  for (const c of candidates) {
-
-    if (!dynamicThresholdPass(c, regime, config)) continue
-
-    if (!betaLimitPass(
-      currentBetaExposure,
-      c.beta,
-      shared.maxBetaExposure
-    )) continue
-
-    if (!spreadQualityPass(c, shared)) continue
-
-    approved.push({
-      ...c,
-      score: computeFinalScore(c)
-    })
-  }
-
-  approved.sort((a, b) => b.score - a.score)
-
-  return {
-    regime,
-    approved: approved.slice(0, capacityLeft),
-    blockedReason: null
-  }
+  return cluster.length < 2
 }
