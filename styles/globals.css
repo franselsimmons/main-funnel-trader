@@ -1,49 +1,50 @@
-/* ===== RESET ===== */
+/* ===== BASE ===== */
 * {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html, body {
-  font-family: Inter, system-ui, -apple-system;
+  margin: 0;
+  font-family: Inter, system-ui;
   background: #0B1220;
   color: #E6EDF6;
 }
 
 /* ===== TOPBAR ===== */
 .topbar {
-  height: 72px;
+  height: 78px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 28px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
   background: #0E1627;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
 .brand {
   font-size: 18px;
   font-weight: 600;
-  letter-spacing: 0.5px;
 }
 
 .sub {
   font-size: 13px;
-  opacity: 0.6;
+  opacity: .6;
   margin-top: 4px;
 }
 
-/* ===== BUTTONS ===== */
+.nav {
+  display: flex;
+  gap: 10px;
+}
+
 .btn {
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.08);
   color: white;
-  padding: 8px 16px;
+  padding: 8px 14px;
   border-radius: 8px;
   cursor: pointer;
-  margin-left: 10px;
-  transition: all .2s ease;
+  transition: .2s ease;
 }
 
 .btn:hover {
@@ -66,17 +67,17 @@ html, body {
 /* ===== PANEL ===== */
 .panel {
   background: #111A2E;
-  border: 1px solid rgba(255,255,255,0.06);
   border-radius: 14px;
   padding: 24px;
+  border: 1px solid rgba(255,255,255,0.06);
 }
 
 .panelTitle {
-  font-size: 14px;
+  font-size: 13px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  opacity: 0.6;
-  margin-bottom: 20px;
+  opacity: .6;
+  margin-bottom: 18px;
 }
 
 /* ===== COIN ===== */
@@ -85,8 +86,9 @@ html, body {
   border-radius: 10px;
   padding: 14px 16px;
   margin-bottom: 14px;
-  transition: 0.2s ease;
   border: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  transition: .2s ease;
 }
 
 .coin:hover {
@@ -101,26 +103,24 @@ html, body {
 
 .symbol {
   font-weight: 600;
-  font-size: 15px;
 }
 
 .price {
-  font-size: 13px;
-  opacity: 0.7;
+  font-size: 12px;
+  opacity: .7;
 }
 
 .score {
-  font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
   padding: 4px 8px;
-  background: rgba(59,130,246,0.15);
   border-radius: 6px;
+  background: rgba(59,130,246,0.2);
 }
 
 .meta {
   font-size: 12px;
   margin-top: 8px;
-  opacity: 0.6;
+  opacity: .6;
   display: flex;
   gap: 12px;
 }
@@ -129,10 +129,50 @@ html, body {
   margin-top: 8px;
   font-size: 12px;
   color: #22C55E;
-  opacity: 0.8;
 }
 
 .empty {
-  opacity: 0.4;
+  opacity: .4;
   font-size: 13px;
+}
+
+/* ===== MODAL ===== */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  width: 700px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: #0E1627;
+  border-radius: 14px;
+  padding: 28px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.modalTitle {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.modalSection {
+  margin-top: 20px;
+}
+
+.kvRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+  opacity: .8;
+}
+
+.closeBtn {
+  margin-top: 20px;
 }
