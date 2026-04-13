@@ -1,25 +1,14 @@
-export function runAnalyse(tradeHistory) {
+export function calculateStats(trades) {
+  const wins = trades.filter(t => t.rMultiple > 0)
+  const losses = trades.filter(t => t.rMultiple <= 0)
 
-  const buckets = buildBuckets(tradeHistory)
-
-  const stats = computeStats(tradeHistory)
-
-  const suggestions = []
-
-  const momentumInsight = analyseMomentumBuckets(buckets)
-  if (momentumInsight)
-    suggestions.push(momentumInsight)
-
-  const spreadInsight = analyseSpreadBuckets(buckets)
-  if (spreadInsight)
-    suggestions.push(spreadInsight)
-
-  const betaInsight = analyseBetaClusters(buckets)
-  if (betaInsight)
-    suggestions.push(betaInsight)
+  const expectancy =
+    trades.reduce((a, b) => a + b.rMultiple, 0) / trades.length
 
   return {
-    stats,
-    suggestions
+    winrate: wins.length / trades.length,
+    expectancy,
+    avgWin: wins.reduce((a, b) => a + b.rMultiple, 0) / wins.length || 0,
+    avgLoss: losses.reduce((a, b) => a + b.rMultiple, 0) / losses.length || 0
   }
 }
