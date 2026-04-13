@@ -5,37 +5,36 @@ export default function Trade() {
   const [trades, setTrades] = useState([]);
 
   useEffect(() => {
-    fetch("/api/dashboard?side=bull")
-      .then(res => res.json())
-      .then(bull => {
-        fetch("/api/dashboard?side=bear")
-          .then(res => res.json())
-          .then(bear => {
-            setTrades([
-              ...(bull.trades || []),
-              ...(bear.trades || [])
-            ]);
-          });
-      });
+    const load = async () => {
+      const bull = await fetch("/api/dashboard?side=bull").then(r => r.json());
+      const bear = await fetch("/api/dashboard?side=bear").then(r => r.json());
+
+      setTrades([
+        ...(bull.trades || []),
+        ...(bear.trades || [])
+      ]);
+    };
+
+    load();
+    const interval = setInterval(load, 10000);
+
+    return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="container">
-      <header>
-        <h1>Live Trade Signals</h1>
-      </header>
-
+      <h1>Live Trade Signals</h1>
       <Navbar />
-
-      <div className="section-title">Open Trades</div>
 
       <div className="bucket-grid">
         {trades.map(t => (
           <div key={t.symbol} className="card">
             <div className="title">
-              {t.symbol} {t.side?.toUpperCase()}
+              {t.symbol} {t.side.toUpperCase()}
             </div>
-            <div className="meta">Entry: {t.entry}</div>
+            <div className="meta">
+              Entry: {t.entry}
+            </div>
           </div>
         ))}
       </div>
