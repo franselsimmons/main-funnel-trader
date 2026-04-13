@@ -1,0 +1,24 @@
+body {
+  background:#0b1220;
+  color:white;
+  font-family:Inter,sans-serif;
+  margin:0;
+}
+
+.container {
+  padding:20px;
+  max-width:1200px;
+  margin:auto;
+}
+
+.grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+  gap:15px;
+}
+
+.card {
+  background:#111c30;
+  padding:15px;
+  border-radius:10px;
+}
