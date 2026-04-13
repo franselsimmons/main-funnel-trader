@@ -9,8 +9,10 @@ export default function Trade() {
     refreshInterval: 5000
   })
 
-  const bullApproved = data?.bull?.approved || 0
-  const bearApproved = data?.bear?.approved || 0
+  const bullTrades = data?.bull?.approved || []
+  const bearTrades = data?.bear?.approved || []
+
+  const allTrades = [...bullTrades, ...bearTrades]
 
   return (
     <>
@@ -19,39 +21,38 @@ export default function Trade() {
       <div className="page">
         <div className="page-inner">
 
-          <h1>Trade Overview</h1>
+          <h1>Live Trade Signals</h1>
 
-          <div style={{
-            display:"grid",
-            gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",
-            gap:"20px",
-            marginTop:"30px"
-          }}>
-
-            <div style={{
-              background:"#121826",
-              padding:"20px",
-              borderRadius:"12px",
-              border:"1px solid #1f2636"
-            }}>
-              <div style={{color:"#94a3b8"}}>Bull Approved</div>
-              <div style={{fontSize:"32px", marginTop:"10px"}}>
-                {bullApproved}
-              </div>
-            </div>
-
-            <div style={{
-              background:"#121826",
-              padding:"20px",
-              borderRadius:"12px",
-              border:"1px solid #1f2636"
-            }}>
-              <div style={{color:"#94a3b8"}}>Bear Approved</div>
-              <div style={{fontSize:"32px", marginTop:"10px"}}>
-                {bearApproved}
-              </div>
-            </div>
-
+          <div className="table-wrapper" style={{marginTop:30}}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Direction</th>
+                  <th>Entry</th>
+                  <th>24h %</th>
+                  <th>Volume</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allTrades.map((trade, i) => (
+                  <tr key={i}>
+                    <td>{trade.symbol}</td>
+                    <td style={{
+                      color: trade.direction === "LONG" ? "#22c55e" : "#ef4444",
+                      fontWeight:600
+                    }}>
+                      {trade.direction}
+                    </td>
+                    <td>${trade.price}</td>
+                    <td className={trade.change24h >= 0 ? "pos" : "neg"}>
+                      {trade.change24h.toFixed(2)}%
+                    </td>
+                    <td>${trade.volume.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
         </div>
