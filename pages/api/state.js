@@ -6,7 +6,6 @@ export default async function handler(req, res) {
   const state = await kv.get(`state:${mode}`);
 
   res.json({
-    ok: true,
     funnel: state?.funnel || {
       entry_ready: [],
       setup: [],
