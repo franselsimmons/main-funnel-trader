@@ -19,17 +19,17 @@ export default function Bull() {
       .catch(() => {});
   }
 
-  function pctColor(v) {
-    if (v > 0) return "#22C55E";
-    if (v < 0) return "#EF4444";
-    return "#94A3B8";
-  }
-
   function confColor(v) {
     if (v >= 80) return "#22C55E";
     if (v >= 60) return "#3B82F6";
     if (v >= 40) return "#F59E0B";
     return "#EF4444";
+  }
+
+  function pctColor(v) {
+    if (v > 0) return "#22C55E";
+    if (v < 0) return "#EF4444";
+    return "#94A3B8";
   }
 
   function Stage({ title, items }) {
@@ -58,7 +58,6 @@ export default function Bull() {
                   <div className="symbol">{c.symbol}</div>
                   <div className="price">${c.price}</div>
                 </div>
-
                 <div className="confText">{conf}/100</div>
               </div>
 
@@ -90,7 +89,7 @@ export default function Bull() {
     <>
       <header className="scannerHeader">
         <div>
-          <div className="scannerTitle">SCANNER</div>
+          <div className="scannerTitle">BULL SCANNER</div>
           <div className="scannerSub">
             Last scan: {data?.ts ? new Date(data.ts).toLocaleString() : "—"}
           </div>
@@ -115,18 +114,10 @@ export default function Bull() {
         </div>
 
         <div className="navButtons">
-          <Link href="/bull">
-            <button className="navBtn active">Bull</button>
-          </Link>
-          <Link href="/bear">
-            <button className="navBtn">Bear</button>
-          </Link>
-          <Link href="/analyse">
-            <button className="navBtn">Analyse</button>
-          </Link>
-          <Link href="/trade">
-            <button className="navBtn">Trade</button>
-          </Link>
+          <Link href="/bull"><button className="navBtn active">Bull</button></Link>
+          <Link href="/bear"><button className="navBtn">Bear</button></Link>
+          <Link href="/analyse"><button className="navBtn">Analyse</button></Link>
+          <Link href="/trade"><button className="navBtn">Trade</button></Link>
         </div>
       </header>
 
@@ -163,27 +154,10 @@ function Modal({ coin, onClose }) {
         </div>
 
         <div className="modalStats">
-          <div>
-            <span>Momentum</span>
-            <strong style={{ color: pctColor(coin.momentum) }}>
-              {coin.momentum}%
-            </strong>
-          </div>
-
-          <div>
-            <span>Spread</span>
-            <strong>{coin.ob?.spreadPct}%</strong>
-          </div>
-
-          <div>
-            <span>Volume</span>
-            <strong>${coin.volume}</strong>
-          </div>
-
-          <div>
-            <span>Market Cap</span>
-            <strong>${coin.marketCap}</strong>
-          </div>
+          <div><span>Momentum</span><strong style={{color:pctColor(coin.momentum)}}>{coin.momentum}%</strong></div>
+          <div><span>Spread</span><strong>{coin.ob?.spreadPct}%</strong></div>
+          <div><span>Volume</span><strong>${coin.volume}</strong></div>
+          <div><span>Market Cap</span><strong>${coin.marketCap}</strong></div>
         </div>
       </div>
     </div>
