@@ -1,16 +1,19 @@
 import {
-  detectSweep,
+  detectSweepLong,
+  detectSweepShort,
   calculateSVI,
-  deltaDivergence,
   computeEdgeProbability
 } from "../core/liquidityEngine.js"
 
-export function scanSymbol(symbolData) {
+export function scanSymbol(symbolData, side = "LONG") {
   const { candles, metrics } = symbolData
 
-  const { swept } = detectSweep(candles)
+  const detection =
+    side === "LONG"
+      ? detectSweepLong(candles)
+      : detectSweepShort(candles)
 
-  if (!swept) return null
+  if (!detection.swept) return null
 
   const svi = calculateSVI(
     candles[candles.length - 1],
@@ -18,18 +21,18 @@ export function scanSymbol(symbolData) {
     metrics.atr
   )
 
-  const divergence = deltaDivergence(candles)
-
   const probability =
-    computeEdgeProbability({ svi, divergence })
+    computeEdgeProbability({ svi })
 
   if (probability < 0.6) return null
 
   return {
     symbol: symbolData.symbol,
-    edgeType: "LiquiditySweep",
+    side,
     probability,
     svi,
+    atr: metrics.atr,
+    entry: candles[candles.length - 1].close,
     timestamp: Date.now()
   }
 }
