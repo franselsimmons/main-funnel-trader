@@ -1,68 +1,92 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
-export default function Analyse(){
-  const [data,setData]=useState(null);
-  const canvasRef = useRef(null);
+export default function Analyse() {
+  const [data, setData] = useState(null);
 
-  useEffect(()=>{
-    fetch("/api/metrics").then(r=>r.json()).then(setData);
-  },[]);
+  useEffect(() => {
+    fetch("/api/state?mode=bull")
+      .then(r => r.json())
+      .then(setData);
+  }, []);
 
-  useEffect(()=>{
-    if(!data || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.clearRect(0,0,800,300);
+  if (!data) return null;
 
-    let equity = 100;
-    ctx.beginPath();
-    ctx.moveTo(0,150);
+  function analyzeStage(stage) {
+    const arr = data.funnel?.[stage] || [];
+    const count = arr.length;
 
-    (data.trades?.history||[]).forEach((p,i)=>{
-      equity += p;
-      ctx.lineTo(i*10,150 - equity);
-    });
+    const avgConf =
+      arr.reduce((a, b) => a + (b.aiScore || 0), 0) / (count || 1);
 
-    ctx.strokeStyle="#3B82F6";
-    ctx.stroke();
-  },[data]);
+    const avgSpread =
+      arr.reduce((a, b) => a + (b.ob?.spreadPct || 0), 0) / (count || 1);
 
-  return(
+    return { count, avgConf, avgSpread };
+  }
+
+  const radar = analyzeStage("radar");
+  const warmup = analyzeStage("warmup");
+  const setup = analyzeStage("setup");
+  const entry = analyzeStage("entry_ready");
+
+  function conversion(a, b) {
+    if (!a.count) return 0;
+    return ((b.count / a.count) * 100).toFixed(1);
+  }
+
+  return (
     <>
-      <header className="topbar">
+      <header className="scannerHeader">
         <div>
-          <div className="brand">ANALYSE</div>
-          <div className="sub">Heatmap & Equity Curve</div>
+          <div className="scannerTitle">ANALYSE</div>
+          <div className="scannerSub">
+            Funnel Intelligence Dashboard
+          </div>
+        </div>
+
+        <div className="navButtons">
+          <Link href="/bull"><button className="navBtn">Bull</button></Link>
+          <Link href="/bear"><button className="navBtn">Bear</button></Link>
+          <Link href="/analyse"><button className="navBtn active">Analyse</button></Link>
+          <Link href="/trade"><button className="navBtn">Trade</button></Link>
         </div>
       </header>
 
-      <main className="grid">
-        <section className="panel">
-          <div className="panelTitle">FUNNEL HEATMAP</div>
+      <main className="analyseGrid">
 
-          <div style={{
-            display:"grid",
-            gridTemplateColumns:"repeat(4,1fr)",
-            gap:"8px"
-          }}>
-            {Object.entries(data?.conversion||{}).map(([k,v])=>(
-              <div key={k}
-                style={{
-                  padding:"12px",
-                  background:`rgba(59,130,246,${v/100})`,
-                  borderRadius:"6px"
-                }}>
-                {k} {v}%
-              </div>
-            ))}
-          </div>
-        </section>
+        <div className="analyseCard">
+          <h3>Radar</h3>
+          <p>Coins: {radar.count}</p>
+          <p>Avg Confidence: {radar.avgConf.toFixed(1)}</p>
+          <p>Avg Spread: {radar.avgSpread.toFixed(3)}%</p>
+        </div>
 
-        <section className="panel">
-          <div className="panelTitle">EQUITY CURVE</div>
-          <canvas ref={canvasRef} width={800} height={300}/>
-        </section>
+        <div className="analyseCard">
+          <h3>Warmup</h3>
+          <p>Coins: {warmup.count}</p>
+          <p>Avg Confidence: {warmup.avgConf.toFixed(1)}</p>
+          <p>Avg Spread: {warmup.avgSpread.toFixed(3)}%</p>
+          <p>Conversion from Radar: {conversion(radar, warmup)}%</p>
+        </div>
+
+        <div className="analyseCard">
+          <h3>Setup</h3>
+          <p>Coins: {setup.count}</p>
+          <p>Avg Confidence: {setup.avgConf.toFixed(1)}</p>
+          <p>Avg Spread: {setup.avgSpread.toFixed(3)}%</p>
+          <p>Conversion from Warmup: {conversion(warmup, setup)}%</p>
+        </div>
+
+        <div className="analyseCard">
+          <h3>Entry Ready</h3>
+          <p>Coins: {entry.count}</p>
+          <p>Avg Confidence: {entry.avgConf.toFixed(1)}</p>
+          <p>Avg Spread: {entry.avgSpread.toFixed(3)}%</p>
+          <p>Conversion from Setup: {conversion(setup, entry)}%</p>
+        </div>
+
       </main>
     </>
-  )
+  );
 }
