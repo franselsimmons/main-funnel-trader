@@ -1,5 +1,3 @@
-// pages/api/dashboard.js
-
 let cache = {
   lastScan: null,
   bull: null,
@@ -8,71 +6,83 @@ let cache = {
 
 let scanning = false;
 
-const symbols = [
-  "BTCUSDT",
-  "ETHUSDT",
-  "SOLUSDT",
-  "AVAXUSDT",
-  "BNBUSDT",
-  "XRPUSDT",
-  "DOGEUSDT",
-  "ADAUSDT"
-];
+async function fetchCoinGeckoUniverse() {
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=200&page=1&sparkline=false"
+    );
 
-function generateSide(side) {
-  const coins = symbols.map((s) => {
-    const score = Math.random();
+    const data = await res.json();
 
-    return {
-      symbol: s,
-      score,
-      entry: (Math.random() * 1000 + 10).toFixed(2),
-      side
-    };
-  });
+    // map naar universe formaat
+    return data.map(c => ({
+      symbol: c.symbol.toUpperCase() + "USD",
+      price: c.current_price,
+      volume: c.total_volume,
+      change24h: c.price_change_percentage_24h
+    }));
+
+  } catch (err) {
+    console.error("CoinGecko universe fetch error", err);
+    return [];
+  }
+}
+
+function scoreCoin(c) {
+  const score =
+    (Math.min(c.volume / 10000000, 1) + Math.min(Math.abs(c.change24h) / 10, 1)) / 2;
+  return score;
+}
+
+function categorize(universe) {
+  const coinsWithScore = universe.map(c => ({
+    symbol: c.symbol,
+    score: scoreCoin(c),
+    entry: c.price,
+    side: null
+  }));
 
   return {
-    tradeReady: coins.filter(c => c.score > 0.75),
-    setup: coins.filter(c => c.score > 0.45 && c.score <= 0.75),
-    warmup: coins.filter(c => c.score <= 0.45),
-    trades: coins.filter(c => c.score > 0.85)
+    tradeReady: coinsWithScore.filter(c => c.score > 0.75),
+    setup: coinsWithScore.filter(c => c.score > 0.45 && c.score <= 0.75),
+    warmup: coinsWithScore.filter(c => c.score <= 0.45),
+    trades: coinsWithScore.filter(c => c.score > 0.85)
   };
 }
 
-function startScanner() {
+async function startScanner() {
   if (scanning) return;
-
   scanning = true;
-
-  setInterval(() => {
-    cache.lastScan = Date.now();
-    cache.bull = generateSide("bull");
-    cache.bear = generateSide("bear");
-  }, 15000);
 
   // first immediate scan
   cache.lastScan = Date.now();
-  cache.bull = generateSide("bull");
-  cache.bear = generateSide("bear");
+  const universe = await fetchCoinGeckoUniverse();
+  cache.bull = categorize(universe);
+  cache.bear = categorize(universe);
+
+  setInterval(async () => {
+    const uni = await fetchCoinGeckoUniverse();
+    cache.lastScan = Date.now();
+    cache.bull = categorize(uni);
+    cache.bear = categorize(uni);
+  }, 30000); // scan elke 30 seconden
 }
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   const side = req.query.side || "bull";
 
-  if (!scanning) startScanner();
+  if (!scanning) await startScanner();
 
-  if (!cache[side]) {
-    return res.status(200).json({
-      lastScan: null,
-      tradeReady: [],
-      setup: [],
-      warmup: [],
-      trades: []
-    });
-  }
+  const out = cache[side] || {
+    lastScan: cache.lastScan,
+    tradeReady: [],
+    setup: [],
+    warmup: [],
+    trades: []
+  };
 
   res.status(200).json({
     lastScan: cache.lastScan,
-    ...cache[side]
+    ...out
   });
 }
