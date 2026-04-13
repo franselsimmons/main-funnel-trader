@@ -1,4 +1,4 @@
-export function detectSweep(candles, lookback = 20) {
+export function detectSweepLong(candles, lookback = 20) {
   const latest = candles[candles.length - 1]
   const prev = candles.slice(-lookback - 1, -1)
 
@@ -8,36 +8,28 @@ export function detectSweep(candles, lookback = 20) {
     latest.low < pivotLow &&
     latest.close > pivotLow
 
-  return {
-    swept,
-    pivotLow
-  }
+  return { swept, pivotLow }
 }
 
-export function calculateSVI(latestCandle, avgVolume, atr) {
-  if (!avgVolume || !atr) return 0
-
-  const normalizedVolume = latestCandle.volume / avgVolume
-  const volatilityFactor = atr > 0 ? atr : 1
-
-  return normalizedVolume / volatilityFactor
-}
-
-export function deltaDivergence(candles) {
+export function detectSweepShort(candles, lookback = 20) {
   const latest = candles[candles.length - 1]
-  const prev = candles[candles.length - 2]
+  const prev = candles.slice(-lookback - 1, -1)
 
-  const priceLowerLow = latest.low < prev.low
-  const volumeDrop = latest.volume < prev.volume
+  const pivotHigh = Math.max(...prev.map(c => c.high))
 
-  return priceLowerLow && volumeDrop
+  const swept =
+    latest.high > pivotHigh &&
+    latest.close < pivotHigh
+
+  return { swept, pivotHigh }
 }
 
-export function computeEdgeProbability({ svi, divergence }) {
-  let score = 0
+export function calculateSVI(latest, avgVolume, atr) {
+  if (!avgVolume || !atr) return 0
+  const normalizedVolume = latest.volume / avgVolume
+  return normalizedVolume / atr
+}
 
-  score += Math.min(svi / 3, 1) * 0.6
-  if (divergence) score += 0.4
-
-  return Math.min(score, 1)
+export function computeEdgeProbability({ svi }) {
+  return Math.min(svi / 3, 1)
 }
