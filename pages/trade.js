@@ -1,27 +1,25 @@
 import { useEffect, useState } from "react";
 
 export default function Trade() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState({ open: [] });
 
   useEffect(() => {
     fetch("/api/trade?mode=bull")
       .then(r => r.json())
-      .then(setData);
+      .then(setData)
+      .catch(() => {});
   }, []);
 
-  if (!data) return <div className="container">Loading...</div>;
-
   return (
-    <div className="container">
+    <div className="layout">
       <h1>Open Trades</h1>
 
       <div className="grid">
-        {data.open.map((t, i) => (
+        {data.open?.map((t, i) => (
           <div key={i} className="card">
             <h3>{t.symbol}</h3>
             <div>Side: {t.side}</div>
             <div>Entry: {t.entry}</div>
-            <div>Opened: {new Date(t.openedAt).toLocaleTimeString()}</div>
           </div>
         ))}
       </div>
