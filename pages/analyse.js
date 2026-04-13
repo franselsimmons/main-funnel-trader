@@ -10,40 +10,24 @@ export default function Analyse() {
       .then(setData);
   }, []);
 
-  if (!data) return null;
-
-  function analyzeStage(stage) {
-    const arr = data.funnel?.[stage] || [];
+  function analyze(stage) {
+    const arr = data?.funnel?.[stage] || [];
     const count = arr.length;
-
     const avgConf =
       arr.reduce((a, b) => a + (b.aiScore || 0), 0) / (count || 1);
 
-    const avgSpread =
-      arr.reduce((a, b) => a + (b.ob?.spreadPct || 0), 0) / (count || 1);
-
-    return { count, avgConf, avgSpread };
+    return { count, avgConf };
   }
 
-  const radar = analyzeStage("radar");
-  const warmup = analyzeStage("warmup");
-  const setup = analyzeStage("setup");
-  const entry = analyzeStage("entry_ready");
-
-  function conversion(a, b) {
-    if (!a.count) return 0;
-    return ((b.count / a.count) * 100).toFixed(1);
-  }
+  const radar = analyze("radar");
+  const warmup = analyze("warmup");
+  const setup = analyze("setup");
+  const entry = analyze("entry_ready");
 
   return (
     <>
       <header className="scannerHeader">
-        <div>
-          <div className="scannerTitle">ANALYSE</div>
-          <div className="scannerSub">
-            Funnel Intelligence Dashboard
-          </div>
-        </div>
+        <div className="scannerTitle">ANALYSE</div>
 
         <div className="navButtons">
           <Link href="/bull"><button className="navBtn">Bull</button></Link>
@@ -54,39 +38,21 @@ export default function Analyse() {
       </header>
 
       <main className="analyseGrid">
-
-        <div className="analyseCard">
-          <h3>Radar</h3>
-          <p>Coins: {radar.count}</p>
-          <p>Avg Confidence: {radar.avgConf.toFixed(1)}</p>
-          <p>Avg Spread: {radar.avgSpread.toFixed(3)}%</p>
-        </div>
-
-        <div className="analyseCard">
-          <h3>Warmup</h3>
-          <p>Coins: {warmup.count}</p>
-          <p>Avg Confidence: {warmup.avgConf.toFixed(1)}</p>
-          <p>Avg Spread: {warmup.avgSpread.toFixed(3)}%</p>
-          <p>Conversion from Radar: {conversion(radar, warmup)}%</p>
-        </div>
-
-        <div className="analyseCard">
-          <h3>Setup</h3>
-          <p>Coins: {setup.count}</p>
-          <p>Avg Confidence: {setup.avgConf.toFixed(1)}</p>
-          <p>Avg Spread: {setup.avgSpread.toFixed(3)}%</p>
-          <p>Conversion from Warmup: {conversion(warmup, setup)}%</p>
-        </div>
-
-        <div className="analyseCard">
-          <h3>Entry Ready</h3>
-          <p>Coins: {entry.count}</p>
-          <p>Avg Confidence: {entry.avgConf.toFixed(1)}</p>
-          <p>Avg Spread: {entry.avgSpread.toFixed(3)}%</p>
-          <p>Conversion from Setup: {conversion(setup, entry)}%</p>
-        </div>
-
+        <AnalyseCard title="Radar" data={radar} />
+        <AnalyseCard title="Warmup" data={warmup} />
+        <AnalyseCard title="Setup" data={setup} />
+        <AnalyseCard title="Entry Ready" data={entry} />
       </main>
     </>
+  );
+}
+
+function AnalyseCard({ title, data }) {
+  return (
+    <div className="analyseCard">
+      <h3>{title}</h3>
+      <p>Coins: {data.count}</p>
+      <p>Avg Confidence: {data.avgConf.toFixed(1)}</p>
+    </div>
   );
 }
