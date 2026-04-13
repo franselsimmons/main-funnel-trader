@@ -12,13 +12,13 @@ async function safeFetch(url) {
     const data = await res.json()
 
     if (!Array.isArray(data)) {
-      console.error("Binance returned error:", data)
+      console.error("Binance API error:", data)
       return null
     }
 
     return data
   } catch (err) {
-    console.error("Fetch error:", err)
+    console.error("Fetch failed:", err)
     return null
   }
 }
@@ -65,18 +65,15 @@ export async function fetchUniverse() {
     "https://api.binance.com/api/v3/ticker/24hr"
   )
 
-  if (!data) {
-    console.error("Universe fetch failed.")
-    return []
-  }
+  if (!data) return []
 
   const filtered =
     data
       .filter(c => c.symbol.endsWith("USDT"))
       .sort((a, b) => b.quoteVolume - a.quoteVolume)
-      .slice(0, 120)
+      .slice(0, 70) // 🔥 veilige sweet spot
 
-  const chunks = chunkArray(filtered, 20)
+  const chunks = chunkArray(filtered, 10) // 10 tegelijk
 
   const results = []
 
@@ -96,9 +93,7 @@ export async function fetchUniverse() {
       })
     )
 
-    results.push(
-      ...batchResults.filter(Boolean)
-    )
+    results.push(...batchResults.filter(Boolean))
   }
 
   return results
