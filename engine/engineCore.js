@@ -1,39 +1,32 @@
-import { SHARED_CONFIG } from "../config/shared.js"
+import { detectSweep, calculateSVI, deltaDivergence, computeEdgeProbability } from "../core/liquidityEngine.js"
+import { detectVolatilityRegime } from "../core/regimeEngine.js"
+import { getRiskMultiplier } from "../core/riskEngine.js"
 
-export function runEngine({
-  mode,
-  funnelOutput,
-  openPositions,
-  marketLiveData,
-  regime
-}) {
+export function processEdge(candles, metrics) {
+  const { swept } = detectSweep(candles)
 
-  const newPositions = []
-  const updatedPositions = []
+  if (!swept) return null
 
-  // 1️⃣ ENTRY LOGIC
-  for (const candidate of funnelOutput.approved || []) {
+  const svi = calculateSVI(
+    candles[candles.length - 1],
+    metrics.avgVolume,
+    metrics.atr
+  )
 
-    if (openPositions.find(p => p.symbol === candidate.symbol))
-      continue
+  const divergence = deltaDivergence(candles)
 
-    newPositions.push(createPosition(candidate, regime))
-  }
+  const probability = computeEdgeProbability({ svi, divergence })
 
-  // 2️⃣ POSITION MANAGEMENT
-  for (const pos of openPositions) {
+  if (probability < 0.65) return null
 
-    const live = marketLiveData[pos.symbol]
-    if (!live) continue
+  const regime = detectVolatilityRegime(metrics.atrPercentile)
 
-    const updated = managePosition(pos, live, regime)
-
-    if (!updated.closed)
-      updatedPositions.push(updated)
-  }
+  const riskMultiplier = getRiskMultiplier()
 
   return {
-    newPositions,
-    updatedPositions
+    direction: "long",
+    probability,
+    regime: regime.regime,
+    positionSizeFactor: regime.weight * riskMultiplier
   }
 }
