@@ -1,40 +1,55 @@
 import { kv } from "@vercel/kv"
 
-function calculateSignal(coin) {
+function scoreMomentum(c) {
+  let s = 0
+  if (c.change24h > 2) s++
+  if (c.change24h > 5) s++
+  if (c.change24h > 8) s++
+  return s
+}
 
-  // Trend filter
-  const strongMomentum = coin.change24h > 2
-  const strongVolume = coin.volume > 5000000
+function scoreVolume(c) {
+  let s = 0
+  if (c.volume > 5000000) s++
+  if (c.volume > 15000000) s++
+  if (c.volume > 30000000) s++
+  return s
+}
 
-  if (!strongMomentum || !strongVolume) return null
-
-  const entry = coin.price
-  const stopLoss = entry * 0.97
-  const takeProfit = entry * 1.06
-
-  return {
-    symbol: coin.symbol,
-    direction: "LONG",
-    entry,
-    stopLoss,
-    takeProfit,
-    rr: ((takeProfit - entry) / (entry - stopLoss)).toFixed(2),
-    volume: coin.volume,
-    change24h: coin.change24h,
-    timestamp: Date.now()
-  }
+function scoreStructure(c) {
+  let s = 0
+  if (Math.abs(c.change24h) > 3) s++
+  if (Math.abs(c.change24h) > 6) s++
+  return s
 }
 
 export default async function handler(req, res) {
 
-  const scanner = await kv.get("bull:scanner:candidates") || []
+  const universe = await kv.get("bull:universe") || []
 
-  const signals = scanner
-    .map(calculateSignal)
-    .filter(Boolean)
-    .slice(0, 5)
+  const qualified = universe
+    .map(c => {
+      const momentumScore = scoreMomentum(c)
+      const volumeScore = scoreVolume(c)
+      const structureScore = scoreStructure(c)
 
-  await kv.set("bull:engine:signals", signals)
+      return {
+        ...c,
+        momentumScore,
+        volumeScore,
+        structureScore
+      }
+    })
+    .filter(c =>
+      c.momentumScore >= 2 &&
+      c.volumeScore >= 2 &&
+      c.structureScore >= 2
+    )
 
-  res.json({ ok: true, signals })
+  await kv.set("bull:qualified", qualified)
+
+  res.json({
+    ok: true,
+    qualified: qualified.length
+  })
 }
