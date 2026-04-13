@@ -1,37 +1,46 @@
 import { useEffect, useState } from "react";
 
 export default function Analyse() {
-  const [data, setData] = useState(null);
+
+  const [bull, setBull] = useState(null);
+  const [bear, setBear] = useState(null);
 
   useEffect(() => {
-    fetch("/api/state?mode=bull")
-      .then(r => r.json())
-      .then(setData);
+    fetch("/api/state?mode=bull").then(r => r.json()).then(setBull);
+    fetch("/api/state?mode=bear").then(r => r.json()).then(setBear);
   }, []);
 
-  if (!data) return <div>Loading...</div>;
+  if (!bull || !bear) return <div style={{padding:40}}>Loading...</div>;
 
-  const f = data.funnel;
+  function block(title, data) {
+    const f = data.funnel;
 
-  const total = Object.values(f)
-    .reduce((a, b) => a + b.length, 0);
+    const conv = (a, b) =>
+      a.length ? ((b.length / a.length) * 100).toFixed(1) : 0;
 
-  const conv = (a, b) =>
-    a && b ? ((b.length / a.length) * 100).toFixed(1) : 0;
+    return (
+      <div style={{ marginBottom: 40 }}>
+        <h2>{title}</h2>
+        <p>Regime: {data.regime?.regime} ({data.regime?.score})</p>
+
+        <p>Radar: {f.radar.length}</p>
+        <p>Warmup: {f.warmup.length}</p>
+        <p>Setup: {f.setup.length}</p>
+        <p>Entry: {f.entry_ready.length}</p>
+
+        <h4>Conversion</h4>
+        <p>Radar → Warmup: {conv(f.radar, f.warmup)}%</p>
+        <p>Warmup → Setup: {conv(f.warmup, f.setup)}%</p>
+        <p>Setup → Entry: {conv(f.setup, f.entry_ready)}%</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 40, fontFamily: "Inter" }}>
       <h1>Funnel Analysis</h1>
-
-      <p>Radar: {f.radar.length}</p>
-      <p>Warmup: {f.warmup.length}</p>
-      <p>Setup: {f.setup.length}</p>
-      <p>Entry Ready: {f.entry_ready.length}</p>
-
-      <h2>Conversion</h2>
-      <p>Radar → Warmup: {conv(f.radar, f.warmup)}%</p>
-      <p>Warmup → Setup: {conv(f.warmup, f.setup)}%</p>
-      <p>Setup → Entry: {conv(f.setup, f.entry_ready)}%</p>
+      {block("BULL SYSTEM", bull)}
+      {block("BEAR SYSTEM", bear)}
     </div>
   );
 }
