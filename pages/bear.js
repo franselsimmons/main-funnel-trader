@@ -4,6 +4,7 @@ import Link from "next/link";
 export default function Bear() {
   const mode = "bear";
   const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(null);
 
   useEffect(() => {
     load();
@@ -16,6 +17,12 @@ export default function Bear() {
       .then(r => r.json())
       .then(setData)
       .catch(() => {});
+  }
+
+  function pctColor(v) {
+    if (v > 0) return "#22C55E";
+    if (v < 0) return "#EF4444";
+    return "#94A3B8";
   }
 
   function confColor(v) {
@@ -41,7 +48,11 @@ export default function Bear() {
           const conf = Math.round(c.aiScore || 0);
 
           return (
-            <div key={c.symbol} className="coinCard">
+            <div
+              key={c.symbol}
+              className="coinCard"
+              onClick={() => setSelected(c)}
+            >
               <div className="coinRow">
                 <div>
                   <div className="symbol">{c.symbol}</div>
@@ -62,16 +73,12 @@ export default function Bear() {
               </div>
 
               <div className="coinMeta">
-                <span>mom {c.momentum}%</span>
+                <span style={{ color: pctColor(c.momentum) }}>
+                  mom {c.momentum}%
+                </span>
                 <span>volAcc {c.volumeAcceleration}</span>
                 <span>spread {c.ob?.spreadPct}%</span>
               </div>
-
-              {c.tradePlan && (
-                <div className="tradePlan">
-                  SL {c.tradePlan.sl} • TP {c.tradePlan.tp}
-                </div>
-              )}
             </div>
           );
         })}
@@ -101,7 +108,6 @@ export default function Bear() {
                 }}
               />
             </div>
-
             <div className="regimeLabel">
               {data?.regime?.label || "NEUTRAL"}
             </div>
@@ -112,15 +118,12 @@ export default function Bear() {
           <Link href="/bull">
             <button className="navBtn">Bull</button>
           </Link>
-
           <Link href="/bear">
             <button className="navBtn active">Bear</button>
           </Link>
-
           <Link href="/analyse">
             <button className="navBtn">Analyse</button>
           </Link>
-
           <Link href="/trade">
             <button className="navBtn">Trade</button>
           </Link>
@@ -133,6 +136,56 @@ export default function Bear() {
         <Stage title="WARMUP" items={data?.funnel?.warmup} />
         <Stage title="RADAR" items={data?.funnel?.radar} />
       </main>
+
+      {selected && (
+        <Modal coin={selected} onClose={() => setSelected(null)} />
+      )}
     </>
+  );
+}
+
+function Modal({ coin, onClose }) {
+  function pctColor(v) {
+    if (v > 0) return "#22C55E";
+    if (v < 0) return "#EF4444";
+    return "#94A3B8";
+  }
+
+  return (
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="modalCard" onClick={e => e.stopPropagation()}>
+        <div className="modalHeader">
+          <div>
+            <div className="modalTitle">{coin.symbol}</div>
+            <div className="modalPrice">${coin.price}</div>
+          </div>
+          <button className="modalClose" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modalStats">
+          <div>
+            <span>Momentum</span>
+            <strong style={{ color: pctColor(coin.momentum) }}>
+              {coin.momentum}%
+            </strong>
+          </div>
+
+          <div>
+            <span>Spread</span>
+            <strong>{coin.ob?.spreadPct}%</strong>
+          </div>
+
+          <div>
+            <span>Volume</span>
+            <strong>${coin.volume}</strong>
+          </div>
+
+          <div>
+            <span>Market Cap</span>
+            <strong>${coin.marketCap}</strong>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
