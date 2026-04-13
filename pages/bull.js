@@ -1,114 +1,121 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 export default function Bull() {
   const mode = "bull";
   const [data, setData] = useState(null);
-  const [selected, setSelected] = useState(null);
-  const canvasRef = useRef(null);
 
   useEffect(() => {
-    fetch(`/api/state?mode=${mode}`).then(r=>r.json()).then(setData);
+    load();
+    const i = setInterval(load, 15000);
+    return () => clearInterval(i);
   }, []);
 
-  useEffect(() => {
-    if (!selected || !canvasRef.current) return;
-
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.clearRect(0,0,600,300);
-
-    const bids = selected.ob?.bids || [];
-    const asks = selected.ob?.asks || [];
-
-    ctx.strokeStyle = "#22C55E";
-    ctx.beginPath();
-    bids.forEach((b,i)=>{
-      ctx.lineTo(i*10,300-b[1]);
-    });
-    ctx.stroke();
-
-    ctx.strokeStyle = "#EF4444";
-    ctx.beginPath();
-    asks.forEach((a,i)=>{
-      ctx.lineTo(i*10,300-a[1]);
-    });
-    ctx.stroke();
-
-  }, [selected]);
-
-  function renderStage(arr){
-    if(!arr?.length) return <div className="empty">Geen coins</div>;
-
-    return arr.map(c=>{
-      const conf = Math.round(c.aiScore||0);
-      return(
-        <div className="coin fadeUp" key={c.symbol} onClick={()=>setSelected(c)}>
-          <div className="coinTop">
-            <div>
-              <div className="symbol">{c.symbol}</div>
-              <div className="price">${c.price}</div>
-            </div>
-            <div>{conf}/100</div>
-          </div>
-
-          <div className="confBarWrap">
-            <div className="confBar animateWidth"
-              style={{
-                width:conf+"%",
-                background:conf>70?"#22C55E":"#F59E0B"
-              }}
-            />
-          </div>
-        </div>
-      )
-    })
+  function load() {
+    fetch(`/api/state?mode=${mode}`)
+      .then(r => r.json())
+      .then(setData)
+      .catch(() => {});
   }
 
-  return(
+  function confColor(v) {
+    if (v >= 80) return "#22C55E";
+    if (v >= 60) return "#3B82F6";
+    if (v >= 40) return "#F59E0B";
+    return "#EF4444";
+  }
+
+  function Stage({ title, items }) {
+    const count = items?.length || 0;
+
+    return (
+      <section className="stagePanel">
+        <div className="stageHeader">
+          <div>{title}</div>
+          <div className="stageCount">{count}</div>
+        </div>
+
+        {!count && <div className="empty">Geen coins</div>}
+
+        {items?.map(c => {
+          const conf = Math.round(c.aiScore || 0);
+
+          return (
+            <div key={c.symbol} className="coinCard">
+              <div className="coinRow">
+                <div>
+                  <div className="symbol">{c.symbol}</div>
+                  <div className="price">${c.price}</div>
+                </div>
+
+                <div className="confText">{conf}/100</div>
+              </div>
+
+              <div className="confBarWrap">
+                <div
+                  className="confBar"
+                  style={{
+                    width: conf + "%",
+                    background: confColor(conf)
+                  }}
+                />
+              </div>
+
+              <div className="coinMeta">
+                <span>mom {c.momentum}%</span>
+                <span>volAcc {c.volumeAcceleration}</span>
+                <span>spread {c.ob?.spreadPct}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </section>
+    );
+  }
+
+  return (
     <>
-      <header className="topbar">
+      <header className="scannerHeader">
         <div>
-          <div className="brand">BULL SCANNER</div>
-          <div className="sub">
-            Last scan: {data?.ts?new Date(data.ts).toLocaleString():"—"}
+          <div className="scannerTitle">SCANNER</div>
+          <div className="scannerSub">
+            Last scan: {data?.ts ? new Date(data.ts).toLocaleString() : "—"}
           </div>
 
-          <div className="regimeBar">
-            <div className="regimeFill animateWidth"
-              style={{
-                width:Math.abs(data?.regime?.score||0)+"%",
-                background:(data?.regime?.score||0)>0?"#22C55E":"#EF4444"
-              }}
-            />
+          <div className="regimeWrap">
+            <div className="regimeBar">
+              <div
+                className="regimeFill"
+                style={{
+                  width: Math.abs(data?.regime?.score || 0) + "%",
+                  background:
+                    (data?.regime?.score || 0) >= 0
+                      ? "#22C55E"
+                      : "#EF4444"
+                }}
+              />
+            </div>
+
+            <div className="regimeLabel">
+              {data?.regime?.label || "NEUTRAL"}
+            </div>
           </div>
         </div>
 
-        <div className="nav">
-          <Link href="/bull"><button className="btn active">Bull</button></Link>
-          <Link href="/bear"><button className="btn">Bear</button></Link>
-          <Link href="/analyse"><button className="btn">Analyse</button></Link>
-          <Link href="/trade"><button className="btn">Trade</button></Link>
+        <div className="navButtons">
+          <Link href="/bull"><button className="navBtn active">Bull</button></Link>
+          <Link href="/bear"><button className="navBtn">Bear</button></Link>
+          <Link href="/analyse"><button className="navBtn">Analyse</button></Link>
+          <Link href="/trade"><button className="navBtn">Trade</button></Link>
         </div>
       </header>
 
-      <main className="grid">
-        <section className="panel">
-          <div className="panelTitle">ENTRY READY</div>
-          {renderStage(data?.funnel?.entry_ready)}
-        </section>
+      <main className="scannerGrid">
+        <Stage title="ENTRY READY" items={data?.funnel?.entry_ready} />
+        <Stage title="SETUP" items={data?.funnel?.setup} />
+        <Stage title="WARMUP" items={data?.funnel?.warmup} />
+        <Stage title="RADAR" items={data?.funnel?.radar} />
       </main>
-
-      {selected && (
-        <div className="modalBackdrop" onClick={()=>setSelected(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="modalTitle">{selected.symbol} Orderbook</div>
-            <canvas ref={canvasRef} width={600} height={300} />
-            <button className="btn closeBtn" onClick={()=>setSelected(null)}>
-              Sluiten
-            </button>
-          </div>
-        </div>
-      )}
     </>
-  )
+  );
 }
