@@ -1,30 +1,23 @@
-export function buildBuckets(trades) {
+export function monteCarlo(trades, iterations = 500) {
+  const curves = []
 
-  const buckets = {
-    momentum: {},
-    spread: {},
-    beta: {}
+  for (let i = 0; i < iterations; i++) {
+    let equity = 1
+    const shuffled =
+      [...trades].sort(() => Math.random() - 0.5)
+
+    for (const trade of shuffled) {
+      equity *= (1 + trade.pnl)
+    }
+
+    curves.push(equity)
   }
 
-  for (const t of trades) {
+  curves.sort((a, b) => a - b)
 
-    const momKey = Math.round(t.change1h)
-    const spreadKey = Math.round(t.spreadMean)
-    const betaKey = Math.round(t.beta * 10) / 10
-
-    if (!buckets.momentum[momKey])
-      buckets.momentum[momKey] = []
-
-    if (!buckets.spread[spreadKey])
-      buckets.spread[spreadKey] = []
-
-    if (!buckets.beta[betaKey])
-      buckets.beta[betaKey] = []
-
-    buckets.momentum[momKey].push(t)
-    buckets.spread[spreadKey].push(t)
-    buckets.beta[betaKey].push(t)
+  return {
+    median: curves[Math.floor(iterations / 2)],
+    worst: curves[0],
+    best: curves[iterations - 1]
   }
-
-  return buckets
 }
