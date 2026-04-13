@@ -1,19 +1,93 @@
 import { kv } from "@vercel/kv";
+import { computeBtcRegime } from "../../lib/regimeEngine";
+import { adaptiveThresholds } from "../../lib/adaptiveEngine";
+import { computeAiScore } from "../../lib/aiEngine";
+import { progressiveStage } from "../../lib/funnelEngine";
+import { n } from "../../lib/utils";
 
 export default async function handler(req, res) {
   const mode = req.query.mode === "bear" ? "bear" : "bull";
+  const now = Date.now();
 
   try {
-    const coins = await fetchUniverse();
-    const scored = scoreCoins(coins, mode);
-    const funnel = buildFunnel(scored);
+    const universe = await fetchUniverse();
+    const btc = universe.find(c => c.id === "bitcoin");
 
-    await kv.set(`state:${mode}`, {
-      funnel,
-      lastScan: Date.now()
+    const regimeData = computeBtcRegime({
+      change24: btc.price_change_percentage_24h,
+      range24: (btc.high_24h - btc.low_24h) / btc.low_24h * 100
     });
 
-    res.json({ ok: true, count: scored.length });
+    const thresholds = adaptiveThresholds(regimeData.regime);
+    const prevState = (await kv.get(`progress:${mode}`)) || {};
+    const nextState = {};
+
+    for (const coin of universe) {
+      const momentum = n(coin.price_change_percentage_24h, 0);
+      const vol = n(coin.total_volume, 0);
+
+      const volAcc = vol / 1000000;
+      const compression = Math.abs(momentum) < 5;
+
+      const passes =
+        Math.abs(momentum) > thresholds.confMin / 10 &&
+        volAcc > thresholds.volAccMin;
+
+      const prog = progressiveStage({
+        prev: prevState[coin.symbol],
+        passes,
+        now
+      });
+
+      const aiScore = computeAiScore({
+        momentum,
+        volAcc,
+        compression,
+        obScore: 0.5,
+        rr: 2
+      });
+
+      nextState[coin.symbol] = {
+        symbol: coin.symbol.toUpperCase(),
+        price: coin.current_price,
+        momentum,
+        volAcc,
+        compression,
+        aiScore,
+        ...prog
+      };
+    }
+
+    const funnel = {
+      radar: [],
+      warmup: [],
+      setup: [],
+      entry_ready: []
+    };
+
+    Object.values(nextState).forEach(c => {
+      if (c.stage === 0) funnel.radar.push(c);
+      if (c.stage === 1) funnel.warmup.push(c);
+      if (c.stage === 2) funnel.setup.push(c);
+      if (c.stage === 3) funnel.entry_ready.push(c);
+    });
+
+    await kv.set(`progress:${mode}`, nextState);
+    await kv.set(`funnel:${mode}`, {
+      funnel,
+      regime: regimeData
+    });
+
+    res.json({
+      ok: true,
+      regime: regimeData,
+      counts: {
+        radar: funnel.radar.length,
+        warmup: funnel.warmup.length,
+        setup: funnel.setup.length,
+        entry_ready: funnel.entry_ready.length
+      }
+    });
 
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -22,36 +96,7 @@ export default async function handler(req, res) {
 
 async function fetchUniverse() {
   const r = await fetch(
-    "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1"
+    "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=120&page=1"
   );
   return r.json();
-}
-
-function scoreCoins(coins, mode) {
-  return coins.map(c => {
-    const momentum = c.price_change_percentage_24h || 0;
-
-    const confidence =
-      mode === "bull"
-        ? Math.max(0, momentum)
-        : Math.max(0, -momentum);
-
-    const aiScore = confidence + Math.random() * 10;
-
-    return {
-      symbol: c.symbol.toUpperCase(),
-      price: c.current_price,
-      confidence: confidence.toFixed(2),
-      aiScore: aiScore.toFixed(2)
-    };
-  });
-}
-
-function buildFunnel(coins) {
-  return {
-    entry_ready: coins.filter(c => c.confidence > 8),
-    setup: coins.filter(c => c.confidence > 4 && c.confidence <= 8),
-    warmup: coins.filter(c => c.confidence > 1 && c.confidence <= 4),
-    radar: coins.filter(c => c.confidence <= 1)
-  };
 }
