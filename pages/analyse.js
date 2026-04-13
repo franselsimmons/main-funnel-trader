@@ -1,4 +1,4 @@
-import Nav from "../components/Nav";
+import Navbar from "../components/Navbar";
 
 export default function Analyse() {
   return (
@@ -7,9 +7,11 @@ export default function Analyse() {
         <h1>Edge Analyse</h1>
       </header>
 
-      <Nav active="analyse" />
+      <Navbar />
 
-      <p>Analytics coming soon…</p>
+      <div className="section-title">Analytics</div>
+
+      <p>Analytics dashboard coming soon...</p>
     </div>
   );
 }
