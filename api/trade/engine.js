@@ -1,46 +1,38 @@
 import { kv } from "@vercel/kv"
 
-async function fetchPrice(symbol) {
+async function fetchOrderBook(symbol) {
   const res = await fetch(
-    `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}USDT`
+    `https://api.binance.com/api/v3/depth?symbol=${symbol}USDT&limit=50`
   )
   if (!res.ok) return null
-  const data = await res.json()
-  return parseFloat(data.price)
+  return await res.json()
 }
 
 export default async function handler(req, res) {
 
-  const trades = await kv.get("trade:active") || []
+  const queue = await kv.get("trade:queue") || []
+  const active = []
 
-  const updated = []
+  for (const coin of queue) {
 
-  for (const t of trades) {
+    const book = await fetchOrderBook(coin.symbol)
+    if (!book) continue
 
-    const currentPrice = await fetchPrice(t.symbol)
+    const bidVol = book.bids.reduce((a,b)=>a+parseFloat(b[1]),0)
+    const askVol = book.asks.reduce((a,b)=>a+parseFloat(b[1]),0)
 
-    if (!currentPrice) {
-      updated.push(t)
-      continue
+    if (bidVol > askVol * 1.2) {
+
+      active.push({
+        symbol: coin.symbol,
+        entryType: "pullback",
+        status: "LIVE",
+        created: Date.now()
+      })
     }
-
-    if (t.direction === "LONG") {
-
-      if (currentPrice >= t.takeProfit) {
-        updated.push({ ...t, status: "WIN" })
-        continue
-      }
-
-      if (currentPrice <= t.stopLoss) {
-        updated.push({ ...t, status: "LOSS" })
-        continue
-      }
-    }
-
-    updated.push(t)
   }
 
-  await kv.set("trade:active", updated)
+  await kv.set("trade:active", active)
 
-  res.json({ ok: true })
+  res.json({ ok: true, active: active.length })
 }
