@@ -1,15 +1,16 @@
-import { kv } from "@vercel/kv"
-import { scanSymbol } from "./scannerCore.js"
+import { scanUniverse } from "./scannerCore";
+import { processBullCoin } from "../engine/engineBull";
 
-export async function runBullScanner(universe) {
-  const results = []
+export async function runBullScan(state) {
+  const { btc, coins, regime } = await scanUniverse("bull");
 
-  for (const symbolData of universe) {
-    const candidate =
-      scanSymbol(symbolData, "LONG")
-    if (candidate) results.push(candidate)
+  const results = [];
+
+  for (const coin of coins) {
+    const prev = state[coin.symbol] || {};
+    const processed = await processBullCoin(coin, prev, regime, btc);
+    results.push(processed);
   }
 
-  await kv.set("edge:candidates:bull", results)
-  return results
+  return { btc, regime, results };
 }
