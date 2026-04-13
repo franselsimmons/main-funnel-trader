@@ -1,67 +1,116 @@
-import useSWR from "swr"
-import Navbar from "../components/Navbar"
+import { useEffect, useState } from "react"
+import Layout from "../components/layout"
 
-const fetcher = (url) => fetch(url).then(res => res.json())
+function Bucket({ title, subtitle, coins }) {
+  return (
+    <div className="bucket-card">
+
+      <div className="bucket-header">
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+
+      <div className="bucket-inner">
+
+        {coins.length === 0 ? (
+          <div className="empty">
+            Geen coins.
+          </div>
+        ) : (
+          coins.map((coin) => (
+            <div key={coin.symbol} className="coin-row">
+
+              <div className="coin-left">
+                <strong>{coin.symbol}</strong>
+                <span>
+                  {(coin.score * 100).toFixed(1)}%
+                </span>
+              </div>
+
+              <div className="coin-right">
+                {coin.entry
+                  ? coin.entry.toFixed(4)
+                  : "-"
+                }
+              </div>
+
+            </div>
+          ))
+        )}
+
+      </div>
+    </div>
+  )
+}
 
 export default function Bear() {
 
-  const { data } = useSWR("/api/dashboard", fetcher, {
-    refreshInterval: 5000
-  })
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
 
-  const scanner = data?.bear?.scanner || []
-  const lastScan = data?.bear?.lastScan
+  useEffect(() => {
+    fetch("/api/dashboard?side=bear")
+      .then(res => {
+        if (!res.ok) {
+          throw new Error("API error")
+        }
+        return res.json()
+      })
+      .then(setData)
+      .catch(err => {
+        console.error(err)
+        setError("Fout bij laden van dashboard.")
+      })
+  }, [])
 
-  const formatTime = (timestamp) => {
-    if (!timestamp) return "Never"
-    return new Date(timestamp).toLocaleString()
+  if (error) {
+    return (
+      <Layout>
+        <div className="dashboard-header">
+          <h1>Bear Dashboard</h1>
+          <div className="status error">
+            {error}
+          </div>
+        </div>
+      </Layout>
+    )
   }
 
+  if (!data) return null
+
+  const lastScan =
+    data.lastScan
+      ? new Date(data.lastScan).toLocaleTimeString()
+      : "Never"
+
   return (
-    <>
-      <Navbar />
+    <Layout>
 
-      <div className="page">
-        <div className="page-inner">
-
-          <div className="page-header">
-            <h1>Bear Dashboard</h1>
-            <div className="scan-time">
-              Last Scan: {formatTime(lastScan)}
-            </div>
-          </div>
-
-          <div className="section-header">
-            Scanner Candidates ({scanner.length})
-          </div>
-
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Price</th>
-                  <th>Volume</th>
-                  <th>24h %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scanner.map((coin) => (
-                  <tr key={coin.symbol}>
-                    <td>{coin.symbol}</td>
-                    <td>${coin.price}</td>
-                    <td>${coin.volume.toLocaleString()}</td>
-                    <td className={coin.change24h >= 0 ? "pos" : "neg"}>
-                      {coin.change24h.toFixed(2)}%
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
+      <div className="dashboard-header">
+        <h1>Bear Dashboard</h1>
+        <div className="status">
+          Last Scan: {lastScan}
         </div>
       </div>
-    </>
+
+      <Bucket
+        title="TRADE READY"
+        subtitle="Scanner-signalen die entry-ready zijn."
+        coins={data.tradeReady || []}
+      />
+
+      <Bucket
+        title="SETUP"
+        subtitle="Bijna trade-ready — mist nog 1–2 gates."
+        coins={data.setup || []}
+      />
+
+      <Bucket
+        title="WARMUP"
+        subtitle="Momentum bouwt op."
+        coins={data.warmup || []}
+      />
+
+    </Layout>
   )
 }
