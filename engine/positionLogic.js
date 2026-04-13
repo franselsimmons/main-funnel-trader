@@ -1,10 +1,10 @@
-export function buildPosition(entryPrice, atr) {
-  const stop = entryPrice - (1.2 * atr)
-  const target = entryPrice + (2 * atr)
+export function buildPosition(entry, atr) {
+  const stop = entry - (1.2 * atr)
+  const target = entry + (2 * atr)
 
   return {
     stop,
     target,
-    rr: (target - entryPrice) / (entryPrice - stop)
+    rr: (target - entry) / (entry - stop)
   }
 }
