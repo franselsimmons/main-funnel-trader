@@ -2,15 +2,23 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="page">
-      <h1 className="headline">CryptoCroc V5</h1>
-      <p className="sub">Quant Trading System</p>
+    <>
+      <header className="topbar">
+        <div>
+          <div className="brand">Funnel Intelligence</div>
+          <div className="sub">Institutional Market Scanner</div>
+        </div>
+      </header>
 
-      <div className="navGrid">
-        <Link href="/bull" className="navCard">Bull Market</Link>
-        <Link href="/bear" className="navCard">Bear Market</Link>
-        <Link href="/analyse" className="navCard">System Analyse</Link>
+      <div style={{padding:40}}>
+        <div className="panel">
+          <h2 style={{marginBottom:20}}>Navigation</h2>
+          <Link href="/bull"><button className="btn">Bull Scanner</button></Link>
+          <Link href="/bear"><button className="btn">Bear Scanner</button></Link>
+          <Link href="/analyse"><button className="btn">Analyse</button></Link>
+          <Link href="/trade"><button className="btn">Trade Desk</button></Link>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
