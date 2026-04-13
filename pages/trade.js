@@ -1,44 +1,54 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-export default function Trade(){
-  const [positions,setPositions]=useState([]);
+export default function Trade() {
+  const [data, setData] = useState(null);
 
-  useEffect(()=>{
-    fetch("/api/positions").then(r=>r.json()).then(j=>{
-      setPositions(j.positions||[]);
-    });
-  },[]);
+  useEffect(() => {
+    fetch("/api/trades")
+      .then(r => r.json())
+      .then(setData);
+  }, []);
 
-  return(
+  function pnlColor(v) {
+    if (v > 0) return "#22C55E";
+    if (v < 0) return "#EF4444";
+    return "#94A3B8";
+  }
+
+  return (
     <>
-      <header className="topbar">
-        <div>
-          <div className="brand">TRADE ENGINE</div>
-          <div className="sub">Live Positions</div>
+      <header className="scannerHeader">
+        <div className="scannerTitle">TRADE DESK</div>
+
+        <div className="navButtons">
+          <Link href="/bull"><button className="navBtn">Bull</button></Link>
+          <Link href="/bear"><button className="navBtn">Bear</button></Link>
+          <Link href="/analyse"><button className="navBtn">Analyse</button></Link>
+          <Link href="/trade"><button className="navBtn active">Trade</button></Link>
         </div>
       </header>
 
-      <main className="grid">
-        <section className="panel">
-          <div className="panelTitle">OPEN POSITIONS</div>
-
-          {positions.map(p=>{
-            const pnlClass = p.pnlPct>=0?"pnlPos":"pnlNeg";
-            return(
-              <div className="coin fadeUp" key={p.symbol}>
-                <div className="coinTop">
-                  <div>
-                    <div className="symbol">{p.symbol}</div>
-                    <div className="price">Entry {p.entry}</div>
-                  </div>
-                  <div className={pnlClass}>{p.pnlPct}%</div>
-                </div>
+      <main className="tradeGrid">
+        {data?.positions?.map(p => (
+          <div key={p.id} className="tradeCard">
+            <div className="tradeTop">
+              <div>{p.symbol}</div>
+              <div style={{ color: pnlColor(p.pnlPct) }}>
+                {p.pnlPct}%
               </div>
-            )
-          })}
-        </section>
+            </div>
+
+            <div className="tradeMeta">
+              Entry {p.entry}
+              <br />
+              SL {p.sl}
+              <br />
+              TP {p.tp}
+            </div>
+          </div>
+        ))}
       </main>
     </>
-  )
+  );
 }
