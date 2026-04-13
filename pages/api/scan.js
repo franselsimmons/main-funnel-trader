@@ -1,78 +1,57 @@
 import { kv } from "@vercel/kv";
-import { computeStage } from "../../lib/stageEngine";
-import { computeRegime } from "../../lib/regimeEngine";
-import { adaptive } from "../../lib/adaptiveEngine";
-import { aiScore } from "../../lib/aiEngine";
-import { fetchOrderbook } from "../../lib/orderbook";
-import { getConfig } from "../../lib/configStore";
-import { trackFlow } from "../../lib/flowTracker";
-import { n } from "../../lib/utils";
 
-const CG="https://api.coingecko.com/api/v3/coins/markets";
+export default async function handler(req, res) {
+  const mode = req.query.mode === "bear" ? "bear" : "bull";
 
-export default async function handler(req,res){
-  const mode=req.query.mode==="bear"?"bear":"bull";
-  const config=await getConfig();
+  try {
+    const coins = await fetchUniverse();
+    const scored = scoreCoins(coins, mode);
+    const funnel = buildFunnel(scored);
 
-  const raw=await fetch(`${CG}?vs_currency=usd&order=market_cap_desc&per_page=150&page=1&sparkline=false&price_change_percentage=1h,24h`).then(r=>r.json());
-
-  const btcRow=raw.find(c=>c.id==="bitcoin");
-  const regime=computeRegime(n(btcRow?.price_change_percentage_24h));
-
-  const prev=await kv.get(`state:${mode}`)||{};
-  const next={};
-  const funnel={entry_ready:[],setup:[],warmup:[],radar:[]};
-
-  for(const coin of raw){
-    const sym=coin.symbol.toUpperCase();
-    const p=prev[sym]||{};
-
-    const confidence=Math.abs(n(coin.price_change_percentage_24h));
-
-    const radarPass=confidence>10;
-    const warmupPass=confidence>18;
-    const setupPass=confidence>28;
-
-    const ob=await fetchOrderbook(sym+"USDT");
-    const thresholds=adaptive({regime,marketCap:n(coin.market_cap)});
-
-    const entryPass=
-      setupPass &&
-      ob &&
-      confidence>config.thresholds.confMin &&
-      ob.spreadPct<config.thresholds.spreadMax &&
-      ob.depthMin>config.thresholds.depthMin;
-
-    const stageData=computeStage({
-      radarPass,warmupPass,setupPass,entryPass,
-      prevStage:p.stage,prevCycles:p.cycles
+    await kv.set(`state:${mode}`, {
+      funnel,
+      lastScan: Date.now()
     });
 
-    const ai=aiScore({
-      confidence,
-      depth:ob?.depthMin||0,
-      spread:ob?.spreadPct||2
-    });
+    res.json({ ok: true, count: scored.length });
 
-    const out={
-      symbol:sym,
-      price:n(coin.current_price),
-      confidence,
-      stage:stageData.stage,
-      cycles:stageData.cycles,
-      aiScore:ai
-    };
-
-    next[sym]=out;
-
-    if(out.stage==="ENTRY_READY")funnel.entry_ready.push(out);
-    else if(out.stage==="SETUP")funnel.setup.push(out);
-    else if(out.stage==="WARMUP")funnel.warmup.push(out);
-    else if(out.stage==="RADAR")funnel.radar.push(out);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
+}
 
-  await kv.set(`state:${mode}`,next,{ex:3600});
-  await trackFlow(mode,next);
+async function fetchUniverse() {
+  const r = await fetch(
+    "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1"
+  );
+  return r.json();
+}
 
-  res.json({ok:true,mode,regime,funnel});
+function scoreCoins(coins, mode) {
+  return coins.map(c => {
+    const momentum = c.price_change_percentage_24h || 0;
+
+    const confidence =
+      mode === "bull"
+        ? Math.max(0, momentum)
+        : Math.max(0, -momentum);
+
+    const aiScore = confidence + Math.random() * 10;
+
+    return {
+      symbol: c.symbol.toUpperCase(),
+      price: c.current_price,
+      confidence: confidence.toFixed(2),
+      aiScore: aiScore.toFixed(2)
+    };
+  });
+}
+
+function buildFunnel(coins) {
+  return {
+    entry_ready: coins.filter(c => c.confidence > 8),
+    setup: coins.filter(c => c.confidence > 4 && c.confidence <= 8),
+    warmup: coins.filter(c => c.confidence > 1 && c.confidence <= 4),
+    radar: coins.filter(c => c.confidence <= 1)
+  };
 }
