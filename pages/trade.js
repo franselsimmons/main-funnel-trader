@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 export default function Trade() {
-  const [data, setData] = useState(null);
+  const [positions, setPositions] = useState([]);
 
   useEffect(() => {
-    fetch("/api/trades")
+    fetch("/api/positions")
       .then(r => r.json())
-      .then(setData);
+      .then(d => setPositions(d.positions || []));
   }, []);
 
   function pnlColor(v) {
@@ -19,7 +19,10 @@ export default function Trade() {
   return (
     <>
       <header className="scannerHeader">
-        <div className="scannerTitle">TRADE DESK</div>
+        <div>
+          <div className="scannerTitle">TRADE ENGINE</div>
+          <div className="scannerSub">Live Positions</div>
+        </div>
 
         <div className="navButtons">
           <Link href="/bull"><button className="navBtn">Bull</button></Link>
@@ -29,26 +32,28 @@ export default function Trade() {
         </div>
       </header>
 
-      <main className="tradeGrid">
-        {data?.positions?.map(p => (
-          <div key={p.id} className="tradeCard">
-            <div className="tradeTop">
-              <div>{p.symbol}</div>
-              <div style={{ color: pnlColor(p.pnlPct) }}>
-                {p.pnlPct}%
-              </div>
+      <div className="tradeGrid">
+        {!positions.length && (
+          <div className="empty">No active positions</div>
+        )}
+
+        {positions.map(p => (
+          <div key={p.symbol} className="tradeCard">
+            <div className="tradeHeader">
+              <strong>{p.symbol}</strong>
+              <span style={{ color: pnlColor(p.pnl) }}>
+                {p.pnl}%
+              </span>
             </div>
 
             <div className="tradeMeta">
-              Entry {p.entry}
-              <br />
-              SL {p.sl}
-              <br />
-              TP {p.tp}
+              <span>Entry {p.entry}</span>
+              <span>SL {p.sl}</span>
+              <span>TP {p.tp}</span>
             </div>
           </div>
         ))}
-      </main>
+      </div>
     </>
   );
 }
