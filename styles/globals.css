@@ -1,11 +1,9 @@
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   padding: 0;
-  font-family: Inter, system-ui, -apple-system;
+  font-family: Inter, system-ui;
   background: #0B1220;
   color: #E6EDF6;
 }
@@ -21,21 +19,10 @@ html, body {
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
-.brand {
-  font-weight: 600;
-  font-size: 18px;
-}
+.brand { font-weight: 600; font-size: 18px; }
+.sub { font-size: 12px; opacity: .6; margin-top: 4px; }
 
-.sub {
-  font-size: 12px;
-  opacity: .6;
-  margin-top: 4px;
-}
-
-.nav {
-  display: flex;
-  gap: 10px;
-}
+.nav { display: flex; gap: 10px; }
 
 .btn {
   background: rgba(255,255,255,0.05);
@@ -47,14 +34,8 @@ html, body {
   transition: .2s ease;
 }
 
-.btn:hover {
-  background: rgba(255,255,255,0.12);
-}
-
-.btn.active {
-  background: #2563EB;
-  border-color: #2563EB;
-}
+.btn:hover { background: rgba(255,255,255,0.12); }
+.btn.active { background: #2563EB; border-color: #2563EB; }
 
 /* ===== GRID ===== */
 .grid {
@@ -80,6 +61,19 @@ html, body {
   margin-bottom: 18px;
 }
 
+/* ===== CONFIDENCE BAR ===== */
+.confBarWrap {
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+.confBar {
+  height: 100%;
+  border-radius: 6px;
+}
+
 /* ===== COIN ===== */
 .coin {
   background: #16213A;
@@ -91,30 +85,15 @@ html, body {
   transition: .2s ease;
 }
 
-.coin:hover {
-  background: #1C2A48;
-}
+.coin:hover { background: #1C2A48; }
 
 .coinTop {
   display: flex;
   justify-content: space-between;
 }
 
-.symbol {
-  font-weight: 600;
-}
-
-.price {
-  font-size: 12px;
-  opacity: .7;
-}
-
-.score {
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(59,130,246,0.25);
-}
+.symbol { font-weight: 600; }
+.price { font-size: 12px; opacity: .7; }
 
 .meta {
   font-size: 12px;
@@ -124,15 +103,20 @@ html, body {
   gap: 12px;
 }
 
-.plan {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #22C55E;
+.plan { margin-top: 8px; font-size: 12px; color: #22C55E; }
+.empty { opacity: .4; font-size: 13px; }
+
+/* ===== REGIME METER ===== */
+.regimeBar {
+  height: 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.08);
+  margin-top: 6px;
 }
 
-.empty {
-  opacity: .4;
-  font-size: 13px;
+.regimeFill {
+  height: 100%;
+  border-radius: 6px;
 }
 
 /* ===== MODAL ===== */
@@ -155,14 +139,8 @@ html, body {
   border: 1px solid rgba(255,255,255,0.06);
 }
 
-.modalTitle {
-  font-weight: 600;
-  font-size: 18px;
-}
-
-.modalSection {
-  margin-top: 20px;
-}
+.modalTitle { font-weight: 600; font-size: 18px; }
+.modalSection { margin-top: 20px; }
 
 .kvRow {
   display: flex;
@@ -172,45 +150,12 @@ html, body {
   opacity: .85;
 }
 
-.closeBtn {
-  margin-top: 20px;
-}
+.closeBtn { margin-top: 20px; }
 
-/* ===== HOME HERO ===== */
-.hero {
-  padding: 80px 40px;
-  text-align: center;
-}
+/* ===== TRADE PNL ===== */
+.pnlPos { color: #22C55E; }
+.pnlNeg { color: #EF4444; }
 
-.heroTitle {
-  font-size: 42px;
-  font-weight: 700;
-}
-
-.heroSub {
-  margin-top: 18px;
-  opacity: .6;
-  max-width: 700px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.heroGrid {
-  margin-top: 60px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px,1fr));
-  gap: 28px;
-}
-
-.heroCard {
-  background: #111A2E;
-  padding: 32px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.06);
-  transition: .25s ease;
-  cursor: pointer;
-}
-
-.heroCard:hover {
-  background: #16213A;
-}
+/* ===== ANALYSE HIGHLIGHT ===== */
+.leakBad { color: #EF4444; }
+.leakGood { color: #22C55E; }
