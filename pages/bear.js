@@ -3,64 +3,45 @@ import Layout from "../components/layout"
 
 function Bucket({ title, subtitle, coins }) {
   return (
-    <div className="bucket-card">
-
+    <div className="bucket-card bear">
       <div className="bucket-header">
         <h2>{title}</h2>
         <p>{subtitle}</p>
       </div>
 
       <div className="bucket-inner">
-
         {coins.length === 0 ? (
-          <div className="empty">
-            Geen coins.
-          </div>
+          <div className="empty">Geen coins.</div>
         ) : (
           coins.map((coin) => (
             <div key={coin.symbol} className="coin-row">
-
               <div className="coin-left">
                 <strong>{coin.symbol}</strong>
-                <span>
-                  {(coin.score * 100).toFixed(1)}%
-                </span>
+                <span>{(coin.score * 100).toFixed(1)}%</span>
               </div>
-
               <div className="coin-right">
-                {coin.entry
-                  ? coin.entry.toFixed(4)
-                  : "-"
-                }
+                {coin.entry ? coin.entry.toFixed(4) : "-"}
               </div>
-
             </div>
           ))
         )}
-
       </div>
     </div>
   )
 }
 
 export default function Bear() {
-
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     fetch("/api/dashboard?side=bear")
       .then(res => {
-        if (!res.ok) {
-          throw new Error("API error")
-        }
+        if (!res.ok) throw new Error("API error")
         return res.json()
       })
       .then(setData)
-      .catch(err => {
-        console.error(err)
-        setError("Fout bij laden van dashboard.")
-      })
+      .catch(() => setError("Fout bij laden dashboard"))
   }, [])
 
   if (error) {
@@ -68,9 +49,7 @@ export default function Bear() {
       <Layout>
         <div className="dashboard-header">
           <h1>Bear Dashboard</h1>
-          <div className="status error">
-            {error}
-          </div>
+          <div className="status error">{error}</div>
         </div>
       </Layout>
     )
@@ -85,32 +64,28 @@ export default function Bear() {
 
   return (
     <Layout>
-
       <div className="dashboard-header">
         <h1>Bear Dashboard</h1>
-        <div className="status">
-          Last Scan: {lastScan}
-        </div>
+        <div className="status">Last Scan: {lastScan}</div>
       </div>
 
       <Bucket
         title="TRADE READY"
-        subtitle="Scanner-signalen die entry-ready zijn."
+        subtitle="Short entry-ready signalen."
         coins={data.tradeReady || []}
       />
 
       <Bucket
         title="SETUP"
-        subtitle="Bijna trade-ready — mist nog 1–2 gates."
+        subtitle="Bijna short-ready."
         coins={data.setup || []}
       />
 
       <Bucket
         title="WARMUP"
-        subtitle="Momentum bouwt op."
+        subtitle="Momentum bouwt neerwaarts."
         coins={data.warmup || []}
       />
-
     </Layout>
   )
 }
