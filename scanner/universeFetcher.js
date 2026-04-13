@@ -6,12 +6,29 @@ function chunkArray(array, size) {
   return chunks
 }
 
+async function safeFetch(url) {
+  try {
+    const res = await fetch(url)
+    const data = await res.json()
+
+    if (!Array.isArray(data)) {
+      console.error("Binance returned error:", data)
+      return null
+    }
+
+    return data
+  } catch (err) {
+    console.error("Fetch error:", err)
+    return null
+  }
+}
+
 async function fetchCandles(symbol) {
-  const res = await fetch(
+  const candlesRaw = await safeFetch(
     `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=100`
   )
 
-  const candlesRaw = await res.json()
+  if (!candlesRaw) return null
 
   const candles = candlesRaw.map(c => ({
     open: parseFloat(c[1]),
@@ -44,27 +61,33 @@ async function fetchCandles(symbol) {
 
 export async function fetchUniverse() {
 
-  const res = await fetch(
+  const data = await safeFetch(
     "https://api.binance.com/api/v3/ticker/24hr"
   )
 
-  const data = await res.json()
+  if (!data) {
+    console.error("Universe fetch failed.")
+    return []
+  }
 
   const filtered =
     data
       .filter(c => c.symbol.endsWith("USDT"))
       .sort((a, b) => b.quoteVolume - a.quoteVolume)
-      .slice(0, 120) // 🔥 nu 120 coins
+      .slice(0, 120)
 
-  const chunks = chunkArray(filtered, 20) // 20 tegelijk
+  const chunks = chunkArray(filtered, 20)
 
   const results = []
 
   for (const batch of chunks) {
+
     const batchResults = await Promise.all(
       batch.map(async (coin) => {
         const candleData =
           await fetchCandles(coin.symbol)
+
+        if (!candleData) return null
 
         return {
           symbol: coin.symbol,
@@ -73,7 +96,9 @@ export async function fetchUniverse() {
       })
     )
 
-    results.push(...batchResults)
+    results.push(
+      ...batchResults.filter(Boolean)
+    )
   }
 
   return results
