@@ -3,61 +3,60 @@ import { useEffect, useState } from "react";
 export default function Bull() {
   const [data, setData] = useState(null);
 
-  async function load() {
-    try {
-      const res = await fetch("/api/state?mode=bull");
-      const json = await res.json();
-      setData(json);
-    } catch {
-      setData({ error: true });
-    }
-  }
-
   useEffect(() => {
-    load();
-    const i = setInterval(load, 8000);
-    return () => clearInterval(i);
+    fetch("/api/state?mode=bull")
+      .then(r => r.json())
+      .then(setData);
   }, []);
 
-  if (!data) return <div className="page">Loading market data...</div>;
-  if (data.error) return <div className="page error">Scanner offline</div>;
-
-  return (
-    <MarketView title="Bull Market" funnel={data.funnel} />
-  );
-}
-
-function MarketView({ title, funnel }) {
-  return (
-    <div className="page">
-      <h1 className="headline">{title}</h1>
-
-      <Stage title="ENTRY READY" coins={funnel.entry_ready} />
-      <Stage title="SETUP" coins={funnel.setup} />
-      <Stage title="WARMUP" coins={funnel.warmup} />
-      <Stage title="RADAR" coins={funnel.radar} />
-    </div>
-  );
-}
-
-function Stage({ title, coins }) {
-  return (
-    <section className="section">
-      <div className="sectionHeader">
-        <h2>{title}</h2>
-        <span>{coins.length}</span>
-      </div>
-
-      <div className="table">
-        {coins.map(c => (
-          <div key={c.symbol} className="row">
-            <div className="symbol">{c.symbol}</div>
-            <div>${c.price}</div>
-            <div>{c.confidence}</div>
-            <div>{c.aiScore}</div>
+  const renderStage = (arr) =>
+    arr?.length
+      ? arr.map(c => (
+          <div className="coin" key={c.symbol}>
+            <div className="coinTop">
+              <div>
+                <div className="symbol">{c.symbol}</div>
+                <div className="price">${Number(c.price).toFixed(4)}</div>
+              </div>
+              <div className="score">{c.aiScore}/100</div>
+            </div>
+            <div className="meta">
+              <span>mom {Number(c.momentum).toFixed(2)}%</span>
+              <span>volAcc {Number(c.volAcc).toFixed(2)}</span>
+            </div>
+            {c.tradePlan && (
+              <div className="plan">
+                SL ${c.tradePlan.sl.toFixed(4)} • TP ${c.tradePlan.tp.toFixed(4)}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
-    </section>
+        ))
+      : <div className="empty">Geen coins</div>;
+
+  return (
+    <>
+      <header className="topbar">
+        <div className="brand">BULL MARKET</div>
+      </header>
+
+      <main className="grid">
+        <section className="panel">
+          <div className="panelTitle">ENTRY READY</div>
+          {renderStage(data?.funnel?.entry_ready)}
+        </section>
+        <section className="panel">
+          <div className="panelTitle">SETUP</div>
+          {renderStage(data?.funnel?.setup)}
+        </section>
+        <section className="panel">
+          <div className="panelTitle">WARMUP</div>
+          {renderStage(data?.funnel?.warmup)}
+        </section>
+        <section className="panel">
+          <div className="panelTitle">RADAR</div>
+          {renderStage(data?.funnel?.radar)}
+        </section>
+      </main>
+    </>
   );
 }
