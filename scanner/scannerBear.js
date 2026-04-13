@@ -1,13 +1,15 @@
-import { BEAR_CONFIG } from "../config/bear.js"
-import { SHARED_CONFIG } from "../config/shared.js"
-import { runScanner } from "./scannerCore.js"
+import { kv } from "@vercel/kv"
+import { scanSymbol } from "./scannerCore.js"
 
-export async function runBearScanner(marketData, btcData) {
-  return await runScanner({
-    mode: "bear",
-    config: BEAR_CONFIG,
-    sharedConfig: SHARED_CONFIG,
-    marketData,
-    btcData
-  })
+export async function runBearScanner(universe) {
+  const results = []
+
+  for (const symbolData of universe) {
+    const candidate =
+      scanSymbol(symbolData, "SHORT")
+    if (candidate) results.push(candidate)
+  }
+
+  await kv.set("edge:candidates:bear", results)
+  return results
 }
