@@ -5,7 +5,7 @@ export default function Index() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/?mode=bull");
+    router.replace("/bull");
   }, []);
 
   return null;
