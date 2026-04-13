@@ -1,10 +1,10 @@
+import { runBullFunnel } from "../../funnel/funnelBull.js"
+
 export default async function handler(req, res) {
-  const base = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_BASE_URL
+  const result = await runBullFunnel()
 
-  await fetch(`${base}/api/bull/funnel`)
-  await fetch(`${base}/api/bear/funnel`)
-
-  res.json({ ok: true, job: "funnel" })
+  res.json({
+    ok: true,
+    approved: result.length
+  })
 }
