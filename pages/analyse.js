@@ -6,33 +6,40 @@ export default function Analyse() {
   useEffect(() => {
     fetch("/api/analyse?mode=bull")
       .then(r => r.json())
-      .then(setData);
+      .then(setData)
+      .catch(() => setData({ error: true }));
   }, []);
 
-  if (!data) return <div className="container">Loading...</div>;
+  if (!data)
+    return <div className="layout">Loading analyse...</div>;
+
+  if (data.error)
+    return <div className="layout error">Analyse tijdelijk niet beschikbaar</div>;
+
+  const perf = data.perf || {};
+  const flow = data.flow || {};
 
   return (
-    <div className="container">
+    <div className="layout">
       <h1>System Analyse</h1>
 
-      <h2>Performance</h2>
       <div className="card">
-        <div>Trades: {data.perf.trades}</div>
-        <div>Winrate: {data.perf.winrate}%</div>
-        <div>Avg PnL: {data.perf.avgPnL}%</div>
+        <div>Trades: {perf.trades || 0}</div>
+        <div>Winrate: {perf.winrate || 0}%</div>
+        <div>Avg PnL: {perf.avgPnL || 0}%</div>
       </div>
 
-      <h2>Suggestions</h2>
       <div className="card">
-        {data.perf.suggestions.map((s, i) => (
+        <h3>Suggestions</h3>
+        {(perf.suggestions || []).map((s, i) => (
           <div key={i}>{s}</div>
         ))}
       </div>
 
-      <h2>Funnel Flow (Last 5)</h2>
       <div className="card">
+        <h3>Flow Snapshot</h3>
         <pre>
-          {JSON.stringify(data.flow.history?.slice(-5), null, 2)}
+          {JSON.stringify(flow.history?.slice(-5) || [], null, 2)}
         </pre>
       </div>
     </div>
