@@ -1,45 +1,25 @@
-export function computeStats(trades) {
+export function calculateExpectancy(trades) {
+  if (!trades.length) return 0
 
-  const wins = trades.filter(t => t.pnl > 0)
-  const losses = trades.filter(t => t.pnl <= 0)
+  const wins =
+    trades.filter(t => t.pnl > 0)
 
-  const winrate = wins.length / trades.length
+  const losses =
+    trades.filter(t => t.pnl <= 0)
 
-  const avgWin = avg(wins.map(t => t.pnl))
-  const avgLoss = avg(losses.map(t => t.pnl))
+  const winRate =
+    wins.length / trades.length
 
-  const expectancy =
-    winrate * avgWin +
-    (1 - winrate) * avgLoss
+  const avgWin =
+    wins.reduce((a, b) => a + b.pnl, 0) /
+    (wins.length || 1)
 
-  const maxDrawdown = computeMaxDrawdown(trades)
+  const avgLoss =
+    Math.abs(
+      losses.reduce((a, b) => a + b.pnl, 0) /
+      (losses.length || 1)
+    )
 
-  return {
-    winrate,
-    avgWin,
-    avgLoss,
-    expectancy,
-    maxDrawdown
-  }
-}
-
-function avg(arr) {
-  if (!arr.length) return 0
-  return arr.reduce((a, b) => a + b, 0) / arr.length
-}
-
-function computeMaxDrawdown(trades) {
-
-  let peak = 0
-  let equity = 0
-  let maxDD = 0
-
-  for (const t of trades) {
-    equity += t.pnl
-    if (equity > peak) peak = equity
-    const dd = peak - equity
-    if (dd > maxDD) maxDD = dd
-  }
-
-  return maxDD
+  return (winRate * avgWin) -
+         ((1 - winRate) * avgLoss)
 }
