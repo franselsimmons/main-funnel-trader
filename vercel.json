@@ -1,8 +1,8 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/run",
-      "schedule": "*/3 * * * *"
-    }
+  "cron": [
+    { "path": "/api/scan?mode=bull", "schedule": "*/5 * * * *" },
+    { "path": "/api/scan?mode=bear", "schedule": "*/5 * * * *" },
+    { "path": "/api/trade?mode=bull", "schedule": "*/1 * * * *" },
+    { "path": "/api/trade?mode=bear", "schedule": "*/1 * * * *" }
   ]
 }
