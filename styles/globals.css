@@ -1,5 +1,3 @@
-/* ===== DASHBOARD STYLE ===== */
-
 .dashboard-header {
   margin-bottom: 30px;
 }
@@ -15,12 +13,20 @@
   font-size: 14px;
 }
 
+.status.error {
+  color: #ef4444;
+}
+
 .bucket-card {
   background: #0f172a;
   border: 1px solid #1e293b;
   border-radius: 20px;
   padding: 25px;
   margin-bottom: 25px;
+}
+
+.bucket-card.bear {
+  border-color: #7f1d1d;
 }
 
 .bucket-header h2 {
