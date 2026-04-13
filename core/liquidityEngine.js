@@ -4,7 +4,9 @@ export function detectSweep(candles, lookback = 20) {
 
   const pivotLow = Math.min(...prev.map(c => c.low))
 
-  const swept = latest.low < pivotLow && latest.close > pivotLow
+  const swept =
+    latest.low < pivotLow &&
+    latest.close > pivotLow
 
   return {
     swept,
@@ -13,6 +15,8 @@ export function detectSweep(candles, lookback = 20) {
 }
 
 export function calculateSVI(latestCandle, avgVolume, atr) {
+  if (!avgVolume || !atr) return 0
+
   const normalizedVolume = latestCandle.volume / avgVolume
   const volatilityFactor = atr > 0 ? atr : 1
 
