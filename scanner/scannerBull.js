@@ -1,17 +1,15 @@
-import { fetchUniverse } from "./universeFetcher.js"
-import { runScanner } from "./scannerCore.js"
-import { BULL_CONFIG } from "../config/bull.js"
-import { SHARED_CONFIG } from "../config/shared.js"
+import { kv } from "@vercel/kv"
+import { scanSymbol } from "./scannerCore.js"
 
-export async function runBullScanner(btcData) {
+export async function runBullScanner(universe) {
+  const candidates = []
 
-  const universe = await fetchUniverse()
+  for (const symbolData of universe) {
+    const result = scanSymbol(symbolData)
+    if (result) candidates.push(result)
+  }
 
-  return await runScanner({
-    mode: "bull",
-    config: BULL_CONFIG,
-    sharedConfig: SHARED_CONFIG,
-    marketData: universe,
-    btcData
-  })
+  await kv.set("edge:candidates", candidates)
+
+  return candidates
 }
