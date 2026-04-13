@@ -1,60 +1,27 @@
-import { kv } from "@vercel/kv"
-import { calculateExpectancy } from "../analytics/stats.js"
-import { monteCarlo } from "../analytics/buckets.js"
+// pages/api/dashboard.js
 
 export default async function handler(req, res) {
+  const side = req.query.side || "bull";
 
-  const bullPortfolio =
-    await kv.get("state:bull") || []
+  // SIMULATIE
+  const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT"];
 
-  const bearPortfolio =
-    await kv.get("state:bear") || []
+  const generateCoins = () => {
+    return symbols.map(s => ({
+      symbol: s,
+      score: Math.random(),
+      entry: (Math.random() * 1000).toFixed(2),
+      side
+    }));
+  };
 
-  const bullCandidates =
-    await kv.get("edge:candidates:bull") || []
+  const all = generateCoins();
 
-  const bearCandidates =
-    await kv.get("edge:candidates:bear") || []
-
-  const approvedBull =
-    await kv.get("trade:approved:bull") || []
-
-  const approvedBear =
-    await kv.get("trade:approved:bear") || []
-
-  const closedTrades =
-    await kv.get("state:closed") || []
-
-  const expectancy =
-    calculateExpectancy(closedTrades)
-
-  const monte =
-    monteCarlo(closedTrades)
-
-  const totalExposure =
-    [...bullPortfolio, ...bearPortfolio]
-      .reduce((a, b) => a + b.size, 0)
-
-  res.json({
-    regime: "LIVE",
-    scanner: {
-      bull: bullCandidates.length,
-      bear: bearCandidates.length
-    },
-    funnel: {
-      bull: approvedBull.length,
-      bear: approvedBear.length
-    },
-    portfolio: {
-      bullOpen: bullPortfolio.length,
-      bearOpen: bearPortfolio.length,
-      exposure: totalExposure
-    },
-    edge: {
-      expectancy
-    },
-    monte,
-    lastScan:
-      bullCandidates[0]?.timestamp || null
-  })
+  res.status(200).json({
+    lastScan: Date.now(),
+    tradeReady: all.filter(c => c.score > 0.7),
+    setup: all.filter(c => c.score > 0.4 && c.score <= 0.7),
+    warmup: all.filter(c => c.score <= 0.4),
+    trades: all.filter(c => c.score > 0.8)
+  });
 }
