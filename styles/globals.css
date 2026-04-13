@@ -1,161 +1,145 @@
-* { box-sizing: border-box; }
+/* ===== OVERVIEW ===== */
 
-html, body {
-  margin: 0;
-  padding: 0;
-  font-family: Inter, system-ui;
-  background: #0B1220;
-  color: #E6EDF6;
+.overviewHeader {
+  padding: 40px 24px 10px;
 }
 
-/* ===== TOPBAR ===== */
-.topbar {
-  height: 80px;
+.overviewTitle {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.overviewSub {
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.overviewList {
+  padding: 10px 24px 40px;
+}
+
+.coinRowSimple {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 36px;
-  background: #0E1627;
+  padding: 18px 0;
   border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-.brand { font-weight: 600; font-size: 18px; }
-.sub { font-size: 12px; opacity: .6; margin-top: 4px; }
-
-.nav { display: flex; gap: 10px; }
-
-.btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.08);
-  color: white;
-  padding: 9px 16px;
-  border-radius: 8px;
   cursor: pointer;
-  transition: .2s ease;
+  transition: 0.2s;
 }
 
-.btn:hover { background: rgba(255,255,255,0.12); }
-.btn.active { background: #2563EB; border-color: #2563EB; }
-
-/* ===== GRID ===== */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px,1fr));
-  gap: 28px;
-  padding: 40px;
+.coinRowSimple:hover {
+  background: rgba(255,255,255,0.03);
 }
 
-/* ===== PANEL ===== */
-.panel {
-  background: #111A2E;
-  border-radius: 14px;
-  padding: 24px;
-  border: 1px solid rgba(255,255,255,0.06);
-}
-
-.panelTitle {
-  font-size: 13px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  opacity: .6;
-  margin-bottom: 18px;
-}
-
-/* ===== CONFIDENCE BAR ===== */
-.confBarWrap {
-  height: 6px;
-  background: rgba(255,255,255,0.08);
-  border-radius: 6px;
-  margin-top: 6px;
-}
-
-.confBar {
-  height: 100%;
-  border-radius: 6px;
-}
-
-/* ===== COIN ===== */
-.coin {
-  background: #16213A;
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-bottom: 14px;
-  border: 1px solid rgba(255,255,255,0.05);
-  cursor: pointer;
-  transition: .2s ease;
-}
-
-.coin:hover { background: #1C2A48; }
-
-.coinTop {
+.coinLeft {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
 }
 
-.symbol { font-weight: 600; }
-.price { font-size: 12px; opacity: .7; }
+.coinLogo {
+  width: 32px;
+  height: 32px;
+  margin-right: 12px;
+}
 
-.meta {
+.coinSymbol {
+  font-weight: 600;
+}
+
+.coinName {
   font-size: 12px;
-  margin-top: 8px;
-  opacity: .6;
-  display: flex;
-  gap: 12px;
+  color: #94a3b8;
 }
 
-.plan { margin-top: 8px; font-size: 12px; color: #22C55E; }
-.empty { opacity: .4; font-size: 13px; }
-
-/* ===== REGIME METER ===== */
-.regimeBar {
-  height: 8px;
-  border-radius: 6px;
-  background: rgba(255,255,255,0.08);
-  margin-top: 6px;
+.coinRight {
+  text-align: right;
 }
 
-.regimeFill {
-  height: 100%;
-  border-radius: 6px;
+.coinPrice {
+  font-weight: 600;
+}
+
+.coinPct {
+  font-size: 13px;
 }
 
 /* ===== MODAL ===== */
-.modalBackdrop {
+
+.modalOverlay {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
   display: flex;
   justify-content: center;
   align-items: center;
+  z-index: 1000;
 }
 
-.modal {
-  width: 720px;
-  max-height: 85vh;
-  overflow-y: auto;
-  background: #0E1627;
-  border-radius: 14px;
-  padding: 28px;
-  border: 1px solid rgba(255,255,255,0.06);
+.modalCard {
+  width: 90%;
+  max-width: 700px;
+  background: #0f172a;
+  border-radius: 18px;
+  padding: 24px;
+  animation: fadeIn 0.25s ease-out;
 }
 
-.modalTitle { font-weight: 600; font-size: 18px; }
-.modalSection { margin-top: 20px; }
+@keyframes fadeIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
 
-.kvRow {
+.modalHeader {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
-  margin-bottom: 6px;
-  opacity: .85;
+  align-items: center;
 }
 
-.closeBtn { margin-top: 20px; }
+.modalTitle {
+  font-size: 22px;
+  font-weight: 600;
+}
 
-/* ===== TRADE PNL ===== */
-.pnlPos { color: #22C55E; }
-.pnlNeg { color: #EF4444; }
+.modalPrice {
+  color: #94a3b8;
+}
 
-/* ===== ANALYSE HIGHLIGHT ===== */
-.leakBad { color: #EF4444; }
-.leakGood { color: #22C55E; }
+.modalClose {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.modalStats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 20px;
+  gap: 12px;
+}
+
+.modalStats div span {
+  display: block;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.modalStats div strong {
+  font-size: 16px;
+}
+
+.modalChart {
+  margin-top: 24px;
+  height: 200px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 12px;
+}
+
+.modalDescription {
+  margin-top: 20px;
+  font-size: 14px;
+  color: #cbd5e1;
+}
