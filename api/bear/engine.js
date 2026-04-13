@@ -1,39 +1,97 @@
 import { kv } from "@vercel/kv"
 
-function calculateSignal(coin) {
+async function fetchCandles(symbol) {
+  const res = await fetch(
+    `https://api.binance.com/api/v3/klines?symbol=${symbol}USDT&interval=1h&limit=100`
+  )
+  if (!res.ok) return null
+  return await res.json()
+}
 
-  const strongMomentum = coin.change24h < -2
-  const strongVolume = coin.volume > 5000000
-
-  if (!strongMomentum || !strongVolume) return null
-
-  const entry = coin.price
-  const stopLoss = entry * 1.03
-  const takeProfit = entry * 0.94
-
-  return {
-    symbol: coin.symbol,
-    direction: "SHORT",
-    entry,
-    stopLoss,
-    takeProfit,
-    rr: ((entry - takeProfit) / (stopLoss - entry)).toFixed(2),
-    volume: coin.volume,
-    change24h: coin.change24h,
-    timestamp: Date.now()
+function calculateEMA(data, period) {
+  const k = 2 / (period + 1)
+  let ema = parseFloat(data[0][4])
+  for (let i = 1; i < data.length; i++) {
+    const close = parseFloat(data[i][4])
+    ema = close * k + ema * (1 - k)
   }
+  return ema
+}
+
+function calculateRSI(data, period = 14) {
+  let gains = 0
+  let losses = 0
+
+  for (let i = data.length - period; i < data.length - 1; i++) {
+    const diff =
+      parseFloat(data[i + 1][4]) - parseFloat(data[i][4])
+    if (diff > 0) gains += diff
+    else losses -= diff
+  }
+
+  const rs = gains / (losses || 1)
+  return 100 - 100 / (1 + rs)
+}
+
+function calculateATR(data, period = 14) {
+  let sum = 0
+  for (let i = data.length - period; i < data.length; i++) {
+    const high = parseFloat(data[i][2])
+    const low = parseFloat(data[i][3])
+    sum += high - low
+  }
+  return sum / period
+}
+
+async function btcBearish() {
+  const candles = await fetchCandles("BTC")
+  if (!candles) return false
+  const ema50 = calculateEMA(candles, 50)
+  const ema200 = calculateEMA(candles, 200)
+  return ema50 < ema200
 }
 
 export default async function handler(req, res) {
 
-  const scanner = await kv.get("bear:scanner:candidates") || []
+  const universe = await kv.get("bear:universe") || []
+  const btcOk = await btcBearish()
 
-  const signals = scanner
-    .map(calculateSignal)
-    .filter(Boolean)
-    .slice(0, 5)
+  if (!btcOk) {
+    return res.json({ ok: true, qualified: 0, reason: "BTC bullish" })
+  }
 
-  await kv.set("bear:engine:signals", signals)
+  const qualified = []
 
-  res.json({ ok: true, signals })
+  for (const coin of universe.slice(0, 40)) {
+
+    const candles = await fetchCandles(coin.symbol)
+    if (!candles) continue
+
+    const ema50 = calculateEMA(candles, 50)
+    const ema200 = calculateEMA(candles, 200)
+    const rsi = calculateRSI(candles)
+    const atr = calculateATR(candles)
+    const price = parseFloat(candles[candles.length - 1][4])
+
+    const trend = ema50 < ema200
+    const momentum = rsi < 45
+    const volatility = atr / price > 0.01
+
+    if (trend && momentum && volatility) {
+      qualified.push({
+        symbol: coin.symbol,
+        price,
+        rsi,
+        atr,
+        created: Date.now()
+      })
+    }
+  }
+
+  await kv.set("bear:qualified", qualified)
+
+  res.json({
+    ok: true,
+    qualified: qualified.length
+  })
 }
