@@ -10,24 +10,23 @@ export default function Analyse() {
       .then(setData);
   }, []);
 
-  function analyze(stage) {
-    const arr = data?.funnel?.[stage] || [];
-    const count = arr.length;
-    const avgConf =
-      arr.reduce((a, b) => a + (b.aiScore || 0), 0) / (count || 1);
-
-    return { count, avgConf };
+  function count(stage) {
+    return data?.funnel?.[stage]?.length || 0;
   }
 
-  const radar = analyze("radar");
-  const warmup = analyze("warmup");
-  const setup = analyze("setup");
-  const entry = analyze("entry_ready");
+  const total =
+    count("radar") +
+    count("warmup") +
+    count("setup") +
+    count("entry_ready");
 
   return (
     <>
       <header className="scannerHeader">
-        <div className="scannerTitle">ANALYSE</div>
+        <div>
+          <div className="scannerTitle">ANALYSE</div>
+          <div className="scannerSub">Full Funnel Breakdown</div>
+        </div>
 
         <div className="navButtons">
           <Link href="/bull"><button className="navBtn">Bull</button></Link>
@@ -37,22 +36,26 @@ export default function Analyse() {
         </div>
       </header>
 
-      <main className="analyseGrid">
-        <AnalyseCard title="Radar" data={radar} />
-        <AnalyseCard title="Warmup" data={warmup} />
-        <AnalyseCard title="Setup" data={setup} />
-        <AnalyseCard title="Entry Ready" data={entry} />
-      </main>
-    </>
-  );
-}
+      <div className="analyseGrid">
+        {["radar", "warmup", "setup", "entry_ready"].map(stage => {
+          const c = count(stage);
+          const pct = total ? Math.round((c / total) * 100) : 0;
 
-function AnalyseCard({ title, data }) {
-  return (
-    <div className="analyseCard">
-      <h3>{title}</h3>
-      <p>Coins: {data.count}</p>
-      <p>Avg Confidence: {data.avgConf.toFixed(1)}</p>
-    </div>
+          return (
+            <div key={stage} className="analyseCard">
+              <h3>{stage.toUpperCase()}</h3>
+              <div className="bigNumber">{c}</div>
+              <div className="analyseBarWrap">
+                <div
+                  className="analyseBar"
+                  style={{ width: pct + "%" }}
+                />
+              </div>
+              <span>{pct}% of total flow</span>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
