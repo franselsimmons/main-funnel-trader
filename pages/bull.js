@@ -122,10 +122,11 @@ export default function Bull() {
       </header>
 
       <main className="panels">
-        <FunnelBlock title="RADAR" items={funnel.radar} onOpenModal={setActiveCoin} />
-        <FunnelBlock title="WARMUP" items={funnel.warmup} onOpenModal={setActiveCoin} />
-        <FunnelBlock title="SETUP" items={funnel.setup} onOpenModal={setActiveCoin} />
+        {/* Volgorde aangepast: Entry Ready bovenaan */}
         <FunnelBlock title="ENTRY READY" items={funnel.entry_ready} onOpenModal={setActiveCoin} />
+        <FunnelBlock title="SETUP" items={funnel.setup} onOpenModal={setActiveCoin} />
+        <FunnelBlock title="WARMUP" items={funnel.warmup} onOpenModal={setActiveCoin} />
+        <FunnelBlock title="RADAR" items={funnel.radar} onOpenModal={setActiveCoin} />
       </main>
 
       {/* MODAL / POP-UP */}
@@ -142,7 +143,7 @@ export default function Bull() {
 
             <div className="modalGrid">
               <div className="metricBox">
-                <div className="metricLabel">Huidige Prijs</div>
+                <div className="metricLabel">Prijs</div>
                 <div className="metricValue">${fmtPrice(activeCoin.price)}</div>
               </div>
               <div className="metricBox">
@@ -160,14 +161,14 @@ export default function Bull() {
             </div>
 
             <div className="modalSection">
-              <div className="sectionHeading">ORDERBOOK DATA</div>
+              <div className="sectionHeading">ORDERBOOK DETAILS</div>
               <div className="detailsGrid">
                 <div className="detailItem">
                   <span className="detailLabel">Vol. Acceleratie</span>
                   <span className="detailValue">{activeCoin.volAcc ? activeCoin.volAcc.toFixed(2) : "—"}</span>
                 </div>
                 <div className="detailItem">
-                  <span className="detailLabel">Min. Depth (USD)</span>
+                  <span className="detailLabel">Depth (USD)</span>
                   <span className="detailValue">{activeCoin?.ob?.depthMin ? activeCoin.ob.depthMin.toFixed(0) : "—"}</span>
                 </div>
               </div>
