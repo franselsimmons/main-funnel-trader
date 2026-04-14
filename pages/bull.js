@@ -22,21 +22,17 @@ export default function Bull() {
 
   useEffect(() => {
     loadState();
-
-    // Alleen state refresh
     const t = setInterval(loadState, 15000);
-
     return () => clearInterval(t);
   }, []);
 
   const lastScan = useMemo(() => {
-    const ts = n(data?.ts || data?.scannedAt || 0);
+    const ts = n(data?.lastScan || data?.ts, 0);
     return ts ? new Date(ts).toLocaleString() : "—";
   }, [data]);
 
   const regimeLabel = useMemo(() => {
-    const r = data?.regime || {};
-    return String(r.label || r.regime || "NEUTRAL");
+    return String(data?.regime?.label || "NEUTRAL");
   }, [data]);
 
   const regimeScore = n(data?.regime?.score, 0);
