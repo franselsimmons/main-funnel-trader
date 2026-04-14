@@ -1,10 +1,7 @@
-// pages/bear.js
-
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 /* ================= HELPERS ================= */
-
 function n(x, d = 0) {
   const v = Number(x);
   return Number.isFinite(v) ? v : d;
@@ -13,59 +10,69 @@ function n(x, d = 0) {
 function fmtPrice(x) {
   const v = Number(x);
   if (!Number.isFinite(v)) return "—";
-  if (v >= 1000) {
-    return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  }
-  return v.toFixed(4);
+  if (v >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (v >= 1) return v.toFixed(2);
+  if (v >= 0.01) return v.toFixed(4);
+  return v.toFixed(6);
 }
 
 /* ================= COMPONENTS ================= */
-
-function CoinCard({ c }) {
+function CoinCard({ c, onOpenModal }) {
+  const avatarLetters = (c.symbol || "CR").substring(0, 2).toUpperCase();
   return (
-    <div className="coinCard">
-      <div className="coinHeader">
-        <div className="coinSymbol">{c.symbol}</div>
-        <div className="coinScore">AI {c.aiScore}</div>
+    <button className="coinButton" onClick={() => onOpenModal(c)}>
+      <div className="coinCore">
+        <div className="coinLeft">
+          <div className="coinAvatarText">{avatarLetters}</div>
+          <div className="coinText">
+            <div className="coinSymbol">{c.symbol}</div>
+            <div className="coinName">{c.name || "Crypto Asset"}</div>
+          </div>
+        </div>
+        <div className="coinMarket">
+          <div className="coinPrice">${fmtPrice(c.price)}</div>
+          <div className="coinChange" style={{ color: "var(--muted)" }}>
+            AI Score: {c.aiScore || "—"}
+          </div>
+        </div>
       </div>
-      <div className="coinName">{c.name}</div>
-      <div className="coinPrice">${fmtPrice(c.price)}</div>
-    </div>
+    </button>
   );
 }
 
-function FunnelBlock({ title, items }) {
+function FunnelBlock({ title, items, onOpenModal }) {
   return (
-    <div className="funnelBlock">
-      <div className="funnelHeader">
-        <span>{title}</span>
-        <span className="count">{items?.length || 0}</span>
+    <div className="panel" style={{ marginBottom: "18px" }}>
+      <div className="panelHead">
+        <div>
+          <div className="panelTitle">{title}</div>
+          <div className="panelHint">Munten actief in deze fase</div>
+        </div>
+        <div className="panelCount">{items?.length || 0}</div>
       </div>
 
       {items?.length ? (
         <div className="coinGrid">
           {items.map((c) => (
-            <CoinCard key={c.symbol} c={c} />
+            <CoinCard key={c.symbol} c={c} onOpenModal={onOpenModal} />
           ))}
         </div>
       ) : (
-        <div className="emptyState">Geen coins in deze fase</div>
+        <div className="emptyState">Geen data beschikbaar voor deze fase.</div>
       )}
     </div>
   );
 }
 
 /* ================= PAGE ================= */
-
 export default function Bear() {
   const mode = "bear";
   const [data, setData] = useState(null);
+  const [activeCoin, setActiveCoin] = useState(null);
 
   async function loadState() {
     try {
-      const r = await fetch(`/api/state?mode=${mode}`, {
-        cache: "no-store",
-      });
+      const r = await fetch(`/api/state?mode=${mode}`, { cache: "no-store" });
       const j = await r.json();
       setData(j);
     } catch {}
@@ -73,13 +80,13 @@ export default function Bear() {
 
   useEffect(() => {
     loadState();
-    const t = setInterval(loadState, 30000); // 30s refresh
+    const t = setInterval(loadState, 30000);
     return () => clearInterval(t);
   }, []);
 
   const lastScan = useMemo(() => {
     const ts = n(data?.lastScan || data?.ts, 0);
-    return ts ? new Date(ts).toLocaleString() : "—";
+    return ts ? new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "—";
   }, [data]);
 
   const regimeLabel = data?.regime?.label || "NEUTRAL";
@@ -88,38 +95,86 @@ export default function Bear() {
 
   return (
     <div className="pageShell">
-      {/* ===== HEADER CARD ===== */}
-      <div className="topCard">
-        <div className="topLeft">
-          <div className="title">BEAR SCANNER</div>
-          <div className="meta">Last scan: {lastScan}</div>
-          <div className="regime">
-            Regime: <strong>{regimeLabel}</strong> ({regimeScore.toFixed(2)})
-          </div>
-
-          <div className="progress">
-            <div
-              className="bar"
-              style={{
-                width: `${Math.min(regimeScore, 100)}%`,
-              }}
-            />
+      <header className="topbar">
+        <div className="brandBlock">
+          <div className="brandTitle">BEAR SCANNER</div>
+          <div className="brandMeta">Laatste scan: {lastScan}</div>
+          <div className="regimeBlock">
+            <div className="regimeMeta">
+              <span>Huidig Regime</span>
+              <strong>{regimeLabel} ({regimeScore.toFixed(1)})</strong>
+            </div>
+            <div className="regimeMeter">
+              <div
+                className="regimeFill bearish"
+                style={{ width: `${Math.min(Math.max(regimeScore, 0), 100)}%` }}
+              />
+            </div>
           </div>
         </div>
+        <nav className="navRow">
+          <Link href="/" className="navBtn">Home</Link>
+          <Link href="/bull" className="navBtn">Bull</Link>
+          <Link href="/bear" className="navBtn active">Bear</Link>
+          <Link href="/analyse" className="navBtn">Analyse</Link>
+          <Link href="/trade" className="navBtn">Trade</Link>
+        </nav>
+      </header>
 
-        <div className="nav">
-          <Link href="/bull">Bull</Link>
-          <Link href="/bear">Bear</Link>
-          <Link href="/analyse">Analyse</Link>
-          <Link href="/trade">Trade</Link>
+      <main className="panels">
+        <FunnelBlock title="RADAR" items={funnel.radar} onOpenModal={setActiveCoin} />
+        <FunnelBlock title="WARMUP" items={funnel.warmup} onOpenModal={setActiveCoin} />
+        <FunnelBlock title="SETUP" items={funnel.setup} onOpenModal={setActiveCoin} />
+        <FunnelBlock title="ENTRY READY" items={funnel.entry_ready} onOpenModal={setActiveCoin} />
+      </main>
+
+      {/* MODAL / POP-UP */}
+      {activeCoin && (
+        <div className="modalBackdrop" onClick={() => setActiveCoin(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modalTop">
+              <div>
+                <div className="modalTitle">{activeCoin.symbol}</div>
+                <div className="modalSubtitle">{activeCoin.name || "Short Setup Analyse"}</div>
+              </div>
+              <button className="closeBtn" onClick={() => setActiveCoin(null)}>✕</button>
+            </div>
+
+            <div className="modalGrid">
+              <div className="metricBox">
+                <div className="metricLabel">Huidige Prijs</div>
+                <div className="metricValue">${fmtPrice(activeCoin.price)}</div>
+              </div>
+              <div className="metricBox">
+                <div className="metricLabel">AI Score</div>
+                <div className="metricValue">{activeCoin.aiScore || "—"}</div>
+              </div>
+              <div className="metricBox">
+                <div className="metricLabel">24h Change</div>
+                <div className="metricValue">{activeCoin.change24 ? `${activeCoin.change24.toFixed(2)}%` : "—"}</div>
+              </div>
+              <div className="metricBox">
+                <div className="metricLabel">Spread</div>
+                <div className="metricValue">{activeCoin?.ob?.spreadPct ? `${activeCoin.ob.spreadPct.toFixed(3)}%` : "—"}</div>
+              </div>
+            </div>
+
+            <div className="modalSection">
+              <div className="sectionHeading">ORDERBOOK DATA</div>
+              <div className="detailsGrid">
+                <div className="detailItem">
+                  <span className="detailLabel">Vol. Acceleratie</span>
+                  <span className="detailValue">{activeCoin.volAcc ? activeCoin.volAcc.toFixed(2) : "—"}</span>
+                </div>
+                <div className="detailItem">
+                  <span className="detailLabel">Min. Depth (USD)</span>
+                  <span className="detailValue">{activeCoin?.ob?.depthMin ? activeCoin.ob.depthMin.toFixed(0) : "—"}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* ===== FUNNEL SECTIONS ===== */}
-      <FunnelBlock title="RADAR" items={funnel.radar} />
-      <FunnelBlock title="WARMUP" items={funnel.warmup} />
-      <FunnelBlock title="SETUP" items={funnel.setup} />
-      <FunnelBlock title="ENTRY READY" items={funnel.entry_ready} />
+      )}
     </div>
   );
 }
