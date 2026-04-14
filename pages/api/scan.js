@@ -5,7 +5,7 @@ import { computeAiScore } from "../../lib/aiEngine";
 import { progressiveStage } from "../../lib/funnelEngine";
 import { fetchOrderbook, orderbookPass } from "../../lib/orderbookEngine";
 import { buildTradePlan } from "../../lib/tradePlanEngine";
-import { executeTrade } from "../../lib/tradeengine";
+import { executeTrade, updateOpenTrades } from "../../lib/tradeengine";
 
 export const config = { runtime: "nodejs" };
 
@@ -27,7 +27,7 @@ async function fetchJsonSafe(url, timeoutMs = 9000) {
       signal: controller.signal,
       headers: {
         accept: "application/json",
-        "user-agent": "CryptoCrocScanner/3.0",
+        "user-agent": "CryptoCrocScanner/FINAL",
       },
       cache: "no-store",
     });
@@ -64,8 +64,7 @@ async function mapLimit(list, limit, fn) {
 
 function safeObSymbol(symbol) {
   const s = up(symbol);
-  if (s.endsWith("USDT")) return s;
-  return `${s}USDT`;
+  return s.endsWith("USDT") ? s : `${s}USDT`;
 }
 
 const keyAuto = (m) => `scan:auto:${m}`;
@@ -92,17 +91,14 @@ export default async function handler(req, res) {
   const OB_CANDIDATES = 20;
   const OB_CONCURRENCY = 5;
   const SOFT_TIME_BUDGET_MS = 8000;
-
   const AUTO_MAX_PER_SCAN = 3;
 
   try {
+    /* ========= SCHEDULE ========= */
+
     const auto = (await kv.get(keyAuto(mode))) || {};
     if (auto?.nextDue && now < auto.nextDue) {
-      return res.json({
-        ok: true,
-        skipped: true,
-        reason: "not_due",
-      });
+      return res.json({ ok: true, skipped: true, reason: "not_due" });
     }
 
     const lock = await kv.set(
@@ -115,12 +111,12 @@ export default async function handler(req, res) {
       return res.json({ ok: true, skipped: true, reason: "locked" });
     }
 
-    /* ================= FETCH UNIVERSE ================= */
+    /* ========= FETCH ========= */
 
     const url =
       `https://api.coingecko.com/api/v3/coins/markets` +
       `?vs_currency=usd&order=market_cap_desc&per_page=${MAX_COINS}` +
-      `&page=1&sparkline=false&price_change_percentage=1h,24h`;
+      `&page=1&sparkline=false&price_change_percentage=24h`;
 
     const universe = await fetchJsonSafe(url, 11000);
 
@@ -143,7 +139,7 @@ export default async function handler(req, res) {
     const nextState = {};
     const preRows = [];
 
-    /* ================= PRE-SCORE ================= */
+    /* ========= PRE-SCORE ========= */
 
     for (const coin of universe) {
       const symbol = up(coin?.symbol);
@@ -157,8 +153,7 @@ export default async function handler(req, res) {
       const mcap = n(coin.market_cap);
 
       const volAcc = volume / 1_000_000;
-      const directional =
-        mode === "bull" ? mom24 > 0 : mom24 < 0;
+      const directional = mode === "bull" ? mom24 > 0 : mom24 < 0;
 
       const passes =
         directional &&
@@ -186,7 +181,7 @@ export default async function handler(req, res) {
       });
     }
 
-    /* ================= ORDERBOOK ================= */
+    /* ========= ORDERBOOK ========= */
 
     const obCandidates = preRows
       .filter((r) => n(r.prog?.stage) >= 2)
@@ -199,14 +194,13 @@ export default async function handler(req, res) {
         obMap.set(row.symbol, null);
         return;
       }
-
       const ob = await fetchOrderbook(
         safeObSymbol(row.symbol)
       );
       obMap.set(row.symbol, ob || null);
     });
 
-    /* ================= FINALIZE ================= */
+    /* ========= FINALIZE ========= */
 
     for (const row of preRows) {
       let prog = row.prog;
@@ -255,7 +249,7 @@ export default async function handler(req, res) {
       };
     }
 
-    /* ================= BUILD FUNNEL ================= */
+    /* ========= BUILD FUNNEL ========= */
 
     const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
 
@@ -266,7 +260,7 @@ export default async function handler(req, res) {
       else if (c.stage === 3) funnel.entry_ready.push(c);
     }
 
-    /* ================= AUTO EXECUTION ================= */
+    /* ========= AUTO OPEN ========= */
 
     let executed = 0;
 
@@ -275,16 +269,25 @@ export default async function handler(req, res) {
       if (!coin.tradePlan) continue;
 
       const result = await executeTrade(mode, coin, {
-        maxOpen: 3,
+        maxOpen: 5,
         entryTolerancePct: 4,
-        maxSpreadPct: 1.8,
+        maxSpreadPct: 2,
         minDepthUsd1p: 800,
       });
 
       if (result?.opened) executed++;
     }
 
-    /* ================= SAVE ================= */
+    /* ========= AUTO CLOSE + PNL ========= */
+
+    const latestPrices = {};
+    for (const c of Object.values(nextState)) {
+      latestPrices[c.symbol] = c.price;
+    }
+
+    await updateOpenTrades(mode, latestPrices);
+
+    /* ========= SAVE ========= */
 
     await kv.set(keyProgress(mode), nextState, { ex: 259200 });
 
