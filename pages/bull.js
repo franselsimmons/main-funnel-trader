@@ -19,6 +19,7 @@ function fmtPrice(x) {
 /* ================= COMPONENTS ================= */
 function CoinCard({ c, onOpenModal }) {
   const avatarLetters = (c.symbol || "CR").substring(0, 2).toUpperCase();
+
   return (
     <button className="coinButton" onClick={() => onOpenModal(c)}>
       <div className="coinCore">
@@ -29,10 +30,11 @@ function CoinCard({ c, onOpenModal }) {
             <div className="coinName">{c.name || "Crypto Asset"}</div>
           </div>
         </div>
+
         <div className="coinMarket">
           <div className="coinPrice">${fmtPrice(c.price)}</div>
           <div className="coinChange" style={{ color: "var(--muted)" }}>
-            AI Score: {c.aiScore || "—"}
+            AI Score: {c.aiScore ?? "—"}
           </div>
         </div>
       </div>
@@ -84,14 +86,25 @@ export default function Bull() {
     return () => clearInterval(t);
   }, []);
 
+  /* 🔥 FIX: juiste funnel pad */
+  const funnel =
+    data?.state?.funnel ||
+    data?.funnel || {
+      radar: [],
+      warmup: [],
+      setup: [],
+      entry_ready: [],
+    };
+
   const lastScan = useMemo(() => {
-    const ts = n(data?.lastScan || data?.ts, 0);
-    return ts ? new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "—";
+    const ts = n(data?.lastScan || data?.state?.ts, 0);
+    return ts
+      ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "—";
   }, [data]);
 
-  const regimeLabel = data?.regime?.label || "NEUTRAL";
-  const regimeScore = n(data?.regime?.score, 0);
-  const funnel = data?.funnel || {};
+  const regimeLabel = data?.state?.regime?.label || "NEUTRAL";
+  const regimeScore = n(data?.state?.regime?.score, 0);
 
   return (
     <div className="pageShell">
@@ -99,11 +112,13 @@ export default function Bull() {
         <div className="brandBlock">
           <div className="brandTitle">BULL SCANNER</div>
           <div className="brandMeta">Laatste scan: {lastScan}</div>
+
           <div className="regimeBlock">
             <div className="regimeMeta">
               <span>Huidig Regime</span>
               <strong>{regimeLabel} ({regimeScore.toFixed(1)})</strong>
             </div>
+
             <div className="regimeMeter">
               <div
                 className="regimeFill bullish"
@@ -112,6 +127,7 @@ export default function Bull() {
             </div>
           </div>
         </div>
+
         <nav className="navRow">
           <Link href="/" className="navBtn">Home</Link>
           <Link href="/bull" className="navBtn active">Bull</Link>
@@ -122,21 +138,19 @@ export default function Bull() {
       </header>
 
       <main className="panels">
-        {/* Volgorde aangepast: Entry Ready bovenaan */}
         <FunnelBlock title="ENTRY READY" items={funnel.entry_ready} onOpenModal={setActiveCoin} />
         <FunnelBlock title="SETUP" items={funnel.setup} onOpenModal={setActiveCoin} />
         <FunnelBlock title="WARMUP" items={funnel.warmup} onOpenModal={setActiveCoin} />
         <FunnelBlock title="RADAR" items={funnel.radar} onOpenModal={setActiveCoin} />
       </main>
 
-      {/* MODAL / POP-UP */}
       {activeCoin && (
         <div className="modalBackdrop" onClick={() => setActiveCoin(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modalTop">
               <div>
                 <div className="modalTitle">{activeCoin.symbol}</div>
-                <div className="modalSubtitle">{activeCoin.name || "Long Setup Analyse"}</div>
+                <div className="modalSubtitle">{activeCoin.name}</div>
               </div>
               <button className="closeBtn" onClick={() => setActiveCoin(null)}>✕</button>
             </div>
@@ -148,29 +162,7 @@ export default function Bull() {
               </div>
               <div className="metricBox">
                 <div className="metricLabel">AI Score</div>
-                <div className="metricValue">{activeCoin.aiScore || "—"}</div>
-              </div>
-              <div className="metricBox">
-                <div className="metricLabel">24h Change</div>
-                <div className="metricValue">{activeCoin.change24 ? `${activeCoin.change24.toFixed(2)}%` : "—"}</div>
-              </div>
-              <div className="metricBox">
-                <div className="metricLabel">Spread</div>
-                <div className="metricValue">{activeCoin?.ob?.spreadPct ? `${activeCoin.ob.spreadPct.toFixed(3)}%` : "—"}</div>
-              </div>
-            </div>
-
-            <div className="modalSection">
-              <div className="sectionHeading">ORDERBOOK DETAILS</div>
-              <div className="detailsGrid">
-                <div className="detailItem">
-                  <span className="detailLabel">Vol. Acceleratie</span>
-                  <span className="detailValue">{activeCoin.volAcc ? activeCoin.volAcc.toFixed(2) : "—"}</span>
-                </div>
-                <div className="detailItem">
-                  <span className="detailLabel">Depth (USD)</span>
-                  <span className="detailValue">{activeCoin?.ob?.depthMin ? activeCoin.ob.depthMin.toFixed(0) : "—"}</span>
-                </div>
+                <div className="metricValue">{activeCoin.aiScore ?? "—"}</div>
               </div>
             </div>
           </div>
