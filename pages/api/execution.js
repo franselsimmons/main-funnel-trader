@@ -3,9 +3,19 @@ import { updateOpenTrades } from "../../lib/tradeEngine";
 
 export const config = { runtime: "nodejs" };
 
+function isAuthorized(req) {
+  const token = process.env.CRON_SECRET;
+  if (!token) return true;
+  return req.headers.authorization === `Bearer ${token}`;
+}
+
 const keyProgress = (m) => `progress:${m}`;
 
 export default async function handler(req, res) {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
   try {
     const modes = ["bull", "bear"];
 
@@ -22,13 +32,13 @@ export default async function handler(req, res) {
 
     return res.json({
       ok: true,
-      type: "execution_only",
+      type: "execution_loop",
       ts: Date.now(),
     });
 
   } catch (e) {
     console.error("EXECUTION_FATAL:", e);
-    return res.json({
+    return res.status(500).json({
       ok: false,
       error: String(e?.message || e),
     });
