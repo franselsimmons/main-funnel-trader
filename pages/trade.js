@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-function arr(v) {
-  return Array.isArray(v) ? v : [];
-}
-function n(v, d = 0) {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : d;
-}
+function arr(v) { return Array.isArray(v) ? v : []; }
+function n(v, d = 0) { const x = Number(v); return Number.isFinite(x) ? x : d; }
 function fmtPrice(v) {
   const x = n(v, 0);
   if (x >= 1000) return x.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -38,16 +33,11 @@ export default function Trade() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/positions", { cache: "no-store" })
-        .then((r) => r.json())
-        .then((j) => j?.positions || [])
-        .catch(() => []),
+      fetch("/api/positions", { cache: "no-store" }).then((r) => r.json()).then((j) => j?.positions || []).catch(() => []),
       fetch("/api/state?mode=bull", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
       fetch("/api/state?mode=bear", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
     ]).then(([p, b1, b2]) => {
-      setPositions(p);
-      setBull(b1);
-      setBear(b2);
+      setPositions(p); setBull(b1); setBear(b2);
     });
   }, []);
 
@@ -58,23 +48,17 @@ export default function Trade() {
   const bearEntry = bear?.funnel?.entry_ready?.length || 0;
 
   const bullAvgPnl = bullPositions.length
-    ? bullPositions.reduce((a, p) => a + n(p?.pnlPct ?? p?.pnl, 0), 0) / bullPositions.length
-    : 0;
-
+    ? bullPositions.reduce((a, p) => a + n(p?.pnlPct ?? p?.pnl, 0), 0) / bullPositions.length : 0;
   const bearAvgPnl = bearPositions.length
-    ? bearPositions.reduce((a, p) => a + n(p?.pnlPct ?? p?.pnl, 0), 0) / bearPositions.length
-    : 0;
+    ? bearPositions.reduce((a, p) => a + n(p?.pnlPct ?? p?.pnl, 0), 0) / bearPositions.length : 0;
 
-  let improvement = "Trade tunnel oogt gezond op dit snapshot.";
+  let improvement = "Trade tunnel ziet er gezond uit. Geen directe actie vereist.";
   if (bullEntry + bearEntry > 0 && positions.length === 0) {
-    improvement =
-      "Er zijn entry-ready signals maar geen open trades. Entry tolerance / live spread reject / websocket execution kunnen te streng zijn.";
+    improvement = "Entry-ready signals gespot, maar geen open trades. Controleer je spread of execution websockets.";
   } else if (positions.length > 0 && bullAvgPnl + bearAvgPnl < 0) {
-    improvement =
-      "Trades staan gemiddeld negatief. Check entry timing (te laat), SL/TP afstand en spread reject.";
+    improvement = "Gemiddelde PnL staat negatief. Controleer entry timing (te laat?) of je SL/TP afstanden.";
   } else if (bullEntry === 0 && bearEntry === 0) {
-    improvement =
-      "Geen entry-ready flow. Grootste winst zit nu in setup → entry conversie (OB thresholds).";
+    improvement = "Geen entry-ready flow. Focus momenteel op Setup → Entry conversie (OB thresholds).";
   }
 
   return (
@@ -82,10 +66,10 @@ export default function Trade() {
       <header className="topbar">
         <div className="brandBlock">
           <div className="brandTitle">TRADE TUNNEL</div>
-          <div className="brandMeta">Entry flow, open posities en execution health</div>
+          <div className="brandMeta">Monitor open posities en execution health</div>
         </div>
-
         <nav className="navRow">
+          <Link href="/" className="navBtn">Home</Link>
           <Link href="/bull" className="navBtn">Bull</Link>
           <Link href="/bear" className="navBtn">Bear</Link>
           <Link href="/analyse" className="navBtn">Analyse</Link>
@@ -96,37 +80,33 @@ export default function Trade() {
       <main className="analysisPage">
         <div className="compareGrid">
           <div className="compareCard">
-            <div className="compareTitle">Bull trade tunnel</div>
+            <div className="compareTitle">Bull Tunnel</div>
             <div className="compareMeta">
-              Entry ready <strong>{bullEntry}</strong> • Open <strong>{bullPositions.length}</strong> • Avg PnL{" "}
-              <strong className={pnlClass(bullAvgPnl)}>
-                {bullAvgPnl > 0 ? "+" : ""}{bullAvgPnl.toFixed(2)}%
-              </strong>
+              Ready: <strong>{bullEntry}</strong> • Open: <strong>{bullPositions.length}</strong><br/>
+              Avg PnL: <strong className={pnlClass(bullAvgPnl)}>{bullAvgPnl > 0 ? "+" : ""}{bullAvgPnl.toFixed(2)}%</strong>
             </div>
           </div>
 
           <div className="compareCard">
-            <div className="compareTitle">Bear trade tunnel</div>
+            <div className="compareTitle">Bear Tunnel</div>
             <div className="compareMeta">
-              Entry ready <strong>{bearEntry}</strong> • Open <strong>{bearPositions.length}</strong> • Avg PnL{" "}
-              <strong className={pnlClass(bearAvgPnl)}>
-                {bearAvgPnl > 0 ? "+" : ""}{bearAvgPnl.toFixed(2)}%
-              </strong>
+              Ready: <strong>{bearEntry}</strong> • Open: <strong>{bearPositions.length}</strong><br/>
+              Avg PnL: <strong className={pnlClass(bearAvgPnl)}>{bearAvgPnl > 0 ? "+" : ""}{bearAvgPnl.toFixed(2)}%</strong>
             </div>
           </div>
         </div>
 
         <section className="analysisSection">
-          <div className="analysisSectionTitle">Wat verbeteren</div>
+          <div className="analysisSectionTitle">Status & Advies</div>
           <div className="adviceBox">
             <div className="adviceItem">{improvement}</div>
           </div>
         </section>
 
         <section className="analysisSection">
-          <div className="analysisSectionTitle">Open posities</div>
+          <div className="analysisSectionTitle">Actieve Posities</div>
           <div className="tradeCardList">
-            {!positions.length && <div className="emptyState">Geen open posities</div>}
+            {!positions.length && <div className="emptyState">Momenteel geen open posities.</div>}
 
             {positions.map((p, idx) => {
               const pnl = n(p?.pnlPct ?? p?.pnl, 0);
@@ -134,17 +114,15 @@ export default function Trade() {
                 <div className="tradeRow" key={`${p.symbol || "pos"}-${idx}`}>
                   <div>
                     <div className="coinSymbol">{p.symbol || "—"}</div>
-                    <div className="coinName">
-                      {String(p?.side || "").toUpperCase()} • mode {String(p?.mode || "—").toUpperCase()}
+                    <div className="coinName" style={{color: p.side === "LONG" ? "var(--green)" : "var(--red)"}}>
+                      {String(p?.side || "").toUpperCase()}
                     </div>
                   </div>
-
                   <div className="tradeMid">
-                    <span>entry ${fmtPrice(p?.entry)}</span>
-                    <span>sl ${fmtPrice(p?.sl)}</span>
-                    <span>tp ${fmtPrice(p?.tp)}</span>
+                    <span className="chip">In: ${fmtPrice(p?.entry)}</span>
+                    <span className="chip">SL: ${fmtPrice(p?.sl)}</span>
+                    <span className="chip">TP: ${fmtPrice(p?.tp)}</span>
                   </div>
-
                   <div className={`tradePnl ${pnlClass(pnl)}`}>
                     {pnl > 0 ? "+" : ""}{pnl.toFixed(2)}%
                   </div>
