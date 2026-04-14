@@ -1,12 +1,12 @@
 {
-  "crons": [
+  "cron": [
     {
       "path": "/api/scan?mode=bull",
-      "schedule": "*/10 * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/scan?mode=bear",
-      "schedule": "*/10 * * * *"
+      "schedule": "*/15 * * * *"
     }
   ]
 }
