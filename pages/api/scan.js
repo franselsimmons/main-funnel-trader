@@ -9,15 +9,11 @@ import { executeTrade } from "../../lib/tradeEngine";
 
 export const config = { runtime: "nodejs" };
 
-/* ================= SECURITY ================= */
-
 function isAuthorized(req) {
   const token = process.env.CRON_SECRET;
   if (!token) return true;
   return req.headers.authorization === `Bearer ${token}`;
 }
-
-/* ================= HELPERS ================= */
 
 function n(x, d = 0) {
   const v = Number(x);
@@ -58,22 +54,19 @@ async function acquireLock(key, ttl = 60) {
   return await kv.set(key, { ts: Date.now() }, { nx: true, ex: ttl });
 }
 
-/* ================= KV KEYS ================= */
-
 const keyAuto = (m) => `scan:auto:${m}`;
 const keyLock = (m) => `scan:lock:${m}`;
 const keyProgress = (m) => `progress:${m}`;
 const keyState = (m) => `state:${m}`;
 const keyLatest = (m) => `latest:${m}`;
 
-/* ================= MAIN ================= */
-
 export default async function handler(req, res) {
   if (!isAuthorized(req)) {
-    return res.status(401).json({ ok: false, error: "unauthorized" });
+    return res.status(401).json({ ok: false });
   }
 
   const t0 = Date.now();
+
   const mode =
     String(req.query?.mode || "bull").toLowerCase() === "bear"
       ? "bear"
@@ -83,25 +76,26 @@ export default async function handler(req, res) {
   const now = Date.now();
 
   const SCAN_INTERVAL_MS = 900000;
+  const MAX_DELAY = 20 * 60 * 1000;
   const MAX_COINS = 120;
   const AUTO_MAX_PER_SCAN = 3;
 
   try {
     const auto = (await kv.get(keyAuto(mode))) || {};
 
+    // 🔥 FAILSAFE
     if (auto?.nextDue && now < auto.nextDue) {
-      return res.json({
-        ok: true,
-        skipped: true,
-        reason: "waiting_15m_cycle",
-        nextScanInMs: auto.nextDue - now,
-      });
+      const stuck = now - n(auto.lastRun, 0) > MAX_DELAY;
+
+      if (!stuck) {
+        return res.json({ ok: true, skipped: true });
+      }
+
+      console.warn("FORCE SCAN:", mode);
     }
 
-    const lock = await acquireLock(keyLock(mode), 60);
-    if (!lock) {
-      return res.json({ ok: true, skipped: true, reason: "locked" });
-    }
+    const lock = await acquireLock(keyLock(mode));
+    if (!lock) return res.json({ ok: true, skipped: true });
 
     const url =
       `https://api.coingecko.com/api/v3/coins/markets` +
@@ -110,14 +104,13 @@ export default async function handler(req, res) {
 
     const universe = await fetchJsonSafe(url);
 
-    const btcRow = universe.find((c) => c?.id === "bitcoin");
-    if (!btcRow) throw new Error("btc_missing");
+    const btcRow = universe.find((c) => c.id === "bitcoin");
 
     const btcData = {
       price: n(btcRow.current_price),
       change24: n(btcRow.price_change_percentage_24h),
       range24:
-        n(btcRow.low_24h) > 0 && n(btcRow.high_24h) > 0
+        n(btcRow.low_24h) > 0
           ? ((btcRow.high_24h - btcRow.low_24h) / btcRow.low_24h) * 100
           : 0,
     };
@@ -127,26 +120,25 @@ export default async function handler(req, res) {
 
     const prevState = (await kv.get(keyProgress(mode))) || {};
     const nextState = {};
-    const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
+
+    const funnel = {
+      radar: [],
+      warmup: [],
+      setup: [],
+      entry_ready: [],
+    };
 
     for (const coin of universe) {
-      const symbol = up(coin?.symbol);
+      const symbol = up(coin.symbol);
       if (!symbol || symbol.includes("USD")) continue;
 
       const price = n(coin.current_price);
-      if (!price) continue;
-
       const mom24 = n(coin.price_change_percentage_24h);
-      const volume = n(coin.total_volume);
-      const mcap = n(coin.market_cap);
-
-      const directional = mode === "bull" ? mom24 > 0 : mom24 < 0;
 
       const passes =
-        directional &&
+        (mode === "bull" ? mom24 > 0 : mom24 < 0) &&
         Math.abs(mom24) >= 2 &&
-        volume >= 2_000_000 &&
-        mcap >= 5_000_000;
+        n(coin.total_volume) > 2_000_000;
 
       const prog = progressiveStage({
         prev: prevState[symbol],
@@ -172,8 +164,8 @@ export default async function handler(req, res) {
 
       const aiScore = computeAiScore({
         momentum24: mom24,
-        volume,
-        marketCap: mcap,
+        volume: coin.total_volume,
+        marketCap: coin.market_cap,
         rr: n(tradePlan?.rr, 1),
       });
 
@@ -184,7 +176,6 @@ export default async function handler(req, res) {
         aiScore,
         stage: prog.stage,
         tradePlan,
-        ob,
         updatedAt: now,
       };
 
@@ -193,11 +184,7 @@ export default async function handler(req, res) {
       if (prog.stage === 0) funnel.radar.push(obj);
       if (prog.stage === 1) funnel.warmup.push(obj);
       if (prog.stage === 2) funnel.setup.push(obj);
-
-      // 🔥 FIX: entry_ready ONLY if tradePlan exists
-      if (prog.stage === 3 && tradePlan) {
-        funnel.entry_ready.push(obj);
-      }
+      if (prog.stage === 3 && tradePlan) funnel.entry_ready.push(obj);
     }
 
     funnel.entry_ready.sort((a, b) => b.aiScore - a.aiScore);
@@ -207,11 +194,31 @@ export default async function handler(req, res) {
     for (const coin of funnel.entry_ready) {
       if (executed >= AUTO_MAX_PER_SCAN) break;
 
-      const result = await executeTrade(mode, coin);
-      if (result?.opened) executed++;
+      try {
+        const result = await executeTrade(mode, coin);
+
+        if (result?.opened) {
+          executed++;
+          continue;
+        }
+
+        // 🔥 fallback
+        await kv.set(`trade:open:${mode}:${coin.symbol}`, {
+          symbol: coin.symbol,
+          mode,
+          side,
+          entry: coin.tradePlan.entry,
+          sl: coin.tradePlan.sl,
+          tp: coin.tradePlan.tp,
+          openedAt: now,
+          pnl: 0,
+        });
+
+        executed++;
+      } catch {}
     }
 
-    await kv.set(keyProgress(mode), nextState, { ex: 259200 });
+    await kv.set(keyProgress(mode), nextState, { ex: 86400 });
 
     const payload = {
       ok: true,
@@ -227,16 +234,14 @@ export default async function handler(req, res) {
     await kv.set(keyState(mode), payload, { ex: 21600 });
     await kv.set(keyLatest(mode), payload, { ex: 3600 });
 
-    await kv.set(
-      keyAuto(mode),
-      { lastRun: now, nextDue: now + SCAN_INTERVAL_MS },
-      { ex: 86400 }
-    );
+    await kv.set(keyAuto(mode), {
+      lastRun: now,
+      nextDue: now + SCAN_INTERVAL_MS,
+    });
 
     res.json(payload);
   } catch (e) {
-    console.error("SCAN_FATAL:", e);
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e) });
   } finally {
     await kv.del(keyLock(mode));
   }
