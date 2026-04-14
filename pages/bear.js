@@ -3,28 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-/* ===== helpers ===== */
-
 function n(x, d = 0) {
   const v = Number(x);
   return Number.isFinite(v) ? v : d;
 }
-
-function fmtUSD(x, dec = 6) {
-  const v = Number(x);
-  if (!Number.isFinite(v)) return "—";
-  if (v >= 1000) return `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-  return `$${v.toFixed(dec)}`;
-}
-
-function fmtPct(x) {
-  const v = Number(x);
-  if (!Number.isFinite(v)) return "—";
-  const s = v >= 0 ? "+" : "";
-  return `${s}${v.toFixed(2)}%`;
-}
-
-/* ===== component ===== */
 
 export default function Bear() {
   const mode = "bear";
@@ -40,21 +22,17 @@ export default function Bear() {
 
   useEffect(() => {
     loadState();
-
-    // Alleen state refresh, GEEN scan
     const t = setInterval(loadState, 15000);
-
     return () => clearInterval(t);
   }, []);
 
   const lastScan = useMemo(() => {
-    const ts = n(data?.ts || data?.scannedAt || 0);
+    const ts = n(data?.lastScan || data?.ts, 0);
     return ts ? new Date(ts).toLocaleString() : "—";
   }, [data]);
 
   const regimeLabel = useMemo(() => {
-    const r = data?.regime || {};
-    return String(r.label || r.regime || "NEUTRAL");
+    return String(data?.regime?.label || "NEUTRAL");
   }, [data]);
 
   const regimeScore = n(data?.regime?.score, 0);
