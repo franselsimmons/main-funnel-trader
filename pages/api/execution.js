@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv";
+import { updateOpenTrades } from "../../lib/tradeEngine";
 
 export const config = { runtime: "nodejs" };
 
@@ -12,44 +13,36 @@ const keyProgress = (m) => `progress:${m}`;
 
 export default async function handler(req, res) {
   if (!isAuthorized(req)) {
-    return res.status(401).json({ ok: false });
+    return res.status(401).json({ ok: false, error: "unauthorized" });
   }
 
   try {
     const modes = ["bull", "bear"];
 
     for (const mode of modes) {
-      const keys = await kv.keys(`trade:open:${mode}:*`);
-      const progress = (await kv.get(keyProgress(mode))) || {};
+      const state = (await kv.get(keyProgress(mode))) || {};
+      const latestPrices = {};
 
-      for (const key of keys) {
-        const trade = await kv.get(key);
-        if (!trade) continue;
-
-        const coin = progress[trade.symbol];
-        if (!coin) continue;
-
-        const price = coin.price;
-
-        let pnl = 0;
-
-        if (trade.side === "LONG") {
-          pnl = ((price - trade.entry) / trade.entry) * 100;
-        } else {
-          pnl = ((trade.entry - price) / trade.entry) * 100;
+      for (const coin of Object.values(state)) {
+        if (coin?.symbol && coin?.price) {
+          latestPrices[coin.symbol] = coin.price;
         }
-
-        await kv.set(key, {
-          ...trade,
-          price,
-          pnl,
-          updatedAt: Date.now(),
-        });
       }
+
+      await updateOpenTrades(mode, latestPrices);
     }
 
-    res.json({ ok: true });
+    return res.json({
+      ok: true,
+      type: "execution_loop",
+      ts: Date.now(),
+    });
+
   } catch (e) {
-    res.status(500).json({ ok: false });
+    console.error("EXECUTION_FATAL:", e);
+    return res.status(500).json({
+      ok: false,
+      error: String(e?.message || e),
+    });
   }
 }
