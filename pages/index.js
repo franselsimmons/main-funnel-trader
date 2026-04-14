@@ -1,42 +1,75 @@
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 export default function Home() {
+  const [bull, setBull] = useState(null);
+  const [bear, setBear] = useState(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/state?mode=bull", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+      fetch("/api/state?mode=bear", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+    ]).then(([b1, b2]) => {
+      setBull(b1);
+      setBear(b2);
+    });
+  }, []);
+
+  const bullEntry = bull?.funnel?.entry_ready?.length || 0;
+  const bearEntry = bear?.funnel?.entry_ready?.length || 0;
+  const bullSetup = bull?.funnel?.setup?.length || 0;
+  const bearSetup = bear?.funnel?.setup?.length || 0;
+
   return (
-    <div className="homeWrap">
-      <div className="homeHero">
-        <h1>FUNNEL TRADER</h1>
-        <p>Institutional AI Market Scanner</p>
-      </div>
+    <div className="pageShell homePage">
+      <section className="heroCard">
+        <div className="eyebrow">MAIN V6</div>
+        <h1 className="heroTitle">Scanner & Trade Desk</h1>
+        <p className="heroText">
+          Rustig overzicht bovenaan. Diepte pas als je klikt.
+        </p>
 
-      <div className="homeGrid">
-        <Link href="/bull">
-          <div className="homeCard">
-            <h2>BULL MARKET</h2>
-            <p>Long side opportunities</p>
+        <div className="heroStats">
+          <div className="heroStat">
+            <span className="heroStatLabel">Bull entry ready</span>
+            <span className="heroStatValue">{bullEntry}</span>
           </div>
+          <div className="heroStat">
+            <span className="heroStatLabel">Bear entry ready</span>
+            <span className="heroStatValue">{bearEntry}</span>
+          </div>
+          <div className="heroStat">
+            <span className="heroStatLabel">Bull setup</span>
+            <span className="heroStatValue">{bullSetup}</span>
+          </div>
+          <div className="heroStat">
+            <span className="heroStatLabel">Bear setup</span>
+            <span className="heroStatValue">{bearSetup}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="homeGrid">
+        <Link href="/bull" className="homeCard">
+          <div className="homeCardTitle">Bull Scanner</div>
+          <div className="homeCardText">Long kansen, funnel en modal coin detail.</div>
         </Link>
 
-        <Link href="/bear">
-          <div className="homeCard">
-            <h2>BEAR MARKET</h2>
-            <p>Short side opportunities</p>
-          </div>
+        <Link href="/bear" className="homeCard">
+          <div className="homeCardTitle">Bear Scanner</div>
+          <div className="homeCardText">Short kansen, funnel en modal coin detail.</div>
         </Link>
 
-        <Link href="/analyse">
-          <div className="homeCard">
-            <h2>ANALYSE</h2>
-            <p>Heatmaps & Equity</p>
-          </div>
+        <Link href="/analyse" className="homeCard">
+          <div className="homeCardTitle">Analyse</div>
+          <div className="homeCardText">Bull en bear apart, bottlenecks en verbeteradvies.</div>
         </Link>
 
-        <Link href="/trade">
-          <div className="homeCard">
-            <h2>TRADE ENGINE</h2>
-            <p>Live Positions</p>
-          </div>
+        <Link href="/trade" className="homeCard">
+          <div className="homeCardTitle">Trade Tunnel</div>
+          <div className="homeCardText">Open posities, entry flow en execution health.</div>
         </Link>
-      </div>
+      </section>
     </div>
   );
 }
