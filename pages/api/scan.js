@@ -5,9 +5,19 @@ import { computeAiScore } from "../../lib/aiEngine";
 import { progressiveStage } from "../../lib/funnelEngine";
 import { fetchOrderbook, orderbookPass } from "../../lib/orderbookEngine";
 import { buildTradePlan } from "../../lib/tradePlanEngine";
-import { executeTrade, updateOpenTrades } from "../../lib/tradeEngine";
+import { executeTrade } from "../../lib/tradeEngine";
 
 export const config = { runtime: "nodejs" };
+
+/* ================= SECURITY ================= */
+
+function isAuthorized(req) {
+  const token = process.env.CRON_SECRET;
+  if (!token) return true;
+  return req.headers.authorization === `Bearer ${token}`;
+}
+
+/* ================= HELPERS ================= */
 
 function n(x, d = 0) {
   const v = Number(x);
@@ -23,17 +33,14 @@ function safeObSymbol(symbol) {
   return s.endsWith("USDT") ? s : `${s}USDT`;
 }
 
-async function fetchJsonSafe(url, timeoutMs = 9000) {
+async function fetchJsonSafe(url, timeoutMs = 10000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const r = await fetch(url, {
       signal: controller.signal,
-      headers: {
-        accept: "application/json",
-        "user-agent": "CryptoCrocSwing/1.0",
-      },
+      headers: { accept: "application/json" },
       cache: "no-store",
     });
 
@@ -47,25 +54,11 @@ async function fetchJsonSafe(url, timeoutMs = 9000) {
   }
 }
 
-async function mapLimit(list, limit, fn) {
-  const out = new Array(list.length);
-  let idx = 0;
-
-  async function worker() {
-    while (idx < list.length) {
-      const i = idx++;
-      try {
-        out[i] = await fn(list[i], i);
-      } catch {
-        out[i] = null;
-      }
-    }
-  }
-
-  const workers = Array.from({ length: Math.max(1, limit) }, () => worker());
-  await Promise.all(workers);
-  return out;
+async function acquireLock(key, ttl = 60) {
+  return await kv.set(key, { ts: Date.now() }, { nx: true, ex: ttl });
 }
+
+/* ================= KV KEYS ================= */
 
 const keyAuto = (m) => `scan:auto:${m}`;
 const keyLock = (m) => `scan:lock:${m}`;
@@ -73,7 +66,13 @@ const keyProgress = (m) => `progress:${m}`;
 const keyState = (m) => `state:${m}`;
 const keyLatest = (m) => `latest:${m}`;
 
+/* ================= MAIN ================= */
+
 export default async function handler(req, res) {
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
   const t0 = Date.now();
 
   const mode =
@@ -84,30 +83,11 @@ export default async function handler(req, res) {
   const side = mode === "bear" ? "SHORT" : "LONG";
   const now = Date.now();
 
-  /* ===== SWING SETTINGS ===== */
-
-  const SCAN_INTERVAL_MS = 900000; // 15 minuten
-  const LOCK_TTL_SEC = 60;
+  const SCAN_INTERVAL_MS = 900000; // 15 min
   const MAX_COINS = 120;
-  const OB_CANDIDATES = 20;
-  const OB_CONCURRENCY = 5;
-  const SOFT_TIME_BUDGET_MS = 10000;
   const AUTO_MAX_PER_SCAN = 3;
 
   try {
-    /* ===== AUTO CLOSE (ALTIJD) ===== */
-
-    const latestState = (await kv.get(keyProgress(mode))) || {};
-    const latestPrices = {};
-
-    for (const c of Object.values(latestState)) {
-      latestPrices[c.symbol] = c.price;
-    }
-
-    await updateOpenTrades(mode, latestPrices);
-
-    /* ===== SCHEDULE ===== */
-
     const auto = (await kv.get(keyAuto(mode))) || {};
 
     if (auto?.nextDue && now < auto.nextDue) {
@@ -119,12 +99,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const lock = await kv.set(
-      keyLock(mode),
-      { ts: now },
-      { nx: true, ex: LOCK_TTL_SEC }
-    );
-
+    const lock = await acquireLock(keyLock(mode), 60);
     if (!lock) {
       return res.json({ ok: true, skipped: true, reason: "locked" });
     }
@@ -136,7 +111,7 @@ export default async function handler(req, res) {
       `?vs_currency=usd&order=market_cap_desc&per_page=${MAX_COINS}` +
       `&page=1&sparkline=false&price_change_percentage=24h`;
 
-    const universe = await fetchJsonSafe(url, 11000);
+    const universe = await fetchJsonSafe(url);
 
     const btcRow = universe.find((c) => c?.id === "bitcoin");
     if (!btcRow) throw new Error("btc_missing");
@@ -153,11 +128,9 @@ export default async function handler(req, res) {
     const regimeData = computeBtcRegime(btcData);
     const thresholds = adaptiveThresholds(regimeData?.regime);
 
-    const prevState = latestState;
+    const prevState = (await kv.get(keyProgress(mode))) || {};
     const nextState = {};
-    const preRows = [];
-
-    /* ===== PRE-SCORE ===== */
+    const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
 
     for (const coin of universe) {
       const symbol = up(coin?.symbol);
@@ -170,13 +143,12 @@ export default async function handler(req, res) {
       const volume = n(coin.total_volume);
       const mcap = n(coin.market_cap);
 
-      const volAcc = volume / 1_000_000;
       const directional = mode === "bull" ? mom24 > 0 : mom24 < 0;
 
       const passes =
         directional &&
         Math.abs(mom24) >= 2 &&
-        volAcc >= 2 &&
+        volume >= 2_000_000 &&
         mcap >= 5_000_000;
 
       const prog = progressiveStage({
@@ -185,94 +157,48 @@ export default async function handler(req, res) {
         now,
       });
 
-      preRows.push({
-        symbol,
-        coin,
-        price,
-        mom24,
-        volume,
-        mcap,
-        volAcc,
-        prog,
-      });
-    }
-
-    /* ===== ORDERBOOK ===== */
-
-    const obCandidates = preRows
-      .filter((r) => n(r.prog?.stage) >= 2)
-      .slice(0, OB_CANDIDATES);
-
-    const obMap = new Map();
-
-    await mapLimit(obCandidates, OB_CONCURRENCY, async (row) => {
-      if (Date.now() - t0 > SOFT_TIME_BUDGET_MS) {
-        obMap.set(row.symbol, null);
-        return;
-      }
-
-      const ob = await fetchOrderbook(safeObSymbol(row.symbol));
-      obMap.set(row.symbol, ob || null);
-    });
-
-    /* ===== FINALIZE ===== */
-
-    for (const row of preRows) {
-      let prog = row.prog;
-      let ob = null;
       let tradePlan = null;
+      let ob = null;
 
-      if (n(prog.stage) >= 3) {
-        ob = obMap.get(row.symbol) || null;
-
+      if (prog.stage >= 3) {
+        ob = await fetchOrderbook(safeObSymbol(symbol));
         if (orderbookPass(ob, thresholds)) {
           tradePlan = buildTradePlan({
-            price: row.price,
+            price,
             range24: btcData.range24,
             regime: regimeData?.regime,
             side,
           });
-        } else {
-          prog = { ...prog, stage: 2 };
         }
       }
 
       const aiScore = computeAiScore({
-        momentum24: row.mom24,
-        volAcc: row.volAcc,
+        momentum24: mom24,
+        volume,
+        marketCap: mcap,
         rr: n(tradePlan?.rr, 1),
-        marketCap: row.mcap,
-        volume: row.volume,
       });
 
-      nextState[row.symbol] = {
-        symbol: row.symbol,
-        name: row.coin?.name || "",
-        image: row.coin?.image || "",
-        side,
-        price: row.price,
+      const obj = {
+        symbol,
+        name: coin.name,
+        price,
         aiScore,
         stage: prog.stage,
         tradePlan,
         ob,
         updatedAt: now,
       };
+
+      nextState[symbol] = obj;
+
+      if (prog.stage === 0) funnel.radar.push(obj);
+      if (prog.stage === 1) funnel.warmup.push(obj);
+      if (prog.stage === 2) funnel.setup.push(obj);
+      if (prog.stage === 3) funnel.entry_ready.push(obj);
     }
 
-    /* ===== FUNNEL ===== */
-
-    const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
-
-    for (const c of Object.values(nextState)) {
-      if (c.stage === 0) funnel.radar.push(c);
-      else if (c.stage === 1) funnel.warmup.push(c);
-      else if (c.stage === 2) funnel.setup.push(c);
-      else if (c.stage === 3) funnel.entry_ready.push(c);
-    }
-
-    funnel.entry_ready.sort((a, b) => n(b.aiScore) - n(a.aiScore));
-
-    /* ===== AUTO OPEN ===== */
+    funnel.entry_ready.sort((a, b) => b.aiScore - a.aiScore);
 
     let executed = 0;
 
@@ -281,17 +207,15 @@ export default async function handler(req, res) {
       if (!coin.tradePlan) continue;
 
       const result = await executeTrade(mode, coin);
-
       if (result?.opened) executed++;
     }
-
-    /* ===== SAVE ===== */
 
     await kv.set(keyProgress(mode), nextState, { ex: 259200 });
 
     const payload = {
       ok: true,
       mode,
+      ts: now,
       regime: regimeData,
       funnel,
       autoExecuted: executed,
@@ -308,14 +232,12 @@ export default async function handler(req, res) {
       { ex: 86400 }
     );
 
-    return res.json(payload);
+    res.json(payload);
 
   } catch (e) {
     console.error("SCAN_FATAL:", e);
-    return res.json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   } finally {
-    try {
-      await kv.del(keyLock(mode));
-    } catch {}
+    await kv.del(keyLock(mode));
   }
 }
