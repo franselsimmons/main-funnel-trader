@@ -5,7 +5,7 @@ import { computeAiScore } from "../../lib/aiEngine";
 import { progressiveStage } from "../../lib/funnelEngine";
 import { fetchOrderbook, orderbookPass } from "../../lib/orderbookEngine";
 import { buildTradePlan } from "../../lib/tradePlanEngine";
-import { executeTrade, updateOpenTrades } from "../../lib/tradeengine";
+import { executeTrade, updateOpenTrades } from "../../lib/tradeEngine";
 
 export const config = { runtime: "nodejs" };
 
@@ -278,7 +278,7 @@ export default async function handler(req, res) {
       if (result?.opened) executed++;
     }
 
-    /* ========= AUTO CLOSE + PNL ========= */
+    /* ========= AUTO CLOSE ========= */
 
     const latestPrices = {};
     for (const c of Object.values(nextState)) {
