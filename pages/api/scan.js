@@ -5,6 +5,7 @@ import { computeAiScore } from "../../lib/aiEngine";
 import { progressiveStage } from "../../lib/funnelEngine";
 import { fetchOrderbook, orderbookPass } from "../../lib/orderbookEngine";
 import { buildTradePlan } from "../../lib/tradePlanEngine";
+import { executeTrade } from "../../lib/tradeengine";
 
 export const config = { runtime: "nodejs" };
 
@@ -17,8 +18,6 @@ function up(x) {
   return String(x || "").toUpperCase();
 }
 
-/* ================= SAFE HELPERS ================= */
-
 async function fetchJsonSafe(url, timeoutMs = 9000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -28,26 +27,15 @@ async function fetchJsonSafe(url, timeoutMs = 9000) {
       signal: controller.signal,
       headers: {
         accept: "application/json",
-        "user-agent": "CryptoCrocScanner/2.0",
+        "user-agent": "CryptoCrocScanner/3.0",
       },
       cache: "no-store",
     });
 
     const text = await r.text();
+    const json = JSON.parse(text);
 
-    let json = null;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new Error(`bad_json: ${text.slice(0, 120)}`);
-    }
-
-    if (!r.ok) {
-      const err = new Error(`HTTP_${r.status}`);
-      err.status = r.status;
-      throw err;
-    }
-
+    if (!r.ok) throw new Error(`HTTP_${r.status}`);
     return json;
   } finally {
     clearTimeout(id);
@@ -64,7 +52,7 @@ async function mapLimit(list, limit, fn) {
       try {
         out[i] = await fn(list[i], i);
       } catch {
-        out[i] = null; // NEVER crash entire scan
+        out[i] = null;
       }
     }
   }
@@ -74,26 +62,17 @@ async function mapLimit(list, limit, fn) {
   return out;
 }
 
-/* ================= SYMBOL SAFETY ================= */
-
 function safeObSymbol(symbol) {
   const s = up(symbol);
   if (s.endsWith("USDT")) return s;
   return `${s}USDT`;
 }
 
-/* ================= KV KEYS ================= */
-
 const keyAuto = (m) => `scan:auto:${m}`;
 const keyLock = (m) => `scan:lock:${m}`;
 const keyProgress = (m) => `progress:${m}`;
 const keyState = (m) => `state:${m}`;
 const keyLatest = (m) => `latest:${m}`;
-
-const KV_CG_CACHE = "cg:markets:v2";
-const KV_CG_BTC = "cg:btc:v2";
-
-/* ================= HANDLER ================= */
 
 export default async function handler(req, res) {
   const t0 = Date.now();
@@ -105,7 +84,6 @@ export default async function handler(req, res) {
 
   const side = mode === "bear" ? "SHORT" : "LONG";
   const now = Date.now();
-  const force = String(req.query?.force || "") === "1";
 
   const SCAN_INTERVAL_MS = 120000;
   const LOCK_TTL_SEC = 55;
@@ -115,16 +93,15 @@ export default async function handler(req, res) {
   const OB_CONCURRENCY = 5;
   const SOFT_TIME_BUDGET_MS = 8000;
 
-  try {
-    /* ============ SCHEDULE GATE ============ */
+  const AUTO_MAX_PER_SCAN = 3;
 
+  try {
     const auto = (await kv.get(keyAuto(mode))) || {};
-    if (!force && auto?.nextDue && now < auto.nextDue) {
+    if (auto?.nextDue && now < auto.nextDue) {
       return res.json({
         ok: true,
         skipped: true,
         reason: "not_due",
-        waitMs: auto.nextDue - now,
       });
     }
 
@@ -138,46 +115,23 @@ export default async function handler(req, res) {
       return res.json({ ok: true, skipped: true, reason: "locked" });
     }
 
-    /* ============ FETCH UNIVERSE ============ */
-
-    let universe = null;
-    let cgSource = "live";
+    /* ================= FETCH UNIVERSE ================= */
 
     const url =
       `https://api.coingecko.com/api/v3/coins/markets` +
       `?vs_currency=usd&order=market_cap_desc&per_page=${MAX_COINS}` +
       `&page=1&sparkline=false&price_change_percentage=1h,24h`;
 
-    try {
-      universe = await fetchJsonSafe(url, 11000);
-      await kv.set(KV_CG_CACHE, universe, { ex: 600 });
-    } catch {
-      const cached = await kv.get(KV_CG_CACHE);
-      if (!cached) throw new Error("cg_unavailable");
-      universe = cached;
-      cgSource = "cache";
-    }
+    const universe = await fetchJsonSafe(url, 11000);
 
-    universe = universe.slice(0, MAX_COINS);
-
-    /* ============ BTC DATA ============ */
-
-    let btcRow =
-      universe.find((c) => c?.id === "bitcoin") ||
-      (await kv.get(KV_CG_BTC));
-
+    const btcRow = universe.find((c) => c?.id === "bitcoin");
     if (!btcRow) throw new Error("btc_missing");
 
-    await kv.set(KV_CG_BTC, btcRow, { ex: 600 });
-
     const btcData = {
-      price: n(btcRow?.current_price),
-      change24: n(
-        btcRow?.price_change_percentage_24h_in_currency ??
-          btcRow?.price_change_percentage_24h
-      ),
+      price: n(btcRow.current_price),
+      change24: n(btcRow.price_change_percentage_24h),
       range24:
-        n(btcRow?.low_24h) > 0 && n(btcRow?.high_24h) > 0
+        n(btcRow.low_24h) > 0 && n(btcRow.high_24h) > 0
           ? ((btcRow.high_24h - btcRow.low_24h) / btcRow.low_24h) * 100
           : 0,
     };
@@ -185,63 +139,54 @@ export default async function handler(req, res) {
     const regimeData = computeBtcRegime(btcData);
     const thresholds = adaptiveThresholds(regimeData?.regime);
 
-    /* ============ PRE-SCORE ============ */
-
     const prevState = (await kv.get(keyProgress(mode))) || {};
     const nextState = {};
     const preRows = [];
 
+    /* ================= PRE-SCORE ================= */
+
     for (const coin of universe) {
-      try {
-        const symbol = up(coin?.symbol);
-        if (!symbol) continue;
+      const symbol = up(coin?.symbol);
+      if (!symbol || symbol.includes("USD")) continue;
 
-        if (symbol.includes("USD")) continue;
+      const price = n(coin.current_price);
+      if (!price) continue;
 
-        const price = n(coin?.current_price);
-        if (!price) continue;
+      const mom24 = n(coin.price_change_percentage_24h);
+      const volume = n(coin.total_volume);
+      const mcap = n(coin.market_cap);
 
-        const mom24 = n(
-          coin?.price_change_percentage_24h_in_currency ??
-            coin?.price_change_percentage_24h
-        );
+      const volAcc = volume / 1_000_000;
+      const directional =
+        mode === "bull" ? mom24 > 0 : mom24 < 0;
 
-        const volume = n(coin?.total_volume);
-        const mcap = n(coin?.market_cap);
+      const passes =
+        directional &&
+        Math.abs(mom24) >= 2 &&
+        volAcc >= 2 &&
+        mcap >= 5_000_000;
 
-        const volAcc = volume / 1_000_000;
-        const directional =
-          mode === "bull" ? mom24 > 0 : mom24 < 0;
+      const prog = progressiveStage({
+        prev: prevState[symbol],
+        passes,
+        now,
+        mode,
+        regime: regimeData?.regime,
+      });
 
-        const passes =
-          directional &&
-          Math.abs(mom24) >= 2 &&
-          volAcc >= 2 &&
-          mcap >= 5_000_000;
-
-        const prog = progressiveStage({
-          prev: prevState[symbol],
-          passes,
-          now,
-          mode,
-          regime: regimeData?.regime,
-        });
-
-        preRows.push({
-          symbol,
-          coin,
-          price,
-          mom24,
-          volume,
-          mcap,
-          volAcc,
-          passes,
-          prog,
-        });
-      } catch {}
+      preRows.push({
+        symbol,
+        coin,
+        price,
+        mom24,
+        volume,
+        mcap,
+        volAcc,
+        prog,
+      });
     }
 
-    /* ============ ORDERBOOK SAFE ============ */
+    /* ================= ORDERBOOK ================= */
 
     const obCandidates = preRows
       .filter((r) => n(r.prog?.stage) >= 2)
@@ -255,21 +200,16 @@ export default async function handler(req, res) {
         return;
       }
 
-      try {
-        const ob = await fetchOrderbook(
-          safeObSymbol(row.symbol)
-        );
-        obMap.set(row.symbol, ob || null);
-      } catch {
-        obMap.set(row.symbol, null);
-      }
+      const ob = await fetchOrderbook(
+        safeObSymbol(row.symbol)
+      );
+      obMap.set(row.symbol, ob || null);
     });
 
-    /* ============ FINALIZE ============ */
+    /* ================= FINALIZE ================= */
 
     for (const row of preRows) {
       let prog = row.prog;
-
       let ob = null;
       let tradePlan = null;
 
@@ -282,8 +222,6 @@ export default async function handler(req, res) {
             range24: btcData.range24,
             regime: regimeData?.regime,
             side,
-            mode,
-            thresholds,
           });
         } else {
           prog = { ...prog, stage: 2 };
@@ -293,7 +231,6 @@ export default async function handler(req, res) {
       const aiScore = computeAiScore({
         momentum24: row.mom24,
         volAcc: row.volAcc,
-        obScore: n(ob?.score),
         rr: n(tradePlan?.rr, 1),
         marketCap: row.mcap,
         volume: row.volume,
@@ -312,13 +249,13 @@ export default async function handler(req, res) {
         aiScore,
         stage: prog.stage,
         streak: prog.streak,
-        tradePlan: tradePlan || null,
-        ob: ob || null,
+        tradePlan,
+        ob,
         updatedAt: now,
       };
     }
 
-    /* ============ BUILD FUNNEL ============ */
+    /* ================= BUILD FUNNEL ================= */
 
     const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
 
@@ -328,6 +265,26 @@ export default async function handler(req, res) {
       else if (c.stage === 2) funnel.setup.push(c);
       else if (c.stage === 3) funnel.entry_ready.push(c);
     }
+
+    /* ================= AUTO EXECUTION ================= */
+
+    let executed = 0;
+
+    for (const coin of funnel.entry_ready) {
+      if (executed >= AUTO_MAX_PER_SCAN) break;
+      if (!coin.tradePlan) continue;
+
+      const result = await executeTrade(mode, coin, {
+        maxOpen: 3,
+        entryTolerancePct: 4,
+        maxSpreadPct: 1.8,
+        minDepthUsd1p: 800,
+      });
+
+      if (result?.opened) executed++;
+    }
+
+    /* ================= SAVE ================= */
 
     await kv.set(keyProgress(mode), nextState, { ex: 259200 });
 
@@ -343,10 +300,8 @@ export default async function handler(req, res) {
         setup: funnel.setup.length,
         entry_ready: funnel.entry_ready.length,
       },
-      meta: {
-        cgSource,
-        ms: Date.now() - t0,
-      },
+      autoExecuted: executed,
+      ms: Date.now() - t0,
     };
 
     await kv.set(keyState(mode), statePayload, { ex: 21600 });
@@ -354,22 +309,14 @@ export default async function handler(req, res) {
 
     await kv.set(
       keyAuto(mode),
-      {
-        lastRun: now,
-        nextDue: now + SCAN_INTERVAL_MS,
-      },
+      { lastRun: now, nextDue: now + SCAN_INTERVAL_MS },
       { ex: 86400 }
     );
 
     return res.json(statePayload);
   } catch (e) {
     console.error("SCAN_FATAL:", e);
-
-    return res.json({
-      ok: false,
-      error: String(e?.message || e),
-      ms: Date.now() - t0,
-    });
+    return res.json({ ok: false, error: String(e?.message || e) });
   } finally {
     try {
       await kv.del(keyLock(mode));
