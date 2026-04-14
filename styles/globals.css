@@ -16,13 +16,9 @@
   --shadow:0 24px 80px rgba(0,0,0,.35);
 }
 
-*{
-  box-sizing:border-box;
-}
+*{ box-sizing:border-box; }
 
-html, body, #__next{
-  min-height:100%;
-}
+html, body, #__next{ min-height:100%; }
 
 html, body{
   margin:0;
@@ -34,19 +30,9 @@ html, body{
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 }
 
-a{
-  color:inherit;
-  text-decoration:none;
-}
-
-button{
-  font:inherit;
-}
-
-img{
-  display:block;
-  max-width:100%;
-}
+a{ color:inherit; text-decoration:none; }
+button{ font:inherit; }
+img{ display:block; max-width:100%; }
 
 .pageShell{
   width:100%;
@@ -68,10 +54,7 @@ img{
   box-shadow:var(--shadow);
 }
 
-.brandBlock{
-  flex:1;
-  min-width:0;
-}
+.brandBlock{ flex:1; min-width:0; }
 
 .brandTitle{
   font-size:clamp(30px, 5vw, 56px);
@@ -88,10 +71,7 @@ img{
   margin-bottom:14px;
 }
 
-.regimeBlock{
-  width:min(420px, 100%);
-  margin-bottom:14px;
-}
+.regimeBlock{ width:min(420px, 100%); margin-bottom:14px; }
 
 .regimeMeta{
   display:flex;
@@ -101,11 +81,7 @@ img{
   font-size:13px;
   color:var(--muted);
 }
-
-.regimeMeta strong{
-  color:var(--text);
-  font-weight:700;
-}
+.regimeMeta strong{ color:var(--text); font-weight:700; }
 
 .regimeMeter{
   width:100%;
@@ -114,42 +90,13 @@ img{
   background:rgba(255,255,255,.06);
   overflow:hidden;
 }
-
 .regimeFill{
   height:100%;
   border-radius:999px;
   transition:width .35s ease;
 }
-
-.regimeFill.bullish{
-  background:linear-gradient(90deg, #1fa463, #27d87a);
-}
-
-.regimeFill.bearish{
-  background:linear-gradient(90deg, #b82626, #ef4444);
-}
-
-.summaryRow{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-}
-
-.summaryChip{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:10px 14px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  background:rgba(255,255,255,.03);
-  color:var(--muted);
-  font-size:13px;
-}
-
-.summaryChip strong{
-  color:var(--text);
-}
+.regimeFill.bullish{ background:linear-gradient(90deg, #1fa463, #27d87a); }
+.regimeFill.bearish{ background:linear-gradient(90deg, #b82626, #ef4444); }
 
 .navRow{
   display:flex;
@@ -167,24 +114,20 @@ img{
   background:rgba(255,255,255,.02);
   color:var(--text);
   transition:all .22s ease;
+  display:inline-block;
 }
-
 .navBtn:hover{
   transform:translateY(-1px);
   border-color:rgba(255,255,255,.14);
   background:rgba(255,255,255,.05);
 }
-
 .navBtn.active{
   background:var(--blue);
   border-color:transparent;
   box-shadow:0 10px 28px rgba(56,111,247,.35);
 }
 
-.panels{
-  display:grid;
-  gap:18px;
-}
+.panels{ display:grid; gap:18px; }
 
 .panel{
   border:1px solid var(--line);
@@ -243,7 +186,6 @@ img{
   border:1px solid rgba(255,255,255,.06);
   transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
-
 .coinButton:hover{
   transform:translateY(-2px);
   border-color:rgba(255,255,255,.14);
@@ -285,9 +227,7 @@ img{
   font-weight:700;
 }
 
-.coinText{
-  min-width:0;
-}
+.coinText{ min-width:0; }
 
 .coinSymbol{
   font-size:22px;
@@ -463,12 +403,6 @@ img{
   font-weight:700;
 }
 
-.chipRow{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-}
-
 .chip{
   padding:10px 12px;
   border-radius:999px;
@@ -477,14 +411,19 @@ img{
   background:rgba(255,255,255,.05);
 }
 
-.chip.neutral{
-  color:#dce7ff;
+.codeBox{
+  margin:0;
+  padding:14px;
+  border-radius:18px;
+  background:rgba(0,0,0,.22);
+  border:1px solid rgba(255,255,255,.08);
+  color:#dbe6ff;
+  overflow:auto;
+  font-size:12px;
+  line-height:1.45;
 }
 
-.analysisPage{
-  display:grid;
-  gap:18px;
-}
+.analysisPage{ display:grid; gap:18px; }
 
 .compareGrid{
   display:grid;
@@ -509,10 +448,7 @@ img{
   margin-bottom:8px;
 }
 
-.compareMeta{
-  color:var(--muted);
-  line-height:1.5;
-}
+.compareMeta{ color:var(--muted); line-height:1.5; }
 
 .bottleneckBanner{
   margin-top:14px;
@@ -568,10 +504,7 @@ img{
   font-size:13px;
 }
 
-.funnelTable{
-  display:grid;
-  gap:8px;
-}
+.funnelTable{ display:grid; gap:8px; }
 
 .funnelRow{
   display:flex;
@@ -581,10 +514,7 @@ img{
   border-bottom:1px solid rgba(255,255,255,.06);
 }
 
-.adviceBox{
-  display:grid;
-  gap:10px;
-}
+.adviceBox{ display:grid; gap:10px; }
 
 .adviceItem{
   padding:12px 14px;
@@ -595,10 +525,7 @@ img{
   line-height:1.5;
 }
 
-.tradeCardList{
-  display:grid;
-  gap:12px;
-}
+.tradeCardList{ display:grid; gap:12px; }
 
 .tradeRow{
   display:grid;
@@ -625,9 +552,7 @@ img{
   letter-spacing:-0.03em;
 }
 
-.homePage{
-  padding-top:40px;
-}
+.homePage{ padding-top:40px; }
 
 .heroCard{
   border:1px solid var(--line);
@@ -685,6 +610,13 @@ img{
   letter-spacing:-0.03em;
 }
 
+.heroStatSmall{
+  display:block;
+  margin-top:8px;
+  color:rgba(255,255,255,.55);
+  font-size:12px;
+}
+
 .homeGrid{
   display:grid;
   grid-template-columns:repeat(2, 1fr);
@@ -720,85 +652,26 @@ img{
   line-height:1.5;
 }
 
-.positive{
-  color:var(--green);
-}
-
-.negative{
-  color:var(--red);
-}
-
-.neutral{
-  color:#dce7ff;
-}
+.positive{ color:var(--green); }
+.negative{ color:var(--red); }
+.neutral{ color:#dce7ff; }
 
 @media (max-width: 980px){
-  .topbar{
-    flex-direction:column;
-  }
-
-  .navRow{
-    width:100%;
-    justify-content:flex-start;
-  }
-
-  .compareGrid,
-  .analysisTwoCol,
-  .homeGrid{
-    grid-template-columns:1fr;
-  }
-
-  .heroStats{
-    grid-template-columns:repeat(2, 1fr);
-  }
-
-  .modalGrid{
-    grid-template-columns:repeat(2, 1fr);
-  }
+  .topbar{ flex-direction:column; }
+  .navRow{ width:100%; justify-content:flex-start; }
+  .compareGrid, .analysisTwoCol, .homeGrid{ grid-template-columns:1fr; }
+  .heroStats{ grid-template-columns:repeat(2, 1fr); }
+  .modalGrid{ grid-template-columns:repeat(2, 1fr); }
 }
 
 @media (max-width: 640px){
-  .pageShell{
-    padding:14px 12px 56px;
-  }
-
-  .topbar,
-  .panel,
-  .compareCard,
-  .analysisSection,
-  .heroCard,
-  .homeCard{
-    border-radius:24px;
-  }
-
-  .brandTitle{
-    font-size:42px;
-  }
-
-  .navBtn{
-    min-width:92px;
-    padding:13px 14px;
-  }
-
-  .coinGrid{
-    grid-template-columns:1fr;
-  }
-
-  .modal{
-    padding:16px;
-    border-radius:24px;
-  }
-
-  .detailsGrid,
-  .modalGrid{
-    grid-template-columns:1fr;
-  }
-
-  .tradeRow{
-    grid-template-columns:1fr;
-  }
-
-  .heroStats{
-    grid-template-columns:1fr 1fr;
-  }
+  .pageShell{ padding:14px 12px 56px; }
+  .topbar, .panel, .compareCard, .analysisSection, .heroCard, .homeCard{ border-radius:24px; }
+  .brandTitle{ font-size:42px; }
+  .navBtn{ min-width:92px; padding:13px 14px; }
+  .coinGrid{ grid-template-columns:1fr; }
+  .modal{ padding:16px; border-radius:24px; }
+  .detailsGrid, .modalGrid{ grid-template-columns:1fr; }
+  .tradeRow{ grid-template-columns:1fr; }
+  .heroStats{ grid-template-columns:1fr 1fr; }
 }
