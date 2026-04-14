@@ -18,6 +18,11 @@ function up(x) {
   return String(x || "").toUpperCase();
 }
 
+function safeObSymbol(symbol) {
+  const s = up(symbol);
+  return s.endsWith("USDT") ? s : `${s}USDT`;
+}
+
 async function fetchJsonSafe(url, timeoutMs = 9000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -27,7 +32,7 @@ async function fetchJsonSafe(url, timeoutMs = 9000) {
       signal: controller.signal,
       headers: {
         accept: "application/json",
-        "user-agent": "CryptoCrocScanner/FINAL",
+        "user-agent": "CryptoCrocScanner/AUTO",
       },
       cache: "no-store",
     });
@@ -62,11 +67,6 @@ async function mapLimit(list, limit, fn) {
   return out;
 }
 
-function safeObSymbol(symbol) {
-  const s = up(symbol);
-  return s.endsWith("USDT") ? s : `${s}USDT`;
-}
-
 const keyAuto = (m) => `scan:auto:${m}`;
 const keyLock = (m) => `scan:lock:${m}`;
 const keyProgress = (m) => `progress:${m}`;
@@ -94,9 +94,10 @@ export default async function handler(req, res) {
   const AUTO_MAX_PER_SCAN = 3;
 
   try {
-    /* ========= SCHEDULE ========= */
+    /* ================= SCHEDULE ================= */
 
     const auto = (await kv.get(keyAuto(mode))) || {};
+
     if (auto?.nextDue && now < auto.nextDue) {
       return res.json({ ok: true, skipped: true, reason: "not_due" });
     }
@@ -111,7 +112,7 @@ export default async function handler(req, res) {
       return res.json({ ok: true, skipped: true, reason: "locked" });
     }
 
-    /* ========= FETCH ========= */
+    /* ================= FETCH MARKET ================= */
 
     const url =
       `https://api.coingecko.com/api/v3/coins/markets` +
@@ -139,7 +140,7 @@ export default async function handler(req, res) {
     const nextState = {};
     const preRows = [];
 
-    /* ========= PRE-SCORE ========= */
+    /* ================= PRE-SCORE ================= */
 
     for (const coin of universe) {
       const symbol = up(coin?.symbol);
@@ -181,7 +182,7 @@ export default async function handler(req, res) {
       });
     }
 
-    /* ========= ORDERBOOK ========= */
+    /* ================= ORDERBOOK ================= */
 
     const obCandidates = preRows
       .filter((r) => n(r.prog?.stage) >= 2)
@@ -194,13 +195,12 @@ export default async function handler(req, res) {
         obMap.set(row.symbol, null);
         return;
       }
-      const ob = await fetchOrderbook(
-        safeObSymbol(row.symbol)
-      );
+
+      const ob = await fetchOrderbook(safeObSymbol(row.symbol));
       obMap.set(row.symbol, ob || null);
     });
 
-    /* ========= FINALIZE ========= */
+    /* ================= FINALIZE ================= */
 
     for (const row of preRows) {
       let prog = row.prog;
@@ -249,7 +249,7 @@ export default async function handler(req, res) {
       };
     }
 
-    /* ========= BUILD FUNNEL ========= */
+    /* ================= BUILD FUNNEL ================= */
 
     const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
 
@@ -260,7 +260,10 @@ export default async function handler(req, res) {
       else if (c.stage === 3) funnel.entry_ready.push(c);
     }
 
-    /* ========= AUTO OPEN ========= */
+    // sort entry_ready by AI score descending
+    funnel.entry_ready.sort((a, b) => n(b.aiScore) - n(a.aiScore));
+
+    /* ================= AUTO OPEN ================= */
 
     let executed = 0;
 
@@ -278,7 +281,7 @@ export default async function handler(req, res) {
       if (result?.opened) executed++;
     }
 
-    /* ========= AUTO CLOSE ========= */
+    /* ================= AUTO CLOSE ================= */
 
     const latestPrices = {};
     for (const c of Object.values(nextState)) {
@@ -287,7 +290,7 @@ export default async function handler(req, res) {
 
     await updateOpenTrades(mode, latestPrices);
 
-    /* ========= SAVE ========= */
+    /* ================= SAVE ================= */
 
     await kv.set(keyProgress(mode), nextState, { ex: 259200 });
 
@@ -317,6 +320,7 @@ export default async function handler(req, res) {
     );
 
     return res.json(statePayload);
+
   } catch (e) {
     console.error("SCAN_FATAL:", e);
     return res.json({ ok: false, error: String(e?.message || e) });
