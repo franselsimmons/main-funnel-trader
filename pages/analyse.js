@@ -8,43 +8,32 @@ const STAGES = [
   { key: "entry_ready", title: "ENTRY READY" },
 ];
 
-function n(v, d = 0) {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : d;
-}
-
-function arr(v) {
-  return Array.isArray(v) ? v : [];
-}
-
+function n(v, d = 0) { const x = Number(v); return Number.isFinite(x) ? x : d; }
+function arr(v) { return Array.isArray(v) ? v : []; }
 function scoreOf(c) {
   const raw = n(c?.aiScore ?? c?.confidence ?? c?.entryQuality ?? 0, 0);
   return raw <= 1 ? raw * 100 : raw;
 }
-
 function avg(items, getter) {
   const list = arr(items);
   if (!list.length) return 0;
   return list.reduce((sum, it) => sum + n(getter(it), 0), 0) / list.length;
 }
 
-function fmtPct(v) {
-  return `${n(v, 0).toFixed(1)}%`;
+function fmtPct(v) { return `${n(v, 0).toFixed(1)}%`; }
+function fmtNum(v) { return n(v, 0).toFixed(2); }
+function pnlClass(v) {
+  if (v > 0) return "positive";
+  if (v < 0) return "negative";
+  return "neutral";
 }
 
-function fmtNum(v) {
-  return n(v, 0).toFixed(2);
-}
-
-function getStageItems(state, key) {
-  return arr(state?.funnel?.[key]);
-}
+function getStageItems(state, key) { return arr(state?.funnel?.[key]); }
 
 function stageStats(state, key) {
   const items = getStageItems(state, key);
   return {
-    key,
-    count: items.length,
+    key, count: items.length,
     avgScore: avg(items, (c) => scoreOf(c)),
     avgSpread: avg(items, (c) => c?.ob?.spreadPct ?? c?.orderbook?.spreadPct),
     avgDepth: avg(items, (c) => c?.ob?.depthMinUsd1p ?? c?.ob?.depthMin ?? c?.orderbook?.depthMin),
@@ -66,7 +55,7 @@ function splitPositionsByMode(positions, mode) {
 
 function buildSide(label, state, positions) {
   const stats = STAGES.map((s) => ({ ...s, ...stageStats(state, s.key) }));
-  const radar = stats[0], warmup = stats[1], setup = stats[2], entry = stats[3];
+  const [radar, warmup, setup, entry] = stats;
 
   const conversions = [
     { from: "RADAR", to: "WARMUP", rate: radar.count ? (warmup.count / radar.count) * 100 : 0 },
@@ -78,31 +67,15 @@ function buildSide(label, state, positions) {
   for (const step of conversions) if (step.rate < bottleneck.rate) bottleneck = step;
 
   const avgPnl = positions.length ? avg(positions, (p) => p?.pnlPct ?? p?.pnl) : 0;
-
   const advice = [];
 
-  if (radar.count > 0 && warmup.count === 0) advice.push("RADAR → WARMUP is dicht. Warmup eisen (volAcc/momentum) te streng óf radar te breed.");
-  if (warmup.count > 0 && setup.count === 0) advice.push("WARMUP → SETUP is dicht. Setup eisen (confidence/compressie) te streng.");
-  if (setup.count > 0 && entry.count === 0) advice.push("SETUP → ENTRY is dicht. Orderbook gate te streng (spreadMax/depthMin/obScore).");
-  if (entry.count > 0 && positions.length === 0) advice.push("ENTRY READY maar geen open trades: entry tolerance / live spread reject / websocket execution check.");
-  if (!advice.length) advice.push("Geen harde blokkade op dit snapshot. Focus op ENTRY→OPEN monitoring.");
+  if (radar.count > 0 && warmup.count === 0) advice.push("RADAR → WARMUP dicht: Warmup eisen te streng of radar te breed.");
+  if (warmup.count > 0 && setup.count === 0) advice.push("WARMUP → SETUP dicht: Setup eisen (confidence/compressie) verlagen.");
+  if (setup.count > 0 && entry.count === 0) advice.push("SETUP → ENTRY dicht: Orderbook eisen (spread/depth) te strak ingesteld.");
+  if (entry.count > 0 && positions.length === 0) advice.push("ENTRY READY, maar geen trades open: Check live execution logic.");
+  if (!advice.length) advice.push("Flow ziet er gezond uit. Blijf monitoren.");
 
-  return {
-    label,
-    stats,
-    conversions,
-    bottleneck,
-    entryCount: entry.count,
-    positionsCount: positions.length,
-    avgPnl,
-    advice,
-  };
-}
-
-function pnlClass(v) {
-  if (v > 0) return "positive";
-  if (v < 0) return "negative";
-  return "neutral";
+  return { label, stats, conversions, bottleneck, entryCount: entry.count, positionsCount: positions.length, avgPnl, advice };
 }
 
 export default function Analyse() {
@@ -114,20 +87,14 @@ export default function Analyse() {
     Promise.all([
       fetch("/api/state?mode=bull", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
       fetch("/api/state?mode=bear", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
-      fetch("/api/positions", { cache: "no-store" })
-        .then((r) => r.json())
-        .then((j) => j?.positions || [])
-        .catch(() => []),
+      fetch("/api/positions", { cache: "no-store" }).then((r) => r.json()).then((j) => j?.positions || []).catch(() => []),
     ]).then(([b1, b2, p]) => {
-      setBull(b1);
-      setBear(b2);
-      setPositions(p);
+      setBull(b1); setBear(b2); setPositions(p);
     });
   }, []);
 
-  const bullSide = useMemo(() => buildSide("Bull funnel", bull, splitPositionsByMode(positions, "bull")), [bull, positions]);
-  const bearSide = useMemo(() => buildSide("Bear funnel", bear, splitPositionsByMode(positions, "bear")), [bear, positions]);
-
+  const bullSide = useMemo(() => buildSide("Bull Flow", bull, splitPositionsByMode(positions, "bull")), [bull, positions]);
+  const bearSide = useMemo(() => buildSide("Bear Flow", bear, splitPositionsByMode(positions, "bear")), [bear, positions]);
   const sections = [bullSide, bearSide];
 
   return (
@@ -135,12 +102,10 @@ export default function Analyse() {
       <header className="topbar">
         <div className="brandBlock">
           <div className="brandTitle">ANALYSE</div>
-          <div className="brandMeta">
-            Bull & bear apart • bottleneck per stap • advies per funnel + trade tunnel
-          </div>
+          <div className="brandMeta">Spoor bottlenecks op en optimaliseer je instellingen</div>
         </div>
-
         <nav className="navRow">
+          <Link href="/" className="navBtn">Home</Link>
           <Link href="/bull" className="navBtn">Bull</Link>
           <Link href="/bear" className="navBtn">Bear</Link>
           <Link href="/analyse" className="navBtn active">Analyse</Link>
@@ -154,13 +119,11 @@ export default function Analyse() {
             <div className="compareCard" key={s.label}>
               <div className="compareTitle">{s.label}</div>
               <div className="compareMeta">
-                Entry ready <strong>{s.entryCount}</strong> • Open <strong>{s.positionsCount}</strong> • Avg PnL{" "}
-                <strong className={pnlClass(s.avgPnl)}>
-                  {s.avgPnl > 0 ? "+" : ""}{s.avgPnl.toFixed(2)}%
-                </strong>
+                Ready: <strong>{s.entryCount}</strong> • Open: <strong>{s.positionsCount}</strong><br/>
+                Avg PnL: <strong className={pnlClass(s.avgPnl)}>{s.avgPnl > 0 ? "+" : ""}{s.avgPnl.toFixed(2)}%</strong>
               </div>
               <div className="bottleneckBanner">
-                Grootste bottleneck: {s.bottleneck.from} → {s.bottleneck.to} ({fmtPct(s.bottleneck.rate)})
+                <strong>Bottleneck:</strong> {s.bottleneck.from} → {s.bottleneck.to} ({fmtPct(s.bottleneck.rate)})
               </div>
             </div>
           ))}
@@ -169,7 +132,7 @@ export default function Analyse() {
         <div className="analysisTwoCol">
           {sections.map((s) => (
             <section className="analysisSection" key={s.label}>
-              <div className="analysisSectionTitle">{s.label}</div>
+              <div className="analysisSectionTitle">{s.label} Diepte Data</div>
 
               {s.stats.map((st) => {
                 const maxCount = Math.max(...s.stats.map((x) => x.count), 1);
@@ -181,40 +144,20 @@ export default function Analyse() {
                       <div>{st.title}</div>
                       <strong>{st.count}</strong>
                     </div>
-
                     <div className="stageBar">
                       <div className="stageBarFill" style={{ width: `${width}%` }} />
                     </div>
-
                     <div className="stageBarStats">
-                      <span>avg score {fmtNum(st.avgScore)}</span>
-                      <span>avg chg24 {fmtNum(st.avgChg24)}%</span>
-                      <span>avg spread {fmtNum(st.avgSpread)}%</span>
-                      <span>avg depth {fmtNum(st.avgDepth)}</span>
-                      <span>avg volAcc {fmtNum(st.avgVolAcc)}</span>
+                      <span>Score: {fmtNum(st.avgScore)}</span>
+                      <span>Chg: {fmtNum(st.avgChg24)}%</span>
+                      <span>Spread: {fmtNum(st.avgSpread)}%</span>
                     </div>
                   </div>
                 );
               })}
 
               <div className="analysisStageCard">
-                <div className="stageBarHeader">
-                  <div>Conversies</div>
-                </div>
-                <div className="funnelTable">
-                  {s.conversions.map((c) => (
-                    <div className="funnelRow" key={`${c.from}-${c.to}`}>
-                      <span>{c.from} → {c.to}</span>
-                      <strong>{fmtPct(c.rate)}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="analysisStageCard">
-                <div className="stageBarHeader">
-                  <div>Wat verbeteren</div>
-                </div>
+                <div className="stageBarHeader"><div>Systeem Advies</div></div>
                 <div className="adviceBox">
                   {s.advice.map((line, idx) => (
                     <div className="adviceItem" key={idx}>{line}</div>
