@@ -10,11 +10,9 @@ function n(x, d = 0) {
   const v = Number(x);
   return Number.isFinite(v) ? v : d;
 }
-
 function up(x) {
   return String(x || "").toUpperCase();
 }
-
 function arr(x) {
   return Array.isArray(x) ? x : [];
 }
@@ -38,55 +36,103 @@ async function fetchJsonWithTimeout(url, timeoutMs = 9000) {
 async function mapLimit(list, limit, fn) {
   const out = new Array(list.length);
   let idx = 0;
-
   async function worker() {
     while (idx < list.length) {
       const i = idx++;
       out[i] = await fn(list[i], i);
     }
   }
-
   const workers = Array.from({ length: Math.max(1, limit) }, () => worker());
   await Promise.all(workers);
   return out;
 }
 
 /**
- * Stage mapping (progressief):
- * 0 = RADAR
- * 1 = WARMUP
- * 2 = SETUP
- * 3 = ENTRY_READY
- *
- * Belangrijk:
- * - Stage stijgt alleen als coin "passes" meerdere scans achter elkaar.
- * - Stage kan zakken als "passes" faalt of (bij stage 3) orderbook faalt.
- *
- * progressiveStage(...) is jouw centrale state machine.
- * Je funnelEngine bepaalt streak regels (bv. 2x = warmup, 3x = setup, 4x = entry_ready).
+ * AUTO-SCAN / SELF-SCHEDULING
+ * - nextDue: wanneer een nieuwe scan mag draaien
+ * - lock: voorkomt dubbele runs
  */
+function keyAuto(mode) {
+  return `scan:auto:${mode}`;
+}
+function keyLock(mode) {
+  return `scan:lock:${mode}`;
+}
+function keyProgress(mode) {
+  return `progress:${mode}`;
+}
+function keyState(mode) {
+  return `state:${mode}`;
+}
+function keyLatest(mode) {
+  return `latest:${mode}`;
+}
 
 export default async function handler(req, res) {
   const mode = String(req.query?.mode || "bull").toLowerCase() === "bear" ? "bear" : "bull";
   const side = mode === "bear" ? "SHORT" : "LONG";
   const now = Date.now();
 
+  // tuning
+  const SCAN_INTERVAL_MS = 60_000; // elke 60s (self schedule)
+  const LOCK_TTL_SEC = 55; // lock blijft max 55s
+  const force = String(req.query?.force || "") === "1";
+
   try {
+    // ======================
+    // 0) SELF-SCHEDULE GATE
+    // ======================
+    const auto = (await kv.get(keyAuto(mode))) || {};
+    const nextDue = n(auto?.nextDue, 0);
+
+    if (!force && nextDue && now < nextDue) {
+      // nog niet due -> snelle response
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: "not_due",
+        mode,
+        now,
+        nextDue,
+        waitMs: Math.max(0, nextDue - now),
+      });
+    }
+
+    // ======================
+    // 0b) ACQUIRE LOCK
+    // ======================
+    const lockOk = await kv.set(
+      keyLock(mode),
+      { ts: now, mode },
+      { nx: true, ex: LOCK_TTL_SEC }
+    );
+
+    if (!lockOk) {
+      const cur = await kv.get(keyLock(mode));
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: "locked",
+        mode,
+        lock: cur || null,
+      });
+    }
+
+    // ensure lock released by TTL anyway, but we also try to clean up at end.
     // ======================
     // PERFORMANCE / LIMITS
     // ======================
-    const MAX_COINS = 200;            // meer coins = meer kansen, maar houd runtimes in de gaten
-    const OB_CANDIDATES = 60;         // alleen top setup coins krijgen orderbook check
-    const OB_CONCURRENCY = 8;         // parallel OB calls
-    const KV_EX_PROGRESS_SEC = 60 * 60 * 24 * 3;  // 3 dagen
-    const KV_EX_STATE_SEC = 60 * 60 * 6;          // 6 uur
-    const KV_EX_LATEST_SEC = 60 * 60;             // 1 uur
+    const MAX_COINS = 200;
+    const OB_CANDIDATES = 60;
+    const OB_CONCURRENCY = 8;
+
+    const KV_EX_PROGRESS_SEC = 60 * 60 * 24 * 3; // 3 dagen
+    const KV_EX_STATE_SEC = 60 * 60 * 6; // 6 uur
+    const KV_EX_LATEST_SEC = 60 * 60; // 1 uur
 
     // ======================
-    // 1️⃣ FETCH UNIVERSE (CG)
+    // 1) FETCH UNIVERSE (CG)
     // ======================
-    // Let op: CoinGecko kan 250 max per page.
-    // We nemen market_cap_desc omdat je “beste coins” wil, maar wel veel.
     const universeUrl =
       `https://api.coingecko.com/api/v3/coins/markets` +
       `?vs_currency=usd&order=market_cap_desc&per_page=${Math.min(MAX_COINS, 250)}&page=1` +
@@ -95,10 +141,9 @@ export default async function handler(req, res) {
     const universe = await fetchJsonWithTimeout(universeUrl, 12000);
     if (!Array.isArray(universe)) throw new Error("universe_not_array");
 
-    // BTC regime: haal bitcoin row uit universe (of fallback)
+    // BTC row
     let btcRow = universe.find((c) => String(c?.id || "") === "bitcoin");
 
-    // Fallback: aparte BTC call als BTC ontbreekt in lijst (komt zelden voor, maar safe)
     if (!btcRow) {
       const btcUrl =
         `https://api.coingecko.com/api/v3/coins/markets` +
@@ -109,9 +154,15 @@ export default async function handler(req, res) {
     }
 
     const btcData = {
+      price: n(btcRow?.current_price, 0),
       change24: n(
         btcRow?.price_change_percentage_24h_in_currency ??
           btcRow?.price_change_percentage_24h,
+        0
+      ),
+      change1h: n(
+        btcRow?.price_change_percentage_1h_in_currency ??
+          btcRow?.price_change_percentage_1h,
         0
       ),
       range24:
@@ -124,28 +175,24 @@ export default async function handler(req, res) {
     const thresholds = adaptiveThresholds(regimeData?.regime);
 
     // ======================
-    // 2️⃣ LOAD PREVIOUS STATE
+    // 2) LOAD PREVIOUS STATE
     // ======================
-    // progress:${mode} bevat per symbol de stage + streak + context
-    const prevState = (await kv.get(`progress:${mode}`)) || {};
+    const prevState = (await kv.get(keyProgress(mode))) || {};
     const nextState = {};
 
     // ======================
-    // 3️⃣ PRE-SCORE COINS (zonder OB)
+    // 3) PRE-SCORE (NO OB)
     // ======================
-    // Doel: snel bepalen wie in aanmerking komt om te groeien.
-    // Je wil niet direct alles in setup/entry_ready:
-    // -> progressiveStage regelt dat op basis van streak.
     const preRows = [];
 
     for (const coin of universe) {
       const symbol = up(coin?.symbol);
       if (!symbol) continue;
 
-      // filter stablecoins uit (anders vullen ze radar)
+      // filter stablecoins (veel noise)
       const isStableLike =
         symbol.includes("USD") ||
-        ["USDT", "USDC", "DAI", "TUSD", "FDUSD", "USDE", "PYUSD", "USDS"].includes(symbol);
+        ["USDT", "USDC", "DAI", "TUSD", "FDUSD", "USDE", "PYUSD", "USDS", "USD1"].includes(symbol);
 
       if (isStableLike) continue;
 
@@ -167,21 +214,19 @@ export default async function handler(req, res) {
       const volume = n(coin?.total_volume, 0);
       const marketCap = n(coin?.market_cap, 0);
 
-      // simpele “vol acc” proxy voor progressive funnel
-      // (beter: rolling vol hist — maar jij wilt nu met huidige bestanden)
-      const volAcc = volume / 1_000_000; // schaalbaar; thresholds.volAccMin moet hierop afgestemd zijn
+      // volume acceleration proxy
+      const volAcc = volume / 1_000_000;
 
-      // compressie proxy (hier kun je later echte flat60Pct in bouwen)
+      // compression proxy
       const compression = Math.abs(momentum24) < n(thresholds?.compressionMaxAbs24 ?? 4, 4);
 
-      // directioneel per mode
+      // direction per mode
       const directional = mode === "bull" ? momentum24 > 0 : momentum24 < 0;
 
-      // basis pass: direction + min momentum + volacc
-      // LET OP: dit is expres NIET “super streng”, want growth wordt door streak geregeld.
+      // not too strict — streak decides growth
       const passes =
         directional &&
-        Math.abs(momentum24) >= n(thresholds?.momMinAbs24 ?? (n(thresholds?.confMin, 24) / 12), 2) &&
+        Math.abs(momentum24) >= n(thresholds?.momMinAbs24 ?? 2, 2) &&
         volAcc >= n(thresholds?.volAccMin ?? 2, 2) &&
         marketCap >= n(thresholds?.mcapMin ?? 5_000_000, 5_000_000);
 
@@ -195,8 +240,6 @@ export default async function handler(req, res) {
         regime: regimeData?.regime,
       });
 
-      // NOTE: prog.stage is 0..3
-      // We gaan nu nog geen orderbook doen; dat pas bij stage 3 candidates selectie.
       preRows.push({
         symbol,
         price,
@@ -214,15 +257,11 @@ export default async function handler(req, res) {
     }
 
     // ======================
-    // 4️⃣ SELECT OB CANDIDATES (alleen setup->entry_ready/entry_ready)
+    // 4) SELECT OB CANDIDATES
     // ======================
-    // We willen OB calls beperken:
-    // - Alleen coins die al “hoog” zitten of dichtbij entry_ready zijn.
-    // - Rank op (stage, streak, ai/quality proxy)
     const obCandidates = preRows
-      .filter((r) => r.prog?.stage >= 2) // setup of hoger
+      .filter((r) => n(r.prog?.stage, 0) >= 2) // setup+
       .sort((a, b) => {
-        // eerst stage, dan streak, dan momentum/volume
         const sd = n(b.prog?.stage) - n(a.prog?.stage);
         if (sd) return sd;
         const st = n(b.prog?.streak) - n(a.prog?.streak);
@@ -233,39 +272,25 @@ export default async function handler(req, res) {
       })
       .slice(0, OB_CANDIDATES);
 
-    // fetch orderbooks parallel (maar gecontroleerd)
     const obMap = new Map();
 
     await mapLimit(obCandidates, OB_CONCURRENCY, async (row) => {
-      // jouw orderbookEngine verwacht symbol (soms "BTCUSDT" of "BTC")
-      // we gebruiken symbol als basis (jij gebruikt fetchOrderbook(symbol))
       const ob = await fetchOrderbook(row.symbol);
       obMap.set(row.symbol, ob);
     });
 
     // ======================
-    // 5️⃣ BUILD FINAL STATE (met OB + trade plan alleen bij ENTRY_READY)
+    // 5) FINALIZE STATE (OB+PLAN at stage 3)
     // ======================
     for (const row of preRows) {
-      const {
-        symbol,
-        coin,
-        price,
-        momentum24,
-        momentum1h,
-        volume,
-        marketCap,
-        volAcc,
-        compression,
-      } = row;
+      const { symbol, coin, price, momentum24, momentum1h, volume, marketCap, volAcc, compression } =
+        row;
 
       let prog = row.prog || { stage: 0, streak: 0 };
 
       let ob = null;
       let tradePlan = null;
 
-      // Alleen stage 3 = ENTRY_READY wil OB hard gate + tradeplan
-      // Maar: als prog.stage == 3 en OB faalt -> demote naar 2
       if (n(prog.stage) >= 3) {
         ob = obMap.get(symbol) || null;
 
@@ -274,10 +299,6 @@ export default async function handler(req, res) {
         if (pass) {
           tradePlan = buildTradePlan({
             price,
-            // jij gebruikte btcData.range24, maar dat is BTC range.
-            // Voor SL/TP adaptief is coin-range beter.
-            // We hebben coin-range niet in universeUrl; daarom:
-            // -> gebruik BTC range + momentum als proxy (later kun je coin high/low toevoegen).
             range24: n(btcData.range24, 0),
             regime: regimeData?.regime,
             side,
@@ -285,12 +306,11 @@ export default async function handler(req, res) {
             thresholds,
           });
         } else {
-          // OB faalt => terug naar SETUP
+          // fail liquidity -> demote
           prog = { ...prog, stage: 2 };
         }
       }
 
-      // AI ranking: combineer momentum/volAcc/compression + ob + rr
       const aiScore = computeAiScore({
         mode,
         regime: regimeData?.regime,
@@ -311,11 +331,14 @@ export default async function handler(req, res) {
         name: String(coin?.name || ""),
         image: String(coin?.image || ""),
         side,
+
         price: n(price, 0),
-        momentum24: n(momentum24, 0),
-        momentum1h: n(momentum1h, 0),
+        change24: n(momentum24, 0),
+        change1h: n(momentum1h, 0),
         volume: n(volume, 0),
         marketCap: n(marketCap, 0),
+
+        vm: marketCap > 0 ? volume / marketCap : 0,
 
         // funnel metrics
         volAcc: n(volAcc, 0),
@@ -324,8 +347,8 @@ export default async function handler(req, res) {
         // scores
         aiScore: n(aiScore, 0),
 
-        // progressive funnel state
-        stage: n(prog.stage, 0),       // 0..3
+        // progressive state
+        stage: n(prog.stage, 0),
         streak: n(prog.streak, 0),
         passes: !!row.passes,
 
@@ -333,20 +356,14 @@ export default async function handler(req, res) {
         tradePlan: tradePlan || null,
         ob: ob || null,
 
-        // meta
         updatedAt: now,
       };
     }
 
     // ======================
-    // 6️⃣ BUILD FUNNEL ARRAYS
+    // 6) BUILD FUNNEL
     // ======================
-    const funnel = {
-      radar: [],
-      warmup: [],
-      setup: [],
-      entry_ready: [],
-    };
+    const funnel = { radar: [], warmup: [], setup: [], entry_ready: [] };
 
     for (const c of Object.values(nextState)) {
       if (c.stage === 0) funnel.radar.push(c);
@@ -355,12 +372,10 @@ export default async function handler(req, res) {
       else if (c.stage === 3) funnel.entry_ready.push(c);
     }
 
-    // rank per bucket
     for (const k of Object.keys(funnel)) {
       funnel[k].sort((a, b) => n(b.aiScore) - n(a.aiScore));
     }
 
-    // hard caps (zodat UI niet overloaded wordt)
     const limits = {
       radar: n(thresholds?.uiRadarLimit ?? 120, 120),
       warmup: n(thresholds?.uiWarmupLimit ?? 80, 80),
@@ -374,50 +389,54 @@ export default async function handler(req, res) {
     funnel.entry_ready = funnel.entry_ready.slice(0, limits.entry_ready);
 
     // ======================
-    // 7️⃣ PERSIST (belangrijk!)
+    // 7) PERSIST
     // ======================
-    // progress:${mode} = volledige map voor progressiveStage
-    // state:${mode} = funnel snapshot voor UI + trade engine
-    await kv.set(`progress:${mode}`, nextState, { ex: KV_EX_PROGRESS_SEC });
+    await kv.set(keyProgress(mode), nextState, { ex: KV_EX_PROGRESS_SEC });
 
-    await kv.set(
-      `state:${mode}`,
-      {
-        ok: true,
-        mode,
-        side,
-        ts: now,
-        scannedAt: now,
-        btc: btcData,
-        regime: regimeData,
-        thresholds,
-        funnel,
-        counts: {
-          radar: funnel.radar.length,
-          warmup: funnel.warmup.length,
-          setup: funnel.setup.length,
-          entry_ready: funnel.entry_ready.length,
-        },
+    const statePayload = {
+      ok: true,
+      mode,
+      side,
+      ts: now,
+      scannedAt: now,
+      btc: btcData,
+      regime: regimeData,
+      thresholds,
+      funnel,
+      counts: {
+        radar: funnel.radar.length,
+        warmup: funnel.warmup.length,
+        setup: funnel.setup.length,
+        entry_ready: funnel.entry_ready.length,
       },
-      { ex: KV_EX_STATE_SEC }
-    );
+    };
 
-    // optional "latest" key voor simpele frontend calls
+    await kv.set(keyState(mode), statePayload, { ex: KV_EX_STATE_SEC });
+
     await kv.set(
-      `latest:${mode}`,
+      keyLatest(mode),
       {
         ok: true,
         mode,
         ts: now,
         regime: regimeData,
-        counts: {
-          radar: funnel.radar.length,
-          warmup: funnel.warmup.length,
-          setup: funnel.setup.length,
-          entry_ready: funnel.entry_ready.length,
-        },
+        counts: statePayload.counts,
       },
       { ex: KV_EX_LATEST_SEC }
+    );
+
+    // ======================
+    // 8) UPDATE AUTO SCHEDULE
+    // ======================
+    await kv.set(
+      keyAuto(mode),
+      {
+        mode,
+        lastRun: now,
+        nextDue: now + SCAN_INTERVAL_MS,
+        intervalMs: SCAN_INTERVAL_MS,
+      },
+      { ex: 60 * 60 * 24 } // 1 day
     );
 
     // ======================
@@ -426,17 +445,21 @@ export default async function handler(req, res) {
     res.json({
       ok: true,
       mode,
-      regime: regimeData,
       ts: now,
-      counts: {
-        radar: funnel.radar.length,
-        warmup: funnel.warmup.length,
-        setup: funnel.setup.length,
-        entry_ready: funnel.entry_ready.length,
-      },
+      regime: regimeData,
+      counts: statePayload.counts,
       limits,
+      auto: {
+        nextDue: now + SCAN_INTERVAL_MS,
+        intervalMs: SCAN_INTERVAL_MS,
+      },
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
+  } finally {
+    // best-effort unlock (TTL also exists)
+    try {
+      await kv.del(keyLock(mode));
+    } catch {}
   }
 }
