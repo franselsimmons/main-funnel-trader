@@ -29,33 +29,33 @@ export default function Home() {
         <div className="eyebrow">CRYPTOCROC</div>
         <h1 className="heroTitle">Scanner & Trade Desk</h1>
         <p className="heroText">
-          Rustig overzicht bovenaan. Diepte pas als je klikt.
+          Professioneel overzicht van de markt. Klik door voor diepgaande data.
         </p>
 
         <div className="heroStats">
           <div className="heroStat">
-            <span className="heroStatLabel">Bull entry ready</span>
+            <span className="heroStatLabel">Bull Entry Ready</span>
             <span className="heroStatValue">{bullEntry}</span>
             <span className="heroStatSmall">
-              Last scan: {bullLast ? new Date(bullLast).toLocaleString() : "—"}
+              Scan: {bullLast ? new Date(bullLast).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "—"}
             </span>
           </div>
           <div className="heroStat">
-            <span className="heroStatLabel">Bear entry ready</span>
+            <span className="heroStatLabel">Bear Entry Ready</span>
             <span className="heroStatValue">{bearEntry}</span>
             <span className="heroStatSmall">
-              Last scan: {bearLast ? new Date(bearLast).toLocaleString() : "—"}
+              Scan: {bearLast ? new Date(bearLast).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "—"}
             </span>
           </div>
           <div className="heroStat">
-            <span className="heroStatLabel">Bull setup</span>
+            <span className="heroStatLabel">Bull Setup</span>
             <span className="heroStatValue">{bullSetup}</span>
-            <span className="heroStatSmall">Setup → Entry is OB gate</span>
+            <span className="heroStatSmall">Setup → Entry Flow</span>
           </div>
           <div className="heroStat">
-            <span className="heroStatLabel">Bear setup</span>
+            <span className="heroStatLabel">Bear Setup</span>
             <span className="heroStatValue">{bearSetup}</span>
-            <span className="heroStatSmall">Setup → Entry is OB gate</span>
+            <span className="heroStatSmall">Setup → Entry Flow</span>
           </div>
         </div>
       </section>
@@ -63,22 +63,22 @@ export default function Home() {
       <section className="homeGrid">
         <Link href="/bull" className="homeCard">
           <div className="homeCardTitle">Bull Scanner</div>
-          <div className="homeCardText">Long kansen, funnel en coin modal detail.</div>
+          <div className="homeCardText">Vind long kansen, bekijk de funnel en analyseer coins via de detail pop-up.</div>
         </Link>
 
         <Link href="/bear" className="homeCard">
           <div className="homeCardTitle">Bear Scanner</div>
-          <div className="homeCardText">Short kansen, funnel en coin modal detail.</div>
+          <div className="homeCardText">Vind short kansen, bekijk de funnel en analyseer coins via de detail pop-up.</div>
         </Link>
 
         <Link href="/analyse" className="homeCard">
-          <div className="homeCardTitle">Analyse</div>
-          <div className="homeCardText">Bull & bear apart, bottlenecks en verbeteradvies.</div>
+          <div className="homeCardTitle">Analyse Desk</div>
+          <div className="homeCardText">Ontdek bottlenecks en bekijk verbeteradviezen voor beide marktrichtingen.</div>
         </Link>
 
         <Link href="/trade" className="homeCard">
           <div className="homeCardTitle">Trade Tunnel</div>
-          <div className="homeCardText">Open posities, entry flow en execution health.</div>
+          <div className="homeCardText">Monitor open posities, entry flow en de algemene execution health.</div>
         </Link>
       </section>
     </div>
