@@ -4,12 +4,10 @@ import Link from "next/link";
 function arr(v) {
   return Array.isArray(v) ? v : [];
 }
-
 function n(v, d = 0) {
   const x = Number(v);
   return Number.isFinite(x) ? x : d;
 }
-
 function fmtPrice(v) {
   const x = n(v, 0);
   if (x >= 1000) return x.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -17,18 +15,15 @@ function fmtPrice(v) {
   if (x >= 0.01) return x.toFixed(4);
   return x.toFixed(6);
 }
-
 function pnlClass(v) {
   if (v > 0) return "positive";
   if (v < 0) return "negative";
   return "neutral";
 }
-
 function splitPositionsByMode(positions, mode) {
   return arr(positions).filter((p) => {
     const m = String(p?.mode || "").toLowerCase();
     const side = String(p?.side || "").toUpperCase();
-
     if (m) return m === mode;
     if (mode === "bull") return side === "LONG";
     if (mode === "bear") return side === "SHORT";
@@ -73,13 +68,13 @@ export default function Trade() {
   let improvement = "Trade tunnel oogt gezond op dit snapshot.";
   if (bullEntry + bearEntry > 0 && positions.length === 0) {
     improvement =
-      "Er zijn entry-ready signals maar geen open trades. Kijk naar entry trigger tolerance, live spread reject en websocket execution.";
+      "Er zijn entry-ready signals maar geen open trades. Entry tolerance / live spread reject / websocket execution kunnen te streng zijn.";
   } else if (positions.length > 0 && bullAvgPnl + bearAvgPnl < 0) {
     improvement =
-      "Trades staan gemiddeld negatief. Kijk naar entry timing, SL/TP afstand en of je te laat triggert.";
+      "Trades staan gemiddeld negatief. Check entry timing (te laat), SL/TP afstand en spread reject.";
   } else if (bullEntry === 0 && bearEntry === 0) {
     improvement =
-      "Trade tunnel krijgt niets binnen. Grootste winst zit nu waarschijnlijk in setup → entry conversie.";
+      "Geen entry-ready flow. Grootste winst zit nu in setup → entry conversie (OB thresholds).";
   }
 
   return (
@@ -87,9 +82,7 @@ export default function Trade() {
       <header className="topbar">
         <div className="brandBlock">
           <div className="brandTitle">TRADE TUNNEL</div>
-          <div className="brandMeta">
-            Entry flow, open posities en execution health
-          </div>
+          <div className="brandMeta">Entry flow, open posities en execution health</div>
         </div>
 
         <nav className="navRow">
@@ -107,8 +100,7 @@ export default function Trade() {
             <div className="compareMeta">
               Entry ready <strong>{bullEntry}</strong> • Open <strong>{bullPositions.length}</strong> • Avg PnL{" "}
               <strong className={pnlClass(bullAvgPnl)}>
-                {bullAvgPnl > 0 ? "+" : ""}
-                {bullAvgPnl.toFixed(2)}%
+                {bullAvgPnl > 0 ? "+" : ""}{bullAvgPnl.toFixed(2)}%
               </strong>
             </div>
           </div>
@@ -118,15 +110,14 @@ export default function Trade() {
             <div className="compareMeta">
               Entry ready <strong>{bearEntry}</strong> • Open <strong>{bearPositions.length}</strong> • Avg PnL{" "}
               <strong className={pnlClass(bearAvgPnl)}>
-                {bearAvgPnl > 0 ? "+" : ""}
-                {bearAvgPnl.toFixed(2)}%
+                {bearAvgPnl > 0 ? "+" : ""}{bearAvgPnl.toFixed(2)}%
               </strong>
             </div>
           </div>
         </div>
 
         <section className="analysisSection">
-          <div className="analysisSectionTitle">Wat verbeteren in trade tunnel</div>
+          <div className="analysisSectionTitle">Wat verbeteren</div>
           <div className="adviceBox">
             <div className="adviceItem">{improvement}</div>
           </div>
@@ -134,13 +125,11 @@ export default function Trade() {
 
         <section className="analysisSection">
           <div className="analysisSectionTitle">Open posities</div>
-
           <div className="tradeCardList">
             {!positions.length && <div className="emptyState">Geen open posities</div>}
 
             {positions.map((p, idx) => {
               const pnl = n(p?.pnlPct ?? p?.pnl, 0);
-
               return (
                 <div className="tradeRow" key={`${p.symbol || "pos"}-${idx}`}>
                   <div>
@@ -157,8 +146,7 @@ export default function Trade() {
                   </div>
 
                   <div className={`tradePnl ${pnlClass(pnl)}`}>
-                    {pnl > 0 ? "+" : ""}
-                    {pnl.toFixed(2)}%
+                    {pnl > 0 ? "+" : ""}{pnl.toFixed(2)}%
                   </div>
                 </div>
               );
