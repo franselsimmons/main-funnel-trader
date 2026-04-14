@@ -1,1 +1,16 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/scan?mode=bull",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/scan?mode=bear",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/execution",
+      "schedule": "* * * * *"
+    }
+  ]
+}
