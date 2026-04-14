@@ -74,7 +74,6 @@ export default async function handler(req, res) {
   }
 
   const t0 = Date.now();
-
   const mode =
     String(req.query?.mode || "bull").toLowerCase() === "bear"
       ? "bear"
@@ -83,7 +82,7 @@ export default async function handler(req, res) {
   const side = mode === "bear" ? "SHORT" : "LONG";
   const now = Date.now();
 
-  const SCAN_INTERVAL_MS = 900000; // 15 min
+  const SCAN_INTERVAL_MS = 900000;
   const MAX_COINS = 120;
   const AUTO_MAX_PER_SCAN = 3;
 
@@ -103,8 +102,6 @@ export default async function handler(req, res) {
     if (!lock) {
       return res.json({ ok: true, skipped: true, reason: "locked" });
     }
-
-    /* ===== FETCH MARKET ===== */
 
     const url =
       `https://api.coingecko.com/api/v3/coins/markets` +
@@ -162,6 +159,7 @@ export default async function handler(req, res) {
 
       if (prog.stage >= 3) {
         ob = await fetchOrderbook(safeObSymbol(symbol));
+
         if (orderbookPass(ob, thresholds)) {
           tradePlan = buildTradePlan({
             price,
@@ -195,7 +193,11 @@ export default async function handler(req, res) {
       if (prog.stage === 0) funnel.radar.push(obj);
       if (prog.stage === 1) funnel.warmup.push(obj);
       if (prog.stage === 2) funnel.setup.push(obj);
-      if (prog.stage === 3) funnel.entry_ready.push(obj);
+
+      // 🔥 FIX: entry_ready ONLY if tradePlan exists
+      if (prog.stage === 3 && tradePlan) {
+        funnel.entry_ready.push(obj);
+      }
     }
 
     funnel.entry_ready.sort((a, b) => b.aiScore - a.aiScore);
@@ -204,7 +206,6 @@ export default async function handler(req, res) {
 
     for (const coin of funnel.entry_ready) {
       if (executed >= AUTO_MAX_PER_SCAN) break;
-      if (!coin.tradePlan) continue;
 
       const result = await executeTrade(mode, coin);
       if (result?.opened) executed++;
@@ -233,7 +234,6 @@ export default async function handler(req, res) {
     );
 
     res.json(payload);
-
   } catch (e) {
     console.error("SCAN_FATAL:", e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
