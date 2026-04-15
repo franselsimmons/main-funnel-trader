@@ -8,6 +8,9 @@ import {
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
+import { updateLifecycle } from "../lib/lifecycle.js";
+import { handleTrade, getAllTrades } from "../lib/tradeSystem.js";
+
 // ================= SCORE =================
 function calculateScore(c) {
   let score = 0;
@@ -60,30 +63,40 @@ export default async function handler(req, res) {
         ob
       };
 
-      // 🔥 stage uit filter
-      const stage =
+      const stageRaw =
         mode === "bull"
           ? bullFilter(coin)
           : bearFilter(coin);
 
       const score = calculateScore(coin);
 
-      coin.moveScore = score;
+      const stage = updateLifecycle(
+        coin.symbol,
+        stageRaw,
+        score
+      );
+
       coin.stage = stage;
+      coin.moveScore = score;
+
+      coin.trade = handleTrade(coin);
 
       funnel[stage.toLowerCase()].push(coin);
     }
 
-    // 🔥 sort alles
+    // sort
     for (const key in funnel) {
       funnel[key].sort((a, b) => b.moveScore - a.moveScore);
     }
 
-    // 🔥 fallback (NOOIT LEEG)
-    if (
-      funnel.entry.length === 0 &&
-      funnel.almost.length === 0
-    ) {
+    // fallback
+    const total =
+      funnel.entry.length +
+      funnel.almost.length +
+      funnel.buildup.length +
+      funnel.radar.length;
+
+    if (total === 0) {
       funnel.radar = coins.slice(0, 10).map(c => ({
         symbol: c.symbol.toUpperCase(),
         price: c.current_price,
@@ -97,6 +110,7 @@ export default async function handler(req, res) {
       scannedAt: Date.now(),
       btc,
       funnel,
+      trades: getAllTrades(),
       whaleFlow: Math.random() * 100
     });
 
