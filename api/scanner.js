@@ -1,4 +1,7 @@
-import { fetchCoinGeckoTopCached, fetchBTCGateFromUniverse } from "../lib/_main_shared.js";
+import {
+  fetchCoinGeckoTopCached,
+  fetchBTCGateFromUniverse
+} from "../lib/_main_shared.js";
 
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
@@ -9,59 +12,98 @@ import { chooseStrategy } from "../lib/strategy.js";
 
 import { executeTrade } from "../lib/executionEngine.js";
 
+import { hasEdge } from "../lib/edge.js";
+
+import { updatePositions } from "../lib/lifecycle.js";
+import { getPositions } from "../lib/position.js";
+
+import { getPortfolio } from "../lib/portfolio.js";
+
 let LAST = null;
 
-export default async function handler(req,res){
+export default async function handler(req, res){
 
-  const mode = (req.query.mode || "bull").toLowerCase();
+  try {
 
-  const coins = await fetchCoinGeckoTopCached();
-  const btc = await fetchBTCGateFromUniverse();
+    // ===== MODE =====
+    const mode = (req.query.mode || "bull").toLowerCase();
 
-  const volatility = detectVolatility(coins);
+    // ===== DATA =====
+    const coins = await fetchCoinGeckoTopCached();
+    const btc = await fetchBTCGateFromUniverse();
 
-  const totalCap = coins.reduce((a,c)=>a+(c.market_cap||0),0);
+    // ===== MARKET ANALYSIS =====
+    const volatility = detectVolatility(coins);
 
-  const btcCap =
-    coins.find(c=>c.symbol==="btc")?.market_cap || 0;
+    const totalCap = coins.reduce((a,c)=>a+(c.market_cap||0),0);
 
-  const dominance = btcDominance(btcCap,totalCap);
+    const btcCap =
+      coins.find(c=>c.symbol==="btc")?.market_cap || 0;
 
-  const strategy = chooseStrategy(volatility,dominance);
+    const dominance = btcDominance(btcCap,totalCap);
 
-  const filtered = coins.filter(c =>
-    mode==="bull" ? bullFilter(c) : bearFilter(c)
-  );
+    const strategy = chooseStrategy(volatility, dominance);
 
-  const resultCoins = [];
+    // ===== UPDATE OPEN POSITIONS =====
+    updatePositions();
 
-  for(const c of filtered){
+    // ===== FILTER COINS =====
+    const filtered = coins.filter(c =>
+      mode === "bull"
+        ? bullFilter(c)
+        : bearFilter(c)
+    );
 
-    const result = executeTrade(c,strategy);
+    const resultCoins = [];
 
-    resultCoins.push({
-      symbol: c.symbol.toUpperCase(),
-      name: c.name,
-      price: c.current_price,
-      change24: c.price_change_percentage_24h,
-      change1h: c.price_change_percentage_1h,
-      volume: c.total_volume,
-      marketCap: c.market_cap,
+    // ===== PROCESS COINS =====
+    for(const c of filtered){
+
+      // 🔥 EDGE CHECK (BELANGRIJK)
+      if(!hasEdge(c)) continue;
+
+      // ===== EXECUTE TRADE =====
+      const result = executeTrade(c, strategy);
+
+      resultCoins.push({
+        symbol: c.symbol.toUpperCase(),
+        name: c.name,
+        price: c.current_price,
+        change24: c.price_change_percentage_24h,
+        change1h: c.price_change_percentage_1h,
+        volume: c.total_volume,
+        marketCap: c.market_cap,
+        strategy,
+        result,
+        stage: result === "OPENED" ? "ENTRY" : "SKIP"
+      });
+    }
+
+    // ===== STATE =====
+    const positions = getPositions();
+    const portfolio = getPortfolio();
+
+    LAST = {
+      ts: Date.now(),
+      mode,
+      btc,
+      volatility,
+      dominance,
       strategy,
-      result,
-      stage: result==="WIN" ? "ENTRY" : "SKIP"
+      coins: resultCoins,
+      positions,
+      portfolio
+    };
+
+    res.json(LAST);
+
+  } catch (err) {
+
+    console.error("SCANNER ERROR:", err);
+
+    res.status(500).json({
+      error: "Scanner crash",
+      message: err.message
     });
   }
-
-  LAST = {
-    ts: Date.now(),
-    mode,
-    btc,
-    volatility,
-    dominance,
-    strategy,
-    coins: resultCoins
-  };
-
-  res.json(LAST);
 }
