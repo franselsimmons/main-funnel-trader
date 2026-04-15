@@ -24,20 +24,28 @@ function sleep(ms) {
 
 /* ================= SAFE FETCH ================= */
 
-async function fetchJsonSafe(url, retries = 2) {
+async function fetchJsonSafe(url, retries = 3) {
   for (let i = 0; i <= retries; i++) {
     try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 8000);
+
       const r = await fetch(url, {
         cache: "no-store",
+        signal: controller.signal,
         headers: { accept: "application/json" },
       });
+
+      clearTimeout(id);
 
       if (!r.ok) throw new Error(`HTTP_${r.status}`);
 
       return await r.json();
     } catch (e) {
       if (i === retries) throw e;
-      await sleep(500 * (i + 1)); // backoff
+
+      console.warn("retry fetch...", i + 1);
+      await sleep(600 * (i + 1));
     }
   }
 }
@@ -45,34 +53,28 @@ async function fetchJsonSafe(url, retries = 2) {
 /* ================= FETCH UNIVERSE ================= */
 
 async function fetchUniverse() {
-  const results = [];
-
-  for (let page = 1; page <= 3; page++) {
+  try {
     const url =
       `https://api.coingecko.com/api/v3/coins/markets` +
       `?vs_currency=usd` +
       `&order=market_cap_desc` +
-      `&per_page=100` +
-      `&page=${page}` +
+      `&per_page=100` +   // ✅ MAX 100 (GEEN PAGING)
+      `&page=1` +
       `&sparkline=false` +
       `&price_change_percentage=24h`;
 
-    try {
-      const data = await fetchJsonSafe(url);
+    const data = await fetchJsonSafe(url);
 
-      if (Array.isArray(data)) {
-        results.push(...data);
-      } else {
-        console.warn("bad data page:", page);
-      }
-
-      await sleep(300); // 🔥 rate limit protection
-    } catch (e) {
-      console.warn("fetch page failed:", page);
+    if (!Array.isArray(data)) {
+      console.warn("bad universe response");
+      return [];
     }
-  }
 
-  return results;
+    return data;
+  } catch (e) {
+    console.error("fetchUniverse failed:", e.message);
+    return [];
+  }
 }
 
 /* ================= KV KEYS ================= */
@@ -103,27 +105,25 @@ export default async function handler(req, res) {
 
     /* ===== FETCH ===== */
 
-    let universe = await fetchUniverse();
+    const universe = await fetchUniverse();
 
-    // 🔥 HARD FAILSAFE: gebruik oude state als API faalt
+    // 🔥 FAILSAFE (geen crash meer)
     if (!universe.length) {
-      console.error("⚠️ FALLBACK: using previous state");
+      console.warn("⚠️ FALLBACK: using previous state");
 
       const prev = await kv.get(keyState(mode));
 
-      if (prev) {
-        return res.json({
-          ok: true,
-          fallback: true,
-          ...prev,
-        });
-      }
-
-      // als niks bestaat → return lege maar geen crash
       return res.json({
         ok: true,
         fallback: true,
-        funnel: { radar: [], warmup: [], setup: [], entry_ready: [] },
+        ...(prev || {
+          funnel: {
+            radar: [],
+            warmup: [],
+            setup: [],
+            entry_ready: [],
+          },
+        }),
       });
     }
 
@@ -152,11 +152,7 @@ export default async function handler(req, res) {
       entry_ready: [],
     };
 
-    let processed = 0;
-
     for (const coin of universe) {
-      if (processed++ > 250) break;
-
       const symbol = up(coin.symbol);
       if (!symbol || symbol.includes("USD")) continue;
 
@@ -190,7 +186,7 @@ export default async function handler(req, res) {
             });
           }
         } catch {
-          // ignore OB failure
+          // OB fail = skip
         }
       }
 
@@ -233,6 +229,7 @@ export default async function handler(req, res) {
     });
 
     return res.json(payload);
+
   } catch (e) {
     console.error("SCAN_FATAL:", e);
 
