@@ -1,38 +1,39 @@
+---
+
+# 🌐 public/index.html
+
+```html
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
-  <title>MAIN HEDGE FUND</title>
-  <link rel="stylesheet" href="/main.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MAIN Trading System</title>
+  <link rel="stylesheet" href="/main.css" />
 </head>
 <body>
 
 <div class="topbar">
-  <div>
-    <b>MAIN HEDGE FUND</b>
-    <div id="statusLine"></div>
+  <div class="left">
+    <div class="brand">MAIN SYSTEM</div>
+    <div id="statusLine" class="sub">Laden...</div>
   </div>
-
-  <div>
-    <button id="modeBull">BULL</button>
-    <button id="modeBear">BEAR</button>
+  <div class="right">
+    <button id="modeBull" class="btn">BULL</button>
+    <button id="modeBear" class="btn">BEAR</button>
   </div>
 </div>
 
 <div class="grid">
 
   <div class="panel">
-    <h3>ENTRY</h3>
-    <div id="stageTradeReady"></div>
+    <div class="panelTitle">ENTRY</div>
+    <div id="stageTradeReady" class="stageBody"></div>
   </div>
 
   <div class="panel">
-    <h3>AI STATE</h3>
-    <div id="analysisBox"></div>
-  </div>
-
-  <div class="panel">
-    <h3>PERFORMANCE</h3>
-    <div id="perfBox"></div>
+    <div class="panelTitle">SKIP</div>
+    <div id="stageSkip" class="stageBody"></div>
   </div>
 
 </div>
