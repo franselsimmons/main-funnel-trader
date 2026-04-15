@@ -8,6 +8,8 @@ import { buildTradePlan } from "../../lib/tradePlanEngine";
 
 export const config = { runtime: "nodejs" };
 
+/* ================= HELPERS ================= */
+
 function n(x, d = 0) {
   const v = Number(x);
   return Number.isFinite(v) ? v : d;
@@ -15,36 +17,77 @@ function n(x, d = 0) {
 function up(x) {
   return String(x || "").toUpperCase();
 }
-function safeObSymbol(symbol) {
-  const s = up(symbol);
-  return s.endsWith("USDT") ? s : `${s}USDT`;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchJsonSafe(url) {
-  const r = await fetch(url, { cache: "no-store" });
-  return await r.json();
+/* ================= SAFE FETCH ================= */
+
+async function fetchJsonSafe(url, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const r = await fetch(url, {
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      });
+
+      if (!r.ok) throw new Error(`HTTP_${r.status}`);
+
+      return await r.json();
+    } catch (e) {
+      if (i === retries) throw e;
+      await sleep(500 * (i + 1)); // backoff
+    }
+  }
 }
+
+/* ================= FETCH UNIVERSE ================= */
+
+async function fetchUniverse() {
+  const results = [];
+
+  for (let page = 1; page <= 3; page++) {
+    const url =
+      `https://api.coingecko.com/api/v3/coins/markets` +
+      `?vs_currency=usd` +
+      `&order=market_cap_desc` +
+      `&per_page=100` +
+      `&page=${page}` +
+      `&sparkline=false` +
+      `&price_change_percentage=24h`;
+
+    try {
+      const data = await fetchJsonSafe(url);
+
+      if (Array.isArray(data)) {
+        results.push(...data);
+      } else {
+        console.warn("bad data page:", page);
+      }
+
+      await sleep(300); // 🔥 rate limit protection
+    } catch (e) {
+      console.warn("fetch page failed:", page);
+    }
+  }
+
+  return results;
+}
+
+/* ================= KV KEYS ================= */
+
+const keyState = (m) => `state:${m}`;
+const keyAuto = (m) => `scan:auto:${m}`;
+const keyLock = (m) => `scan:lock:${m}`;
+
+/* ================= LOCK ================= */
 
 async function acquireLock(key) {
   return await kv.set(key, { ts: Date.now() }, { nx: true, ex: 60 });
 }
 
-async function fetchUniverse() {
-  const results = [];
-  for (let page = 1; page <= 3; page++) {
-    const url =
-      `https://api.coingecko.com/api/v3/coins/markets` +
-      `?vs_currency=usd&order=market_cap_desc&per_page=100&page=${page}`;
-    const data = await fetchJsonSafe(url);
-    if (Array.isArray(data)) results.push(...data);
-  }
-  return results;
-}
-
-const keyState = (m) => `state:${m}`;
-const keyFlow = (m) => `flow:${m}`;
-const keyAuto = (m) => `scan:auto:${m}`;
-const keyLock = (m) => `scan:lock:${m}`;
+/* ================= MAIN ================= */
 
 export default async function handler(req, res) {
   const mode =
@@ -53,16 +96,39 @@ export default async function handler(req, res) {
       : "bull";
 
   const now = Date.now();
-  const baseUrl =
-    (req.headers["x-forwarded-proto"] || "https") +
-    "://" +
-    (req.headers["x-forwarded-host"] || req.headers.host);
 
   try {
     const lock = await acquireLock(keyLock(mode));
     if (!lock) return res.json({ ok: true, skipped: true });
 
-    const universe = await fetchUniverse();
+    /* ===== FETCH ===== */
+
+    let universe = await fetchUniverse();
+
+    // 🔥 HARD FAILSAFE: gebruik oude state als API faalt
+    if (!universe.length) {
+      console.error("⚠️ FALLBACK: using previous state");
+
+      const prev = await kv.get(keyState(mode));
+
+      if (prev) {
+        return res.json({
+          ok: true,
+          fallback: true,
+          ...prev,
+        });
+      }
+
+      // als niks bestaat → return lege maar geen crash
+      return res.json({
+        ok: true,
+        fallback: true,
+        funnel: { radar: [], warmup: [], setup: [], entry_ready: [] },
+      });
+    }
+
+    /* ===== BTC ===== */
+
     const btc = universe.find((c) => c.id === "bitcoin");
 
     const btcData = {
@@ -77,6 +143,8 @@ export default async function handler(req, res) {
     const regime = computeBtcRegime(btcData);
     const thresholds = adaptiveThresholds(regime?.regime);
 
+    /* ===== FUNNEL ===== */
+
     const funnel = {
       radar: [],
       warmup: [],
@@ -84,10 +152,10 @@ export default async function handler(req, res) {
       entry_ready: [],
     };
 
-    let count = 0;
+    let processed = 0;
 
     for (const coin of universe) {
-      if (count++ > 250) break;
+      if (processed++ > 250) break;
 
       const symbol = up(coin.symbol);
       if (!symbol || symbol.includes("USD")) continue;
@@ -108,18 +176,21 @@ export default async function handler(req, res) {
           : 0;
 
       let tradePlan = null;
-      let ob = null;
 
       if (stage >= 3) {
-        ob = await fetchOrderbook(safeObSymbol(symbol));
+        try {
+          const ob = await fetchOrderbook(symbol + "USDT");
 
-        if (orderbookPass(ob, thresholds)) {
-          tradePlan = buildTradePlan({
-            price,
-            range24: btcData.range24,
-            regime: regime?.regime,
-            side: mode === "bear" ? "SHORT" : "LONG",
-          });
+          if (orderbookPass(ob, thresholds)) {
+            tradePlan = buildTradePlan({
+              price,
+              range24: btcData.range24,
+              regime: regime?.regime,
+              side: mode === "bear" ? "SHORT" : "LONG",
+            });
+          }
+        } catch {
+          // ignore OB failure
         }
       }
 
@@ -136,7 +207,6 @@ export default async function handler(req, res) {
         aiScore,
         stage,
         tradePlan,
-        ob,
       };
 
       if (stage === 0) funnel.radar.push(obj);
@@ -155,28 +225,21 @@ export default async function handler(req, res) {
       funnel,
     };
 
-    await kv.set(keyState(mode), payload);
-
-    // ✅ FLOW TRACKING
-    await kv.set(keyFlow(mode), {
-      ts: now,
-      radar: funnel.radar.length,
-      warmup: funnel.warmup.length,
-      setup: funnel.setup.length,
-      entry: funnel.entry_ready.length,
-    });
+    await kv.set(keyState(mode), payload, { ex: 21600 });
 
     await kv.set(keyAuto(mode), {
       lastRun: now,
       nextDue: now + 900000,
     });
 
-    // ✅ TRIGGER TRADE ENGINE
-    await fetch(`${baseUrl}/api/trade?mode=${mode}`, { cache: "no-store" });
-
     return res.json(payload);
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e) });
+    console.error("SCAN_FATAL:", e);
+
+    return res.status(500).json({
+      ok: false,
+      error: String(e?.message || e),
+    });
   } finally {
     await kv.del(keyLock(mode));
   }
