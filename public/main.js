@@ -1,51 +1,124 @@
-const el = id => document.getElementById(id);
+const el = (id) => document.getElementById(id);
 
 let MODE = "bull";
 
-function setMode(m){
-  MODE = m;
+function setMode(mode) {
+  MODE = mode === "bear" ? "bear" : "bull";
   load();
 }
 
-el("modeBull").onclick = ()=>setMode("bull");
-el("modeBear").onclick = ()=>setMode("bear");
+const bullBtn = el("modeBull");
+const bearBtn = el("modeBear");
 
-async function load(){
+if (bullBtn) bullBtn.onclick = () => setMode("bull");
+if (bearBtn) bearBtn.onclick = () => setMode("bear");
 
-  el("statusLine").innerText = "Laden...";
+function coinRow(c) {
+  const price = Number(c?.price || 0);
+  const change24 = Number(c?.change24 || 0);
+  const score = Number(c?.moveScore || 0);
+  const stage = String(c?.stage || "—");
 
-  const res = await fetch(`/api/public-latest?mode=${MODE}`);
-  const data = await res.json();
-
-  render(data);
-}
-
-function coinRow(c){
   return `
     <div class="coin">
-      <b>${c.symbol}</b> - $${c.price}
-      <br/>
-      ${c.change24.toFixed(2)}%
-      <br/>
-      ${c.strategy}
+      <div><b>${c?.symbol || "—"}</b> - $${price.toFixed(6)}</div>
+      <div>24h: ${change24.toFixed(2)}%</div>
+      <div>Score: ${score}</div>
+      <div>Stage: ${stage}</div>
     </div>
   `;
 }
 
-function render(data){
+function ageLabel(ts) {
+  const x = Number(ts || 0);
+  if (!x) return "tijd onbekend";
 
-  el("statusLine").innerText =
-    `Strategy: ${data.strategy} | Vol: ${data.volatility}`;
+  const diffMin = Math.floor((Date.now() - x) / 60000);
 
-  const entry = data.coins.filter(c=>c.stage==="ENTRY");
-  const skip = data.coins.filter(c=>c.stage!=="ENTRY");
+  if (diffMin < 1) return "live";
+  if (diffMin < 60) return `${diffMin}m oud`;
 
-  el("stageTradeReady").innerHTML =
-    entry.map(coinRow).join("");
+  const h = Math.floor(diffMin / 60);
+  const m = diffMin % 60;
+  return `${h}u ${m}m oud`;
+}
 
-  el("stageSkip").innerHTML =
-    skip.map(coinRow).join("");
+function render(data) {
+  const funnel = data?.funnel || {};
+
+  const entry = Array.isArray(funnel.entry) ? funnel.entry : [];
+  const almost = Array.isArray(funnel.almost) ? funnel.almost : [];
+  const buildup = Array.isArray(funnel.buildup) ? funnel.buildup : [];
+  const radar = Array.isArray(funnel.radar) ? funnel.radar : [];
+
+  const status = el("statusLine");
+  if (status) {
+    status.innerText =
+      `BTC: ${data?.btc?.state || "—"} • ` +
+      `ENTRY ${entry.length} • ` +
+      `ALMOST ${almost.length} • ` +
+      `BUILDUP ${buildup.length} • ` +
+      `RADAR ${radar.length} • ` +
+      `${ageLabel(data?.scannedAt)}`;
+  }
+
+  const tradeReady = el("stageTradeReady");
+  if (tradeReady) {
+    tradeReady.innerHTML = entry.length
+      ? entry.map(coinRow).join("")
+      : "Geen ENTRY coins";
+  }
+
+  const almostBox = el("stageAlmost");
+  if (almostBox) {
+    almostBox.innerHTML = almost.length
+      ? almost.map(coinRow).join("")
+      : "Geen ALMOST";
+  }
+
+  const buildupBox = el("stageBuildup");
+  if (buildupBox) {
+    buildupBox.innerHTML = buildup.length
+      ? buildup.map(coinRow).join("")
+      : "Geen BUILDUP";
+  }
+
+  const radarBox = el("stageRadar");
+  if (radarBox) {
+    radarBox.innerHTML = radar.length
+      ? radar.map(coinRow).join("")
+      : "Geen RADAR";
+  }
+}
+
+async function load() {
+  const status = el("statusLine");
+  if (status) status.innerText = "Laden...";
+
+  try {
+    const res = await fetch(`/api/public-latest?mode=${MODE}`, {
+      cache: "no-store",
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.error || "request_failed");
+    }
+
+    render(data);
+  } catch (err) {
+    if (status) {
+      status.innerText = `Fout: ${String(err?.message || err)}`;
+    }
+  }
 }
 
 load();
-setInterval(load, 5000);
+
+/*
+  Swing trading:
+  - backend scan via cron: elke 15 min
+  - frontend refresh: elke 60 sec is prima
+*/
+setInterval(load, 60000);
