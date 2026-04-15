@@ -20,23 +20,32 @@ function calculateScore(c) {
 
   // short term
   if (c.change1h > 1) score += 20;
+  else if (c.change1h > 0.5) score += 10;
 
   // volume strength
   if (c.vm > 0.5) score += 25;
   else if (c.vm > 0.3) score += 15;
 
   // liquidity
-  if (c.ob?.score > 0.05) score += 15;
+  if (c.ob?.score > 0.08) score += 15;
+  else if (c.ob?.score > 0.04) score += 10;
 
   return Math.min(score, 100);
 }
 
-// ================= STAGES =================
-function getStage(score) {
-  if (score >= 80) return "ENTRY";
-  if (score >= 65) return "ALMOST";
-  if (score >= 50) return "BUILDUP";
-  return "RADAR";
+// ================= NORMALIZE =================
+function normalizeCoin(c, ob) {
+  return {
+    symbol: c.symbol?.toUpperCase(),
+    name: c.name,
+    price: c.current_price,
+    change24: c.price_change_percentage_24h,
+    change1h: c.price_change_percentage_1h,
+    volume: c.total_volume,
+    marketCap: c.market_cap,
+    vm: c.total_volume / c.market_cap,
+    ob
+  };
 }
 
 // ================= MAIN =================
@@ -56,40 +65,32 @@ export default async function handler(req, res) {
       radar: []
     };
 
-    for (const c of coins) {
-      const symbol = (c.symbol || "").toUpperCase() + "USDT";
-
+    for (const raw of coins) {
+      const symbol = (raw.symbol || "").toUpperCase() + "USDT";
       const ob = generateShallowOb(tickers.get(symbol));
 
-      const coin = {
-        symbol: c.symbol?.toUpperCase(),
-        name: c.name,
-        price: c.current_price,
-        change24: c.price_change_percentage_24h,
-        change1h: c.price_change_percentage_1h,
-        volume: c.total_volume,
-        marketCap: c.market_cap,
-        vm: c.total_volume / c.market_cap,
-        ob
-      };
+      const coin = normalizeCoin(raw, ob);
 
-      // ================= FILTER =================
-      let passed = false;
+      // ================= FILTER (STAGE BASED) =================
+      let stage = false;
 
       if (mode === "bull") {
-        passed = bullFilter(coin);
+        stage = bullFilter(coin);
       } else {
-        passed = bearFilter(coin);
+        stage = bearFilter(coin);
       }
 
-      if (!passed) continue;
+      if (!stage) continue;
 
       // ================= SCORE =================
       const score = calculateScore(coin);
       coin.moveScore = score;
 
-      // ================= STAGE =================
-      const stage = getStage(score);
+      // 🔥 BELANGRIJK: filter stage vs score combineren
+      // (voorkomt dat zwakke coins ENTRY worden)
+      if (stage === "ENTRY" && score < 70) stage = "ALMOST";
+      if (stage === "ALMOST" && score < 55) stage = "BUILDUP";
+
       coin.stage = stage;
 
       // ================= PUSH =================
@@ -97,6 +98,11 @@ export default async function handler(req, res) {
       else if (stage === "ALMOST") funnel.almost.push(coin);
       else if (stage === "BUILDUP") funnel.buildup.push(coin);
       else funnel.radar.push(coin);
+    }
+
+    // 🔥 SORT (BELANGRIJK)
+    for (const key of Object.keys(funnel)) {
+      funnel[key].sort((a, b) => b.moveScore - a.moveScore);
     }
 
     return res.status(200).json({
