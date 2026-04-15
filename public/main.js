@@ -2,32 +2,50 @@ const el = id => document.getElementById(id);
 
 let MODE = "bull";
 
+function setMode(m){
+  MODE = m;
+  load();
+}
+
+el("modeBull").onclick = ()=>setMode("bull");
+el("modeBear").onclick = ()=>setMode("bear");
+
 async function load(){
 
-  const data = await fetch(`/api/public-latest?mode=${MODE}`).then(r=>r.json());
-  const a = await fetch(`/api/analysis`).then(r=>r.json());
-  const p = await fetch(`/api/performance`).then(r=>r.json());
+  el("statusLine").innerText = "Laden...";
 
-  el("statusLine").textContent =
-    `BTC: ${data.btc.state} | VOL: ${data.volatility}`;
+  const res = await fetch(`/api/public-latest?mode=${MODE}`);
+  const data = await res.json();
 
-  el("analysisBox").innerHTML =
-    `Strategy: ${a.strategy}<br>
-     Regime: ${a.regime}<br>
-     Confidence: ${a.confidence}`;
-
-  el("perfBox").innerHTML =
-    `Trades: ${p.total}<br>
-     Winrate: ${p.winrate}%`;
-
-  render("stageTradeReady", data.funnel.entry);
+  render(data);
 }
 
-function render(id,list){
-  el(id).innerHTML = list.map(c =>
-    `<div class="coin">${c.symbol} $${c.price}</div>`
-  ).join("");
+function coinRow(c){
+  return `
+    <div class="coin">
+      <b>${c.symbol}</b> - $${c.price}
+      <br/>
+      ${c.change24.toFixed(2)}%
+      <br/>
+      ${c.strategy}
+    </div>
+  `;
 }
 
-setInterval(load, 5000);
+function render(data){
+
+  el("statusLine").innerText =
+    `Strategy: ${data.strategy} | Vol: ${data.volatility}`;
+
+  const entry = data.coins.filter(c=>c.stage==="ENTRY");
+  const skip = data.coins.filter(c=>c.stage!=="ENTRY");
+
+  el("stageTradeReady").innerHTML =
+    entry.map(coinRow).join("");
+
+  el("stageSkip").innerHTML =
+    skip.map(coinRow).join("");
+}
+
 load();
+setInterval(load, 5000);
