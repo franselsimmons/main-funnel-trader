@@ -1,8 +1,11 @@
 {
-  "name": "main-hedgefund-trader",
-  "private": true,
+  "name": "main-trading-system",
+  "version": "1.0.0",
   "type": "module",
-  "dependencies": {
-    "@vercel/kv": "^1.0.1"
-  }
+  "private": true,
+  "scripts": {
+    "dev": "node api/scanner.js",
+    "start": "node api/scanner.js"
+  },
+  "dependencies": {}
 }
