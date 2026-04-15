@@ -1,43 +1,33 @@
----
-
-# 🌐 public/index.html
-
-```html
 <!DOCTYPE html>
-<html lang="nl">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MAIN Trading System</title>
-  <link rel="stylesheet" href="/main.css" />
+  <title>MAIN SYSTEM</title>
+  <link rel="stylesheet" href="main.css">
 </head>
 <body>
 
-<div class="topbar">
-  <div class="left">
-    <div class="brand">MAIN SYSTEM</div>
-    <div id="statusLine" class="sub">Laden...</div>
-  </div>
-  <div class="right">
-    <button id="modeBull" class="btn">BULL</button>
-    <button id="modeBear" class="btn">BEAR</button>
-  </div>
-</div>
+<h2>MAIN SYSTEM</h2>
 
-<div class="grid">
+<div id="statusLine"></div>
 
-  <div class="panel">
-    <div class="panelTitle">ENTRY</div>
-    <div id="stageTradeReady" class="stageBody"></div>
-  </div>
+<button id="modeBull">BULL</button>
+<button id="modeBear">BEAR</button>
 
-  <div class="panel">
-    <div class="panelTitle">SKIP</div>
-    <div id="stageSkip" class="stageBody"></div>
-  </div>
+<h3>ENTRY</h3>
+<div id="stageTradeReady"></div>
 
-</div>
+<h3>ALMOST</h3>
+<div id="stageAlmost"></div>
 
-<script src="/main.js"></script>
+<h3>BUILDUP</h3>
+<div id="stageBuildup"></div>
+
+<h3>RADAR</h3>
+<div id="stageRadar"></div>
+
+<h3>TRADES</h3>
+<div id="stageTrades"></div>
+
+<script src="main.js"></script>
 </body>
 </html>
