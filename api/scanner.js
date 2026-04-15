@@ -9,49 +9,72 @@ import {
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
+function n(x, d = 0) {
+  const v = Number(x);
+  return Number.isFinite(v) ? v : d;
+}
+
 // ================= SCORE =================
 function calculateScore(c) {
   let score = 0;
 
-  // momentum
+  // 24h momentum
   if (c.change24 > 8) score += 30;
   else if (c.change24 > 5) score += 20;
   else if (c.change24 > 2) score += 10;
+  else if (c.change24 < -8) score += 30;
+  else if (c.change24 < -5) score += 20;
+  else if (c.change24 < -2) score += 10;
 
-  // short term
+  // 1h momentum
   if (c.change1h > 1) score += 20;
   else if (c.change1h > 0.5) score += 10;
+  else if (c.change1h < -1) score += 20;
+  else if (c.change1h < -0.5) score += 10;
 
-  // volume strength
+  // volume / market cap
   if (c.vm > 0.5) score += 25;
   else if (c.vm > 0.3) score += 15;
+  else if (c.vm > 0.2) score += 8;
 
-  // liquidity
-  if (c.ob?.score > 0.08) score += 15;
-  else if (c.ob?.score > 0.04) score += 10;
+  // liquidity / orderbook
+  if (n(c.ob?.score) > 0.08) score += 15;
+  else if (n(c.ob?.score) > 0.04) score += 10;
+
+  if (n(c.ob?.depthMinUsd1p) > 500000) score += 10;
+  else if (n(c.ob?.depthMinUsd1p) > 100000) score += 5;
+
+  if (n(c.ob?.spreadPct) > 0 && n(c.ob?.spreadPct) < 0.1) score += 5;
 
   return Math.min(score, 100);
 }
 
 // ================= NORMALIZE =================
-function normalizeCoin(c, ob) {
+function normalizeCoin(raw, ob, contractConfig) {
+  const marketCap = n(raw?.market_cap);
+  const volume = n(raw?.total_volume);
+
   return {
-    symbol: c.symbol?.toUpperCase(),
-    name: c.name,
-    price: c.current_price,
-    change24: c.price_change_percentage_24h,
-    change1h: c.price_change_percentage_1h,
-    volume: c.total_volume,
-    marketCap: c.market_cap,
-    vm: c.total_volume / c.market_cap,
-    ob
+    symbol: String(raw?.symbol || "").toUpperCase(),
+    name: raw?.name || "",
+    price: n(raw?.current_price),
+    change24: n(raw?.price_change_percentage_24h),
+    change1h: n(raw?.price_change_percentage_1h),
+    volume,
+    marketCap,
+    vm: marketCap > 0 ? volume / marketCap : 0,
+    ob,
+    contractConfig: contractConfig || null,
   };
 }
 
 // ================= MAIN =================
 export default async function handler(req, res) {
   try {
-    const mode = (req.query.mode || "bull").toLowerCase();
+    const mode =
+      String(req.query?.mode || "bull").toLowerCase() === "bear"
+        ? "bear"
+        : "bull";
 
     const btc = await fetchBTCGateFromUniverse();
     const coins = await fetchCoinGeckoTopCached();
@@ -62,16 +85,20 @@ export default async function handler(req, res) {
       entry: [],
       almost: [],
       buildup: [],
-      radar: []
+      radar: [],
     };
 
     for (const raw of coins) {
-      const symbol = (raw.symbol || "").toUpperCase() + "USDT";
-      const ob = generateShallowOb(tickers.get(symbol));
+      const symbolUpper = String(raw?.symbol || "").toUpperCase();
+      if (!symbolUpper) continue;
 
-      const coin = normalizeCoin(raw, ob);
+      const symbolUsdt = `${symbolUpper}USDT`;
+      const ob = generateShallowOb(tickers.get(symbolUsdt));
+      const contractConfig = configs.get(symbolUsdt);
 
-      // ================= FILTER (STAGE BASED) =================
+      const coin = normalizeCoin(raw, ob, contractConfig);
+
+      // ================= FILTER (RETURNS STAGE OR FALSE) =================
       let stage = false;
 
       if (mode === "bull") {
@@ -86,10 +113,10 @@ export default async function handler(req, res) {
       const score = calculateScore(coin);
       coin.moveScore = score;
 
-      // 🔥 BELANGRIJK: filter stage vs score combineren
-      // (voorkomt dat zwakke coins ENTRY worden)
+      // combine filter-stage + score sanity
       if (stage === "ENTRY" && score < 70) stage = "ALMOST";
       if (stage === "ALMOST" && score < 55) stage = "BUILDUP";
+      if (stage === "BUILDUP" && score < 40) stage = "RADAR";
 
       coin.stage = stage;
 
@@ -100,19 +127,21 @@ export default async function handler(req, res) {
       else funnel.radar.push(coin);
     }
 
-    // 🔥 SORT (BELANGRIJK)
+    // sort strongest first
     for (const key of Object.keys(funnel)) {
-      funnel[key].sort((a, b) => b.moveScore - a.moveScore);
+      funnel[key].sort((a, b) => n(b.moveScore) - n(a.moveScore));
     }
 
     return res.status(200).json({
       scannedAt: Date.now(),
+      mode,
       btc,
       funnel,
-      whaleFlow: Math.random() * 100
+      whaleFlow: Math.random() * 100,
     });
-
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({
+      error: String(err?.message || err),
+    });
   }
 }
