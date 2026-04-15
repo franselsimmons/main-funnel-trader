@@ -9,104 +9,104 @@ import {
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
-import { detectVolatility } from "../lib/regime.js";
-import { btcDominance } from "../lib/dominance.js";
-import { chooseStrategy } from "../lib/strategy.js";
+// ================= SCORE =================
+function calculateScore(c) {
+  let score = 0;
 
-import { executeTrade } from "../lib/executionEngine.js";
+  // momentum
+  if (c.change24 > 8) score += 30;
+  else if (c.change24 > 5) score += 20;
+  else if (c.change24 > 2) score += 10;
 
-import { hasEdge } from "../lib/edge.js";
+  // short term
+  if (c.change1h > 1) score += 20;
 
-import { updatePositions } from "../lib/lifecycle.js";
-import { getPositions } from "../lib/position.js";
+  // volume strength
+  if (c.vm > 0.5) score += 25;
+  else if (c.vm > 0.3) score += 15;
 
-import { getPortfolio } from "../lib/portfolio.js";
+  // liquidity
+  if (c.ob?.score > 0.05) score += 15;
 
-let LAST = null;
+  return Math.min(score, 100);
+}
 
-export default async function handler(req, res){
+// ================= STAGES =================
+function getStage(score) {
+  if (score >= 80) return "ENTRY";
+  if (score >= 65) return "ALMOST";
+  if (score >= 50) return "BUILDUP";
+  return "RADAR";
+}
 
+// ================= MAIN =================
+export default async function handler(req, res) {
   try {
-
-    // ===== MODE =====
     const mode = (req.query.mode || "bull").toLowerCase();
 
-    // ===== DATA =====
-    const coins = await fetchCoinGeckoTopCached();
     const btc = await fetchBTCGateFromUniverse();
+    const coins = await fetchCoinGeckoTopCached();
+    const tickers = await fetchFuturesTickers();
+    const configs = await fetchContractConfigs();
 
-    // ===== MARKET ANALYSIS =====
-    const volatility = detectVolatility(coins);
+    const funnel = {
+      entry: [],
+      almost: [],
+      buildup: [],
+      radar: []
+    };
 
-    const totalCap = coins.reduce((a,c)=>a+(c.market_cap||0),0);
+    for (const c of coins) {
+      const symbol = (c.symbol || "").toUpperCase() + "USDT";
 
-    const btcCap =
-      coins.find(c=>c.symbol==="btc")?.market_cap || 0;
+      const ob = generateShallowOb(tickers.get(symbol));
 
-    const dominance = btcDominance(btcCap,totalCap);
-
-    const strategy = chooseStrategy(volatility, dominance);
-
-    // ===== UPDATE OPEN POSITIONS =====
-    updatePositions();
-
-    // ===== FILTER COINS =====
-    const filtered = coins.filter(c =>
-      mode === "bull"
-        ? bullFilter(c)
-        : bearFilter(c)
-    );
-
-    const resultCoins = [];
-
-    // ===== PROCESS COINS =====
-    for(const c of filtered){
-
-      // 🔥 EDGE CHECK (BELANGRIJK)
-      if(!hasEdge(c)) continue;
-
-      // ===== EXECUTE TRADE =====
-      const result = executeTrade(c, strategy);
-
-      resultCoins.push({
-        symbol: c.symbol.toUpperCase(),
+      const coin = {
+        symbol: c.symbol?.toUpperCase(),
         name: c.name,
         price: c.current_price,
         change24: c.price_change_percentage_24h,
         change1h: c.price_change_percentage_1h,
         volume: c.total_volume,
         marketCap: c.market_cap,
-        strategy,
-        result,
-        stage: result === "OPENED" ? "ENTRY" : "SKIP"
-      });
+        vm: c.total_volume / c.market_cap,
+        ob
+      };
+
+      // ================= FILTER =================
+      let passed = false;
+
+      if (mode === "bull") {
+        passed = bullFilter(coin);
+      } else {
+        passed = bearFilter(coin);
+      }
+
+      if (!passed) continue;
+
+      // ================= SCORE =================
+      const score = calculateScore(coin);
+      coin.moveScore = score;
+
+      // ================= STAGE =================
+      const stage = getStage(score);
+      coin.stage = stage;
+
+      // ================= PUSH =================
+      if (stage === "ENTRY") funnel.entry.push(coin);
+      else if (stage === "ALMOST") funnel.almost.push(coin);
+      else if (stage === "BUILDUP") funnel.buildup.push(coin);
+      else funnel.radar.push(coin);
     }
 
-    // ===== STATE =====
-    const positions = getPositions();
-    const portfolio = getPortfolio();
-
-    LAST = {
-      ts: Date.now(),
-      mode,
+    return res.status(200).json({
+      scannedAt: Date.now(),
       btc,
-      volatility,
-      dominance,
-      strategy,
-      coins: resultCoins,
-      positions,
-      portfolio
-    };
-
-    res.json(LAST);
+      funnel,
+      whaleFlow: Math.random() * 100
+    });
 
   } catch (err) {
-
-    console.error("SCANNER ERROR:", err);
-
-    res.status(500).json({
-      error: "Scanner crash",
-      message: err.message
-    });
+    return res.status(500).json({ error: err.message });
   }
 }
