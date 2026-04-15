@@ -1,0 +1,47 @@
+:root{
+  --bg:#0b0f14;
+  --card:#0f1620;
+  --line:#24303f;
+  --text:#e8eef7;
+  --accent:#3d7cff;
+}
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Arial;
+}
+
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  padding:12px;
+  border-bottom:1px solid var(--line);
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  padding:12px;
+}
+
+.panel{
+  background:var(--card);
+  padding:12px;
+  border-radius:12px;
+}
+
+.coin{
+  padding:10px;
+  border-bottom:1px solid var(--line);
+}
+
+.btn{
+  background:#111;
+  color:white;
+  padding:8px;
+  border:none;
+  cursor:pointer;
+}
