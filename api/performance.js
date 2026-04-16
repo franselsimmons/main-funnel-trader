@@ -1,11 +1,7 @@
-import { getStats } from "../lib/learning.js";
-
-export default function handler(req,res){
-
-  const stats = getStats();
-
+export default function handler(req, res) {
   res.json({
-    totalTrades: stats.total,
-    winrate: stats.winrate.toFixed(2)
+    trades: 0,
+    winrate: 0,
+    profit: 0
   });
 }
