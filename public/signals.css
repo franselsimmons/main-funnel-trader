@@ -1,0 +1,35 @@
+:root {
+  --bg: #070e1b; --panel: #111c33; --border: #1e2d4a; 
+  --text: #f8fafc; --muted: #94a3b8; 
+  --green: #22c55e; --add: #16a34a; --hold: #3b82f6; --exit: #ef4444; --amber: #f59e0b;
+}
+* { box-sizing: border-box; font-family: -apple-system, sans-serif; }
+body { background: var(--bg); color: var(--text); margin: 0; padding: 20px 16px; }
+
+.header h1 { color: var(--amber); margin: 0 0 4px; font-size: 28px; }
+#statusLine { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+
+.nav { display: flex; gap: 8px; margin-bottom: 24px; }
+.btn { flex: 1; text-align: center; padding: 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; }
+.btn.active.yellow { background: var(--amber); color: #000; border-color: var(--amber); }
+
+h2 { font-size: 12px; letter-spacing: 2px; color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 24px; }
+
+.tradeRow { display: flex; flex-direction: column; gap: 12px; background: var(--panel); padding: 16px; border-radius: 16px; border: 1px solid var(--border); margin-bottom: 12px; }
+.t-head { display: flex; justify-content: space-between; align-items: center; }
+.t-sym { font-size: 20px; font-weight: 800; }
+.t-action { font-size: 18px; font-weight: bold; }
+.t-details { display: flex; gap: 8px; font-size: 12px; color: var(--muted); }
+.chip { background: rgba(255,255,255,0.05); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); }
+
+/* Kleurcodes voor de trades via border-left */
+.trade-entry { border-left: 6px solid var(--green); }
+.trade-add { border-left: 6px solid var(--add); }
+.trade-hold { border-left: 6px solid var(--hold); }
+.trade-exit { border-left: 6px solid var(--exit); }
+
+/* Kleuren voor de action tekst */
+.text-entry { color: var(--green); }
+.text-add { color: var(--add); }
+.text-hold { color: var(--hold); }
+.text-exit { color: var(--exit); }
