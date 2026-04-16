@@ -1,39 +1,18 @@
-const el = id => document.getElementById(id);
-
-let MODE = "bull";
-
-function setMode(m){
-  MODE = m;
-  load();
-}
-
-function row(s){
-
-  let color = "white";
-
-  if(s.signal === "ENTRY") color = "green";
-  if(s.signal === "HOLD") color = "orange";
-  if(s.signal === "EXIT") color = "red";
-
-  return `
-    <div style="border:1px solid #333;margin:5px;padding:10px;color:${color}">
-      <b>${s.symbol}</b> → ${s.signal}
-      <br/>
-      ${s.reason}
-      <br/>
-      strength: ${s.strength}
-    </div>
-  `;
-}
-
 async function load(){
 
-  const res = await fetch(`/api/public-latest?mode=${MODE}`);
+  const res = await fetch("/api/public-latest");
   const data = await res.json();
 
-  el("signals").innerHTML =
-    data.signals.map(row).join("");
+  document.getElementById("signals").innerHTML =
+    data.signals.map(s=>`
+      <div class="coin">
+        <b>${s.symbol}</b><br/>
+        Signal: ${s.signal}<br/>
+        Stage: ${s.stage}<br/>
+        Score: ${s.score}
+      </div>
+    `).join("");
 }
 
+setInterval(load,15000);
 load();
-setInterval(load, 60_000);
