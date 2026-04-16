@@ -12,6 +12,7 @@ import { getLifecycleStage } from "../lib/lifecycle.js";
 import { processTrades } from "../lib/tradeSystem.js";
 import { setLatestScan } from "../lib/scanStore.js";
 
+// ================= SCORE =================
 function calculateScore(c, regime, side) {
   let score = 0;
 
@@ -37,6 +38,7 @@ function calculateScore(c, regime, side) {
   return Math.max(0, Math.min(score, 100));
 }
 
+// ================= FLOW =================
 function detectFlow(c) {
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
@@ -48,6 +50,7 @@ function detectFlow(c) {
   return "NEUTRAL";
 }
 
+// ================= STAGE =================
 function getStage(score, flow) {
   if (score >= 85 && flow === "TREND") return "ENTRY";
   if (score >= 70) return "ALMOST";
@@ -55,6 +58,7 @@ function getStage(score, flow) {
   return "RADAR";
 }
 
+// ================= NORMALIZE =================
 function normalize(raw) {
   const marketCap = Number(raw?.market_cap || 0);
   const totalVolume = Number(raw?.total_volume || 0);
@@ -72,13 +76,14 @@ function normalize(raw) {
   };
 }
 
+// ================= MAIN =================
 export default async function handler(req, res) {
   try {
     const btc = await fetchBTCGateFromUniverse();
     const rawCoins = await fetchCoinGeckoTopCached();
 
     if (!Array.isArray(rawCoins)) {
-      throw new Error("fetchCoinGeckoTopCached did not return an array");
+      throw new Error("Invalid API response");
     }
 
     const regime = detectRegime(rawCoins);
@@ -93,45 +98,56 @@ export default async function handler(req, res) {
     for (const raw of rawCoins) {
       const base = normalize(raw);
 
-      if (!base.symbol || !Number.isFinite(base.price) || base.price <= 0) {
-        continue;
-      }
+      if (!base.symbol || base.price <= 0) continue;
 
       const flow = detectFlow(base);
 
+      // ===== BULL =====
       if (bullFilter(base)) {
         const c = { ...base, side: "bull" };
+
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
         c.stage = getLifecycleStage(getStage(c.moveScore, flow)) || "RADAR";
         c.edge = calculateEdge(c, regime) || 0;
 
-        if (c.moveScore >= 55 && flow !== "NEUTRAL") {
+        // 🔥 NIEUWE LOGICA
+        if (c.stage === "RADAR") {
+          funnel.bull.radar.push(c);
+        }
+        else if (c.moveScore >= 50) {
           funnel.bull[c.stage.toLowerCase()].push(c);
           coins.push(c);
         }
       }
 
+      // ===== BEAR =====
       if (bearFilter(base)) {
         const c = { ...base, side: "bear" };
+
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
         c.stage = getLifecycleStage(getStage(c.moveScore, flow)) || "RADAR";
         c.edge = calculateEdge(c, regime) || 0;
 
-        if (c.moveScore >= 55 && flow !== "NEUTRAL") {
+        if (c.stage === "RADAR") {
+          funnel.bear.radar.push(c);
+        }
+        else if (c.moveScore >= 50) {
           funnel.bear[c.stage.toLowerCase()].push(c);
           coins.push(c);
         }
       }
     }
 
+    // ===== SORT =====
     for (const side of ["bull", "bear"]) {
       for (const key of Object.keys(funnel[side])) {
         funnel[side][key].sort((a, b) => b.moveScore - a.moveScore);
       }
     }
 
+    // ===== TRADE =====
     const trades = processTrades(coins, btc, "auto", regime) || [];
 
     const payload = {
@@ -147,13 +163,21 @@ export default async function handler(req, res) {
 
     setLatestScan(payload);
 
+    console.log("SCAN RESULT:", {
+      total: rawCoins.length,
+      candidates: coins.length,
+      bullRadar: funnel.bull.radar.length,
+      bearRadar: funnel.bear.radar.length
+    });
+
     return res.status(200).json(payload);
+
   } catch (err) {
     console.error("SCANNER ERROR:", err);
 
     return res.status(500).json({
       ok: false,
-      error: err?.message || "scanner_failed"
+      error: err.message
     });
   }
 }
