@@ -7,27 +7,33 @@ import {
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
-import { multiTFScore } from "../lib/timeframe.js";
 import { detectRegime } from "../lib/regime.js";
 import { calculateEdge } from "../lib/edge.js";
 import { getLifecycleStage } from "../lib/lifecycle.js";
 
+import { processTrades } from "../lib/tradeSystem.js";
+
 
 // ================= SCORE =================
-function calculateScore(c, regime){
+function calculateScore(c, regime, side){
 
   let score = 0;
 
-  // momentum 24h
-  if(Math.abs(c.change24) > 10) score += 30;
-  else if(Math.abs(c.change24) > 6) score += 20;
-  else if(Math.abs(c.change24) > 3) score += 10;
+  const dir = side === "bull" ? 1 : -1;
 
-  // momentum 1h (confirmatie)
-  if(Math.abs(c.change1h) > 1.2) score += 20;
-  else if(Math.abs(c.change1h) > 0.5) score += 10;
+  const ch24 = c.change24 * dir;
+  const ch1 = c.change1h * dir;
 
-  // volume quality
+  // momentum
+  if(ch24 > 10) score += 30;
+  else if(ch24 > 6) score += 20;
+  else if(ch24 > 3) score += 10;
+
+  // 1h confirmatie
+  if(ch1 > 1.2) score += 20;
+  else if(ch1 > 0.5) score += 10;
+
+  // volume
   if(c.vm > 0.6) score += 25;
   else if(c.vm > 0.35) score += 15;
 
@@ -35,7 +41,7 @@ function calculateScore(c, regime){
   if(c.ob.score > 0.07) score += 15;
   else if(c.ob.score > 0.04) score += 10;
 
-  // regime penalty
+  // regime
   if(regime === "LOW_VOL") score -= 10;
 
   return Math.max(0, Math.min(score, 100));
@@ -45,17 +51,12 @@ function calculateScore(c, regime){
 // ================= FLOW =================
 function detectFlow(c){
 
-  if(Math.abs(c.change1h) > 1.2 && Math.abs(c.change24) > 6){
-    return "TREND";
-  }
+  const ch1 = Math.abs(c.change1h);
+  const ch24 = Math.abs(c.change24);
 
-  if(Math.abs(c.change1h) < 0.2 && Math.abs(c.change24) > 8){
-    return "EXHAUSTION";
-  }
-
-  if(Math.abs(c.change1h) > 0.5){
-    return "BUILDING";
-  }
+  if(ch1 > 1.2 && ch24 > 6) return "TREND";
+  if(ch1 < 0.2 && ch24 > 8) return "EXHAUSTION";
+  if(ch1 > 0.5) return "BUILDING";
 
   return "NEUTRAL";
 }
@@ -73,7 +74,6 @@ function getStage(score, flow){
 
 // ================= NORMALIZE =================
 function normalize(raw){
-
   return {
     symbol: raw.symbol.toUpperCase(),
     name: raw.name,
@@ -93,56 +93,55 @@ export default async function handler(req, res){
 
   try{
 
-    const mode = (req.query.mode || "bull").toLowerCase();
-
     const btc = await fetchBTCGateFromUniverse();
     const rawCoins = await fetchCoinGeckoTopCached();
 
     const regime = detectRegime(rawCoins);
 
-    // 🔥 DRIE FUNNELS
     const funnel = {
-      bull: { entry:[], almost:[], buildup:[], radar:[] },
-      bear: { entry:[], almost:[], buildup:[], radar:[] },
-      trade: { entry:[], hold:[], exit:[] }
+      bull:{ entry:[], almost:[], buildup:[], radar:[] },
+      bear:{ entry:[], almost:[], buildup:[], radar:[] }
     };
 
     const coins = [];
 
     for(const r of rawCoins){
 
-      const c = normalize(r);
+      const base = normalize(r);
 
-      // ===== FLOW =====
-      const flow = detectFlow(c);
-      c.flow = flow;
+      const flow = detectFlow(base);
 
-      // ===== SCORE =====
-      c.moveScore = calculateScore(c, regime);
+      // ===== BULL =====
+      if(bullFilter(base)){
 
-      // ===== STAGE =====
-      c.stage = getLifecycleStage(
-        getStage(c.moveScore, flow)
-      );
+        const c = {...base, side:"bull"};
 
-      // ===== EDGE =====
-      c.edge = calculateEdge(c, regime);
+        c.flow = flow;
+        c.moveScore = calculateScore(c, regime, "bull");
+        c.stage = getLifecycleStage(getStage(c.moveScore, flow));
+        c.edge = calculateEdge(c, regime);
 
-      // ===== FILTERS =====
-      const bull = bullFilter(c);
-      const bear = bearFilter(c);
-
-      if(bull){
-        funnel.bull[c.stage.toLowerCase()].push(c);
+        // 🔥 extra kwaliteit filter (voorkomt rotzooi)
+        if(c.moveScore >= 55 && flow !== "NEUTRAL"){
+          funnel.bull[c.stage.toLowerCase()].push(c);
+          coins.push(c);
+        }
       }
 
-      if(bear){
-        funnel.bear[c.stage.toLowerCase()].push(c);
-      }
+      // ===== BEAR =====
+      if(bearFilter(base)){
 
-      // trade candidates
-      if(bull || bear){
-        coins.push(c);
+        const c = {...base, side:"bear"};
+
+        c.flow = flow;
+        c.moveScore = calculateScore(c, regime, "bear");
+        c.stage = getLifecycleStage(getStage(c.moveScore, flow));
+        c.edge = calculateEdge(c, regime);
+
+        if(c.moveScore >= 55 && flow !== "NEUTRAL"){
+          funnel.bear[c.stage.toLowerCase()].push(c);
+          coins.push(c);
+        }
       }
     }
 
@@ -153,11 +152,15 @@ export default async function handler(req, res){
       }
     }
 
+    // ===== TRADE SYSTEM =====
+    const trades = processTrades(coins, btc, "auto", regime);
+
     return res.status(200).json({
       scannedAt: Date.now(),
       btc,
       regime,
       funnel,
+      trades,
       total: rawCoins.length
     });
 
