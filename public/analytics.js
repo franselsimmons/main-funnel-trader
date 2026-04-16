@@ -1,5 +1,9 @@
 const el = id => document.getElementById(id);
 
+// 🔥 toevoegen (globaal opslaan)
+window.latestAdvice = {};
+
+
 // ================= BLOCK =================
 function block(title, data, side){
 
@@ -7,8 +11,14 @@ function block(title, data, side){
 
   const adviceId = `advice-${side}-${title}`;
 
-  const adviceHtml = data.advice && data.advice.length
-    ? data.advice.map(adviceItemToHtml).join("")
+  // 🔥 NIEUW: juiste advies ophalen
+  const stageKey = title.toLowerCase();
+
+  const adviceList =
+    window.latestAdvice?.[side]?.[stageKey] || [];
+
+  const adviceHtml = adviceList.length
+    ? adviceList.map(adviceItemToHtml).join("")
     : "<span style='color: var(--green);'>✅ Flow is gezond. Geen specifiek advies.</span>";
 
   return `
@@ -67,6 +77,13 @@ function adviceItemToHtml(item){
 
   if (!item) return "";
 
+  // 🔥 extra safe (voorkomt undefined)
+  if (typeof item === "string") {
+    return `<div>• ${item}</div>`;
+  }
+
+  const message = item.message || "Onbekend advies";
+
   let actionColor = "#a78bfa";
 
   if (item.action === "STRENGER") actionColor = "var(--red)";
@@ -93,7 +110,7 @@ function adviceItemToHtml(item){
 
   return `
     <div style="margin-bottom:10px;">
-      • ${action}${item.message}
+      • ${action}${message}
       ${values}
     </div>
   `;
@@ -122,6 +139,9 @@ async function load(){
 
     const res = await fetch("/api/public-latest");
     const data = await res.json();
+
+    // 🔥 BELANGRIJK: opslaan
+    window.latestAdvice = data.advice || {};
 
     if (data.btc && data.regime){
       el("statusLine").innerText =
