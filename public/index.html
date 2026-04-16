@@ -1,61 +1,61 @@
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-  <meta charset="UTF-8" />
-  <title>Main System</title>
-  <link rel="stylesheet" href="/main.css" />
-</head>
-<body>
+import { useEffect, useState } from "react";
+import Link from "next/link";
 
-<h1>🚀 MAIN TRADING SYSTEM</h1>
+export default function Home() {
+  const [data, setData] = useState(null);
 
-<div class="top">
-  <button id="modeBull">BULL</button>
-  <button id="modeBear">BEAR</button>
-</div>
+  useEffect(() => {
+    fetch("/api/public-latest", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setData(j))
+      .catch(() => null);
+  }, []);
 
-<div id="statusLine">Loading...</div>
+  const btcState = data?.btc?.state || "Laden...";
+  const regime = data?.regime || "Laden...";
+  const tradeCount = data?.trades?.length || 0;
 
-<!-- ================= BULL ================= -->
-<h2>🟢 BULL FUNNEL</h2>
+  return (
+    <div className="pageShell homePage">
+      <section className="heroCard">
+        <div className="eyebrow">MAIN TRADING SYSTEM</div>
+        <h1 className="heroTitle">Scanner & Trade Desk</h1>
+        <p className="heroText">
+          Professioneel overzicht van de markt. Selecteer een funnel of bekijk actieve signalen.
+        </p>
 
-<h3>ENTRY</h3>
-<div id="bull_entry"></div>
+        <div className="heroStats">
+          <div className="heroStat">
+            <span className="heroStatLabel">BTC Status</span>
+            <span className="heroStatValue" style={{ fontSize: "20px" }}>{btcState}</span>
+          </div>
+          <div className="heroStat">
+            <span className="heroStatLabel">Huidig Regime</span>
+            <span className="heroStatValue" style={{ fontSize: "20px" }}>{regime}</span>
+          </div>
+          <div className="heroStat">
+            <span className="heroStatLabel">Actieve Trades</span>
+            <span className="heroStatValue">{tradeCount}</span>
+          </div>
+        </div>
+      </section>
 
-<h3>ALMOST</h3>
-<div id="bull_almost"></div>
+      <section className="homeGrid">
+        <Link href="/bull" className="homeCard">
+          <div className="homeCardTitle" style={{ color: "var(--green)" }}>🟢 Bull Funnel</div>
+          <div className="homeCardText">Long kansen, flow scores en details via de coin-modal.</div>
+        </Link>
 
-<h3>BUILDUP</h3>
-<div id="bull_buildup"></div>
+        <Link href="/bear" className="homeCard">
+          <div className="homeCardTitle" style={{ color: "var(--red)" }}>🔴 Bear Funnel</div>
+          <div className="homeCardText">Short kansen, flow scores en details via de coin-modal.</div>
+        </Link>
 
-<h3>RADAR</h3>
-<div id="bull_radar"></div>
-
-
-<!-- ================= BEAR ================= -->
-<h2>🔴 BEAR FUNNEL</h2>
-
-<h3>ENTRY</h3>
-<div id="bear_entry"></div>
-
-<h3>ALMOST</h3>
-<div id="bear_almost"></div>
-
-<h3>BUILDUP</h3>
-<div id="bear_buildup"></div>
-
-<h3>RADAR</h3>
-<div id="bear_radar"></div>
-
-
-<!-- ================= TRADE ================= -->
-<h2>⚡ TRADE SYSTEM</h2>
-
-<h3>ENTRY / ADD / HOLD / EXIT</h3>
-<div id="trades"></div>
-
-<a href="/signals.html">➡️ Ga naar SIGNALS pagina</a>
-
-<script src="/main.js"></script>
-</body>
-</html>
+        <Link href="/signals" className="homeCard">
+          <div className="homeCardTitle" style={{ color: "var(--amber)" }}>⚡ Trade Signals</div>
+          <div className="homeCardText">Live trade executies: Entry, Add, Hold en Exit signalen.</div>
+        </Link>
+      </section>
+    </div>
+  );
+}
