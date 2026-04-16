@@ -2,7 +2,7 @@ import {
   fetchBTCGateFromUniverse,
   fetchCoinGeckoTopCached,
   generateShallowOb
-} from "../lib/__main_shared.js";
+} from "../lib/_main_shared.js";
 
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
