@@ -4,55 +4,60 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bull Signals</title>
+  <link rel="stylesheet" href="main.css">
   <link rel="stylesheet" href="bull.css">
 </head>
 <body>
 
-  <div class="header">
-    <h1>🟢 BULL FUNNEL</h1>
-    <div id="statusLine">Laden...</div>
-    <div class="nav">
-      <a href="index.html" class="btn">Home</a>
-      <a href="bull.html" class="btn active green">Bull</a>
-      <a href="bear.html" class="btn">Bear</a>
-      <a href="signals.html" class="btn">Trade</a>
-    </div>
-  </div>
-
-  <div class="funnel-section">
-    <h2>ENTRY</h2>
-    <div id="entry"></div>
-  </div>
-
-  <div class="funnel-section">
-    <h2>ALMOST</h2>
-    <div id="almost"></div>
-  </div>
-
-  <div class="funnel-section">
-    <h2>BUILDUP</h2>
-    <div id="buildup"></div>
-  </div>
-
-  <div class="funnel-section">
-    <h2>RADAR</h2>
-    <div id="radar"></div>
-  </div>
-
-  <div id="modalOverlay" class="modal-overlay" onclick="closeModal()">
-    <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        <div>
-          <h2 id="m-title">Coin</h2>
-          <p>Long Analyse</p>
-        </div>
-        <button class="close-btn" onclick="closeModal()">✕</button>
+  <div class="pageShell">
+    <div class="header">
+      <h1>🟢 BULL FUNNEL</h1>
+      <div id="statusLine">Laden...</div>
+      
+      <div class="nav">
+        <a href="index.html" class="btn">Home</a>
+        <a href="bull.html" class="btn active green">Bull</a>
+        <a href="bear.html" class="btn">Bear</a>
+        <a href="signals.html" class="btn">Trade</a>
+        <a href="analytics.html" class="btn">Analyse</a>
       </div>
-      <div class="modal-grid">
-        <div class="m-box"><span>Prijs</span><strong id="m-price">$0</strong></div>
-        <div class="m-box"><span>Score</span><strong id="m-score">0</strong></div>
-        <div class="m-box"><span>Flow</span><strong id="m-flow">-</strong></div>
-        <div class="m-box"><span>24h Chg</span><strong id="m-change">0%</strong></div>
+    </div>
+
+    <div class="funnel-section">
+      <h2>ENTRY</h2>
+      <div id="entry"></div>
+    </div>
+
+    <div class="funnel-section">
+      <h2>ALMOST</h2>
+      <div id="almost"></div>
+    </div>
+
+    <div class="funnel-section">
+      <h2>BUILDUP</h2>
+      <div id="buildup"></div>
+    </div>
+
+    <div class="funnel-section">
+      <h2>RADAR</h2>
+      <div id="radar"></div>
+    </div>
+
+    <div id="modalOverlay" class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+          <div>
+            <h2 id="m-title">Coin</h2>
+            <p>Long Analyse</p>
+          </div>
+          <button class="close-btn" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-grid">
+          <div class="m-box"><span>Prijs</span><strong id="m-price">$0</strong></div>
+          <div class="m-box"><span>Score</span><strong id="m-score">0</strong></div>
+          <div class="m-box"><span>Flow</span><strong id="m-flow">-</strong></div>
+          <div class="m-box"><span>24h Chg</span><strong id="m-change">0%</strong></div>
+        </div>
       </div>
     </div>
   </div>
