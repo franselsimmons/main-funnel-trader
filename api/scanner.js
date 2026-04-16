@@ -17,42 +17,48 @@ import { processTrades } from "../lib/tradeSystem.js";
 // ================= SCORE =================
 function calculateScore(c, regime, side){
 
-  let score = 0;
+  try{
 
-  const dir = side === "bull" ? 1 : -1;
+    let score = 0;
 
-  const ch24 = c.change24 * dir;
-  const ch1 = c.change1h * dir;
+    const dir = side === "bull" ? 1 : -1;
 
-  // momentum
-  if(ch24 > 10) score += 30;
-  else if(ch24 > 6) score += 20;
-  else if(ch24 > 3) score += 10;
+    const ch24 = (c.change24 || 0) * dir;
+    const ch1  = (c.change1h || 0) * dir;
 
-  // 1h confirmatie
-  if(ch1 > 1.2) score += 20;
-  else if(ch1 > 0.5) score += 10;
+    // momentum
+    if(ch24 > 10) score += 30;
+    else if(ch24 > 6) score += 20;
+    else if(ch24 > 3) score += 10;
 
-  // volume
-  if(c.vm > 0.6) score += 25;
-  else if(c.vm > 0.35) score += 15;
+    // 1h confirmatie
+    if(ch1 > 1.2) score += 20;
+    else if(ch1 > 0.5) score += 10;
 
-  // liquidity
-  if(c.ob.score > 0.07) score += 15;
-  else if(c.ob.score > 0.04) score += 10;
+    // volume
+    if(c.vm > 0.6) score += 25;
+    else if(c.vm > 0.35) score += 15;
 
-  // regime
-  if(regime === "LOW_VOL") score -= 10;
+    // liquidity
+    if(c.ob?.score > 0.07) score += 15;
+    else if(c.ob?.score > 0.04) score += 10;
 
-  return Math.max(0, Math.min(score, 100));
+    // regime penalty
+    if(regime === "LOW_VOL") score -= 10;
+
+    return Math.max(0, Math.min(score, 100));
+
+  }catch(e){
+    return 0;
+  }
 }
 
 
 // ================= FLOW =================
 function detectFlow(c){
 
-  const ch1 = Math.abs(c.change1h);
-  const ch24 = Math.abs(c.change24);
+  const ch1 = Math.abs(Number(c.change1h || 0));
+  const ch24 = Math.abs(Number(c.change24 || 0));
 
   if(ch1 > 1.2 && ch24 > 6) return "TREND";
   if(ch1 < 0.2 && ch24 > 8) return "EXHAUSTION";
@@ -74,15 +80,16 @@ function getStage(score, flow){
 
 // ================= NORMALIZE =================
 function normalize(raw){
+
   return {
-    symbol: raw.symbol.toUpperCase(),
-    name: raw.name,
-    price: raw.current_price,
-    change24: raw.price_change_percentage_24h,
-    change1h: raw.price_change_percentage_1h,
-    volume: raw.total_volume,
-    marketCap: raw.market_cap,
-    vm: raw.total_volume / raw.market_cap,
+    symbol: (raw.symbol || "").toUpperCase(),
+    name: raw.name || "",
+    price: Number(raw.current_price || 0),
+    change24: Number(raw.price_change_percentage_24h || 0),
+    change1h: Number(raw.price_change_percentage_1h || 0),
+    volume: Number(raw.total_volume || 0),
+    marketCap: Number(raw.market_cap || 0),
+    vm: raw.market_cap ? raw.total_volume / raw.market_cap : 0,
     ob: generateShallowOb()
   };
 }
@@ -95,6 +102,10 @@ export default async function handler(req, res){
 
     const btc = await fetchBTCGateFromUniverse();
     const rawCoins = await fetchCoinGeckoTopCached();
+
+    if(!rawCoins || !Array.isArray(rawCoins)){
+      throw new Error("No coin data");
+    }
 
     const regime = detectRegime(rawCoins);
 
@@ -118,10 +129,13 @@ export default async function handler(req, res){
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
-        c.stage = getLifecycleStage(getStage(c.moveScore, flow));
-        c.edge = calculateEdge(c, regime);
 
-        // 🔥 extra kwaliteit filter (voorkomt rotzooi)
+        c.stage = getLifecycleStage(
+          getStage(c.moveScore, flow)
+        ) || "RADAR";
+
+        c.edge = calculateEdge(c, regime) || 0;
+
         if(c.moveScore >= 55 && flow !== "NEUTRAL"){
           funnel.bull[c.stage.toLowerCase()].push(c);
           coins.push(c);
@@ -135,8 +149,12 @@ export default async function handler(req, res){
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
-        c.stage = getLifecycleStage(getStage(c.moveScore, flow));
-        c.edge = calculateEdge(c, regime);
+
+        c.stage = getLifecycleStage(
+          getStage(c.moveScore, flow)
+        ) || "RADAR";
+
+        c.edge = calculateEdge(c, regime) || 0;
 
         if(c.moveScore >= 55 && flow !== "NEUTRAL"){
           funnel.bear[c.stage.toLowerCase()].push(c);
@@ -153,7 +171,7 @@ export default async function handler(req, res){
     }
 
     // ===== TRADE SYSTEM =====
-    const trades = processTrades(coins, btc, "auto", regime);
+    const trades = processTrades(coins, btc, "auto", regime) || [];
 
     return res.status(200).json({
       scannedAt: Date.now(),
@@ -165,6 +183,11 @@ export default async function handler(req, res){
     });
 
   }catch(err){
-    return res.status(500).json({ error: err.message });
+
+    console.error("SCANNER ERROR:", err);
+
+    return res.status(500).json({
+      error: err.message
+    });
   }
 }
