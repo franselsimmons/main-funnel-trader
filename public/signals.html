@@ -4,24 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Trade Signals</title>
+  <link rel="stylesheet" href="main.css">
   <link rel="stylesheet" href="signals.css">
 </head>
 <body>
 
-  <div class="header">
-    <h1>⚡ TRADE SYSTEM</h1>
-    <div id="statusLine">Laden...</div>
-    <div class="nav">
-      <a href="index.html" class="btn">Home</a>
-      <a href="bull.html" class="btn">Bull</a>
-      <a href="bear.html" class="btn">Bear</a>
-      <a href="signals.html" class="btn active yellow">Trade</a>
+  <div class="pageShell">
+    <div class="header">
+      <h1>⚡ TRADE SYSTEM</h1>
+      <div id="statusLine">Laden...</div>
+      
+      <div class="nav">
+        <a href="index.html" class="btn">Home</a>
+        <a href="bull.html" class="btn">Bull</a>
+        <a href="bear.html" class="btn">Bear</a>
+        <a href="signals.html" class="btn active yellow">Trade</a>
+        <a href="analytics.html" class="btn">Analyse</a>
+      </div>
     </div>
-  </div>
 
-  <div class="trade-section">
-    <h2>ACTIEVE SIGNALEN</h2>
-    <div id="trades"></div>
+    <div class="trade-section">
+      <h2>ACTIEVE SIGNALEN</h2>
+      <div id="trades"></div>
+    </div>
   </div>
 
   <script src="signals.js"></script>
