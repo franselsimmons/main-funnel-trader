@@ -1,9 +1,8 @@
 import {
   fetchBTCGateFromUniverse,
   fetchCoinGeckoTopCached,
-  fetchFuturesTickers,
   generateShallowOb
-} from "../lib/_main_shared.js";
+} from "../lib/__main_shared.js";
 
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
@@ -11,73 +10,41 @@ import { bearFilter } from "../lib/bearFilters.js";
 import { processTrades } from "../lib/tradeSystem.js";
 import { generateSignals } from "../lib/signalEngine.js";
 
-import {
-  getVolatilityRegime,
-  getMarketBreadth
-} from "../lib/marketContext.js";
+import { detectRegime } from "../lib/regime.js";
+import { calculateEdge } from "../lib/edge.js";
 
-// ================= SCORE =================
+function score(c) {
+  let s = 0;
 
-function calculateScore(c, volatility){
+  if (Math.abs(c.change24) > 8) s += 30;
+  else if (Math.abs(c.change24) > 5) s += 20;
 
-  let score = 0;
+  if (Math.abs(c.change1h) > 1) s += 20;
 
-  // 🔥 adaptive momentum
-  if (volatility === "HIGH") {
-    if (c.change24 > 10) score += 30;
-    else if (c.change24 > 6) score += 20;
-  } else {
-    if (c.change24 > 6) score += 30;
-    else if (c.change24 > 3) score += 20;
-  }
+  if (c.vm > 0.5) s += 25;
+  else if (c.vm > 0.3) s += 15;
 
-  // short term momentum
-  if (c.change1h > 1) score += 20;
-  else if (c.change1h > 0.5) score += 10;
+  if (c.ob.score > 0.05) s += 15;
 
-  // volume strength
-  if (c.vm > 0.5) score += 25;
-  else if (c.vm > 0.3) score += 15;
-
-  // liquidity
-  if (c.ob?.score > 0.08) score += 15;
-  else if (c.ob?.score > 0.04) score += 10;
-
-  return Math.min(score, 100);
+  return Math.min(s, 100);
 }
 
-// ================= STAGE =================
-
-function getStage(score){
-  if(score >= 80) return "ENTRY";
-  if(score >= 65) return "ALMOST";
-  if(score >= 50) return "BUILDUP";
+function stage(s) {
+  if (s >= 80) return "ENTRY";
+  if (s >= 65) return "ALMOST";
+  if (s >= 50) return "BUILDUP";
   return "RADAR";
 }
 
-// ================= MAIN =================
-
-export default async function handler(req, res){
-
-  try{
-
+export default async function handler(req, res) {
+  try {
     const mode = (req.query.mode || "bull").toLowerCase();
 
-    // ================= DATA =================
     const btc = await fetchBTCGateFromUniverse();
-    const rawCoins = await fetchCoinGeckoTopCached();
-    const tickers = await fetchFuturesTickers();
+    const raw = await fetchCoinGeckoTopCached();
 
-    // ================= CONTEXT =================
-    const volatility = getVolatilityRegime(rawCoins);
-    const breadth = getMarketBreadth(rawCoins);
+    const regime = detectRegime(raw);
 
-    const context = {
-      volatility,
-      breadth
-    };
-
-    // ================= FUNNEL =================
     const funnel = {
       entry: [],
       almost: [],
@@ -85,83 +52,55 @@ export default async function handler(req, res){
       radar: []
     };
 
-    const allCoins = [];
+    const coins = [];
 
-    // ================= LOOP =================
-    for(const raw of rawCoins){
-
-      const symbol = (raw.symbol || "").toUpperCase() + "USDT";
-
-      const ob = generateShallowOb(tickers.get(symbol));
-
-      const coin = {
-        symbol: raw.symbol?.toUpperCase(),
-        name: raw.name,
-        price: raw.current_price,
-        change24: raw.price_change_percentage_24h,
-        change1h: raw.price_change_percentage_1h,
-        volume: raw.total_volume,
-        marketCap: raw.market_cap,
-        vm: raw.total_volume / raw.market_cap,
-        ob
+    for (const r of raw) {
+      const c = {
+        symbol: r.symbol.toUpperCase(),
+        name: r.name,
+        price: r.current_price,
+        change24: r.price_change_percentage_24h,
+        change1h: r.price_change_percentage_1h,
+        volume: r.total_volume,
+        marketCap: r.market_cap,
+        vm: r.total_volume / r.market_cap,
+        ob: generateShallowOb()
       };
 
-      // ================= FILTER =================
-      const pass = mode === "bull"
-        ? bullFilter(coin)
-        : bearFilter(coin);
+      const pass =
+        mode === "bull"
+          ? bullFilter(c)
+          : bearFilter(c);
 
-      if(!pass) continue;
+      if (!pass) continue;
 
-      // ================= SCORE =================
-      const score = calculateScore(coin, volatility);
-      coin.moveScore = score;
+      c.moveScore = score(c);
+      c.stage = stage(c.moveScore);
+      c.edge = calculateEdge(c, regime);
 
-      // ================= STAGE =================
-      const stage = getStage(score);
-      coin.stage = stage;
+      coins.push(c);
 
-      allCoins.push(coin);
-
-      // ================= FUNNEL PUSH =================
-      if(stage === "ENTRY") funnel.entry.push(coin);
-      else if(stage === "ALMOST") funnel.almost.push(coin);
-      else if(stage === "BUILDUP") funnel.buildup.push(coin);
-      else funnel.radar.push(coin);
+      funnel[c.stage.toLowerCase()].push(c);
     }
 
-    // ================= SORT =================
-    for(const key of Object.keys(funnel)){
-      funnel[key].sort((a,b)=>b.moveScore - a.moveScore);
+    for (const k of Object.keys(funnel)) {
+      funnel[k].sort((a, b) => b.moveScore - a.moveScore);
     }
 
-    // ================= TRADE ENGINE =================
-    const tradeActions = processTrades(
-      allCoins,
-      btc,
-      mode,
-      context
-    );
+    const trades = processTrades(coins, btc, mode);
+    const signals = generateSignals(coins);
 
-    // ================= SIGNAL ENGINE =================
-    const signals = generateSignals(allCoins);
-
-    // ================= RESPONSE =================
     return res.status(200).json({
       scannedAt: Date.now(),
-      mode,
       btc,
-      context,
+      regime,
       funnel,
-      tradeActions,
-      signals
+      signals,
+      trades,
+      total: raw.length
     });
 
-  }catch(err){
-
-    return res.status(500).json({
-      error: err.message
-    });
-
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
   }
 }
