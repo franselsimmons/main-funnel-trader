@@ -10,6 +10,34 @@ function setMode(m){
 el("modeBull").onclick = ()=>setMode("bull");
 el("modeBear").onclick = ()=>setMode("bear");
 
+
+// ================= UI RENDER =================
+
+function coinRow(c){
+  return `
+    <div class="coin ${c.stage.toLowerCase()}">
+      <b>${c.symbol}</b> - $${c.price.toFixed(4)}<br/>
+      24h: ${c.change24.toFixed(2)}%<br/>
+      Score: ${c.moveScore}<br/>
+      Flow: ${c.flow}
+    </div>
+  `;
+}
+
+function tradeRow(t){
+  return `
+    <div class="coin trade-${t.action.toLowerCase()}">
+      <b>${t.symbol}</b> → ${t.action}<br/>
+      Reason: ${t.reason}<br/>
+      Flow: ${t.flow}<br/>
+      Score: ${t.score}
+    </div>
+  `;
+}
+
+
+// ================= LOAD =================
+
 async function load(){
 
   el("statusLine").innerText = "Laden...";
@@ -17,57 +45,27 @@ async function load(){
   const res = await fetch(`/api/public-latest?mode=${MODE}`);
   const data = await res.json();
 
-  render(data);
-}
-
-function coinRow(c){
-  return `
-    <div class="coin">
-      <b>${c.symbol}</b> - $${c.price}<br/>
-      ${c.change24.toFixed(2)}%<br/>
-      Score: ${c.moveScore}
-    </div>
-  `;
-}
-
-function renderTrades(trades){
-  if(!trades.length) return "Geen trades";
-
-  return trades.map(t => `
-    <div class="coin">
-      <b>${t.symbol}</b><br/>
-      Entry: $${t.entry}<br/>
-      SL: $${t.sl}<br/>
-      TP: $${t.tp}<br/>
-      Status: ${t.status}
-    </div>
-  `).join("");
-}
-
-function render(data){
-
-  const f = data.funnel;
-
   el("statusLine").innerText =
-    `BTC: ${data.btc.state} • ENTRY ${f.entry.length} • ALMOST ${f.almost.length} • BUILDUP ${f.buildup.length} • RADAR ${f.radar.length}`;
+    `BTC: ${data.btc.state} | Regime: ${data.regime} | Coins: ${data.total}`;
 
-  el("stageTradeReady").innerHTML =
-    f.entry.map(coinRow).join("") || "Geen ENTRY";
+  // ===== BULL =====
+  el("bull_entry").innerHTML = data.funnel.bull.entry.map(coinRow).join("");
+  el("bull_almost").innerHTML = data.funnel.bull.almost.map(coinRow).join("");
+  el("bull_buildup").innerHTML = data.funnel.bull.buildup.map(coinRow).join("");
+  el("bull_radar").innerHTML = data.funnel.bull.radar.map(coinRow).join("");
 
-  el("stageAlmost").innerHTML =
-    f.almost.map(coinRow).join("") || "Geen ALMOST";
+  // ===== BEAR =====
+  el("bear_entry").innerHTML = data.funnel.bear.entry.map(coinRow).join("");
+  el("bear_almost").innerHTML = data.funnel.bear.almost.map(coinRow).join("");
+  el("bear_buildup").innerHTML = data.funnel.bear.buildup.map(coinRow).join("");
+  el("bear_radar").innerHTML = data.funnel.bear.radar.map(coinRow).join("");
 
-  el("stageBuildup").innerHTML =
-    f.buildup.map(coinRow).join("") || "Geen BUILDUP";
-
-  el("stageRadar").innerHTML =
-    f.radar.map(coinRow).join("") || "Geen RADAR";
-
-  el("stageTrades").innerHTML =
-    renderTrades(data.trades || []);
+  // ===== TRADE =====
+  el("trades").innerHTML =
+    (data.trades || []).map(tradeRow).join("");
 }
 
-load();
 
-// 🔥 15 min refresh (perfect voor swing)
-setInterval(load, 15 * 60 * 1000);
+// 🔥 refresh (stabiel voor swing)
+setInterval(load, 15000);
+load();
