@@ -17,6 +17,8 @@ import {
   getAnalytics
 } from "../lib/analyticsEngine.js";
 
+import { generateAdvice } from "../lib/analysisAdvisor.js";
+
 
 // ================= SCORE =================
 function calculateScore(c, regime, side){
@@ -25,8 +27,8 @@ function calculateScore(c, regime, side){
 
   const dir = side === "bull" ? 1 : -1;
 
-  const ch24 = c.change24 * dir;
-  const ch1 = c.change1h * dir;
+  const ch24 = Number(c.change24 || 0) * dir;
+  const ch1 = Number(c.change1h || 0) * dir;
 
   if(ch24 > 10) score += 30;
   else if(ch24 > 6) score += 20;
@@ -50,8 +52,8 @@ function calculateScore(c, regime, side){
 // ================= FLOW =================
 function detectFlow(c){
 
-  const ch1 = Math.abs(c.change1h);
-  const ch24 = Math.abs(c.change24);
+  const ch1 = Math.abs(Number(c.change1h || 0));
+  const ch24 = Math.abs(Number(c.change24 || 0));
 
   if(ch1 > 1.2 && ch24 > 6) return "TREND";
   if(ch1 < 0.2 && ch24 > 8) return "EXHAUSTION";
@@ -64,15 +66,15 @@ function detectFlow(c){
 // ================= NORMALIZE =================
 function normalize(raw){
 
-  const mc = Number(raw.market_cap || 0);
-  const vol = Number(raw.total_volume || 0);
+  const mc = Number(raw?.market_cap || 0);
+  const vol = Number(raw?.total_volume || 0);
 
   return {
-    symbol: raw.symbol.toUpperCase(),
-    name: raw.name,
-    price: raw.current_price,
-    change24: raw.price_change_percentage_24h || 0,
-    change1h: raw.price_change_percentage_1h || 0,
+    symbol: String(raw?.symbol || "").toUpperCase(),
+    name: raw?.name || "",
+    price: Number(raw?.current_price || 0),
+    change24: Number(raw?.price_change_percentage_24h || 0),
+    change1h: Number(raw?.price_change_percentage_1h || 0),
     volume: vol,
     marketCap: mc,
     vm: mc > 0 ? vol/mc : 0,
@@ -86,10 +88,14 @@ export default async function handler(req,res){
 
   try{
 
-    resetAnalytics(); // 🔥 belangrijk
+    resetAnalytics(); // 🔥 altijd reset → geen oude data
 
     const btc = await fetchBTCGateFromUniverse();
     const rawCoins = await fetchCoinGeckoTopCached();
+
+    if(!Array.isArray(rawCoins)){
+      throw new Error("Invalid API response");
+    }
 
     const regime = detectRegime(rawCoins);
 
@@ -118,13 +124,16 @@ export default async function handler(req,res){
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
         c.stage = bullStage;
-        c.edge = calculateEdge(c, regime);
+        c.edge = calculateEdge(c, regime) || 0;
 
-        logAnalytics(c); // 🔥
+        logAnalytics(c); // 🔥 analyse log
 
         funnel.bull[bullStage.toLowerCase()].push(c);
 
-        if(bullStage !== "RADAR" && c.moveScore >= 50){
+        if(
+          bullStage !== "RADAR" &&
+          c.moveScore >= 50
+        ){
           tradeCandidates.push(c);
         }
       }
@@ -139,21 +148,41 @@ export default async function handler(req,res){
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
         c.stage = bearStage;
-        c.edge = calculateEdge(c, regime);
+        c.edge = calculateEdge(c, regime) || 0;
 
         logAnalytics(c);
 
         funnel.bear[bearStage.toLowerCase()].push(c);
 
-        if(bearStage !== "RADAR" && c.moveScore >= 50){
+        if(
+          bearStage !== "RADAR" &&
+          c.moveScore >= 50
+        ){
           tradeCandidates.push(c);
         }
       }
     }
 
-    const trades = await processTrades(tradeCandidates, btc, "auto", regime);
+    // ===== SORT =====
+    for(const side of ["bull","bear"]){
+      for(const key of Object.keys(funnel[side])){
+        funnel[side][key].sort((a,b)=>b.moveScore-a.moveScore);
+      }
+    }
 
+    // ===== TRADE SYSTEM =====
+    const trades = await processTrades(
+      tradeCandidates,
+      btc,
+      "auto",
+      regime
+    );
+
+    // ===== ANALYTICS =====
     const analytics = getAnalytics();
+
+    // 🔥 HIER KOMT JE "LERAAR"
+    const advice = generateAdvice(analytics);
 
     const payload = {
       ok:true,
@@ -163,15 +192,26 @@ export default async function handler(req,res){
       funnel,
       trades,
       analytics,
+      advice, // 🔥 BELANGRIJK
       total:rawCoins.length,
       candidates:tradeCandidates.length
     };
 
     setLatestScan(payload);
 
+    console.log("SCAN:",{
+      total:rawCoins.length,
+      candidates:tradeCandidates.length,
+      entry:
+        analytics.bull.entry.total +
+        analytics.bear.entry.total
+    });
+
     return res.status(200).json(payload);
 
   }catch(err){
+
+    console.error("SCANNER ERROR:", err);
 
     return res.status(500).json({
       ok:false,
