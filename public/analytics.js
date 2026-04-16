@@ -1,16 +1,31 @@
 const el = id => document.getElementById(id);
 
+// Functie om 1 advies-item netjes te renderen
+function adviceItemToHtml(item) {
+  if (!item) return "";
+
+  if (typeof item === "string") {
+    return `• ${item}`;
+  }
+
+  const message = item.message || "";
+  const change = item.change ? ` <span class="a-change">(${item.change})</span>` : "";
+  const action = item.action ? `<span class="a-action">${item.action}</span> ` : "";
+
+  return `• ${action}${message}${change}`;
+}
+
 // Functie om de HTML voor 1 statistiek-kaart te genereren
 function block(title, data, side) {
   if (!data) return "";
 
-  // Zet de array met adviezen om naar nette HTML regels
-  const adviceHtml = data.advice && data.advice.length 
-    ? data.advice.join("<br/>") 
-    : "Flow is gezond. Geen specifiek advies op dit moment.";
+  const adviceHtml =
+    data.advice && data.advice.length
+      ? data.advice.map(adviceItemToHtml).join("<br/>")
+      : "Flow is gezond. Geen specifiek advies op dit moment.";
 
   return `
-    <div class="analytics-card">
+    <div class="analytics-card analytics-${side}">
       <div class="a-header">
         <div class="a-title">${title}</div>
         <div class="a-total">Total: ${data.total || 0}</div>
@@ -40,33 +55,92 @@ function block(title, data, side) {
       </div>
       
       <div class="a-advice">
-        <strong>Systeem Advies</strong>
+        <strong>Systeem Advies</strong><br/>
         ${adviceHtml}
       </div>
     </div>
   `;
 }
 
+// Globaal adviesblok renderen
+function renderGlobalAdvice(advice) {
+  if (!advice) return "";
+
+  const bull = advice.bull || {};
+  const bear = advice.bear || {};
+  const global = Array.isArray(advice.global) ? advice.global : [];
+
+  let html = `
+    <div class="analytics-card analytics-global">
+      <div class="a-header">
+        <div class="a-title">🧠 Globaal Systeem Advies</div>
+        <div class="a-total">Live</div>
+      </div>
+      <div class="a-advice">
+  `;
+
+  if (global.length) {
+    html += `<strong>Global</strong><br/>`;
+    html += global.map(g => `• ${g}`).join("<br/>");
+    html += `<br/><br/>`;
+  }
+
+  for (const sideName of ["bull", "bear"]) {
+    const sideAdvice = sideName === "bull" ? bull : bear;
+    const icon = sideName === "bull" ? "🟢" : "🔴";
+
+    html += `<strong>${icon} ${sideName.toUpperCase()}</strong><br/>`;
+
+    let found = false;
+
+    for (const stage of ["entry", "almost", "buildup", "radar"]) {
+      const list = sideAdvice?.[stage];
+
+      if (Array.isArray(list) && list.length) {
+        found = true;
+        html += `<span class="a-stage">${stage.toUpperCase()}</span><br/>`;
+        html += list.map(adviceItemToHtml).join("<br/>");
+        html += `<br/><br/>`;
+      }
+    }
+
+    if (!found) {
+      html += `• Geen extra advies op dit moment.<br/><br/>`;
+    }
+  }
+
+  html += `
+      </div>
+    </div>
+  `;
+
+  return html;
+}
+
 async function load() {
   try {
     const res = await fetch("/api/public-latest");
     const data = await res.json();
-    
+
     if (!data.analytics) {
-      el("analytics").innerHTML = "<p style='color: var(--red);'>Geen analytics data gevonden in API.</p>";
+      el("analytics").innerHTML =
+        "<p style='color: var(--red);'>Geen analytics data gevonden in API.</p>";
       return;
     }
 
     const a = data.analytics;
     let html = "";
 
+    // Eerst globaal advies tonen
+    if (data.advice) {
+      html += renderGlobalAdvice(data.advice);
+    }
+
     // Loop door Bull en Bear
     for (const side of ["bull", "bear"]) {
-      
-      // Kleuren en icoontjes bepalen
       const titleColor = side === "bull" ? "var(--green)" : "var(--red)";
       const icon = side === "bull" ? "🟢" : "🔴";
-      
+
       html += `<h2 class="side-title" style="color: ${titleColor};">${icon} ${side.toUpperCase()} FUNNEL</h2>`;
 
       // Loop door de fases
@@ -81,7 +155,8 @@ async function load() {
 
   } catch (error) {
     console.error("Fetch fout:", error);
-    el("analytics").innerHTML = "<p style='color: var(--red);'>Fout bij het laden van analytics data.</p>";
+    el("analytics").innerHTML =
+      "<p style='color: var(--red);'>Fout bij het laden van analytics data.</p>";
   }
 }
 
