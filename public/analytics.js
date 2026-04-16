@@ -1,44 +1,92 @@
 const el = id => document.getElementById(id);
 
-function block(title,data){
+// Functie om de HTML voor 1 statistiek-kaart te genereren
+function block(title, data, side) {
+  if (!data) return "";
+
+  // Zet de array met adviezen om naar nette HTML regels
+  const adviceHtml = data.advice && data.advice.length 
+    ? data.advice.join("<br/>") 
+    : "Flow is gezond. Geen specifiek advies op dit moment.";
 
   return `
-    <div class="coin">
-      <h3>${title}</h3>
-      Total: ${data.total}<br/>
-      LowScore: ${data.reasons.lowScore}<br/>
-      WeakFlow: ${data.reasons.weakFlow}<br/>
-      LowVolume: ${data.reasons.lowVolume}<br/>
-      BadOB: ${data.reasons.badOB}<br/>
-      Good: ${data.reasons.good}<br/>
-      <br/>
-      <b>Advice:</b><br/>
-      ${data.advice.join("<br/>")}
+    <div class="analytics-card">
+      <div class="a-header">
+        <div class="a-title">${title}</div>
+        <div class="a-total">Total: ${data.total || 0}</div>
+      </div>
+      
+      <div class="a-stats">
+        <div class="a-stat-row">
+          <span class="a-stat-label">Good</span>
+          <span class="a-stat-val good">${data.reasons?.good || 0}</span>
+        </div>
+        <div class="a-stat-row">
+          <span class="a-stat-label">Low Score</span>
+          <span class="a-stat-val">${data.reasons?.lowScore || 0}</span>
+        </div>
+        <div class="a-stat-row">
+          <span class="a-stat-label">Weak Flow</span>
+          <span class="a-stat-val">${data.reasons?.weakFlow || 0}</span>
+        </div>
+        <div class="a-stat-row">
+          <span class="a-stat-label">Low Volume</span>
+          <span class="a-stat-val">${data.reasons?.lowVolume || 0}</span>
+        </div>
+        <div class="a-stat-row">
+          <span class="a-stat-label">Bad OB</span>
+          <span class="a-stat-val">${data.reasons?.badOB || 0}</span>
+        </div>
+      </div>
+      
+      <div class="a-advice">
+        <strong>Systeem Advies</strong>
+        ${adviceHtml}
+      </div>
     </div>
   `;
 }
 
-async function load(){
-
-  const res = await fetch("/api/public-latest");
-  const data = await res.json();
-
-  const a = data.analytics;
-
-  let html = "";
-
-  for(const side of ["bull","bear"]){
-
-    html += `<h2>${side.toUpperCase()}</h2>`;
-
-    for(const stage of ["entry","almost","buildup","radar"]){
-
-      html += block(`${stage.toUpperCase()}`, a[side][stage]);
+async function load() {
+  try {
+    const res = await fetch("/api/public-latest");
+    const data = await res.json();
+    
+    if (!data.analytics) {
+      el("analytics").innerHTML = "<p style='color: var(--red);'>Geen analytics data gevonden in API.</p>";
+      return;
     }
-  }
 
-  el("analytics").innerHTML = html;
+    const a = data.analytics;
+    let html = "";
+
+    // Loop door Bull en Bear
+    for (const side of ["bull", "bear"]) {
+      
+      // Kleuren en icoontjes bepalen
+      const titleColor = side === "bull" ? "var(--green)" : "var(--red)";
+      const icon = side === "bull" ? "🟢" : "🔴";
+      
+      html += `<h2 class="side-title" style="color: ${titleColor};">${icon} ${side.toUpperCase()} FUNNEL</h2>`;
+
+      // Loop door de fases
+      for (const stage of ["entry", "almost", "buildup", "radar"]) {
+        if (a[side] && a[side][stage]) {
+          html += block(stage.toUpperCase(), a[side][stage], side);
+        }
+      }
+    }
+
+    el("analytics").innerHTML = html;
+
+  } catch (error) {
+    console.error("Fetch fout:", error);
+    el("analytics").innerHTML = "<p style='color: var(--red);'>Fout bij het laden van analytics data.</p>";
+  }
 }
 
-setInterval(load,15000);
+// Haal data elke 15 seconden op
+setInterval(load, 15000);
+
+// Laad direct bij het openen
 load();
