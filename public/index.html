@@ -7,64 +7,39 @@
   <link rel="stylesheet" href="main.css">
 </head>
 <body>
-
   <div class="pageShell">
-    
     <section class="heroCard">
       <div class="eyebrow">🐊 CRYPTOCROC</div>
       <h1 class="heroTitle">Main Trade Desk</h1>
       <p class="heroText">Real-time markt overzicht & signalen</p>
-      
       <div class="statusGrid">
-        <div class="statusCard">
-          <span class="label">BTC Trend</span>
-          <strong id="btcState" class="value">Laden...</strong>
-        </div>
-        <div class="statusCard">
-          <span class="label">Regime</span>
-          <strong id="regimeState" class="value">Laden... 🟢</strong>
-        </div>
+        <div class="statusCard"><span class="label">BTC Trend</span><strong id="btcState" class="value">Laden...</strong></div>
+        <div class="statusCard"><span class="label">Regime</span><strong id="regimeState" class="value">Laden...</strong></div>
       </div>
     </section>
 
     <main class="dashGrid">
-      
       <a href="bull.html" class="dashCard bull-card">
         <div class="cardIcon">🟢</div>
-        <div class="cardContent">
-          <h2>Bull Funnel</h2>
-          <p>Long kansen & flow scores.</p>
-        </div>
-        <div class="cardStats">
-          <span id="bullCount" class="statBadge">0</span>
-        </div>
+        <div class="cardContent"><h2>Bull Funnel</h2><p>Long kansen & flow</p></div>
+        <div class="cardStats"><span id="bullCount" class="statBadge">0</span></div>
       </a>
-
       <a href="bear.html" class="dashCard bear-card">
         <div class="cardIcon">🔴</div>
-        <div class="cardContent">
-          <h2>Bear Funnel</h2>
-          <p>Short kansen & flow scores.</p>
-        </div>
-        <div class="cardStats">
-          <span id="bearCount" class="statBadge">0</span>
-        </div>
+        <div class="cardContent"><h2>Bear Funnel</h2><p>Short kansen & flow</p></div>
+        <div class="cardStats"><span id="bearCount" class="statBadge">0</span></div>
       </a>
-
       <a href="signals.html" class="dashCard trade-card">
         <div class="cardIcon">⚡</div>
-        <div class="cardContent">
-          <h2>Trade Signals</h2>
-          <p>Live posities & executies.</p>
-        </div>
-        <div class="cardStats">
-          <span id="tradeCount" class="statBadge highlight">0</span>
-        </div>
+        <div class="cardContent"><h2>Trade Signals</h2><p>Live posities</p></div>
+        <div class="cardStats"><span id="tradeCount" class="statBadge highlight">0</span></div>
       </a>
-
+      <a href="analytics.html" class="dashCard analyse-card">
+        <div class="cardIcon">📊</div>
+        <div class="cardContent"><h2>Analyse Desk</h2><p>Bottlenecks & Flow</p></div>
+      </a>
     </main>
   </div>
-
   <script src="main.js"></script>
 </body>
 </html>
