@@ -3,70 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trading System Dashboard</title>
-  <link rel="stylesheet" href="index.css">
-</head>
+  <title>Main Trade Desk</title>
+  <link rel="stylesheet" href="Globals.css"> <link rel="stylesheet" href="index.css"> </head>
 <body>
 
-  <div class="app-container">
+  <div class="pageShell">
     
-    <div class="top-bar">
-      <div class="brand">🐊 CRYPTOCROC</div>
-      <div class="live-badge"><span class="pulse-dot"></span> SCANNING</div>
-    </div>
-
-    <div class="hero-section">
-      <h1 class="gradient-text">Main Trade Desk</h1>
-      <p class="subtitle">Real-time markt overzicht & signalen</p>
+    <section class="heroCard">
+      <div class="eyebrow">🐊 CRYPTOCROC</div>
+      <h1 class="heroTitle">Main Trade Desk</h1>
+      <p class="heroText">Real-time markt overzicht & signalen</p>
       
-      <div class="status-cards">
-        <div class="status-card">
+      <div class="statusGrid">
+        <div class="statusCard">
           <span class="label">BTC Trend</span>
           <strong id="btcState" class="value">Laden...</strong>
         </div>
-        <div class="status-card">
-          <span class="label">Markt Regime</span>
-          <strong id="regimeState" class="value">Laden...</strong>
+        <div class="statusCard">
+          <span class="label">Regime</span>
+          <strong id="regimeState" class="value">Laden... 🟢</strong>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div class="dashboard-grid">
+    <main class="dashGrid">
       
-      <a href="bull.html" class="dash-card bull-card">
-        <div class="card-icon">🟢</div>
-        <div class="card-content">
+      <a href="bull.html" class="dashCard bull-card">
+        <div class="cardIcon">🟢</div>
+        <div class="cardContent">
           <h2>Bull Funnel</h2>
-          <p>Long kansen & flow</p>
+          <p>Long kansen & flow scores.</p>
         </div>
-        <div class="card-stats">
-          <span id="bullCount" class="stat-badge">0</span>
+        <div class="cardStats">
+          <span id="bullCount" class="statBadge">0</span>
         </div>
       </a>
 
-      <a href="bear.html" class="dash-card bear-card">
-        <div class="card-icon">🔴</div>
-        <div class="card-content">
+      <a href="bear.html" class="dashCard bear-card">
+        <div class="cardIcon">🔴</div>
+        <div class="cardContent">
           <h2>Bear Funnel</h2>
-          <p>Short kansen & flow</p>
+          <p>Short kansen & flow scores.</p>
         </div>
-        <div class="card-stats">
-          <span id="bearCount" class="stat-badge">0</span>
+        <div class="cardStats">
+          <span id="bearCount" class="statBadge">0</span>
         </div>
       </a>
 
-      <a href="signals.html" class="dash-card trade-card">
-        <div class="card-icon">⚡</div>
-        <div class="card-content">
+      <a href="signals.html" class="dashCard trade-card">
+        <div class="cardIcon">⚡</div>
+        <div class="cardContent">
           <h2>Trade Signals</h2>
-          <p>Live posities & executies</p>
+          <p>Live posities & executies.</p>
         </div>
-        <div class="card-stats">
-          <span id="tradeCount" class="stat-badge highlight">0</span>
+        <div class="cardStats">
+          <span id="tradeCount" class="statBadge highlight">0</span>
         </div>
       </a>
 
-    </div>
+    </main>
   </div>
 
   <script src="index.js"></script>
