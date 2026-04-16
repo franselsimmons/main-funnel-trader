@@ -3,11 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Analyse Desk</title>
-  <link rel="stylesheet" href="main.css"/>
+  <title>Analytics Desk</title>
+  <link rel="stylesheet" href="main.css">
   <style>
-    /* ... specifieke stijlen voor de analyse pagina ... */
-    .analysis-card { background: var(--panel); padding: 18px; border-radius: 20px; border: 1px solid var(--border); margin-bottom: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+    /* Styling specifiek voor de header van Analytics (Paars thema) */
+    .header h1 { color: #a78bfa; margin: 0 0 4px; font-size: 28px; }
+    #statusLine { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+
+    /* Navigatie balk fix voor mobiel */
+    .nav { display: flex; gap: 5px; margin-bottom: 24px; }
+    .btn { flex: 1; text-align: center; padding: 10px 4px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .btn.active.purple { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+
+    /* Analytics kaarten styling */
+    .side-title { font-size: 20px; font-weight: 800; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; letter-spacing: 1px; }
+    .analysis-card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 18px; margin-bottom: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
     .a-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
     .a-title { font-size: 16px; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
     .a-total { background: rgba(255, 255, 255, 0.08); padding: 6px 12px; border-radius: 12px; font-size: 14px; font-weight: 800; }
@@ -21,38 +31,37 @@
     .advice-content { display: none; margin-top: 12px; background: rgba(139, 92, 246, 0.1); border-left: 4px solid #8b5cf6; padding: 12px 14px; border-radius: 4px 12px 12px 4px; font-size: 13px; line-height: 1.6; }
     .advice-content strong { color: #a78bfa; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
     .advice-toggle-btn { background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: #a78bfa; width: 100%; padding: 10px; text-align: center; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 13px; margin-top: 10px; }
-    .advice-toggle-btn:hover { background: rgba(139, 92, 246, 0.2); }
   </style>
 </head>
-<body class="page-analyse"> <div class="pageShell">
+<body>
+
+  <div class="pageShell">
     
-    <header class="topbar">
-      <div class="brandBlock">
-        <div class="brandTitle">📊 ANALYSE DESK</div>
-        <div class="brandMeta">Bottlenecks, flow & verbeteradvies</div>
-      </div>
-
-      <nav class="nav">
-        <a href="index.html" class="navBtn">Home</a>
-        <a href="bull.html" class="navBtn">Bull</a>
-        <a href="bear.html" class="navBtn">Bear</a>
-        <a href="signals.html" class="navBtn">Trade</a>
-        <a href="analytics.html" class="navBtn active">Analyse</a>
-      </nav>
-    </header>
-
-    <main class="analysisPage">
+    <div class="header">
+      <h1>📊 ANALYTICS DESK</h1>
+      <div id="statusLine">Laden...</div>
       
-      <section id="globalAdvice" class="heroCard" style="display: none; border-color: #8b5cf6; box-shadow: 0 5px 20px rgba(139, 92, 246, 0.1);">
-        <div class="eyebrow">🧠 GLOBALE STATUS</div>
-        <div id="globalAdviceContent" class="heroText" style="margin-top: 12px; font-weight: bold; font-size: 16px; margin-bottom: 0;"></div>
-      </section>
+      <div class="nav">
+        <a href="index.html" class="btn">Home</a>
+        <a href="bull.html" class="btn">Bull</a>
+        <a href="bear.html" class="btn">Bear</a>
+        <a href="signals.html" class="btn">Trade</a>
+        <a href="analytics.html" class="btn active purple">Analyse</a>
+      </div>
+    </div>
+
+    <div class="trade-section">
+      
+      <div id="globalAdvice" style="display: none; background: var(--panel); border: 1px solid #8b5cf6; padding: 16px; border-radius: 16px; margin-bottom: 24px; box-shadow: 0 5px 20px rgba(139, 92, 246, 0.15);">
+        <div style="font-size: 12px; letter-spacing: 2px; color: #a78bfa; margin-bottom: 8px; font-weight: bold;">🧠 GLOBALE STATUS</div>
+        <div id="globalAdviceContent" style="color: #e2e8f0; font-size: 14px; line-height: 1.6; font-weight: bold;"></div>
+      </div>
 
       <div id="analytics">
         <p style="color: var(--muted); text-align: center; margin-top: 40px;">Data ophalen...</p>
       </div>
-
-    </main>
+      
+    </div>
   </div>
 
   <script src="analytics.js"></script>
