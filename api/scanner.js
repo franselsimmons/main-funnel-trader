@@ -8,7 +8,6 @@ import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 import { detectRegime } from "../lib/regime.js";
 import { calculateEdge } from "../lib/edge.js";
-import { getLifecycleStage } from "../lib/lifecycle.js";
 import { processTrades } from "../lib/tradeSystem.js";
 import { setLatestScan } from "../lib/scanStore.js";
 
@@ -50,14 +49,6 @@ function detectFlow(c) {
   return "NEUTRAL";
 }
 
-// ================= STAGE =================
-function getStage(score, flow) {
-  if (score >= 85 && flow === "TREND") return "ENTRY";
-  if (score >= 70) return "ALMOST";
-  if (score >= 55) return "BUILDUP";
-  return "RADAR";
-}
-
 // ================= NORMALIZE =================
 function normalize(raw) {
   const marketCap = Number(raw?.market_cap || 0);
@@ -93,7 +84,7 @@ export default async function handler(req, res) {
       bear: { entry: [], almost: [], buildup: [], radar: [] }
     };
 
-    const coins = [];
+    const tradeCandidates = [];
 
     for (const raw of rawCoins) {
       const base = normalize(raw);
@@ -103,39 +94,39 @@ export default async function handler(req, res) {
       const flow = detectFlow(base);
 
       // ===== BULL =====
-      if (bullFilter(base)) {
+      const bullStage = bullFilter(base);
+
+      if (bullStage) {
         const c = { ...base, side: "bull" };
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
-        c.stage = getLifecycleStage(getStage(c.moveScore, flow)) || "RADAR";
+        c.stage = bullStage;
         c.edge = calculateEdge(c, regime) || 0;
 
-        // 🔥 NIEUWE LOGICA
-        if (c.stage === "RADAR") {
-          funnel.bull.radar.push(c);
-        }
-        else if (c.moveScore >= 50) {
-          funnel.bull[c.stage.toLowerCase()].push(c);
-          coins.push(c);
+        funnel.bull[bullStage.toLowerCase()].push(c);
+
+        // 🔥 alleen betere setups naar trade
+        if (bullStage !== "RADAR" && c.moveScore >= 60) {
+          tradeCandidates.push(c);
         }
       }
 
       // ===== BEAR =====
-      if (bearFilter(base)) {
+      const bearStage = bearFilter(base);
+
+      if (bearStage) {
         const c = { ...base, side: "bear" };
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
-        c.stage = getLifecycleStage(getStage(c.moveScore, flow)) || "RADAR";
+        c.stage = bearStage;
         c.edge = calculateEdge(c, regime) || 0;
 
-        if (c.stage === "RADAR") {
-          funnel.bear.radar.push(c);
-        }
-        else if (c.moveScore >= 50) {
-          funnel.bear[c.stage.toLowerCase()].push(c);
-          coins.push(c);
+        funnel.bear[bearStage.toLowerCase()].push(c);
+
+        if (bearStage !== "RADAR" && c.moveScore >= 60) {
+          tradeCandidates.push(c);
         }
       }
     }
@@ -148,7 +139,7 @@ export default async function handler(req, res) {
     }
 
     // ===== TRADE =====
-    const trades = processTrades(coins, btc, "auto", regime) || [];
+    const trades = processTrades(tradeCandidates, btc, "auto", regime) || [];
 
     const payload = {
       ok: true,
@@ -158,14 +149,14 @@ export default async function handler(req, res) {
       funnel,
       trades,
       total: rawCoins.length,
-      candidates: coins.length
+      candidates: tradeCandidates.length
     };
 
     setLatestScan(payload);
 
     console.log("SCAN RESULT:", {
       total: rawCoins.length,
-      candidates: coins.length,
+      candidates: tradeCandidates.length,
       bullRadar: funnel.bull.radar.length,
       bearRadar: funnel.bear.radar.length
     });
