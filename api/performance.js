@@ -1,7 +1,8 @@
-export default function handler(req, res) {
-  res.json({
-    trades: 0,
-    winrate: 0,
-    profit: 0
-  });
+import { getPerformance } from "../lib/performance.js";
+
+export default function handler(req,res){
+
+  const perf = getPerformance();
+
+  res.status(200).json(perf);
 }
