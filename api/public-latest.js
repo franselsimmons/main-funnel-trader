@@ -3,17 +3,42 @@ import scanner from "./scanner.js";
 
 export default async function handler(req, res) {
   try {
-    const latest = getLatestScan();
+    const cached = getLatestScan();
 
-    if (latest) {
-      return res.status(200).json(latest);
+    // ✅ ALS WE DATA HEBBEN → RETURN
+    if (cached) {
+      return res.status(200).json(cached);
     }
 
-    return scanner(req, res);
+    // 🔥 GEEN DATA → FORCE SCAN
+    console.log("NO CACHE → RUN SCANNER");
+
+    let resultData = null;
+
+    const fakeRes = {
+      status(code) {
+        return {
+          json(data) {
+            resultData = data;
+          }
+        };
+      }
+    };
+
+    await scanner(req, fakeRes);
+
+    if (!resultData) {
+      throw new Error("Scanner returned empty");
+    }
+
+    return res.status(200).json(resultData);
+
   } catch (err) {
+    console.error("PUBLIC-LATEST ERROR:", err);
+
     return res.status(500).json({
       ok: false,
-      error: err?.message || "public_latest_failed"
+      error: err.message
     });
   }
 }
