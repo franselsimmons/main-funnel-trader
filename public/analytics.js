@@ -1,12 +1,14 @@
 const el = id => document.getElementById(id);
 
-// Functie om de HTML voor 1 statistiek-kaart te genereren
+// ================= BLOCK =================
 function block(title, data, side){
+
   if (!data) return "";
 
   const adviceId = `advice-${side}-${title}`;
+
   const adviceHtml = data.advice && data.advice.length
-    ? data.advice.map(adviceItemToHtml).join("<br/>")
+    ? data.advice.map(adviceItemToHtml).join("")
     : "<span style='color: var(--green);'>✅ Flow is gezond. Geen specifiek advies.</span>";
 
   return `
@@ -39,81 +41,117 @@ function block(title, data, side){
         </div>
       </div>
       
-      <div class="advice-content" id="${adviceId}">
+      <div class="advice-content" id="${adviceId}" style="display:none;">
         <strong>💡 Filter Advies</strong>
         ${adviceHtml}
       </div>
       
-      <div class="advice-toggle-btn" onclick="toggleAdvice('${adviceId}')">💡 Bekijk Systeem Advies</div>
+      <div class="advice-toggle-btn" onclick="toggleAdvice('${adviceId}')">
+        💡 Bekijk Systeem Advies
+      </div>
     </div>
   `;
 }
 
-// Functie om advies te tonen/verbergen
+
+// ================= TOGGLE =================
 window.toggleAdvice = function(adviceId){
-  const adviceContent = el(adviceId);
-  const isHidden = adviceContent.style.display === "none" || adviceContent.style.display === "";
-  adviceContent.style.display = isHidden ? "block" : "none";
+  const elAdvice = el(adviceId);
+  const isHidden = elAdvice.style.display === "none";
+  elAdvice.style.display = isHidden ? "block" : "none";
 };
 
-// Functie om advies badges netjes te renderen
-function adviceItemToHtml(item){
-  if (!item) return "";
-  if (typeof item === "string") return `• ${item}`;
 
-  const message = item.message || "";
-  let actionColor = "#a78bfa"; 
+// ================= ADVICE ITEM =================
+function adviceItemToHtml(item){
+
+  if (!item) return "";
+
+  let actionColor = "#a78bfa";
+
   if (item.action === "STRENGER") actionColor = "var(--red)";
   if (item.action === "SOEPELER") actionColor = "var(--green)";
 
-  const action = item.action ? `<span style="background: rgba(139, 92, 246, 0.2); color: ${actionColor}; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-right: 6px; border: 1px solid ${actionColor};">${item.action}</span>` : "";
+  const action = item.action
+    ? `<span style="
+        background: rgba(139,92,246,0.2);
+        color:${actionColor};
+        padding:2px 6px;
+        border-radius:4px;
+        font-size:11px;
+        font-weight:bold;
+        margin-right:6px;
+        border:1px solid ${actionColor};
+      ">${item.action}</span>`
+    : "";
 
-  return `<div style="margin-bottom: 8px;">• ${action}${message}</div>`;
+  const values = (item.current !== undefined && item.recommended !== undefined)
+    ? `<div style="font-size:12px; opacity:0.8; margin-top:2px;">
+         ${item.current} → ${item.recommended}
+       </div>`
+    : "";
+
+  return `
+    <div style="margin-bottom:10px;">
+      • ${action}${item.message}
+      ${values}
+    </div>
+  `;
 }
 
-// Globaal advies renderen in de specifieke box bovenaan
+
+// ================= GLOBAL =================
 function renderGlobalAdvice(advice){
-  if (!advice || !advice.global || advice.global.length === 0) {
+
+  if (!advice || !advice.global || advice.global.length === 0){
     el("globalAdvice").style.display = "none";
     return;
   }
 
   el("globalAdvice").style.display = "block";
-  el("globalAdviceContent").innerHTML = advice.global.map(g => `• ${g}`).join("<br/><br/>");
+
+  el("globalAdviceContent").innerHTML =
+    advice.global.map(g => `• ${g}`).join("<br/><br/>");
 }
 
+
+// ================= LOAD =================
 async function load(){
-  try {
+
+  try{
+
     const res = await fetch("/api/public-latest");
     const data = await res.json();
 
-    // Vul het statusLine element in met BTC en Regime info, net als op Bull en Bear
-    if (data.btc && data.regime) {
-      el("statusLine").innerText = `BTC: ${data.btc.state} | Regime: ${data.regime}`;
+    if (data.btc && data.regime){
+      el("statusLine").innerText =
+        `BTC: ${data.btc.state} | Regime: ${data.regime}`;
     }
 
-    if (!data.analytics) {
-      el("analytics").innerHTML = "<p style='color: var(--red);'>Geen analytics data gevonden in API.</p>";
+    if (!data.analytics){
+      el("analytics").innerHTML =
+        "<p style='color: var(--red);'>Geen analytics data gevonden.</p>";
       return;
     }
 
-    const a = data.analytics;
-    let html = "";
-
-    if (data.advice) {
+    if (data.advice){
       renderGlobalAdvice(data.advice);
     } else {
       el("globalAdvice").style.display = "none";
     }
 
+    const a = data.analytics;
+    let html = "";
+
     for(const side of ["bull","bear"]){
-      const titleColor = side === "bull" ? "var(--green)" : "var(--red)";
+
+      const color = side === "bull" ? "var(--green)" : "var(--red)";
       const icon = side === "bull" ? "🟢" : "🔴";
 
-      html += `<h2 class="side-title" style="color: ${titleColor};">${icon} ${side.toUpperCase()} FUNNEL</h2>`;
+      html += `<h2 style="color:${color};">${icon} ${side.toUpperCase()}</h2>`;
 
       for(const stage of ["entry","almost","buildup","radar"]){
-        if (a[side] && a[side][stage]) {
+        if(a[side]?.[stage]){
           html += block(stage.toUpperCase(), a[side][stage], side);
         }
       }
@@ -121,12 +159,16 @@ async function load(){
 
     el("analytics").innerHTML = html;
 
-  } catch (error) {
-    console.error("Fetch fout:", error);
-    el("analytics").innerHTML = "<p style='color: var(--red);'>Fout bij het laden van analytics data.</p>";
+  }catch(e){
+
+    console.error(e);
+
+    el("analytics").innerHTML =
+      "<p style='color:red;'>Fout bij laden</p>";
   }
 }
 
-// 15 sec auto-refresh
+
+// ================= INIT =================
 setInterval(load, 15000);
 load();
