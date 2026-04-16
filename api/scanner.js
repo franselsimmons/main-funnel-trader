@@ -7,43 +7,61 @@ import {
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
+import { analyzeFlow } from "../lib/flowEngine.js";
+import { detectRegime } from "../lib/regime.js";
+import { calculateEdge } from "../lib/edge.js";
+import { getLifecycleStage } from "../lib/lifecycle.js";
+
 import { processTrades } from "../lib/tradeSystem.js";
 import { generateSignals } from "../lib/signalEngine.js";
 
-import { detectRegime } from "../lib/regime.js";
-import { calculateEdge } from "../lib/edge.js";
 
-function score(c) {
-  let s = 0;
+// 🔥 SCORE (SLIMMER)
+function calculateScore(c, regime) {
+  let score = 0;
 
-  if (Math.abs(c.change24) > 8) s += 30;
-  else if (Math.abs(c.change24) > 5) s += 20;
+  // momentum
+  if (Math.abs(c.change24) > 10) score += 30;
+  else if (Math.abs(c.change24) > 6) score += 20;
+  else if (Math.abs(c.change24) > 3) score += 10;
 
-  if (Math.abs(c.change1h) > 1) s += 20;
+  // 1h confirmatie
+  if (Math.abs(c.change1h) > 1.2) score += 20;
+  else if (Math.abs(c.change1h) > 0.5) score += 10;
 
-  if (c.vm > 0.5) s += 25;
-  else if (c.vm > 0.3) s += 15;
+  // volume kwaliteit
+  if (c.vm > 0.6) score += 25;
+  else if (c.vm > 0.35) score += 15;
 
-  if (c.ob.score > 0.05) s += 15;
+  // liquidity
+  if (c.ob.score > 0.07) score += 15;
+  else if (c.ob.score > 0.04) score += 10;
 
-  return Math.min(s, 100);
+  // 🔥 regime penalty (belangrijk)
+  if (regime === "LOW_VOL") score -= 10;
+
+  return Math.max(0, Math.min(score, 100));
 }
 
-function stage(s) {
-  if (s >= 80) return "ENTRY";
-  if (s >= 65) return "ALMOST";
-  if (s >= 50) return "BUILDUP";
+
+// 🔥 STAGE LOGICA (STRIKTER)
+function getStage(score, flow) {
+  if (score >= 85 && flow.type === "TREND_CONTINUATION") return "ENTRY";
+  if (score >= 70) return "ALMOST";
+  if (score >= 55) return "BUILDUP";
   return "RADAR";
 }
 
+
 export default async function handler(req, res) {
   try {
+
     const mode = (req.query.mode || "bull").toLowerCase();
 
     const btc = await fetchBTCGateFromUniverse();
-    const raw = await fetchCoinGeckoTopCached();
+    const rawCoins = await fetchCoinGeckoTopCached();
 
-    const regime = detectRegime(raw);
+    const regime = detectRegime(rawCoins);
 
     const funnel = {
       entry: [],
@@ -54,8 +72,9 @@ export default async function handler(req, res) {
 
     const coins = [];
 
-    for (const r of raw) {
-      const c = {
+    for (const r of rawCoins) {
+
+      const coin = {
         symbol: r.symbol.toUpperCase(),
         name: r.name,
         price: r.current_price,
@@ -67,27 +86,43 @@ export default async function handler(req, res) {
         ob: generateShallowOb()
       };
 
+      // 🔥 FILTER (STRIKT)
       const pass =
         mode === "bull"
-          ? bullFilter(c)
-          : bearFilter(c);
+          ? bullFilter(coin)
+          : bearFilter(coin);
 
       if (!pass) continue;
 
-      c.moveScore = score(c);
-      c.stage = stage(c.moveScore);
-      c.edge = calculateEdge(c, regime);
+      // 🔥 FLOW
+      const flow = analyzeFlow(coin);
+      coin.flow = flow.type;
 
-      coins.push(c);
+      // 🔥 SCORE
+      coin.moveScore = calculateScore(coin, regime);
 
-      funnel[c.stage.toLowerCase()].push(c);
+      // 🔥 STAGE + LIFECYCLE
+      coin.stage = getLifecycleStage(
+        getStage(coin.moveScore, flow)
+      );
+
+      // 🔥 EDGE
+      coin.edge = calculateEdge(coin, regime);
+
+      coins.push(coin);
+
+      funnel[coin.stage.toLowerCase()].push(coin);
     }
 
-    for (const k of Object.keys(funnel)) {
-      funnel[k].sort((a, b) => b.moveScore - a.moveScore);
+    // 🔥 SORT
+    for (const key of Object.keys(funnel)) {
+      funnel[key].sort((a, b) => b.moveScore - a.moveScore);
     }
 
-    const trades = processTrades(coins, btc, mode);
+    // 🔥 TRADE ENGINE
+    const trades = processTrades(coins, btc, mode, regime);
+
+    // 🔥 SIGNALS
     const signals = generateSignals(coins);
 
     return res.status(200).json({
@@ -95,12 +130,14 @@ export default async function handler(req, res) {
       btc,
       regime,
       funnel,
-      signals,
       trades,
-      total: raw.length
+      signals,
+      total: rawCoins.length
     });
 
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
+  } catch (err) {
+    return res.status(500).json({
+      error: err.message
+    });
   }
 }
