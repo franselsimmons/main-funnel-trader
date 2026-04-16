@@ -1,6 +1,7 @@
 export default function handler(req, res) {
   res.json({
-    message: "Analyse endpoint actief",
+    system: "MAIN",
+    status: "ACTIVE",
     timestamp: Date.now()
   });
 }
