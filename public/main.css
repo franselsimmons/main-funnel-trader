@@ -1,22 +1,54 @@
-/* Specifieke styling voor de Index pagina */
-
-/* Gebruik de globale variabelen van je site voor consistentie */
+/* =========================================
+   GLOBALE VARIABELEN & KLEUREN THEMA
+========================================= */
 :root {
+  --bg-0: #050b14; 
+  --bg-1: #0a1120;
+  --panel: #0d1627;
+  --border: #1e2d4a;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  
+  --green: #22c55e;
+  --red: #ef4444;
+  --amber: #f59e0b;
+  
   --green-glow: rgba(34, 197, 94, 0.2);
   --red-glow: rgba(239, 68, 68, 0.2);
   --amber-glow: rgba(245, 158, 11, 0.2);
 }
 
-/* Algemene lay-out voor de app op mobiel */
+* {
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
 body {
-  padding-bottom: 80px; /* Ruimte voor de navigatie onderaan de site */
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at 50% 0%, var(--bg-1) 0%, var(--bg-0) 60%);
+  background-attachment: fixed;
+  color: var(--text);
+  padding-bottom: 80px; 
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent; 
 }
 
 .pageShell {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
   padding: 20px 16px;
 }
 
-/* Hero / Status Kaart */
+/* =========================================
+   HERO / STATUS KAART
+========================================= */
 .heroCard {
   background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
   border: 1px solid var(--border);
@@ -51,7 +83,6 @@ body {
   margin-bottom: 24px;
 }
 
-/* Status Grid in de Hero Kaart */
 .statusGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -63,7 +94,6 @@ body {
   padding: 18px;
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.05);
-  transition: transform 0.1s;
 }
 
 .statusCard .label {
@@ -81,7 +111,9 @@ body {
   font-weight: 700;
 }
 
-/* Navigatie / Dashboard Grid */
+/* =========================================
+   DASHBOARD NAVIGATIE
+========================================= */
 .dashGrid {
   display: flex;
   flex-direction: column;
@@ -96,34 +128,15 @@ body {
   padding: 20px;
   border-radius: 24px;
   border: 1px solid var(--border);
-  text-decoration: none;
-  color: var(--text);
   transition: all 0.15s ease-out;
-  position: relative;
-  overflow: hidden;
   box-shadow: 0 5px 20px rgba(0,0,0,0.3);
 }
 
-.dashCard:active {
-  transform: scale(0.97);
-}
+.dashCard:active { transform: scale(0.97); }
 
-/* Gloed-effecten op de kaarten op basis van de richting */
-.bull-card {
-  border-color: rgba(34, 197, 94, 0.3);
-  box-shadow: 0 10px 30px var(--green-glow);
-}
-
-.bear-card {
-  border-color: rgba(239, 68, 68, 0.3);
-  box-shadow: 0 10px 30px var(--red-glow);
-}
-
-.trade-card {
-  border-color: rgba(245, 158, 11, 0.3);
-  box-shadow: 0 10px 30px var(--amber-glow);
-  background: linear-gradient(180deg, rgba(23,44,80,.98), rgba(18,35,65,.96));
-}
+.bull-card { border-color: rgba(34, 197, 94, 0.3); box-shadow: 0 10px 30px var(--green-glow); }
+.bear-card { border-color: rgba(239, 68, 68, 0.3); box-shadow: 0 10px 30px var(--red-glow); }
+.trade-card { border-color: rgba(245, 158, 11, 0.3); box-shadow: 0 10px 30px var(--amber-glow); background: linear-gradient(180deg, #152238, var(--panel)); }
 
 .cardIcon {
   font-size: 28px;
@@ -136,23 +149,10 @@ body {
   border: 1px solid rgba(255,255,255,0.05);
 }
 
-.cardContent {
-  flex: 1;
-}
+.cardContent { flex: 1; }
+.cardContent h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; }
+.cardContent p { margin: 0; color: var(--muted); font-size: 14px; }
 
-.cardContent h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.cardContent p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-/* Cijfertjes badges met live stats */
 .statBadge {
   background: rgba(255,255,255,0.08);
   padding: 8px 16px;
@@ -162,21 +162,6 @@ body {
   border: 1px solid rgba(255,255,255,0.1);
 }
 
-.bull-card .statBadge {
-  color: var(--green);
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.bear-card .statBadge {
-  color: var(--red);
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.2);
-}
-
-.trade-card .statBadge.highlight {
-  color: #000;
-  background: var(--amber);
-  border-color: var(--amber);
-  box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
-}
+.bull-card .statBadge { color: var(--green); background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.2); }
+.bear-card .statBadge { color: var(--red); background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.2); }
+.trade-card .statBadge.highlight { color: #000; background: var(--amber); border-color: var(--amber); box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
