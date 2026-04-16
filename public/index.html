@@ -3,41 +3,69 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trading System</title>
+  <title>Trading System Dashboard</title>
   <link rel="stylesheet" href="index.css">
 </head>
 <body>
 
-  <div class="container">
-    <div class="hero">
-      <div class="eyebrow">MAIN TRADING SYSTEM</div>
-      <h1>Scanner & Trade Desk</h1>
+  <div class="app-container">
+    
+    <div class="top-bar">
+      <div class="brand">🐊 CRYPTOCROC</div>
+      <div class="live-badge"><span class="pulse-dot"></span> SCANNING</div>
+    </div>
+
+    <div class="hero-section">
+      <h1 class="gradient-text">Main Trade Desk</h1>
+      <p class="subtitle">Real-time markt overzicht & signalen</p>
       
-      <div class="stats-grid">
-        <div class="stat-box">
-          <span>BTC Status</span>
-          <strong id="btcState">Laden...</strong>
+      <div class="status-cards">
+        <div class="status-card">
+          <span class="label">BTC Trend</span>
+          <strong id="btcState" class="value">Laden...</strong>
         </div>
-        <div class="stat-box">
-          <span>Regime</span>
-          <strong id="regimeState">Laden...</strong>
+        <div class="status-card">
+          <span class="label">Markt Regime</span>
+          <strong id="regimeState" class="value">Laden...</strong>
         </div>
       </div>
     </div>
 
-    <div class="nav-menu">
-      <a href="bull.html" class="nav-card green-card">
-        <h2>🟢 Bull Funnel</h2>
-        <p>Long kansen en flow scores.</p>
+    <div class="dashboard-grid">
+      
+      <a href="bull.html" class="dash-card bull-card">
+        <div class="card-icon">🟢</div>
+        <div class="card-content">
+          <h2>Bull Funnel</h2>
+          <p>Long kansen & flow</p>
+        </div>
+        <div class="card-stats">
+          <span id="bullCount" class="stat-badge">0</span>
+        </div>
       </a>
-      <a href="bear.html" class="nav-card red-card">
-        <h2>🔴 Bear Funnel</h2>
-        <p>Short kansen en flow scores.</p>
+
+      <a href="bear.html" class="dash-card bear-card">
+        <div class="card-icon">🔴</div>
+        <div class="card-content">
+          <h2>Bear Funnel</h2>
+          <p>Short kansen & flow</p>
+        </div>
+        <div class="card-stats">
+          <span id="bearCount" class="stat-badge">0</span>
+        </div>
       </a>
-      <a href="signals.html" class="nav-card yellow-card">
-        <h2>⚡ Trade Signals</h2>
-        <p>Live executies en open posities.</p>
+
+      <a href="signals.html" class="dash-card trade-card">
+        <div class="card-icon">⚡</div>
+        <div class="card-content">
+          <h2>Trade Signals</h2>
+          <p>Live posities & executies</p>
+        </div>
+        <div class="card-stats">
+          <span id="tradeCount" class="stat-badge highlight">0</span>
+        </div>
       </a>
+
     </div>
   </div>
 
