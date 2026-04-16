@@ -1,61 +1,46 @@
-import { useEffect, useState } from "react";
-import Link from "next/link";
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trading System</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
 
-export default function Home() {
-  const [data, setData] = useState(null);
-
-  useEffect(() => {
-    fetch("/api/public-latest", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => setData(j))
-      .catch(() => null);
-  }, []);
-
-  const btcState = data?.btc?.state || "Laden...";
-  const regime = data?.regime || "Laden...";
-  const tradeCount = data?.trades?.length || 0;
-
-  return (
-    <div className="pageShell homePage">
-      <section className="heroCard">
-        <div className="eyebrow">MAIN TRADING SYSTEM</div>
-        <h1 className="heroTitle">Scanner & Trade Desk</h1>
-        <p className="heroText">
-          Professioneel overzicht van de markt. Selecteer een funnel of bekijk actieve signalen.
-        </p>
-
-        <div className="heroStats">
-          <div className="heroStat">
-            <span className="heroStatLabel">BTC Status</span>
-            <span className="heroStatValue" style={{ fontSize: "20px" }}>{btcState}</span>
-          </div>
-          <div className="heroStat">
-            <span className="heroStatLabel">Huidig Regime</span>
-            <span className="heroStatValue" style={{ fontSize: "20px" }}>{regime}</span>
-          </div>
-          <div className="heroStat">
-            <span className="heroStatLabel">Actieve Trades</span>
-            <span className="heroStatValue">{tradeCount}</span>
-          </div>
+  <div class="container">
+    <div class="hero">
+      <div class="eyebrow">MAIN TRADING SYSTEM</div>
+      <h1>Scanner & Trade Desk</h1>
+      
+      <div class="stats-grid">
+        <div class="stat-box">
+          <span>BTC Status</span>
+          <strong id="btcState">Laden...</strong>
         </div>
-      </section>
-
-      <section className="homeGrid">
-        <Link href="/bull" className="homeCard">
-          <div className="homeCardTitle" style={{ color: "var(--green)" }}>🟢 Bull Funnel</div>
-          <div className="homeCardText">Long kansen, flow scores en details via de coin-modal.</div>
-        </Link>
-
-        <Link href="/bear" className="homeCard">
-          <div className="homeCardTitle" style={{ color: "var(--red)" }}>🔴 Bear Funnel</div>
-          <div className="homeCardText">Short kansen, flow scores en details via de coin-modal.</div>
-        </Link>
-
-        <Link href="/signals" className="homeCard">
-          <div className="homeCardTitle" style={{ color: "var(--amber)" }}>⚡ Trade Signals</div>
-          <div className="homeCardText">Live trade executies: Entry, Add, Hold en Exit signalen.</div>
-        </Link>
-      </section>
+        <div class="stat-box">
+          <span>Regime</span>
+          <strong id="regimeState">Laden...</strong>
+        </div>
+      </div>
     </div>
-  );
-}
+
+    <div class="nav-menu">
+      <a href="bull.html" class="nav-card green-card">
+        <h2>🟢 Bull Funnel</h2>
+        <p>Long kansen en flow scores.</p>
+      </a>
+      <a href="bear.html" class="nav-card red-card">
+        <h2>🔴 Bear Funnel</h2>
+        <p>Short kansen en flow scores.</p>
+      </a>
+      <a href="signals.html" class="nav-card yellow-card">
+        <h2>⚡ Trade Signals</h2>
+        <p>Live executies en open posities.</p>
+      </a>
+    </div>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>
