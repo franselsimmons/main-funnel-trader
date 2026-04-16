@@ -1,47 +1,39 @@
-:root{
-  --bg:#0b0f14;
-  --card:#0f1620;
-  --line:#24303f;
-  --text:#e8eef7;
-  --accent:#3d7cff;
-}
-
 body{
-  margin:0;
-  background:var(--bg);
-  color:var(--text);
+  background:#0b0f14;
+  color:#e8eef7;
   font-family:Arial;
+  padding:20px;
 }
 
-.topbar{
-  display:flex;
-  justify-content:space-between;
-  padding:12px;
-  border-bottom:1px solid var(--line);
+h1{
+  color:#3d7cff;
 }
 
-.grid{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:12px;
-  padding:12px;
-}
-
-.panel{
-  background:var(--card);
-  padding:12px;
-  border-radius:12px;
+button{
+  padding:10px;
+  margin:5px;
+  border:none;
+  border-radius:6px;
+  background:#1a2330;
+  color:white;
+  cursor:pointer;
 }
 
 .coin{
   padding:10px;
-  border-bottom:1px solid var(--line);
+  margin:6px 0;
+  background:#111822;
+  border-radius:10px;
+  border-left:4px solid #2b3a52;
 }
 
-.btn{
-  background:#111;
-  color:white;
-  padding:8px;
-  border:none;
-  cursor:pointer;
-}
+.entry{ border-left-color:#22c55e; }
+.almost{ border-left-color:#f59e0b; }
+.buildup{ border-left-color:#3d7cff; }
+.radar{ border-left-color:#666; }
+
+.trade-entry{ border-left-color:#22c55e; }
+.trade-exit{ border-left-color:#ef4444; }
+.trade-hold{ border-left-color:#3d7cff; }
+.trade-add{ border-left-color:#22c55e; }
+.trade-wait{ border-left-color:#999; }
