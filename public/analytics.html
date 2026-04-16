@@ -1,16 +1,62 @@
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
-  <title>Analytics</title>
-  <link rel="stylesheet" href="main.css"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics Desk</title>
+  <link rel="stylesheet" href="main.css">
+  <style>
+    /* Navigatie Knoppen */
+    .nav { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    .btn { flex: 1; min-width: 75px; text-align: center; padding: 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600; transition: 0.1s; }
+    .btn:active { transform: scale(0.95); }
+    .btn.active.purple { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+
+    /* Titels per sectie */
+    .side-title { font-size: 22px; font-weight: 800; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; letter-spacing: 1px; }
+
+    /* Analytics Kaarten */
+    .analytics-card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 18px; margin-bottom: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+    .a-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px; }
+    .a-title { font-size: 16px; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
+    .a-total { background: rgba(255,255,255,0.08); padding: 6px 12px; border-radius: 12px; font-size: 14px; font-weight: 800; border: 1px solid rgba(255,255,255,0.1); }
+
+    /* Grid met cijfers */
+    .a-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .a-stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; background: rgba(255,255,255,0.02); padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.04); }
+    .a-stat-label { color: var(--muted); }
+    .a-stat-val { font-weight: 800; font-size: 14px; color: var(--text); }
+    .a-stat-val.good { color: var(--green); }
+
+    /* Advies Blok */
+    .a-advice { background: rgba(139, 92, 246, 0.1); border-left: 4px solid #8b5cf6; padding: 12px 14px; border-radius: 4px 12px 12px 4px; font-size: 13px; line-height: 1.6; color: #e2e8f0; }
+    .a-advice strong { color: #a78bfa; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+  </style>
 </head>
 <body>
 
-<h1>📊 ANALYTICS</h1>
+  <div class="pageShell">
+    
+    <section class="heroCard" style="padding: 24px 20px; margin-bottom: 10px;">
+      <div class="eyebrow">📈 BOTTLENECKS & FLOW</div>
+      <h1 class="heroTitle" style="font-size: 32px;">Analytics Desk</h1>
+      <p class="heroText" style="margin-bottom: 0;">Optimaliseer je filters en thresholds</p>
+      
+      <div class="nav">
+        <a href="index.html" class="btn">Home</a>
+        <a href="bull.html" class="btn">Bull</a>
+        <a href="bear.html" class="btn">Bear</a>
+        <a href="signals.html" class="btn">Trade</a>
+        <a href="analytics.html" class="btn active purple">Analyse</a>
+      </div>
+    </section>
 
-<div id="analytics"></div>
+    <div id="analytics">
+      <p style="color: var(--muted); text-align: center; margin-top: 40px;">Data ophalen...</p>
+    </div>
 
-<script src="analytics.js"></script>
+  </div>
 
+  <script src="analytics.js"></script>
 </body>
 </html>
