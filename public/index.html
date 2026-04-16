@@ -1,33 +1,61 @@
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
-  <title>MAIN SYSTEM</title>
-  <link rel="stylesheet" href="main.css">
+  <meta charset="UTF-8" />
+  <title>Main System</title>
+  <link rel="stylesheet" href="/main.css" />
 </head>
 <body>
 
-<h2>MAIN SYSTEM</h2>
+<h1>🚀 MAIN TRADING SYSTEM</h1>
 
-<div id="statusLine"></div>
+<div class="top">
+  <button id="modeBull">BULL</button>
+  <button id="modeBear">BEAR</button>
+</div>
 
-<button id="modeBull">BULL</button>
-<button id="modeBear">BEAR</button>
+<div id="statusLine">Loading...</div>
+
+<!-- ================= BULL ================= -->
+<h2>🟢 BULL FUNNEL</h2>
 
 <h3>ENTRY</h3>
-<div id="stageTradeReady"></div>
+<div id="bull_entry"></div>
 
 <h3>ALMOST</h3>
-<div id="stageAlmost"></div>
+<div id="bull_almost"></div>
 
 <h3>BUILDUP</h3>
-<div id="stageBuildup"></div>
+<div id="bull_buildup"></div>
 
 <h3>RADAR</h3>
-<div id="stageRadar"></div>
+<div id="bull_radar"></div>
 
-<h3>TRADES</h3>
-<div id="stageTrades"></div>
 
-<script src="main.js"></script>
+<!-- ================= BEAR ================= -->
+<h2>🔴 BEAR FUNNEL</h2>
+
+<h3>ENTRY</h3>
+<div id="bear_entry"></div>
+
+<h3>ALMOST</h3>
+<div id="bear_almost"></div>
+
+<h3>BUILDUP</h3>
+<div id="bear_buildup"></div>
+
+<h3>RADAR</h3>
+<div id="bear_radar"></div>
+
+
+<!-- ================= TRADE ================= -->
+<h2>⚡ TRADE SYSTEM</h2>
+
+<h3>ENTRY / ADD / HOLD / EXIT</h3>
+<div id="trades"></div>
+
+<a href="/signals.html">➡️ Ga naar SIGNALS pagina</a>
+
+<script src="/main.js"></script>
 </body>
 </html>
