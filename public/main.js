@@ -1,13 +1,12 @@
-// Functie om het totaal aantal coins in een funnel op te tellen
+// Functie om het totaal aantal coins in een funnel op te tellen (voor het stickertje)
 function countFunnel(funnelType) {
   if (!funnelType) return 0;
   
-  // Telt alles in entry, almost, buildup en radar bij elkaar op
+  // Tel entry, almost en buildup bij elkaar op (radar is vaak nog te breed)
   const entryCount = funnelType.entry ? funnelType.entry.length : 0;
   const almostCount = funnelType.almost ? funnelType.almost.length : 0;
   const buildupCount = funnelType.buildup ? funnelType.buildup.length : 0;
   
-  // Optioneel: als je radar erbij wilt optellen doe je hier + radarCount
   return entryCount + almostCount + buildupCount; 
 }
 
@@ -16,9 +15,9 @@ async function loadHome() {
     const res = await fetch(`/api/public-latest`);
     const data = await res.json();
 
-    // Update Top Info
+    // Update Live Status in de Hero Kaart
     document.getElementById("btcState").innerText = data.btc?.state || "Unknown";
-    document.getElementById("regimeState").innerText = data.regime || "Unknown";
+    document.getElementById("regimeState").innerText = (data.regime || "Unknown") + " 🟢";
 
     // Update de Live Badges op de dashboard kaarten
     if (data.funnel && data.funnel.bull) {
