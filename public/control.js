@@ -1,78 +1,86 @@
 const TOKEN = prompt("Admin token:");
 
+let currentData = null;
+
 // ================= LOAD =================
 async function load(){
 
-  try{
+  const res = await fetch("/api/filter-config",{
+    headers:{ "x-admin-token": TOKEN }
+  });
 
-    const res = await fetch("/api/filter-config",{
-      headers:{ "x-admin-token": TOKEN }
-    });
+  const data = await res.json();
 
-    const text = await res.text();
-    console.log("RAW:", text);
-
-    let f;
-
-    try{
-      f = JSON.parse(text);
-    }catch{
-      document.getElementById("app").innerHTML =
-        "<h2 style='color:red;'>❌ API geeft geen JSON terug</h2>";
-      return;
-    }
-
-    // ❗ unauthorized
-    if(f.error){
-      document.getElementById("app").innerHTML =
-        "<h2 style='color:red;'>❌ Unauthorized → verkeerde token</h2>";
-      return;
-    }
-
-    // ❗ structuur check
-    if(!f.bull || !f.bear){
-      document.getElementById("app").innerHTML =
-        "<h2 style='color:red;'>❌ Verkeerde data structuur</h2><pre>" +
-        JSON.stringify(f,null,2) +
-        "</pre>";
-      return;
-    }
-
-    render(f);
-
-  }catch(e){
-
-    console.error(e);
-
+  if(data.error){
     document.getElementById("app").innerHTML =
-      "<h2 style='color:red;'>❌ Crash bij laden</h2>";
+      "<h2 style='color:red;'>❌ Unauthorized</h2>";
+    return;
   }
+
+  currentData = data;
+
+  render(data);
 }
 
 
-// ================= INPUT =================
-function input(id, value){
-  return `<input id="${id}" value="${value ?? ""}" style="width:80px"/>`;
+// ================= SLIDER =================
+function slider(id, value, min, max, step){
+
+  return `
+    <input 
+      type="range"
+      min="${min}"
+      max="${max}"
+      step="${step}"
+      value="${value}"
+      class="slider"
+      oninput="updateValue('${id}', this.value)"
+      id="${id}"
+    />
+    <span class="value" id="${id}_val">${value}</span>
+  `;
+}
+
+function updateValue(id, val){
+  document.getElementById(id+"_val").innerText = val;
+}
+
+
+// ================= STATUS =================
+function status(current, recommended){
+
+  if(recommended === undefined){
+    return `<div class="status good">✅ OK</div>`;
+  }
+
+  if(current > recommended){
+    return `<div class="status warn">⚠️ TE STRENG</div>`;
+  }
+
+  if(current < recommended){
+    return `<div class="status warn">⚠️ TE LOS</div>`;
+  }
+
+  return `<div class="status good">✅ PERFECT</div>`;
 }
 
 
 // ================= BLOCK =================
 function block(side, stage, f){
 
-  // 🔥 fallback zodat hij nooit crasht
-  f = f || {
-    scoreMin: 0,
-    volumeMin: 0,
-    allowNeutral: false
-  };
-
   return `
-    <div style="margin-bottom:20px;">
-      <h4>${stage.toUpperCase()}</h4>
+    <div class="stage">
 
-      Score: ${input(`${side}_${stage}_score`, f.scoreMin)}
-      Volume: ${input(`${side}_${stage}_vol`, f.volumeMin)}
-      Flow: ${input(`${side}_${stage}_flow`, f.allowNeutral)}
+      <h3>${stage.toUpperCase()}</h3>
+
+      <div class="label">Score</div>
+      ${slider(`${side}_${stage}_score`, f.scoreMin, 30, 90, 1)}
+
+      <div class="label">Volume</div>
+      ${slider(`${side}_${stage}_vol`, f.volumeMin, 0.1, 1, 0.05)}
+
+      <div class="label">Allow Neutral</div>
+      ${slider(`${side}_${stage}_flow`, f.allowNeutral ? 1 : 0, 0, 1, 1)}
 
     </div>
   `;
@@ -86,33 +94,40 @@ function render(f){
 
   for(const side of ["bull","bear"]){
 
-    html += `<h2>${side.toUpperCase()}</h2>`;
+    html += `<div class="section"><h2>${side.toUpperCase()}</h2>`;
 
     for(const stage of ["radar","buildup","almost","entry"]){
 
-      html += block(
-        side,
-        stage,
-        f?.[side]?.[stage] // 🔥 safe access
-      );
+      html += block(side, stage, f[side][stage]);
     }
+
+    html += `</div>`;
   }
 
   // ===== TRADE =====
-  const trade = f.trade || {};
-
   html += `
-    <h2>TRADE</h2>
+    <div class="section">
+      <h2>TRADE</h2>
 
-    RR: ${input("trade_rr", trade.rrMin)}
-    Score: ${input("trade_score", trade.scoreMin)}
-    Trend: ${input("trade_trend", trade.requireTrend)}
-    Spoof: ${input("trade_spoof", trade.blockSpoof)}
+      <div class="label">RR</div>
+      ${slider("trade_rr", f.trade.rrMin, 1, 4, 0.1)}
 
-    <br/><br/>
+      <div class="label">Score</div>
+      ${slider("trade_score", f.trade.scoreMin, 40, 90, 1)}
+
+      <div class="label">Trend Required</div>
+      ${slider("trade_trend", f.trade.requireTrend ? 1 : 0, 0, 1, 1)}
+
+      <div class="label">Block Spoof</div>
+      ${slider("trade_spoof", f.trade.blockSpoof ? 1 : 0, 0, 1, 1)}
+
+    </div>
   `;
 
-  html += `<button onclick="save()">💾 SAVE</button>`;
+  html += `
+    <button onclick="save()">💾 SAVE</button>
+    <button onclick="applyAI()">🤖 APPLY AI</button>
+  `;
 
   document.getElementById("app").innerHTML = html;
 }
@@ -121,62 +136,57 @@ function render(f){
 // ================= SAVE =================
 async function save(){
 
-  try{
+  const get = id => document.getElementById(id).value;
 
-    const get = id => document.getElementById(id)?.value;
+  const body = {
+    bull:{},
+    bear:{},
+    trade:{}
+  };
 
-    const body = {
-      bull:{},
-      bear:{},
-      trade:{}
-    };
+  for(const side of ["bull","bear"]){
+    for(const stage of ["radar","buildup","almost","entry"]){
 
-    for(const side of ["bull","bear"]){
-
-      for(const stage of ["radar","buildup","almost","entry"]){
-
-        body[side][stage] = {
-          scoreMin: Number(get(`${side}_${stage}_score`) || 0),
-          volumeMin: Number(get(`${side}_${stage}_vol`) || 0),
-          allowNeutral:
-            get(`${side}_${stage}_flow`) === "true" ||
-            get(`${side}_${stage}_flow`) === true
-        };
-      }
+      body[side][stage] = {
+        scoreMin: Number(get(`${side}_${stage}_score`)),
+        volumeMin: Number(get(`${side}_${stage}_vol`)),
+        allowNeutral: get(`${side}_${stage}_flow`) == 1
+      };
     }
-
-    body.trade = {
-      rrMin: Number(get("trade_rr") || 0),
-      scoreMin: Number(get("trade_score") || 0),
-      requireTrend:
-        get("trade_trend") === "true" ||
-        get("trade_trend") === true,
-      blockSpoof:
-        get("trade_spoof") === "true" ||
-        get("trade_spoof") === true
-    };
-
-    const res = await fetch("/api/filter-config",{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "x-admin-token": TOKEN
-      },
-      body: JSON.stringify(body)
-    });
-
-    if(!res.ok){
-      alert("❌ Save failed");
-      return;
-    }
-
-    alert("✅ Saved");
-
-  }catch(e){
-
-    console.error(e);
-    alert("❌ Crash bij save");
   }
+
+  body.trade = {
+    rrMin: Number(get("trade_rr")),
+    scoreMin: Number(get("trade_score")),
+    requireTrend: get("trade_trend") == 1,
+    blockSpoof: get("trade_spoof") == 1
+  };
+
+  await fetch("/api/filter-config",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "x-admin-token": TOKEN
+    },
+    body: JSON.stringify(body)
+  });
+
+  alert("Saved");
+}
+
+
+// ================= AI APPLY =================
+async function applyAI(){
+
+  const res = await fetch("/api/public-latest");
+  const data = await res.json();
+
+  if(!data.advice){
+    alert("No advice available");
+    return;
+  }
+
+  alert("AI advice applied manually (auto version next step)");
 }
 
 
