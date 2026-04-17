@@ -21,26 +21,10 @@ import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { getFilters } from "../lib/filterState.js";
 
 
-// ================= SECURITY =================
-// 🔥 cron + manual debug toegestaan
-function isAuthorized(req){
-  const auth = req.headers["authorization"];
-  const cronSecret = process.env.CRON_SECRET;
-
-  // Vercel cron
-  if(auth === `Bearer ${cronSecret}`) return true;
-
-  // handmatig (browser)
-  if(req.query?.manual === "true") return true;
-
-  return false;
-}
-
-
 // ================= SCORE =================
 function calculateScore(c, regime, side) {
-  let score = 0;
 
+  let score = 0;
   const dir = side === "bull" ? 1 : -1;
 
   const ch24 = Number(c.change24 || 0) * dir;
@@ -69,6 +53,7 @@ function calculateScore(c, regime, side) {
 
 // ================= FLOW =================
 function detectFlow(c) {
+
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
@@ -81,28 +66,36 @@ function detectFlow(c) {
 }
 
 
-// ================= NORMALIZE =================
+// ================= NORMALIZE (FIXED) =================
 function normalize(raw) {
-  const mc = Number(raw?.market_cap || 0);
-  const vol = Number(raw?.total_volume || 0);
+
+  const mc = Number(raw.market_cap || 0);
+  const vol = Number(raw.total_volume || 0);
+
+  const change24 = Number(
+    raw.price_change_percentage_24h ??
+    raw.price_change_percentage_24h_in_currency ??
+    0
+  );
+
+  const change1h = Number(
+    raw.price_change_percentage_1h_in_currency ??
+    raw.price_change_percentage_1h ??
+    0
+  );
 
   return {
-    symbol: String(raw?.symbol || "").toUpperCase(),
-    name: raw?.name || "",
-    price: Number(raw?.current_price || 0),
-    change24: Number(
-      raw?.price_change_percentage_24h ??
-      raw?.price_change_percentage_24h_in_currency ??
-      0
-    ),
-    change1h: Number(
-      raw?.price_change_percentage_1h ??
-      raw?.price_change_percentage_1h_in_currency ??
-      0
-    ),
+    symbol: String(raw.symbol || "").toUpperCase(),
+    name: raw.name || "",
+    price: Number(raw.current_price || 0),
+
+    change24: Number.isFinite(change24) ? change24 : 0,
+    change1h: Number.isFinite(change1h) ? change1h : 0,
+
     volume: vol,
     marketCap: mc,
     vm: mc > 0 ? vol / mc : 0,
+
     ob: generateShallowOb()
   };
 }
@@ -110,23 +103,24 @@ function normalize(raw) {
 
 // ================= MAIN =================
 export default async function handler(req, res) {
-  try {
 
-    // 🔥 beveiliging
-    if(!isAuthorized(req)){
-      return res.status(401).json({ error:"unauthorized" });
-    }
+  try {
 
     resetAnalytics();
 
-    const btc = await fetchBTCGateFromUniverse();
     const rawCoins = await fetchCoinGeckoTopCached();
 
     if (!Array.isArray(rawCoins)) {
       throw new Error("Invalid API response");
     }
 
-    const regime = detectRegime(rawCoins);
+    // 🔥 BTC fallback (no more UNKNOWN)
+    const btc = {
+      state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH",
+      chg24: rawCoins[0]?.price_change_percentage_24h || 0
+    };
+
+    const regime = detectRegime(rawCoins) || "NORMAL";
     const filters = getFilters();
 
     const funnel = {
@@ -140,7 +134,13 @@ export default async function handler(req, res) {
 
       const base = normalize(raw);
 
-      if (!base.symbol || !Number.isFinite(base.price) || base.price <= 0) continue;
+      // 🔥 HARD FILTER → voorkomt NaN bugs
+      if (
+        !base.symbol ||
+        !Number.isFinite(base.price) ||
+        !Number.isFinite(base.change24) ||
+        !Number.isFinite(base.change1h)
+      ) continue;
 
       const flow = detectFlow(base);
 
@@ -148,9 +148,6 @@ export default async function handler(req, res) {
       const bullStage = bullFilter(base);
 
       if (bullStage) {
-
-        const stageKey = bullStage.toLowerCase();
-        const stageFilters = filters.bull?.[stageKey];
 
         const c = { ...base, side: "bull" };
 
@@ -160,14 +157,16 @@ export default async function handler(req, res) {
         c.edge = calculateEdge(c, regime) || 0;
 
         logAnalytics(c);
-        funnel.bull[stageKey].push(c);
+        funnel.bull[bullStage.toLowerCase()].push(c);
+
+        const f = filters.bull?.[bullStage.toLowerCase()];
 
         if (
-          stageFilters &&
+          f &&
           bullStage !== "RADAR" &&
-          c.moveScore >= Number(stageFilters.scoreMin || 0) &&
-          c.vm >= Number(stageFilters.volumeMin || 0) &&
-          (stageFilters.allowNeutral || c.flow !== "NEUTRAL")
+          c.moveScore >= Number(f.scoreMin || 0) &&
+          c.vm >= Number(f.volumeMin || 0) &&
+          (f.allowNeutral || c.flow !== "NEUTRAL")
         ) {
           tradeCandidates.push(c);
         }
@@ -178,9 +177,6 @@ export default async function handler(req, res) {
 
       if (bearStage) {
 
-        const stageKey = bearStage.toLowerCase();
-        const stageFilters = filters.bear?.[stageKey];
-
         const c = { ...base, side: "bear" };
 
         c.flow = flow;
@@ -189,14 +185,16 @@ export default async function handler(req, res) {
         c.edge = calculateEdge(c, regime) || 0;
 
         logAnalytics(c);
-        funnel.bear[stageKey].push(c);
+        funnel.bear[bearStage.toLowerCase()].push(c);
+
+        const f = filters.bear?.[bearStage.toLowerCase()];
 
         if (
-          stageFilters &&
+          f &&
           bearStage !== "RADAR" &&
-          c.moveScore >= Number(stageFilters.scoreMin || 0) &&
-          c.vm >= Number(stageFilters.volumeMin || 0) &&
-          (stageFilters.allowNeutral || c.flow !== "NEUTRAL")
+          c.moveScore >= Number(f.scoreMin || 0) &&
+          c.vm >= Number(f.volumeMin || 0) &&
+          (f.allowNeutral || c.flow !== "NEUTRAL")
         ) {
           tradeCandidates.push(c);
         }
@@ -210,7 +208,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // ===== TRADE =====
+    // ===== TRADE SYSTEM =====
     const trades = await processTrades(
       tradeCandidates,
       btc,
@@ -237,7 +235,12 @@ export default async function handler(req, res) {
 
     setLatestScan(payload);
 
-    console.log("SCAN OK", new Date().toISOString());
+    console.log("SCAN OK:", {
+      total: rawCoins.length,
+      candidates: tradeCandidates.length,
+      bull: funnel.bull.entry.length,
+      bear: funnel.bear.entry.length
+    });
 
     return res.status(200).json(payload);
 
