@@ -21,6 +21,22 @@ import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { getFilters } from "../lib/filterState.js";
 
 
+// ================= SECURITY =================
+// 🔥 cron + manual debug toegestaan
+function isAuthorized(req){
+  const auth = req.headers["authorization"];
+  const cronSecret = process.env.CRON_SECRET;
+
+  // Vercel cron
+  if(auth === `Bearer ${cronSecret}`) return true;
+
+  // handmatig (browser)
+  if(req.query?.manual === "true") return true;
+
+  return false;
+}
+
+
 // ================= SCORE =================
 function calculateScore(c, regime, side) {
   let score = 0;
@@ -95,6 +111,12 @@ function normalize(raw) {
 // ================= MAIN =================
 export default async function handler(req, res) {
   try {
+
+    // 🔥 beveiliging
+    if(!isAuthorized(req)){
+      return res.status(401).json({ error:"unauthorized" });
+    }
+
     resetAnalytics();
 
     const btc = await fetchBTCGateFromUniverse();
@@ -115,11 +137,10 @@ export default async function handler(req, res) {
     const tradeCandidates = [];
 
     for (const raw of rawCoins) {
+
       const base = normalize(raw);
 
-      if (!base.symbol || !Number.isFinite(base.price) || base.price <= 0) {
-        continue;
-      }
+      if (!base.symbol || !Number.isFinite(base.price) || base.price <= 0) continue;
 
       const flow = detectFlow(base);
 
@@ -127,6 +148,10 @@ export default async function handler(req, res) {
       const bullStage = bullFilter(base);
 
       if (bullStage) {
+
+        const stageKey = bullStage.toLowerCase();
+        const stageFilters = filters.bull?.[stageKey];
+
         const c = { ...base, side: "bull" };
 
         c.flow = flow;
@@ -135,9 +160,7 @@ export default async function handler(req, res) {
         c.edge = calculateEdge(c, regime) || 0;
 
         logAnalytics(c);
-        funnel.bull[bullStage.toLowerCase()].push(c);
-
-        const stageFilters = filters.bull?.[bullStage.toLowerCase()];
+        funnel.bull[stageKey].push(c);
 
         if (
           stageFilters &&
@@ -154,6 +177,10 @@ export default async function handler(req, res) {
       const bearStage = bearFilter(base);
 
       if (bearStage) {
+
+        const stageKey = bearStage.toLowerCase();
+        const stageFilters = filters.bear?.[stageKey];
+
         const c = { ...base, side: "bear" };
 
         c.flow = flow;
@@ -162,9 +189,7 @@ export default async function handler(req, res) {
         c.edge = calculateEdge(c, regime) || 0;
 
         logAnalytics(c);
-        funnel.bear[bearStage.toLowerCase()].push(c);
-
-        const stageFilters = filters.bear?.[bearStage.toLowerCase()];
+        funnel.bear[stageKey].push(c);
 
         if (
           stageFilters &&
@@ -185,7 +210,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // ===== TRADE SYSTEM =====
+    // ===== TRADE =====
     const trades = await processTrades(
       tradeCandidates,
       btc,
@@ -212,15 +237,12 @@ export default async function handler(req, res) {
 
     setLatestScan(payload);
 
-    console.log("SCAN:", {
-      total: rawCoins.length,
-      candidates: tradeCandidates.length,
-      bullEntry: analytics.bull?.entry?.total || 0,
-      bearEntry: analytics.bear?.entry?.total || 0
-    });
+    console.log("SCAN OK", new Date().toISOString());
 
     return res.status(200).json(payload);
+
   } catch (err) {
+
     console.error("SCANNER ERROR:", err);
 
     return res.status(500).json({
