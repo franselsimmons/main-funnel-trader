@@ -4,149 +4,139 @@ let currentData = null;
 
 // ================= LOAD =================
 async function load(){
+  try {
+    const res = await fetch("/api/filter-config", {
+      headers: { "x-admin-token": TOKEN }
+    });
 
-  const res = await fetch("/api/filter-config",{
-    headers:{ "x-admin-token": TOKEN }
-  });
+    const data = await res.json();
 
-  const data = await res.json();
+    if(data.error){
+      document.getElementById("app").innerHTML = 
+        "<div class='control-card' style='text-align:center; color:var(--red); padding:40px 20px;'><h2>❌ Toegang Geweigerd</h2><p>Je token is onjuist of verlopen.</p></div>";
+      return;
+    }
 
-  if(data.error){
-    document.getElementById("app").innerHTML =
-      "<h2 style='color:red;'>❌ Unauthorized</h2>";
-    return;
+    currentData = data;
+    render(data);
+  } catch (err) {
+    document.getElementById("app").innerHTML = "<p style='color:red; text-align:center;'>Netwerkfout.</p>";
   }
-
-  currentData = data;
-
-  render(data);
 }
 
-
-// ================= SLIDER =================
-function slider(id, value, min, max, step){
+// ================= SLIDER GENERATOR =================
+function slider(id, label, value, min, max, step){
+  // Check of het een Aan/Uit schakelaar is (bereik 0 tot 1 met stappen van 1)
+  const isToggle = (max == 1 && step == 1); 
+  
+  let valDisplay = value;
+  let extraClass = "";
+  if (isToggle) {
+    valDisplay = value == 1 ? "AAN" : "UIT";
+    extraClass = value == 1 ? "on" : "off";
+  }
 
   return `
-    <input 
-      type="range"
-      min="${min}"
-      max="${max}"
-      step="${step}"
-      value="${value}"
-      class="slider"
-      oninput="updateValue('${id}', this.value)"
-      id="${id}"
-    />
-    <span class="value" id="${id}_val">${value}</span>
-  `;
-}
-
-function updateValue(id, val){
-  document.getElementById(id+"_val").innerText = val;
-}
-
-
-// ================= STATUS =================
-function status(current, recommended){
-
-  if(recommended === undefined){
-    return `<div class="status good">✅ OK</div>`;
-  }
-
-  if(current > recommended){
-    return `<div class="status warn">⚠️ TE STRENG</div>`;
-  }
-
-  if(current < recommended){
-    return `<div class="status warn">⚠️ TE LOS</div>`;
-  }
-
-  return `<div class="status good">✅ PERFECT</div>`;
-}
-
-
-// ================= BLOCK =================
-function block(side, stage, f){
-
-  return `
-    <div class="stage">
-
-      <h3>${stage.toUpperCase()}</h3>
-
-      <div class="label">Score</div>
-      ${slider(`${side}_${stage}_score`, f.scoreMin, 30, 90, 1)}
-
-      <div class="label">Volume</div>
-      ${slider(`${side}_${stage}_vol`, f.volumeMin, 0.1, 1, 0.05)}
-
-      <div class="label">Allow Neutral</div>
-      ${slider(`${side}_${stage}_flow`, f.allowNeutral ? 1 : 0, 0, 1, 1)}
-
+    <div class="control-row">
+      <div class="c-label-group">
+        <span>${label}</span>
+        <span class="c-val ${extraClass}" id="${id}_val">${valDisplay}</span>
+      </div>
+      <input 
+        type="range"
+        min="${min}"
+        max="${max}"
+        step="${step}"
+        value="${value}"
+        class="slider ${isToggle ? 'slider-toggle' : ''}"
+        oninput="updateValue('${id}', this.value, ${isToggle})"
+        id="${id}"
+      />
     </div>
   `;
 }
 
+// Global update functie zodat de inline oninput hem kan vinden
+window.updateValue = function(id, val, isToggle){
+  const valElement = document.getElementById(id + "_val");
+  
+  if (isToggle) {
+    const isOn = val == 1;
+    valElement.innerText = isOn ? "AAN" : "UIT";
+    valElement.className = `c-val ${isOn ? "on" : "off"}`;
+  } else {
+    valElement.innerText = val;
+  }
+}
+
+// ================= BLOCK GENERATOR =================
+function block(side, stage, f){
+  return `
+    <div class="control-card">
+      <div class="c-header">
+        <div class="c-title">${stage.toUpperCase()}</div>
+      </div>
+      ${slider(`${side}_${stage}_score`, "Minimale AI Score", f.scoreMin, 30, 90, 1)}
+      ${slider(`${side}_${stage}_vol`, "Minimale Volume", f.volumeMin, 0.1, 1, 0.05)}
+      ${slider(`${side}_${stage}_flow`, "Sta NEUTRAL flow toe", f.allowNeutral ? 1 : 0, 0, 1, 1)}
+    </div>
+  `;
+}
 
 // ================= RENDER =================
 function render(f){
-
   let html = "";
 
-  for(const side of ["bull","bear"]){
+  // ===== BULL =====
+  html += `<h2 class="section-title bull-title">🟢 BULL FUNNEL</h2>`;
+  // Logische volgorde (Entry bovenaan)
+  for(const stage of ["entry","almost","buildup","radar"]){
+    html += block("bull", stage, f.bull[stage]);
+  }
 
-    html += `<div class="section"><h2>${side.toUpperCase()}</h2>`;
-
-    for(const stage of ["radar","buildup","almost","entry"]){
-
-      html += block(side, stage, f[side][stage]);
-    }
-
-    html += `</div>`;
+  // ===== BEAR =====
+  html += `<h2 class="section-title bear-title">🔴 BEAR FUNNEL</h2>`;
+  for(const stage of ["entry","almost","buildup","radar"]){
+    html += block("bear", stage, f.bear[stage]);
   }
 
   // ===== TRADE =====
+  html += `<h2 class="section-title trade-title">⚡ TRADE LOGIC</h2>`;
   html += `
-    <div class="section">
-      <h2>TRADE</h2>
-
-      <div class="label">RR</div>
-      ${slider("trade_rr", f.trade.rrMin, 1, 4, 0.1)}
-
-      <div class="label">Score</div>
-      ${slider("trade_score", f.trade.scoreMin, 40, 90, 1)}
-
-      <div class="label">Trend Required</div>
-      ${slider("trade_trend", f.trade.requireTrend ? 1 : 0, 0, 1, 1)}
-
-      <div class="label">Block Spoof</div>
-      ${slider("trade_spoof", f.trade.blockSpoof ? 1 : 0, 0, 1, 1)}
-
+    <div class="control-card">
+      <div class="c-header">
+        <div class="c-title">PARAMETERS</div>
+      </div>
+      ${slider("trade_rr", "Minimale Risk/Reward (RR)", f.trade.rrMin, 1, 4, 0.1)}
+      ${slider("trade_score", "Minimale Trade Score", f.trade.scoreMin, 40, 90, 1)}
+      ${slider("trade_trend", "Require Market Trend", f.trade.requireTrend ? 1 : 0, 0, 1, 1)}
+      ${slider("trade_spoof", "Block Spoofing", f.trade.blockSpoof ? 1 : 0, 0, 1, 1)}
     </div>
   `;
 
+  // ===== ACTIE BALK =====
   html += `
-    <button onclick="save()">💾 SAVE</button>
-    <button onclick="applyAI()">🤖 APPLY AI</button>
+    <div class="action-bar">
+      <button class="btn-save" onclick="save()">💾 OPSLAAN</button>
+      <button class="btn-ai" onclick="applyAI()">🤖 APPLY AI</button>
+    </div>
   `;
 
   document.getElementById("app").innerHTML = html;
 }
 
-
 // ================= SAVE =================
-async function save(){
-
+window.save = async function(){
   const get = id => document.getElementById(id).value;
 
   const body = {
-    bull:{},
-    bear:{},
-    trade:{}
+    bull: {},
+    bear: {},
+    trade: {}
   };
 
   for(const side of ["bull","bear"]){
     for(const stage of ["radar","buildup","almost","entry"]){
-
       body[side][stage] = {
         scoreMin: Number(get(`${side}_${stage}_score`)),
         volumeMin: Number(get(`${side}_${stage}_vol`)),
@@ -162,33 +152,37 @@ async function save(){
     blockSpoof: get("trade_spoof") == 1
   };
 
-  await fetch("/api/filter-config",{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      "x-admin-token": TOKEN
-    },
-    body: JSON.stringify(body)
-  });
-
-  alert("Saved");
+  try {
+    await fetch("/api/filter-config", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-token": TOKEN
+      },
+      body: JSON.stringify(body)
+    });
+    alert("✅ Instellingen succesvol opgeslagen!");
+  } catch (err) {
+    alert("❌ Fout bij het opslaan van de instellingen.");
+  }
 }
-
 
 // ================= AI APPLY =================
-async function applyAI(){
+window.applyAI = async function(){
+  try {
+    const res = await fetch("/api/public-latest");
+    const data = await res.json();
 
-  const res = await fetch("/api/public-latest");
-  const data = await res.json();
+    if(!data.advice){
+      alert("❌ Geen AI advies beschikbaar op dit moment.");
+      return;
+    }
 
-  if(!data.advice){
-    alert("No advice available");
-    return;
+    alert("🤖 AI advies verwerkt (Handmatige bevestiging nodig voor live updates).");
+  } catch (err) {
+    alert("❌ Kan niet verbinden met de AI service.");
   }
-
-  alert("AI advice applied manually (auto version next step)");
 }
-
 
 // ================= INIT =================
 load();
