@@ -11,37 +11,73 @@ async function load(){
   render(f);
 }
 
+function input(id, value){
+  return `<input id="${id}" value="${value}" style="width:80px"/>`;
+}
+
+function block(side, stage, f){
+  return `
+    <h4>${stage.toUpperCase()}</h4>
+    Score: ${input(`${side}_${stage}_score`, f.scoreMin)}
+    Volume: ${input(`${side}_${stage}_vol`, f.volumeMin)}
+    Flow: ${input(`${side}_${stage}_flow`, f.allowNeutral)}
+    <br/><br/>
+  `;
+}
+
 function render(f){
 
-  document.getElementById("app").innerHTML = `
-  
-  <h2>BULL</h2>
-  Score: <input id="bullScore" value="${f.bull.scoreMin}"/><br/>
-  Volume: <input id="bullVol" value="${f.bull.volumeMin}"/><br/>
-  Flow: <input id="bullFlow" value="${f.bull.allowNeutral}"/><br/>
+  let html = "";
 
-  <h2>BEAR</h2>
-  Score: <input id="bearScore" value="${f.bear.scoreMin}"/><br/>
-  Volume: <input id="bearVol" value="${f.bear.volumeMin}"/><br/>
-  Flow: <input id="bearFlow" value="${f.bear.allowNeutral}"/><br/>
+  for(const side of ["bull","bear"]){
 
-  <button onclick="save()">SAVE</button>
+    html += `<h2>${side.toUpperCase()}</h2>`;
+
+    for(const stage of ["radar","buildup","almost","entry"]){
+      html += block(side, stage, f[side][stage]);
+    }
+  }
+
+  html += `
+    <h2>TRADE</h2>
+    RR: ${input("trade_rr", f.trade.rrMin)}
+    Score: ${input("trade_score", f.trade.scoreMin)}
+    Trend: ${input("trade_trend", f.trade.requireTrend)}
+    Spoof: ${input("trade_spoof", f.trade.blockSpoof)}
+    <br/><br/>
   `;
+
+  html += `<button onclick="save()">SAVE</button>`;
+
+  document.getElementById("app").innerHTML = html;
 }
 
 async function save(){
 
+  const get = id => document.getElementById(id).value;
+
   const body = {
-    bull:{
-      scoreMin: document.getElementById("bullScore").value,
-      volumeMin: document.getElementById("bullVol").value,
-      allowNeutral: document.getElementById("bullFlow").value
-    },
-    bear:{
-      scoreMin: document.getElementById("bearScore").value,
-      volumeMin: document.getElementById("bearVol").value,
-      allowNeutral: document.getElementById("bearFlow").value
+    bull:{},
+    bear:{},
+    trade:{}
+  };
+
+  for(const side of ["bull","bear"]){
+    for(const stage of ["radar","buildup","almost","entry"]){
+
+      body[side][stage] = {
+        scoreMin: get(`${side}_${stage}_score`),
+        volumeMin: get(`${side}_${stage}_vol`),
+        allowNeutral: get(`${side}_${stage}_flow`)
+      };
     }
+  }
+
+  body.trade = {
+    rrMin: get("trade_rr"),
+    scoreMin: get("trade_score"),
+    requireTrend: get("trade_trend"),
+    blockSpoof: get("trade_spoof")
   };
 
   await fetch("/api/filter-config",{
