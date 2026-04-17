@@ -1,6 +1,6 @@
 const el = id => document.getElementById(id);
 
-// 🔥 toevoegen (globaal opslaan)
+// 🔥 Globaal advies opslaan
 window.latestAdvice = {};
 
 
@@ -10,8 +10,6 @@ function block(title, data, side){
   if (!data) return "";
 
   const adviceId = `advice-${side}-${title}`;
-
-  // 🔥 NIEUW: juiste advies ophalen
   const stageKey = title.toLowerCase();
 
   const adviceList =
@@ -67,6 +65,8 @@ function block(title, data, side){
 // ================= TOGGLE =================
 window.toggleAdvice = function(adviceId){
   const elAdvice = el(adviceId);
+  if (!elAdvice) return;
+
   const isHidden = elAdvice.style.display === "none";
   elAdvice.style.display = isHidden ? "block" : "none";
 };
@@ -77,7 +77,7 @@ function adviceItemToHtml(item){
 
   if (!item) return "";
 
-  // 🔥 extra safe (voorkomt undefined)
+  // 🔥 voorkomt "undefined"
   if (typeof item === "string") {
     return `<div>• ${item}</div>`;
   }
@@ -137,29 +137,37 @@ async function load(){
 
   try{
 
-    const res = await fetch("/api/public-latest");
+    // 🔥 CRUCIAAL → voorkomt caching bugs
+    const res = await fetch(`/api/public-latest?t=${Date.now()}`, {
+      cache: "no-store"
+    });
+
     const data = await res.json();
 
-    // 🔥 BELANGRIJK: opslaan
+    // 🔥 advies altijd resetten
     window.latestAdvice = data.advice || {};
 
+    // ===== STATUS =====
     if (data.btc && data.regime){
       el("statusLine").innerText =
         `BTC: ${data.btc.state} | Regime: ${data.regime}`;
     }
 
+    // ===== FAIL SAFE =====
     if (!data.analytics){
       el("analytics").innerHTML =
         "<p style='color: var(--red);'>Geen analytics data gevonden.</p>";
       return;
     }
 
+    // ===== GLOBAL =====
     if (data.advice){
       renderGlobalAdvice(data.advice);
     } else {
       el("globalAdvice").style.display = "none";
     }
 
+    // ===== FUNNEL =====
     const a = data.analytics;
     let html = "";
 
@@ -181,7 +189,7 @@ async function load(){
 
   }catch(e){
 
-    console.error(e);
+    console.error("Analytics load error:", e);
 
     el("analytics").innerHTML =
       "<p style='color:red;'>Fout bij laden</p>";
