@@ -18,6 +18,7 @@ import {
 } from "../lib/analyticsEngine.js";
 
 import { generateAdvice } from "../lib/analysisAdvisor.js";
+import { getFilters } from "../lib/filterState.js"; // 🔥 NIEUW
 
 
 // ================= SCORE =================
@@ -88,7 +89,7 @@ export default async function handler(req,res){
 
   try{
 
-    resetAnalytics(); // 🔥 altijd reset → geen oude data
+    resetAnalytics();
 
     const btc = await fetchBTCGateFromUniverse();
     const rawCoins = await fetchCoinGeckoTopCached();
@@ -98,6 +99,7 @@ export default async function handler(req,res){
     }
 
     const regime = detectRegime(rawCoins);
+    const filters = getFilters(); // 🔥 BELANGRIJK
 
     const funnel = {
       bull:{ entry:[], almost:[], buildup:[], radar:[] },
@@ -126,13 +128,16 @@ export default async function handler(req,res){
         c.stage = bullStage;
         c.edge = calculateEdge(c, regime) || 0;
 
-        logAnalytics(c); // 🔥 analyse log
+        logAnalytics(c);
 
         funnel.bull[bullStage.toLowerCase()].push(c);
 
+        // 🔥 FILTERS BULL
         if(
           bullStage !== "RADAR" &&
-          c.moveScore >= 50
+          c.moveScore >= filters.bull.scoreMin &&
+          c.vm >= filters.bull.volumeMin &&
+          (filters.bull.allowNeutral || c.flow !== "NEUTRAL")
         ){
           tradeCandidates.push(c);
         }
@@ -154,9 +159,12 @@ export default async function handler(req,res){
 
         funnel.bear[bearStage.toLowerCase()].push(c);
 
+        // 🔥 FILTERS BEAR
         if(
           bearStage !== "RADAR" &&
-          c.moveScore >= 50
+          c.moveScore >= filters.bear.scoreMin &&
+          c.vm >= filters.bear.volumeMin &&
+          (filters.bear.allowNeutral || c.flow !== "NEUTRAL")
         ){
           tradeCandidates.push(c);
         }
@@ -181,7 +189,7 @@ export default async function handler(req,res){
     // ===== ANALYTICS =====
     const analytics = getAnalytics();
 
-    // 🔥 HIER KOMT JE "LERAAR"
+    // ===== ADVICE =====
     const advice = generateAdvice(analytics);
 
     const payload = {
@@ -192,7 +200,7 @@ export default async function handler(req,res){
       funnel,
       trades,
       analytics,
-      advice, // 🔥 BELANGRIJK
+      advice,
       total:rawCoins.length,
       candidates:tradeCandidates.length
     };
@@ -202,9 +210,8 @@ export default async function handler(req,res){
     console.log("SCAN:",{
       total:rawCoins.length,
       candidates:tradeCandidates.length,
-      entry:
-        analytics.bull.entry.total +
-        analytics.bear.entry.total
+      bullEntry: analytics.bull?.entry?.total || 0,
+      bearEntry: analytics.bear?.entry?.total || 0
     });
 
     return res.status(200).json(payload);
