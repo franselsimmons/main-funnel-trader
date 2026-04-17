@@ -20,6 +20,10 @@ import {
 import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { getFilters } from "../lib/filterState.js";
 
+// 🔥 LEVEL 4
+import { autoAdjustV4 } from "../lib/autoAdjustV4.js";
+import { classifyMarket } from "../lib/marketClassifier.js";
+
 
 // ================= SCORE =================
 function calculateScore(c, regime, side) {
@@ -66,7 +70,7 @@ function detectFlow(c) {
 }
 
 
-// ================= NORMALIZE (FIXED) =================
+// ================= NORMALIZE =================
 function normalize(raw) {
 
   const mc = Number(raw.market_cap || 0);
@@ -114,7 +118,7 @@ export default async function handler(req, res) {
       throw new Error("Invalid API response");
     }
 
-    // 🔥 BTC fallback (no more UNKNOWN)
+    // 🔥 BTC fallback
     const btc = {
       state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH",
       chg24: rawCoins[0]?.price_change_percentage_24h || 0
@@ -122,6 +126,9 @@ export default async function handler(req, res) {
 
     const regime = detectRegime(rawCoins) || "NORMAL";
     const filters = getFilters();
+
+    // 🔥 LEVEL 4 MARKET
+    const marketType = classifyMarket(rawCoins);
 
     const funnel = {
       bull: { entry: [], almost: [], buildup: [], radar: [] },
@@ -134,7 +141,6 @@ export default async function handler(req, res) {
 
       const base = normalize(raw);
 
-      // 🔥 HARD FILTER → voorkomt NaN bugs
       if (
         !base.symbol ||
         !Number.isFinite(base.price) ||
@@ -220,15 +226,24 @@ export default async function handler(req, res) {
     const analytics = getAnalytics();
     const advice = generateAdvice(analytics);
 
+    // 🔥 LEVEL 4 AI AUTO ADJUST
+    let aiResult = null;
+
+    if (process.env.AUTO_AI === "true") {
+      aiResult = autoAdjustV4(advice, marketType);
+    }
+
     const payload = {
       ok: true,
       scannedAt: Date.now(),
       btc,
       regime,
+      market: marketType,
       funnel,
       trades,
       analytics,
       advice,
+      ai: aiResult,
       total: rawCoins.length,
       candidates: tradeCandidates.length
     };
@@ -238,8 +253,9 @@ export default async function handler(req, res) {
     console.log("SCAN OK:", {
       total: rawCoins.length,
       candidates: tradeCandidates.length,
-      bull: funnel.bull.entry.length,
-      bear: funnel.bear.entry.length
+      market: marketType,
+      bullEntry: funnel.bull.entry.length,
+      bearEntry: funnel.bear.entry.length
     });
 
     return res.status(200).json(payload);
