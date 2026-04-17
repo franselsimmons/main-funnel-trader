@@ -1,16 +1,35 @@
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
-  <title>⚙️ Advanced Control</title>
-  <link rel="stylesheet" href="control.css"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Filter Control</title>
+  <link rel="stylesheet" href="main.css">
+  <link rel="stylesheet" href="control.css">
 </head>
 <body>
 
-<h1>⚙️ ADVANCED FILTER CONTROL</h1>
+  <div class="pageShell">
+    
+    <div class="header">
+      <h1 style="color: #64748b;">⚙️ FILTER CONTROL</h1>
+      <div id="statusLine" style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">Systeem parameters & AI instellingen</div>
+      
+      <div class="nav">
+        <a href="index.html" class="btn">Home</a>
+        <a href="bull.html" class="btn">Bull</a>
+        <a href="bear.html" class="btn">Bear</a>
+        <a href="signals.html" class="btn">Trade</a>
+        <a href="analytics.html" class="btn">Analyse</a>
+      </div>
+    </div>
 
-<div id="app"></div>
+    <div id="app">
+      <p style="color: var(--muted); text-align: center; margin-top: 40px;">Authenticatie vereist...</p>
+    </div>
 
-<script src="control.js"></script>
+  </div>
 
+  <script src="control.js"></script>
 </body>
 </html>
