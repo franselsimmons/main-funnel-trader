@@ -19,14 +19,12 @@ import {
 import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { getFilters } from "../lib/filterState.js";
 
-// 🔥 AI
 import { autoAdjustV4 } from "../lib/autoAdjustV4.js";
 import { classifyMarket } from "../lib/marketClassifier.js";
 
 
 // ================= SCORE =================
 function calculateScore(c, regime, side) {
-
   let score = 0;
   const dir = side === "bull" ? 1 : -1;
 
@@ -56,15 +54,26 @@ function calculateScore(c, regime, side) {
 
 // ================= FLOW =================
 function detectFlow(c) {
-
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
   if (ch1 > 1.2 && ch24 > 6) return "TREND";
-  if (ch1 > 0.5) return "BUILDING";
-  if (ch24 > 2) return "EARLY";
+  if (ch1 > 0.7) return "BUILDING";
+  if (ch24 > 3) return "EARLY";
 
   return "NEUTRAL";
+}
+
+
+// ================= STAGE PROGRESSION =================
+function getFinalStage(baseStage, c) {
+
+  // 🔥 FORCE FLOW (BELANGRIJKSTE FIX)
+  if (c.moveScore > 85 && c.flow === "TREND") return "ENTRY";
+  if (c.moveScore > 75) return "ALMOST";
+  if (c.moveScore > 60) return "BUILDUP";
+
+  return baseStage;
 }
 
 
@@ -78,14 +87,11 @@ function normalize(raw) {
     symbol: String(raw.symbol || "").toUpperCase(),
     name: raw.name || "",
     price: Number(raw.current_price || 0),
-
     change24: Number(raw.price_change_percentage_24h || 0),
     change1h: Number(raw.price_change_percentage_1h_in_currency || 0),
-
     volume: vol,
     marketCap: mc,
     vm: mc > 0 ? vol / mc : 0,
-
     ob: generateShallowOb()
   };
 }
@@ -99,15 +105,15 @@ export default async function handler(req, res) {
     resetAnalytics();
 
     const rawCoins = await fetchCoinGeckoTopCached();
-    if (!Array.isArray(rawCoins)) throw new Error("Invalid API");
-
-    const regime = detectRegime(rawCoins) || "NORMAL";
-    const filters = getFilters();
-    const marketType = classifyMarket(rawCoins);
+    if (!Array.isArray(rawCoins)) throw new Error("API error");
 
     const btc = {
       state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH"
     };
+
+    const regime = detectRegime(rawCoins) || "NORMAL";
+    const filters = getFilters();
+    const market = classifyMarket(rawCoins);
 
     const funnel = {
       bull: { entry: [], almost: [], buildup: [], radar: [] },
@@ -119,110 +125,92 @@ export default async function handler(req, res) {
     for (const raw of rawCoins) {
 
       const base = normalize(raw);
-      if (!base.symbol || !Number.isFinite(base.price)) continue;
+      if (!base.symbol || base.price <= 0) continue;
 
       const flow = detectFlow(base);
 
       // ===== BULL =====
-      const bullStage = bullFilter(base);
+      const bs = bullFilter(base);
 
-      if (bullStage) {
-
+      if (bs) {
         const c = { ...base, side: "bull" };
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
-        c.stage = bullStage;
         c.edge = calculateEdge(c, regime) || 0;
 
+        c.stage = getFinalStage(bs, c);
+
         logAnalytics(c);
-        funnel.bull[bullStage.toLowerCase()].push(c);
+        funnel.bull[c.stage.toLowerCase()].push(c);
 
-        const f = filters.bull?.[bullStage.toLowerCase()];
+        const f = filters.bull?.[c.stage.toLowerCase()];
 
-        // 🔥 SOEPELE FILTER (CRUCIAAL)
         if (
           f &&
-          bullStage !== "RADAR" &&
-          c.moveScore >= f.scoreMin * 0.85 &&
-          c.vm >= f.volumeMin * 0.7 &&
-          (
-            f.allowNeutral ||
-            c.flow === "TREND" ||
-            c.flow === "BUILDING"
-          )
+          c.stage !== "RADAR" &&
+          c.moveScore >= f.scoreMin * 0.8 &&
+          c.vm >= f.volumeMin * 0.7
         ) {
           tradeCandidates.push(c);
         }
       }
 
       // ===== BEAR =====
-      const bearStage = bearFilter(base);
+      const br = bearFilter(base);
 
-      if (bearStage) {
-
+      if (br) {
         const c = { ...base, side: "bear" };
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
-        c.stage = bearStage;
         c.edge = calculateEdge(c, regime) || 0;
 
-        logAnalytics(c);
-        funnel.bear[bearStage.toLowerCase()].push(c);
+        c.stage = getFinalStage(br, c);
 
-        const f = filters.bear?.[bearStage.toLowerCase()];
+        logAnalytics(c);
+        funnel.bear[c.stage.toLowerCase()].push(c);
+
+        const f = filters.bear?.[c.stage.toLowerCase()];
 
         if (
           f &&
-          bearStage !== "RADAR" &&
-          c.moveScore >= f.scoreMin * 0.85 &&
-          c.vm >= f.volumeMin * 0.7 &&
-          (
-            f.allowNeutral ||
-            c.flow === "TREND" ||
-            c.flow === "BUILDING"
-          )
+          c.stage !== "RADAR" &&
+          c.moveScore >= f.scoreMin * 0.8 &&
+          c.vm >= f.volumeMin * 0.7
         ) {
           tradeCandidates.push(c);
         }
       }
     }
 
-    // ===== SORT =====
-    for (const side of ["bull", "bear"]) {
-      for (const key in funnel[side]) {
-        funnel[side][key].sort((a, b) => b.moveScore - a.moveScore);
+    // SORT
+    for (const side of ["bull","bear"]) {
+      for (const k in funnel[side]) {
+        funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
       }
     }
 
-    // ===== TRADES =====
-    const trades = await processTrades(
-      tradeCandidates,
-      btc,
-      "auto",
-      regime
-    );
+    const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
     const analytics = getAnalytics();
     const advice = generateAdvice(analytics);
 
-    // 🔥 AI
-    let aiResult = null;
+    let ai = null;
     if (process.env.AUTO_AI === "true") {
-      aiResult = autoAdjustV4(advice, marketType);
+      ai = autoAdjustV4(advice, market);
     }
 
     const payload = {
-      ok: true,
+      ok:true,
       btc,
       regime,
-      market: marketType,
+      market,
       funnel,
       trades,
       analytics,
       advice,
-      ai: aiResult,
+      ai,
       total: rawCoins.length,
       candidates: tradeCandidates.length
     };
@@ -232,19 +220,18 @@ export default async function handler(req, res) {
     console.log("SCAN OK:", {
       total: rawCoins.length,
       candidates: tradeCandidates.length,
-      bullEntry: funnel.bull.entry.length,
-      bearEntry: funnel.bear.entry.length
+      bull: funnel.bull.entry.length
     });
 
-    return res.status(200).json(payload);
+    return res.json(payload);
 
-  } catch (err) {
+  } catch (e) {
 
-    console.error("SCANNER ERROR:", err);
+    console.error("SCAN ERROR:", e);
 
     return res.status(500).json({
-      ok: false,
-      error: err.message
+      ok:false,
+      error:e.message
     });
   }
 }
