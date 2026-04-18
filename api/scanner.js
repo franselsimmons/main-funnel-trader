@@ -65,6 +65,25 @@ function detectFlow(c){
 }
 
 
+// ================= PROMOTION ENGINE =================
+function promoteStage(c){
+
+  if(c.moveScore >= 80 && c.vm >= 0.25 && c.flow === "TREND"){
+    return "ENTRY";
+  }
+
+  if(c.moveScore >= 70 && c.vm >= 0.2){
+    return "ALMOST";
+  }
+
+  if(c.moveScore >= 55 && c.vm >= 0.15){
+    return "BUILDUP";
+  }
+
+  return c.stage;
+}
+
+
 // ================= NORMALIZE =================
 function normalize(raw){
 
@@ -126,14 +145,13 @@ export default async function handler(req,res){
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
         c.edge = calculateEdge(c, regime) || 0;
-        c.stage = bs;
+
+        c.stage = promoteStage({ ...c, stage: bs });
 
         logAnalytics(c);
-        funnel.bull[bs.toLowerCase()].push(c);
+        funnel.bull[c.stage.toLowerCase()].push(c);
 
-        if(bs === "ALMOST" || bs === "ENTRY"){
-          tradeCandidates.push(c);
-        }
+        tradeCandidates.push(c); // 🔥 GEEN FILTER MEER
       }
 
       // ===== BEAR =====
@@ -146,14 +164,13 @@ export default async function handler(req,res){
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
         c.edge = calculateEdge(c, regime) || 0;
-        c.stage = br;
+
+        c.stage = promoteStage({ ...c, stage: br });
 
         logAnalytics(c);
-        funnel.bear[br.toLowerCase()].push(c);
+        funnel.bear[c.stage.toLowerCase()].push(c);
 
-        if(br === "ALMOST" || br === "ENTRY"){
-          tradeCandidates.push(c);
-        }
+        tradeCandidates.push(c);
       }
     }
 
