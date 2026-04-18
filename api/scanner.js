@@ -17,7 +17,6 @@ import {
 } from "../lib/analyticsEngine.js";
 
 import { generateAdvice } from "../lib/analysisAdvisor.js";
-import { getFilters } from "../lib/filterState.js";
 import { autoAdjustV4 } from "../lib/autoAdjustV4.js";
 import { classifyMarket } from "../lib/marketClassifier.js";
 
@@ -66,17 +65,6 @@ function detectFlow(c){
 }
 
 
-// ================= FORCE FLOW =================
-function getFinalStage(baseStage, c){
-
-  if(c.moveScore > 85 && c.flow === "TREND") return "ENTRY";
-  if(c.moveScore > 75) return "ALMOST";
-  if(c.moveScore > 60) return "BUILDUP";
-
-  return baseStage;
-}
-
-
 // ================= NORMALIZE =================
 function normalize(raw){
 
@@ -112,7 +100,6 @@ export default async function handler(req,res){
     };
 
     const regime = detectRegime(rawCoins) || "NORMAL";
-    const filters = getFilters();
     const market = classifyMarket(rawCoins);
 
     const funnel = {
@@ -139,14 +126,12 @@ export default async function handler(req,res){
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
         c.edge = calculateEdge(c, regime) || 0;
-
-        c.stage = getFinalStage(bs, c);
+        c.stage = bs;
 
         logAnalytics(c);
-        funnel.bull[c.stage.toLowerCase()].push(c);
+        funnel.bull[bs.toLowerCase()].push(c);
 
-        // 🔥 GEEN dubbele filtering
-        if(c.stage !== "RADAR"){
+        if(bs === "ALMOST" || bs === "ENTRY"){
           tradeCandidates.push(c);
         }
       }
@@ -161,13 +146,12 @@ export default async function handler(req,res){
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
         c.edge = calculateEdge(c, regime) || 0;
-
-        c.stage = getFinalStage(br, c);
+        c.stage = br;
 
         logAnalytics(c);
-        funnel.bear[c.stage.toLowerCase()].push(c);
+        funnel.bear[br.toLowerCase()].push(c);
 
-        if(c.stage !== "RADAR"){
+        if(br === "ALMOST" || br === "ENTRY"){
           tradeCandidates.push(c);
         }
       }
