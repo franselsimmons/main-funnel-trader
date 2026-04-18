@@ -1,37 +1,25 @@
 import { getLatestScan } from "../lib/scanStore.js";
-import scanner from "./scanner.js";
+import { buildScanPayload } from "./scanner.js";
 
 export default async function handler(req, res) {
   try {
     const cached = getLatestScan();
 
-    // ✅ ALS WE DATA HEBBEN → RETURN
-    if (cached) {
+    // ✅ CACHE BESTAAT → DIRECT RETURN
+    if (cached && cached.ok) {
       return res.status(200).json(cached);
     }
 
-    // 🔥 GEEN DATA → FORCE SCAN
+    // 🔥 GEEN CACHE → NIEUWE SCAN
     console.log("NO CACHE → RUN SCANNER");
 
-    let resultData = null;
+    const fresh = await buildScanPayload();
 
-    const fakeRes = {
-      status(code) {
-        return {
-          json(data) {
-            resultData = data;
-          }
-        };
-      }
-    };
-
-    await scanner(req, fakeRes);
-
-    if (!resultData) {
-      throw new Error("Scanner returned empty");
+    if (!fresh || !fresh.ok) {
+      throw new Error("Scanner returned invalid data");
     }
 
-    return res.status(200).json(resultData);
+    return res.status(200).json(fresh);
 
   } catch (err) {
     console.error("PUBLIC-LATEST ERROR:", err);
