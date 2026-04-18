@@ -23,6 +23,7 @@ import { classifyMarket } from "../lib/marketClassifier.js";
 
 // ================= SCORE =================
 function calculateScore(c, regime, side){
+
   let score = 0;
   const dir = side === "bull" ? 1 : -1;
 
@@ -52,6 +53,7 @@ function calculateScore(c, regime, side){
 
 // ================= FLOW =================
 function detectFlow(c){
+
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
@@ -63,17 +65,20 @@ function detectFlow(c){
 }
 
 
-// ================= STAGE BOOST =================
-function boostStage(stage, c){
-  if(c.moveScore > 85 && c.flow === "TREND") return "ENTRY";
-  if(c.moveScore > 70) return "ALMOST";
-  if(c.moveScore > 55) return "BUILDUP";
+// ================= FLOW BOOST =================
+function forceFlowProgression(stage, c){
+
+  if(c.moveScore > 80) return "ENTRY";
+  if(c.moveScore > 65) return "ALMOST";
+  if(c.moveScore > 50) return "BUILDUP";
+
   return stage;
 }
 
 
 // ================= NORMALIZE =================
 function normalize(raw){
+
   const mc = Number(raw.market_cap || 0);
   const vol = Number(raw.total_volume || 0);
 
@@ -126,17 +131,19 @@ export default async function handler(req,res){
       const bs = bullFilter(base);
 
       if(bs){
+
         const c = {...base, side:"bull"};
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
         c.edge = calculateEdge(c, regime) || 0;
-        c.stage = boostStage(bs, c);
+
+        // 🔥 FIX: stage progression
+        c.stage = forceFlowProgression(bs, c);
 
         logAnalytics(c);
         funnel.bull[c.stage.toLowerCase()].push(c);
 
-        // 🔥 ALLES behalve radar → trade candidates
         if(c.stage !== "RADAR"){
           tradeCandidates.push(c);
         }
@@ -146,12 +153,14 @@ export default async function handler(req,res){
       const br = bearFilter(base);
 
       if(br){
+
         const c = {...base, side:"bear"};
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
         c.edge = calculateEdge(c, regime) || 0;
-        c.stage = boostStage(br, c);
+
+        c.stage = forceFlowProgression(br, c);
 
         logAnalytics(c);
         funnel.bear[c.stage.toLowerCase()].push(c);
@@ -205,6 +214,9 @@ export default async function handler(req,res){
 
   }catch(e){
     console.error("SCAN ERROR:", e);
-    return res.status(500).json({ ok:false, error:e.message });
+    return res.status(500).json({
+      ok:false,
+      error:e.message
+    });
   }
 }
