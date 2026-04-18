@@ -30,19 +30,18 @@ function calculateScore(c, regime, side){
   const ch24 = Number(c.change24 || 0) * dir;
   const ch1 = Number(c.change1h || 0) * dir;
 
-  if(ch24 > 10) score += 30;
-  else if(ch24 > 6) score += 20;
-  else if(ch24 > 3) score += 10;
+  if(ch24 > 8) score += 30;
+  else if(ch24 > 4) score += 20;
+  else if(ch24 > 2) score += 10;
 
-  if(ch1 > 1.2) score += 20;
+  if(ch1 > 1) score += 20;
   else if(ch1 > 0.5) score += 10;
 
-  if(c.vm > 0.6) score += 25;
-  else if(c.vm > 0.35) score += 15;
-  else if(c.vm > 0.2) score += 8;
+  if(c.vm > 0.5) score += 25;
+  else if(c.vm > 0.3) score += 15;
+  else if(c.vm > 0.15) score += 8;
 
-  if(c.ob?.score > 0.07) score += 15;
-  else if(c.ob?.score > 0.04) score += 10;
+  // ❌ GEEN fake OB score meer
 
   if(regime === "LOW_VOL") score -= 10;
   if(regime === "HIGH_VOL") score += 5;
@@ -58,54 +57,25 @@ function detectFlow(c){
   const ch24 = Math.abs(Number(c.change24 || 0));
 
   if(ch1 > 1.2 && ch24 > 6) return "TREND";
-  if(ch1 > 0.7) return "BUILDING";
-  if(ch24 > 3) return "EARLY";
+  if(ch1 > 0.6) return "BUILDING";
+  if(ch24 > 2) return "EARLY";
 
   return "NEUTRAL";
-}
-
-
-// ================= STAGE PROGRESSION =================
-function getFinalStage(baseStage, c){
-
-  // 🔥 ENTRY alleen als echte confluence
-  if(
-    c.flow === "TREND" &&
-    c.moveScore > 85 &&
-    c.vm > 0.3
-  ){
-    return "ENTRY";
-  }
-
-  // 🔥 ALMOST = sterke setup
-  if(
-    c.moveScore > 70 &&
-    c.vm > 0.2
-  ){
-    return "ALMOST";
-  }
-
-  // 🔥 BUILDUP = voorbereiding
-  if(c.moveScore > 55){
-    return "BUILDUP";
-  }
-
-  return baseStage;
 }
 
 
 // ================= NORMALIZE =================
 function normalize(raw){
 
-  const mc = Number(raw.market_cap || 0);
-  const vol = Number(raw.total_volume || 0);
+  const mc = Number(raw?.market_cap || 0);
+  const vol = Number(raw?.total_volume || 0);
 
   return {
-    symbol: String(raw.symbol || "").toUpperCase(),
-    name: raw.name || "",
-    price: Number(raw.current_price || 0),
-    change24: Number(raw.price_change_percentage_24h || 0),
-    change1h: Number(raw.price_change_percentage_1h_in_currency || 0),
+    symbol: String(raw?.symbol || "").toUpperCase(),
+    name: raw?.name || "",
+    price: Number(raw?.current_price || 0),
+    change24: Number(raw?.price_change_percentage_24h || 0),
+    change1h: Number(raw?.price_change_percentage_1h_in_currency || 0),
     volume: vol,
     marketCap: mc,
     vm: mc > 0 ? vol / mc : 0,
@@ -132,8 +102,8 @@ export default async function handler(req,res){
     const market = classifyMarket(rawCoins);
 
     const funnel = {
-      bull:{ entry:[], almost:[], buildup:[], radar:[] },
-      bear:{ entry:[], almost:[], buildup:[], radar:[] }
+      bull:{ candidate:[], almost:[], buildup:[], radar:[] },
+      bear:{ candidate:[], almost:[], buildup:[], radar:[] }
     };
 
     const tradeCandidates = [];
@@ -145,45 +115,50 @@ export default async function handler(req,res){
 
       const flow = detectFlow(base);
 
-      // ===== BULL =====
-      const bs = bullFilter(base);
+      const bullCoin = {
+        ...base,
+        side:"bull",
+        flow,
+        moveScore: calculateScore(base, regime, "bull")
+      };
+
+      const bearCoin = {
+        ...base,
+        side:"bear",
+        flow,
+        moveScore: calculateScore(base, regime, "bear")
+      };
+
+      const bs = bullFilter(bullCoin);
 
       if(bs){
-
-        const c = {...base, side:"bull"};
-
-        c.flow = flow;
-        c.moveScore = calculateScore(c, regime, "bull");
-        c.edge = calculateEdge(c, regime) || 0;
-
-        c.stage = getFinalStage(bs, c);
+        const c = {
+          ...bullCoin,
+          edge: calculateEdge(bullCoin, regime) || 0,
+          stage: bs
+        };
 
         logAnalytics(c);
-        funnel.bull[c.stage.toLowerCase()].push(c);
+        funnel.bull[bs.toLowerCase()].push(c);
 
-        // 🔥 alleen goede candidates
-        if(c.stage === "ALMOST" || c.stage === "ENTRY"){
+        if(bs === "ALMOST" || bs === "CANDIDATE"){
           tradeCandidates.push(c);
         }
       }
 
-      // ===== BEAR =====
-      const br = bearFilter(base);
+      const br = bearFilter(bearCoin);
 
       if(br){
-
-        const c = {...base, side:"bear"};
-
-        c.flow = flow;
-        c.moveScore = calculateScore(c, regime, "bear");
-        c.edge = calculateEdge(c, regime) || 0;
-
-        c.stage = getFinalStage(br, c);
+        const c = {
+          ...bearCoin,
+          edge: calculateEdge(bearCoin, regime) || 0,
+          stage: br
+        };
 
         logAnalytics(c);
-        funnel.bear[c.stage.toLowerCase()].push(c);
+        funnel.bear[br.toLowerCase()].push(c);
 
-        if(c.stage === "ALMOST" || c.stage === "ENTRY"){
+        if(br === "ALMOST" || br === "CANDIDATE"){
           tradeCandidates.push(c);
         }
       }
@@ -222,7 +197,7 @@ export default async function handler(req,res){
 
     setLatestScan(payload);
 
-    return res.json(payload);
+    return res.status(200).json(payload);
 
   }catch(e){
 
