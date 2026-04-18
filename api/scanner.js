@@ -20,10 +20,7 @@ import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { classifyMarket } from "../lib/marketClassifier.js";
 import { selectEliteSignals } from "../lib/eliteSignals.js";
 
-
-// ================= SCORE =================
 function calculateScore(c, regime, side){
-
   let score = 0;
   const dir = side === "bull" ? 1 : -1;
 
@@ -47,10 +44,7 @@ function calculateScore(c, regime, side){
   return Math.max(0, Math.min(score, 100));
 }
 
-
-// ================= FLOW =================
 function detectFlow(c){
-
   const ch1 = Math.abs(c.change1h);
   const ch24 = Math.abs(c.change24);
 
@@ -61,35 +55,22 @@ function detectFlow(c){
   return "NEUTRAL";
 }
 
-
-// ================= STAGE =================
 function getStage(base, c){
-
   if(c.flow === "TREND" && c.moveScore > 80 && c.vm > 0.3){
     return "ENTRY";
   }
-
-  if(c.moveScore > 65){
-    return "ALMOST";
-  }
-
-  if(c.moveScore > 50){
-    return "BUILDUP";
-  }
-
+  if(c.moveScore > 65) return "ALMOST";
+  if(c.moveScore > 50) return "BUILDUP";
   return base;
 }
 
-
-// ================= NORMALIZE =================
 function normalize(raw){
-
   const mc = Number(raw.market_cap || 0);
   const vol = Number(raw.total_volume || 0);
 
   return {
-    symbol: raw.symbol.toUpperCase(),
-    price: Number(raw.current_price),
+    symbol: String(raw.symbol || "").toUpperCase(),
+    price: Number(raw.current_price || 0),
     change24: Number(raw.price_change_percentage_24h || 0),
     change1h: Number(raw.price_change_percentage_1h_in_currency || 0),
     volume: vol,
@@ -99,8 +80,6 @@ function normalize(raw){
   };
 }
 
-
-// ================= MAIN =================
 export async function buildScanPayload(){
 
   resetAnalytics();
@@ -119,12 +98,12 @@ export async function buildScanPayload(){
   for(const raw of rawCoins){
 
     const base = normalize(raw);
+    if(!base.symbol || base.price <= 0) continue;
+
     const flow = detectFlow(base);
 
-    // ===== BULL =====
     const bs = bullFilter(base);
     if(bs){
-
       const c = {...base, side:"bull"};
       c.flow = flow;
       c.moveScore = calculateScore(c, regime, "bull");
@@ -138,10 +117,8 @@ export async function buildScanPayload(){
       }
     }
 
-    // ===== BEAR =====
     const br = bearFilter(base);
     if(br){
-
       const c = {...base, side:"bear"};
       c.flow = flow;
       c.moveScore = calculateScore(c, regime, "bear");
@@ -157,18 +134,19 @@ export async function buildScanPayload(){
   }
 
   const trades = await processTrades(candidates, {}, "auto", regime);
-
   const eliteSignals = selectEliteSignals(trades);
 
   const payload = {
     ok:true,
+    scannedAt: Date.now(),
     funnel,
     trades,
     eliteSignals,
     analytics:getAnalytics(),
     advice:generateAdvice(getAnalytics()),
     market,
-    regime
+    regime,
+    total: rawCoins.length
   };
 
   setLatestScan(payload);
@@ -176,13 +154,12 @@ export async function buildScanPayload(){
   return payload;
 }
 
-
-// ================= API =================
 export default async function handler(req,res){
   try{
     const data = await buildScanPayload();
     return res.status(200).json(data);
   }catch(e){
+    console.error(e);
     return res.status(500).json({ok:false,error:e.message});
   }
 }
