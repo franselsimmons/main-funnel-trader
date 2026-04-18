@@ -23,7 +23,6 @@ import { classifyMarket } from "../lib/marketClassifier.js";
 
 // ================= SCORE =================
 function calculateScore(c, regime, side){
-
   let score = 0;
   const dir = side === "bull" ? 1 : -1;
 
@@ -53,40 +52,28 @@ function calculateScore(c, regime, side){
 
 // ================= FLOW =================
 function detectFlow(c){
-
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
   if(ch1 > 1.2 && ch24 > 6) return "TREND";
   if(ch1 > 0.7) return "BUILDING";
-  if(ch24 > 3) return "EARLY";
+  if(ch24 > 2) return "EARLY";
 
   return "NEUTRAL";
 }
 
 
-// ================= PROMOTION ENGINE =================
-function promoteStage(c){
-
-  if(c.moveScore >= 80 && c.vm >= 0.25 && c.flow === "TREND"){
-    return "ENTRY";
-  }
-
-  if(c.moveScore >= 70 && c.vm >= 0.2){
-    return "ALMOST";
-  }
-
-  if(c.moveScore >= 55 && c.vm >= 0.15){
-    return "BUILDUP";
-  }
-
-  return c.stage;
+// ================= STAGE BOOST =================
+function boostStage(stage, c){
+  if(c.moveScore > 85 && c.flow === "TREND") return "ENTRY";
+  if(c.moveScore > 70) return "ALMOST";
+  if(c.moveScore > 55) return "BUILDUP";
+  return stage;
 }
 
 
 // ================= NORMALIZE =================
 function normalize(raw){
-
   const mc = Number(raw.market_cap || 0);
   const vol = Number(raw.total_volume || 0);
 
@@ -139,38 +126,39 @@ export default async function handler(req,res){
       const bs = bullFilter(base);
 
       if(bs){
-
         const c = {...base, side:"bull"};
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bull");
         c.edge = calculateEdge(c, regime) || 0;
-
-        c.stage = promoteStage({ ...c, stage: bs });
+        c.stage = boostStage(bs, c);
 
         logAnalytics(c);
         funnel.bull[c.stage.toLowerCase()].push(c);
 
-        tradeCandidates.push(c); // 🔥 GEEN FILTER MEER
+        // 🔥 ALLES behalve radar → trade candidates
+        if(c.stage !== "RADAR"){
+          tradeCandidates.push(c);
+        }
       }
 
       // ===== BEAR =====
       const br = bearFilter(base);
 
       if(br){
-
         const c = {...base, side:"bear"};
 
         c.flow = flow;
         c.moveScore = calculateScore(c, regime, "bear");
         c.edge = calculateEdge(c, regime) || 0;
-
-        c.stage = promoteStage({ ...c, stage: br });
+        c.stage = boostStage(br, c);
 
         logAnalytics(c);
         funnel.bear[c.stage.toLowerCase()].push(c);
 
-        tradeCandidates.push(c);
+        if(c.stage !== "RADAR"){
+          tradeCandidates.push(c);
+        }
       }
     }
 
@@ -207,15 +195,16 @@ export default async function handler(req,res){
 
     setLatestScan(payload);
 
+    console.log("SCAN OK:", {
+      total: rawCoins.length,
+      candidates: tradeCandidates.length,
+      entry: funnel.bull.entry.length + funnel.bear.entry.length
+    });
+
     return res.json(payload);
 
   }catch(e){
-
     console.error("SCAN ERROR:", e);
-
-    return res.status(500).json({
-      ok:false,
-      error:e.message
-    });
+    return res.status(500).json({ ok:false, error:e.message });
   }
 }
