@@ -59,18 +59,30 @@ function detectFlow(c){
 
   if(ch1 > 1.2 && ch24 > 6) return "TREND";
   if(ch1 > 0.7) return "BUILDING";
-  if(ch24 > 2) return "EARLY";
+  if(ch24 > 3) return "EARLY";
 
   return "NEUTRAL";
 }
 
 
-// ================= FLOW BOOST =================
+// ================= SMART STAGE =================
 function forceFlowProgression(stage, c){
 
-  if(c.moveScore > 80) return "ENTRY";
-  if(c.moveScore > 65) return "ALMOST";
-  if(c.moveScore > 50) return "BUILDUP";
+  // 🔥 alleen promoten als flow klopt
+  if(c.flow === "TREND"){
+
+    if(c.moveScore > 85 && c.vm > 0.3){
+      return "ENTRY";
+    }
+
+    if(c.moveScore > 70 && c.vm > 0.2){
+      return "ALMOST";
+    }
+
+    if(c.moveScore > 55){
+      return "BUILDUP";
+    }
+  }
 
   return stage;
 }
@@ -138,13 +150,13 @@ export default async function handler(req,res){
         c.moveScore = calculateScore(c, regime, "bull");
         c.edge = calculateEdge(c, regime) || 0;
 
-        // 🔥 FIX: stage progression
         c.stage = forceFlowProgression(bs, c);
 
         logAnalytics(c);
         funnel.bull[c.stage.toLowerCase()].push(c);
 
-        if(c.stage !== "RADAR"){
+        // 🔥 alleen goede setups naar trade
+        if(c.stage === "ALMOST" || c.stage === "ENTRY"){
           tradeCandidates.push(c);
         }
       }
@@ -165,21 +177,23 @@ export default async function handler(req,res){
         logAnalytics(c);
         funnel.bear[c.stage.toLowerCase()].push(c);
 
-        if(c.stage !== "RADAR"){
+        if(c.stage === "ALMOST" || c.stage === "ENTRY"){
           tradeCandidates.push(c);
         }
       }
     }
 
-    // SORT
+    // ===== SORT =====
     for(const side of ["bull","bear"]){
       for(const k in funnel[side]){
         funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
       }
     }
 
+    // ===== TRADE SYSTEM =====
     const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
+    // ===== ANALYTICS =====
     const analytics = getAnalytics();
     const advice = generateAdvice(analytics);
 
@@ -190,6 +204,7 @@ export default async function handler(req,res){
 
     const payload = {
       ok:true,
+      scannedAt:Date.now(),
       btc,
       regime,
       market,
@@ -207,13 +222,16 @@ export default async function handler(req,res){
     console.log("SCAN OK:", {
       total: rawCoins.length,
       candidates: tradeCandidates.length,
-      entry: funnel.bull.entry.length + funnel.bear.entry.length
+      bullEntry: funnel.bull.entry.length,
+      bearEntry: funnel.bear.entry.length
     });
 
     return res.json(payload);
 
   }catch(e){
+
     console.error("SCAN ERROR:", e);
+
     return res.status(500).json({
       ok:false,
       error:e.message
