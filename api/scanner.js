@@ -1,5 +1,4 @@
 import {
-  fetchBTCGateFromUniverse,
   fetchCoinGeckoTopCached,
   generateShallowOb
 } from "../lib/_main_shared.js";
@@ -20,7 +19,7 @@ import {
 import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { getFilters } from "../lib/filterState.js";
 
-// 🔥 LEVEL 4
+// 🔥 AI
 import { autoAdjustV4 } from "../lib/autoAdjustV4.js";
 import { classifyMarket } from "../lib/marketClassifier.js";
 
@@ -62,7 +61,6 @@ function detectFlow(c) {
   const ch24 = Math.abs(Number(c.change24 || 0));
 
   if (ch1 > 1.2 && ch24 > 6) return "TREND";
-  if (ch1 < 0.2 && ch24 > 8) return "EXHAUSTION";
   if (ch1 > 0.5) return "BUILDING";
   if (ch24 > 2) return "EARLY";
 
@@ -76,25 +74,13 @@ function normalize(raw) {
   const mc = Number(raw.market_cap || 0);
   const vol = Number(raw.total_volume || 0);
 
-  const change24 = Number(
-    raw.price_change_percentage_24h ??
-    raw.price_change_percentage_24h_in_currency ??
-    0
-  );
-
-  const change1h = Number(
-    raw.price_change_percentage_1h_in_currency ??
-    raw.price_change_percentage_1h ??
-    0
-  );
-
   return {
     symbol: String(raw.symbol || "").toUpperCase(),
     name: raw.name || "",
     price: Number(raw.current_price || 0),
 
-    change24: Number.isFinite(change24) ? change24 : 0,
-    change1h: Number.isFinite(change1h) ? change1h : 0,
+    change24: Number(raw.price_change_percentage_24h || 0),
+    change1h: Number(raw.price_change_percentage_1h_in_currency || 0),
 
     volume: vol,
     marketCap: mc,
@@ -113,22 +99,15 @@ export default async function handler(req, res) {
     resetAnalytics();
 
     const rawCoins = await fetchCoinGeckoTopCached();
-
-    if (!Array.isArray(rawCoins)) {
-      throw new Error("Invalid API response");
-    }
-
-    // 🔥 BTC fallback
-    const btc = {
-      state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH",
-      chg24: rawCoins[0]?.price_change_percentage_24h || 0
-    };
+    if (!Array.isArray(rawCoins)) throw new Error("Invalid API");
 
     const regime = detectRegime(rawCoins) || "NORMAL";
     const filters = getFilters();
-
-    // 🔥 LEVEL 4 MARKET
     const marketType = classifyMarket(rawCoins);
+
+    const btc = {
+      state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH"
+    };
 
     const funnel = {
       bull: { entry: [], almost: [], buildup: [], radar: [] },
@@ -140,13 +119,7 @@ export default async function handler(req, res) {
     for (const raw of rawCoins) {
 
       const base = normalize(raw);
-
-      if (
-        !base.symbol ||
-        !Number.isFinite(base.price) ||
-        !Number.isFinite(base.change24) ||
-        !Number.isFinite(base.change1h)
-      ) continue;
+      if (!base.symbol || !Number.isFinite(base.price)) continue;
 
       const flow = detectFlow(base);
 
@@ -167,12 +140,17 @@ export default async function handler(req, res) {
 
         const f = filters.bull?.[bullStage.toLowerCase()];
 
+        // 🔥 SOEPELE FILTER (CRUCIAAL)
         if (
           f &&
           bullStage !== "RADAR" &&
-          c.moveScore >= Number(f.scoreMin || 0) &&
-          c.vm >= Number(f.volumeMin || 0) &&
-          (f.allowNeutral || c.flow !== "NEUTRAL")
+          c.moveScore >= f.scoreMin * 0.85 &&
+          c.vm >= f.volumeMin * 0.7 &&
+          (
+            f.allowNeutral ||
+            c.flow === "TREND" ||
+            c.flow === "BUILDING"
+          )
         ) {
           tradeCandidates.push(c);
         }
@@ -198,9 +176,13 @@ export default async function handler(req, res) {
         if (
           f &&
           bearStage !== "RADAR" &&
-          c.moveScore >= Number(f.scoreMin || 0) &&
-          c.vm >= Number(f.volumeMin || 0) &&
-          (f.allowNeutral || c.flow !== "NEUTRAL")
+          c.moveScore >= f.scoreMin * 0.85 &&
+          c.vm >= f.volumeMin * 0.7 &&
+          (
+            f.allowNeutral ||
+            c.flow === "TREND" ||
+            c.flow === "BUILDING"
+          )
         ) {
           tradeCandidates.push(c);
         }
@@ -209,12 +191,12 @@ export default async function handler(req, res) {
 
     // ===== SORT =====
     for (const side of ["bull", "bear"]) {
-      for (const key of Object.keys(funnel[side])) {
+      for (const key in funnel[side]) {
         funnel[side][key].sort((a, b) => b.moveScore - a.moveScore);
       }
     }
 
-    // ===== TRADE SYSTEM =====
+    // ===== TRADES =====
     const trades = await processTrades(
       tradeCandidates,
       btc,
@@ -222,20 +204,17 @@ export default async function handler(req, res) {
       regime
     );
 
-    // ===== ANALYTICS =====
     const analytics = getAnalytics();
     const advice = generateAdvice(analytics);
 
-    // 🔥 LEVEL 4 AI AUTO ADJUST
+    // 🔥 AI
     let aiResult = null;
-
     if (process.env.AUTO_AI === "true") {
       aiResult = autoAdjustV4(advice, marketType);
     }
 
     const payload = {
       ok: true,
-      scannedAt: Date.now(),
       btc,
       regime,
       market: marketType,
@@ -253,7 +232,6 @@ export default async function handler(req, res) {
     console.log("SCAN OK:", {
       total: rawCoins.length,
       candidates: tradeCandidates.length,
-      market: marketType,
       bullEntry: funnel.bull.entry.length,
       bearEntry: funnel.bear.entry.length
     });
