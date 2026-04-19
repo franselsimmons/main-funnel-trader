@@ -30,15 +30,6 @@ import {
 // ================= STAGES =================
 const STAGES = ["radar","buildup","almost","candidate"];
 
-function nextStage(stage){
-  const i = STAGES.indexOf(stage);
-  return STAGES[i + 1] || "candidate";
-}
-
-function resetStage(){
-  return "radar";
-}
-
 
 // ================= NORMALIZE =================
 function normalize(raw){
@@ -57,6 +48,30 @@ function normalize(raw){
     vm: mc > 0 ? vol / mc : 0,
     ob: generateShallowOb()
   };
+}
+
+
+// ================= HELPER =================
+function resolveStage(prev, next){
+
+  if(!next) return "radar";
+
+  next = next.toLowerCase();
+
+  if(!prev) return "radar";
+
+  const prevIndex = STAGES.indexOf(prev);
+  const nextIndex = STAGES.indexOf(next);
+
+  if(nextIndex === -1) return prev;
+
+  // 🔥 GROEI (max 1 stap per scan)
+  if(nextIndex > prevIndex){
+    return STAGES[Math.min(prevIndex + 1, nextIndex)];
+  }
+
+  // 🔻 TERUGVAL (direct)
+  return next;
 }
 
 
@@ -82,7 +97,7 @@ export async function buildScanPayload(){
 
   const tradeCandidates = [];
 
-  // 🔥 LOAD MEMORY
+  // 🔥 LOAD MEMORY (KV)
   let memory = await loadStageMemory();
 
   const activeSymbols = [];
@@ -106,23 +121,14 @@ export async function buildScanPayload(){
     const keyBull = base.symbol + "_bull";
     const prevBull = memory[keyBull];
 
-    const passesBull = bullFilter(bull);
+    const filterStageBull = bullFilter(bull); // 🔥 STRING
 
-    let stageBull;
-
-    if(!prevBull){
-      stageBull = "radar";
-    }
-    else if(passesBull){
-      stageBull = nextStage(prevBull);
-    }
-    else{
-      stageBull = resetStage();
-    }
+    const stageBull = resolveStage(prevBull, filterStageBull);
 
     memory[keyBull] = stageBull;
 
     bull.stage = stageBull;
+
     funnel.bull[stageBull].push(bull);
     logAnalytics(bull);
 
@@ -141,23 +147,14 @@ export async function buildScanPayload(){
     const keyBear = base.symbol + "_bear";
     const prevBear = memory[keyBear];
 
-    const passesBear = bearFilter(bear);
+    const filterStageBear = bearFilter(bear); // 🔥 STRING
 
-    let stageBear;
-
-    if(!prevBear){
-      stageBear = "radar";
-    }
-    else if(passesBear){
-      stageBear = nextStage(prevBear);
-    }
-    else{
-      stageBear = resetStage();
-    }
+    const stageBear = resolveStage(prevBear, filterStageBear);
 
     memory[keyBear] = stageBear;
 
     bear.stage = stageBear;
+
     funnel.bear[stageBear].push(bear);
     logAnalytics(bear);
 
@@ -166,13 +163,14 @@ export async function buildScanPayload(){
     }
   }
 
-  // 🔥 CLEAN MEMORY (BELANGRIJK)
+  // 🔥 CLEAN (coins die niet meer bestaan verwijderen)
   memory = cleanMemory(memory, activeSymbols);
 
-  // 🔥 SAVE MEMORY
+  // 🔥 SAVE (KV)
   await saveStageMemory(memory);
 
-  // SORT
+
+  // ================= SORT =================
   for(const side of ["bull","bear"]){
     for(const k in funnel[side]){
       funnel[side][k].sort((a,b)=>b.vm-a.vm);
@@ -180,7 +178,11 @@ export async function buildScanPayload(){
   }
 
   console.log("TOTAL:", rawCoins.length);
+  console.log("RADAR:", funnel.bull.radar.length);
+  console.log("BUILDUP:", funnel.bull.buildup.length);
+  console.log("ALMOST:", funnel.bull.almost.length);
   console.log("CANDIDATES:", tradeCandidates.length);
+
 
   const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
