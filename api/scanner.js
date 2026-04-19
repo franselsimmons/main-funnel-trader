@@ -26,7 +26,6 @@ import {
   cleanMemory
 } from "../lib/stageMemory.js";
 
-// 🔥 NIEUW
 import { initDefaultFilters } from "../lib/filterState.js";
 
 
@@ -85,12 +84,12 @@ function mergeStage(prevStage, filterStage){
   const prevIndex = order.indexOf(prevStage || "radar");
   const newIndex = order.indexOf(filterStage);
 
-  // omhoog = direct
+  // 🔥 direct omhoog
   if(newIndex >= prevIndex){
     return filterStage;
   }
 
-  // omlaag = zachte decay
+  // 🔥 zachte decay
   return order[Math.max(0, prevIndex - 1)];
 }
 
@@ -118,7 +117,7 @@ function normalize(raw){
 // ================= CORE =================
 export async function buildScanPayload(){
 
-  // 🔥 BELANGRIJK: init filters (anders undefined gedrag)
+  // 🔥 INIT FILTERS (ZEER BELANGRIJK)
   initDefaultFilters();
 
   resetAnalytics();
@@ -155,9 +154,9 @@ export async function buildScanPayload(){
     const direction = decideDirection(base);
     if(direction === "none") continue;
 
-    // 🔥 HARD PRE-FILTER (belangrijk voor kwaliteit)
-    if(base.vm < 0.1) continue;
-    if(Math.abs(base.change24) < 2) continue;
+    // ================= 🔥 HARD PRE FILTER =================
+    if(base.vm < 0.12) continue;                 // iets strenger
+    if(Math.abs(base.change24) < 2.5) continue;  // iets strenger
 
     const flow = detectFlow(base);
     const score = calculateScore(base, regime);
@@ -190,10 +189,10 @@ export async function buildScanPayload(){
     funnel[direction][newStage].push(coin);
     logAnalytics(coin);
 
-    // 🔥 ENTRY = ALLEEN BESTE
+    // ================= 🔥 ENTRY GATE =================
     if(
       newStage === "entry" &&
-      score > 70 &&
+      score > 75 &&           // strenger
       flow === "TREND"
     ){
       tradeCandidates.push(coin);
@@ -219,7 +218,7 @@ export async function buildScanPayload(){
     regime
   );
 
-  // 🔥 FIX: analytics maar 1x ophalen
+  // ================= ANALYTICS =================
   const analytics = getAnalytics();
   const advice = generateAdvice(analytics);
 
@@ -244,11 +243,13 @@ export async function buildScanPayload(){
 
 // ================= HANDLER =================
 export default async function handler(req,res){
+
   try{
     const data = await buildScanPayload();
     return res.status(200).json(data);
   }catch(e){
     console.error("SCAN ERROR:", e);
+
     return res.status(500).json({
       ok:false,
       error:e.message
