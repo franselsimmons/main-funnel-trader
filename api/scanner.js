@@ -27,6 +27,19 @@ import {
 } from "../lib/stageMemory.js";
 
 
+// ================= DIRECTION (🔥 FIX) =================
+function decideDirection(c){
+
+  const ch24 = Number(c.change24 || 0);
+  const ch1 = Number(c.change1h || 0);
+
+  if(ch24 > 2 && ch1 > 0.3) return "bull";
+  if(ch24 < -2 && ch1 < -0.3) return "bear";
+
+  return "none";
+}
+
+
 // ================= FLOW =================
 function detectFlow(c){
 
@@ -67,7 +80,7 @@ function calculateScore(c, regime){
 }
 
 
-// ================= STAGE ENGINE (🔥 BELANGRIJK) =================
+// ================= STAGE ENGINE =================
 function decideStage(prev = {}, passes, score, flow){
 
   let streak = prev.streak || 0;
@@ -75,7 +88,7 @@ function decideStage(prev = {}, passes, score, flow){
   if(passes){
     streak += 1;
   } else {
-    streak = Math.max(0, streak - 1); // decay
+    streak = Math.max(0, streak - 1);
   }
 
   let stage = "radar";
@@ -146,71 +159,48 @@ export async function buildScanPayload(){
 
     activeSymbols.push(base.symbol);
 
+    const direction = decideDirection(base);
+
+    // ❌ skip neutral coins
+    if(direction === "none") continue;
+
     const edge = calculateEdge(base, regime) || 0;
     const flow = detectFlow(base);
     const score = calculateScore(base, regime);
 
-    // ================= BULL =================
-    const bull = {
+    // ================= ACTIVE SIDE =================
+    const coin = {
       ...base,
-      side:"bull",
+      side: direction,
       edge,
       flow,
       moveScore: score
     };
 
-    const keyBull = base.symbol + "_bull";
-    const prevBull = memory[keyBull] || {};
+    const key = base.symbol + "_" + direction;
+    const prev = memory[key] || {};
 
-    const passesBull = bullFilter(bull);
+    const passes =
+      direction === "bull"
+        ? bullFilter(coin)
+        : bearFilter(coin);
 
-    const resultBull = decideStage(
-      prevBull,
-      passesBull,
+    const result = decideStage(
+      prev,
+      passes,
       score,
       flow
     );
 
-    memory[keyBull] = resultBull;
+    memory[key] = result;
 
-    bull.stage = resultBull.stage;
-    funnel.bull[resultBull.stage].push(bull);
-    logAnalytics(bull);
+    coin.stage = result.stage;
 
-    if(resultBull.stage === "entry" && score > 65){
-      tradeCandidates.push(bull);
-    }
+    funnel[direction][result.stage].push(coin);
+    logAnalytics(coin);
 
-
-    // ================= BEAR =================
-    const bear = {
-      ...base,
-      side:"bear",
-      edge,
-      flow,
-      moveScore: score
-    };
-
-    const keyBear = base.symbol + "_bear";
-    const prevBear = memory[keyBear] || {};
-
-    const passesBear = bearFilter(bear);
-
-    const resultBear = decideStage(
-      prevBear,
-      passesBear,
-      score,
-      flow
-    );
-
-    memory[keyBear] = resultBear;
-
-    bear.stage = resultBear.stage;
-    funnel.bear[resultBear.stage].push(bear);
-    logAnalytics(bear);
-
-    if(resultBear.stage === "entry" && score > 65){
-      tradeCandidates.push(bear);
+    if(result.stage === "entry" && score > 65){
+      tradeCandidates.push(coin);
     }
   }
 
