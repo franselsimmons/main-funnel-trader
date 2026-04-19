@@ -21,18 +21,15 @@ import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
 
-// 🔥 MEMORY (blijft tussen scans)
+// ================= MEMORY =================
 const memory = new Map();
 
 const STAGES = ["radar","buildup","almost","candidate"];
 
-function nextStage(stage){
-  const i = STAGES.indexOf(stage);
-  return STAGES[i + 1] || stage;
-}
-
-function resetStage(){
-  return "radar";
+function normalizeStage(stage){
+  if(!stage) return "radar";
+  if(stage === "ENTRY") return "candidate";
+  return stage.toLowerCase();
 }
 
 
@@ -85,7 +82,7 @@ export async function buildScanPayload(){
 
     const edge = calculateEdge(base, regime) || 0;
 
-    // ===== BULL =====
+    // ================= BULL =================
     const bull = {
       ...base,
       side:"bull",
@@ -93,24 +90,22 @@ export async function buildScanPayload(){
     };
 
     const keyBull = base.symbol + "_bull";
-    const prev = memory.get(keyBull);
+    const prev = memory.get(keyBull) || "radar";
 
-    const passes = bullFilter(bull);
+    const maxStageRaw = bullFilter(bull);
+    const maxStage = normalizeStage(maxStageRaw);
 
-    let stage;
+    const currentIndex = STAGES.indexOf(prev);
+    const maxIndex = STAGES.indexOf(maxStage);
 
-    if(!prev){
-      // 🔥 NIEUWE COIN
-      stage = "radar";
+    let nextIndex = Math.min(currentIndex + 1, maxIndex);
+
+    // reset als coin volledig zwak is
+    if(!maxStageRaw){
+      nextIndex = 0;
     }
-    else if(passes){
-      // 🔥 GROEI
-      stage = nextStage(prev);
-    }
-    else{
-      // 🔥 RESET
-      stage = resetStage();
-    }
+
+    const stage = STAGES[nextIndex];
 
     memory.set(keyBull, stage);
 
@@ -124,7 +119,7 @@ export async function buildScanPayload(){
     }
 
 
-    // ===== BEAR =====
+    // ================= BEAR =================
     const bear = {
       ...base,
       side:"bear",
@@ -132,21 +127,21 @@ export async function buildScanPayload(){
     };
 
     const keyBear = base.symbol + "_bear";
-    const prevBear = memory.get(keyBear);
+    const prevBear = memory.get(keyBear) || "radar";
 
-    const passesBear = bearFilter(bear);
+    const maxStageRawBear = bearFilter(bear);
+    const maxStageBear = normalizeStage(maxStageRawBear);
 
-    let stageBear;
+    const currentIndexBear = STAGES.indexOf(prevBear);
+    const maxIndexBear = STAGES.indexOf(maxStageBear);
 
-    if(!prevBear){
-      stageBear = "radar";
+    let nextIndexBear = Math.min(currentIndexBear + 1, maxIndexBear);
+
+    if(!maxStageRawBear){
+      nextIndexBear = 0;
     }
-    else if(passesBear){
-      stageBear = nextStage(prevBear);
-    }
-    else{
-      stageBear = resetStage();
-    }
+
+    const stageBear = STAGES[nextIndexBear];
 
     memory.set(keyBear, stageBear);
 
@@ -160,7 +155,7 @@ export async function buildScanPayload(){
     }
   }
 
-  // SORT
+  // ================= SORT =================
   for(const side of ["bull","bear"]){
     for(const k in funnel[side]){
       funnel[side][k].sort((a,b)=>b.vm-a.vm);
