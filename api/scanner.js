@@ -27,14 +27,15 @@ import {
 } from "../lib/stageMemory.js";
 
 
-// ================= DIRECTION (🔥 FIX) =================
+// ================= DIRECTION (🔥 STRONG FIX) =================
 function decideDirection(c){
 
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  if(ch24 > 2 && ch1 > 0.3) return "bull";
-  if(ch24 < -2 && ch1 < -0.3) return "bear";
+  // duidelijke trend only
+  if(ch24 > 3 && ch1 > 0.5) return "bull";
+  if(ch24 < -3 && ch1 < -0.5) return "bear";
 
   return "none";
 }
@@ -46,9 +47,9 @@ function detectFlow(c){
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
-  if(ch1 > 1 && ch24 > 4) return "TREND";
-  if(ch1 > 0.5) return "BUILDING";
-  if(ch24 > 2) return "EARLY";
+  if(ch1 > 1 && ch24 > 5) return "TREND";
+  if(ch1 > 0.6) return "BUILDING";
+  if(ch24 > 3) return "EARLY";
 
   return "NEUTRAL";
 }
@@ -62,25 +63,25 @@ function calculateScore(c, regime){
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  if(ch24 > 6) score += 30;
-  else if(ch24 > 3) score += 20;
-  else if(ch24 > 1) score += 10;
+  if(ch24 > 8) score += 35;
+  else if(ch24 > 5) score += 25;
+  else if(ch24 > 2) score += 15;
 
-  if(ch1 > 1) score += 20;
-  else if(ch1 > 0.3) score += 10;
+  if(ch1 > 1.2) score += 25;
+  else if(ch1 > 0.5) score += 15;
 
-  if(c.vm > 0.4) score += 25;
-  else if(c.vm > 0.2) score += 15;
-  else if(c.vm > 0.1) score += 8;
+  if(c.vm > 0.5) score += 25;
+  else if(c.vm > 0.3) score += 15;
+  else if(c.vm > 0.15) score += 8;
 
-  if(regime === "LOW_VOL") score -= 10;
+  if(regime === "LOW_VOL") score -= 15;
   if(regime === "HIGH_VOL") score += 5;
 
   return Math.max(0, Math.min(score, 100));
 }
 
 
-// ================= STAGE ENGINE =================
+// ================= STAGE ENGINE (🔥 STRIKTER) =================
 function decideStage(prev = {}, passes, score, flow){
 
   let streak = prev.streak || 0;
@@ -88,18 +89,19 @@ function decideStage(prev = {}, passes, score, flow){
   if(passes){
     streak += 1;
   } else {
-    streak = Math.max(0, streak - 1);
+    streak = Math.max(0, streak - 2); // 🔥 harder decay
   }
 
   let stage = "radar";
 
-  if(streak >= 6 && score > 60 && flow !== "NEUTRAL"){
+  // 🔥 STRIKTER DAN VOORHEEN
+  if(streak >= 7 && score > 70 && flow === "TREND"){
     stage = "entry";
   }
-  else if(streak >= 4 && score > 45){
+  else if(streak >= 5 && score > 55 && flow !== "NEUTRAL"){
     stage = "almost";
   }
-  else if(streak >= 2){
+  else if(streak >= 3 && score > 40){
     stage = "buildup";
   }
 
@@ -159,16 +161,18 @@ export async function buildScanPayload(){
 
     activeSymbols.push(base.symbol);
 
+    // 🔥 DIRECTION
     const direction = decideDirection(base);
-
-    // ❌ skip neutral coins
     if(direction === "none") continue;
+
+    // 🔥 EXTRA HARD FILTER (voordat funnel start)
+    if(base.vm < 0.1) continue;
+    if(Math.abs(base.change24) < 2) continue;
 
     const edge = calculateEdge(base, regime) || 0;
     const flow = detectFlow(base);
     const score = calculateScore(base, regime);
 
-    // ================= ACTIVE SIDE =================
     const coin = {
       ...base,
       side: direction,
@@ -185,12 +189,7 @@ export async function buildScanPayload(){
         ? bullFilter(coin)
         : bearFilter(coin);
 
-    const result = decideStage(
-      prev,
-      passes,
-      score,
-      flow
-    );
+    const result = decideStage(prev, passes, score, flow);
 
     memory[key] = result;
 
@@ -199,7 +198,8 @@ export async function buildScanPayload(){
     funnel[direction][result.stage].push(coin);
     logAnalytics(coin);
 
-    if(result.stage === "entry" && score > 65){
+    // 🔥 ENTRY GATE STRIKT
+    if(result.stage === "entry" && score > 70 && flow === "TREND"){
       tradeCandidates.push(coin);
     }
   }
