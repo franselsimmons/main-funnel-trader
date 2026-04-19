@@ -27,21 +27,9 @@ import {
 } from "../lib/stageMemory.js";
 
 
-// ================= STAGES =================
-const STAGES = ["radar","buildup","almost","entry"];
-
-function nextStage(stage){
-  const i = STAGES.indexOf(stage);
-  return STAGES[i + 1] || "entry";
-}
-
-function resetStage(){
-  return "radar";
-}
-
-
 // ================= FLOW =================
 function detectFlow(c){
+
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
@@ -76,6 +64,33 @@ function calculateScore(c, regime){
   if(regime === "HIGH_VOL") score += 5;
 
   return Math.max(0, Math.min(score, 100));
+}
+
+
+// ================= STAGE ENGINE (🔥 BELANGRIJK) =================
+function decideStage(prev = {}, passes, score, flow){
+
+  let streak = prev.streak || 0;
+
+  if(passes){
+    streak += 1;
+  } else {
+    streak = Math.max(0, streak - 1); // decay
+  }
+
+  let stage = "radar";
+
+  if(streak >= 6 && score > 60 && flow !== "NEUTRAL"){
+    stage = "entry";
+  }
+  else if(streak >= 4 && score > 45){
+    stage = "almost";
+  }
+  else if(streak >= 2){
+    stage = "buildup";
+  }
+
+  return { stage, streak };
 }
 
 
@@ -145,28 +160,24 @@ export async function buildScanPayload(){
     };
 
     const keyBull = base.symbol + "_bull";
-    const prevBull = memory[keyBull];
+    const prevBull = memory[keyBull] || {};
+
     const passesBull = bullFilter(bull);
 
-    let stageBull;
+    const resultBull = decideStage(
+      prevBull,
+      passesBull,
+      score,
+      flow
+    );
 
-    if(!prevBull){
-      stageBull = "radar";
-    }
-    else if(passesBull){
-      stageBull = nextStage(prevBull);
-    }
-    else{
-      stageBull = resetStage();
-    }
+    memory[keyBull] = resultBull;
 
-    memory[keyBull] = stageBull;
-
-    bull.stage = stageBull;
-    funnel.bull[stageBull].push(bull);
+    bull.stage = resultBull.stage;
+    funnel.bull[resultBull.stage].push(bull);
     logAnalytics(bull);
 
-    if(stageBull === "entry"){
+    if(resultBull.stage === "entry" && score > 65){
       tradeCandidates.push(bull);
     }
 
@@ -181,33 +192,29 @@ export async function buildScanPayload(){
     };
 
     const keyBear = base.symbol + "_bear";
-    const prevBear = memory[keyBear];
+    const prevBear = memory[keyBear] || {};
+
     const passesBear = bearFilter(bear);
 
-    let stageBear;
+    const resultBear = decideStage(
+      prevBear,
+      passesBear,
+      score,
+      flow
+    );
 
-    if(!prevBear){
-      stageBear = "radar";
-    }
-    else if(passesBear){
-      stageBear = nextStage(prevBear);
-    }
-    else{
-      stageBear = resetStage();
-    }
+    memory[keyBear] = resultBear;
 
-    memory[keyBear] = stageBear;
-
-    bear.stage = stageBear;
-    funnel.bear[stageBear].push(bear);
+    bear.stage = resultBear.stage;
+    funnel.bear[resultBear.stage].push(bear);
     logAnalytics(bear);
 
-    if(stageBear === "entry"){
+    if(resultBear.stage === "entry" && score > 65){
       tradeCandidates.push(bear);
     }
   }
 
-  // CLEAN MEMORY
+  // CLEAN + SAVE
   memory = cleanMemory(memory, activeSymbols);
   await saveStageMemory(memory);
 
@@ -219,10 +226,10 @@ export async function buildScanPayload(){
   }
 
   console.log("TOTAL:", rawCoins.length);
-  console.log("RADAR:", funnel.bull.radar.length);
-  console.log("BUILDUP:", funnel.bull.buildup.length);
-  console.log("ALMOST:", funnel.bull.almost.length);
   console.log("ENTRY:", funnel.bull.entry.length);
+  console.log("ALMOST:", funnel.bull.almost.length);
+  console.log("BUILDUP:", funnel.bull.buildup.length);
+  console.log("RADAR:", funnel.bull.radar.length);
   console.log("TRADES:", tradeCandidates.length);
 
   const trades = await processTrades(tradeCandidates, btc, "auto", regime);
