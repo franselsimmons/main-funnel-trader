@@ -26,16 +26,17 @@ function calculateScore(c, regime){
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  if(ch24 > 8) score += 30;
-  else if(ch24 > 4) score += 20;
-  else if(ch24 > 2) score += 10;
+  // 🔥 realistischer thresholds
+  if(ch24 > 6) score += 30;
+  else if(ch24 > 3) score += 20;
+  else if(ch24 > 1) score += 10;
 
   if(ch1 > 1) score += 20;
-  else if(ch1 > 0.5) score += 10;
+  else if(ch1 > 0.3) score += 10;
 
-  if(c.vm > 0.5) score += 25;
-  else if(c.vm > 0.3) score += 15;
-  else if(c.vm > 0.15) score += 8;
+  if(c.vm > 0.4) score += 25;
+  else if(c.vm > 0.2) score += 15;
+  else if(c.vm > 0.1) score += 8;
 
   if(regime === "LOW_VOL") score -= 10;
   if(regime === "HIGH_VOL") score += 5;
@@ -50,8 +51,8 @@ function detectFlow(c){
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
-  if(ch1 > 1.2 && ch24 > 6) return "TREND";
-  if(ch1 > 0.6) return "BUILDING";
+  if(ch1 > 1 && ch24 > 4) return "TREND";
+  if(ch1 > 0.5) return "BUILDING";
   if(ch24 > 2) return "EARLY";
 
   return "NEUTRAL";
@@ -78,7 +79,7 @@ function normalize(raw){
 }
 
 
-// ================= CORE BUILDER =================
+// ================= CORE =================
 export async function buildScanPayload(){
 
   resetAnalytics();
@@ -107,7 +108,6 @@ export async function buildScanPayload(){
 
     const flow = detectFlow(base);
     const score = calculateScore(base, regime);
-
     const edge = calculateEdge(base, regime) || 0;
 
     // ===== BULL =====
@@ -119,25 +119,29 @@ export async function buildScanPayload(){
       edge
     };
 
-    if(score > 80){
-      bull.stage = "candidate";
-      funnel.bull.candidate.push(bull);
-      tradeCandidates.push(bull);
-    }
-    else if(score > 65){
-      bull.stage = "almost";
-      funnel.bull.almost.push(bull);
+    let stage;
+
+    if(score > 65){
+      stage = "candidate";
     }
     else if(score > 50){
-      bull.stage = "buildup";
-      funnel.bull.buildup.push(bull);
+      stage = "almost";
+    }
+    else if(score > 35){
+      stage = "buildup";
     }
     else{
-      bull.stage = "radar";
-      funnel.bull.radar.push(bull);
+      stage = "radar";
     }
 
+    bull.stage = stage;
+    funnel.bull[stage].push(bull);
     logAnalytics(bull);
+
+    // 🔥 DOORSTROOM NA TRADE
+    if(stage === "candidate" || stage === "almost"){
+      tradeCandidates.push(bull);
+    }
 
     // ===== BEAR =====
     const bear = {
@@ -145,28 +149,16 @@ export async function buildScanPayload(){
       side:"bear",
       flow,
       moveScore: score,
-      edge
+      edge,
+      stage
     };
 
-    if(score > 80){
-      bear.stage = "candidate";
-      funnel.bear.candidate.push(bear);
+    funnel.bear[stage].push(bear);
+    logAnalytics(bear);
+
+    if(stage === "candidate" || stage === "almost"){
       tradeCandidates.push(bear);
     }
-    else if(score > 65){
-      bear.stage = "almost";
-      funnel.bear.almost.push(bear);
-    }
-    else if(score > 50){
-      bear.stage = "buildup";
-      funnel.bear.buildup.push(bear);
-    }
-    else{
-      bear.stage = "radar";
-      funnel.bear.radar.push(bear);
-    }
-
-    logAnalytics(bear);
   }
 
   // SORT
@@ -175,6 +167,9 @@ export async function buildScanPayload(){
       funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
     }
   }
+
+  console.log("TOTAL:", rawCoins.length);
+  console.log("CANDIDATES:", tradeCandidates.length);
 
   const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
@@ -200,7 +195,7 @@ export async function buildScanPayload(){
 }
 
 
-// ================= API HANDLER =================
+// ================= HANDLER =================
 export default async function handler(req,res){
 
   try{
