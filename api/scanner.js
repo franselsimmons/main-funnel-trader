@@ -3,8 +3,6 @@ import {
   generateShallowOb
 } from "../lib/_main_shared.js";
 
-import { bullFilter } from "../lib/bullFilters.js";
-import { bearFilter } from "../lib/bearFilters.js";
 import { detectRegime } from "../lib/regime.js";
 import { calculateEdge } from "../lib/edge.js";
 import { processTrades } from "../lib/tradeSystem.js";
@@ -17,18 +15,16 @@ import {
 } from "../lib/analyticsEngine.js";
 
 import { generateAdvice } from "../lib/analysisAdvisor.js";
-import { autoAdjustV4 } from "../lib/autoAdjustV4.js";
 import { classifyMarket } from "../lib/marketClassifier.js";
 
 
 // ================= SCORE =================
-function calculateScore(c, regime, side){
+function calculateScore(c, regime){
 
   let score = 0;
-  const dir = side === "bull" ? 1 : -1;
 
-  const ch24 = Number(c.change24 || 0) * dir;
-  const ch1 = Number(c.change1h || 0) * dir;
+  const ch24 = Number(c.change24 || 0);
+  const ch1 = Number(c.change1h || 0);
 
   if(ch24 > 8) score += 30;
   else if(ch24 > 4) score += 20;
@@ -40,8 +36,6 @@ function calculateScore(c, regime, side){
   if(c.vm > 0.5) score += 25;
   else if(c.vm > 0.3) score += 15;
   else if(c.vm > 0.15) score += 8;
-
-  // ❌ GEEN fake OB score meer
 
   if(regime === "LOW_VOL") score -= 10;
   if(regime === "HIGH_VOL") score += 5;
@@ -84,120 +78,136 @@ function normalize(raw){
 }
 
 
-// ================= MAIN =================
+// ================= CORE BUILDER =================
+export async function buildScanPayload(){
+
+  resetAnalytics();
+
+  const rawCoins = await fetchCoinGeckoTopCached();
+  if(!Array.isArray(rawCoins)) throw new Error("API error");
+
+  const btc = {
+    state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH"
+  };
+
+  const regime = detectRegime(rawCoins) || "NORMAL";
+  const market = classifyMarket(rawCoins);
+
+  const funnel = {
+    bull:{ candidate:[], almost:[], buildup:[], radar:[] },
+    bear:{ candidate:[], almost:[], buildup:[], radar:[] }
+  };
+
+  const tradeCandidates = [];
+
+  for(const raw of rawCoins){
+
+    const base = normalize(raw);
+    if(!base.symbol || base.price <= 0) continue;
+
+    const flow = detectFlow(base);
+    const score = calculateScore(base, regime);
+
+    const edge = calculateEdge(base, regime) || 0;
+
+    // ===== BULL =====
+    const bull = {
+      ...base,
+      side:"bull",
+      flow,
+      moveScore: score,
+      edge
+    };
+
+    if(score > 80){
+      bull.stage = "candidate";
+      funnel.bull.candidate.push(bull);
+      tradeCandidates.push(bull);
+    }
+    else if(score > 65){
+      bull.stage = "almost";
+      funnel.bull.almost.push(bull);
+    }
+    else if(score > 50){
+      bull.stage = "buildup";
+      funnel.bull.buildup.push(bull);
+    }
+    else{
+      bull.stage = "radar";
+      funnel.bull.radar.push(bull);
+    }
+
+    logAnalytics(bull);
+
+    // ===== BEAR =====
+    const bear = {
+      ...base,
+      side:"bear",
+      flow,
+      moveScore: score,
+      edge
+    };
+
+    if(score > 80){
+      bear.stage = "candidate";
+      funnel.bear.candidate.push(bear);
+      tradeCandidates.push(bear);
+    }
+    else if(score > 65){
+      bear.stage = "almost";
+      funnel.bear.almost.push(bear);
+    }
+    else if(score > 50){
+      bear.stage = "buildup";
+      funnel.bear.buildup.push(bear);
+    }
+    else{
+      bear.stage = "radar";
+      funnel.bear.radar.push(bear);
+    }
+
+    logAnalytics(bear);
+  }
+
+  // SORT
+  for(const side of ["bull","bear"]){
+    for(const k in funnel[side]){
+      funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
+    }
+  }
+
+  const trades = await processTrades(tradeCandidates, btc, "auto", regime);
+
+  const analytics = getAnalytics();
+  const advice = generateAdvice(analytics);
+
+  const payload = {
+    ok:true,
+    btc,
+    regime,
+    market,
+    funnel,
+    trades,
+    analytics,
+    advice,
+    total: rawCoins.length,
+    candidates: tradeCandidates.length
+  };
+
+  setLatestScan(payload);
+
+  return payload;
+}
+
+
+// ================= API HANDLER =================
 export default async function handler(req,res){
 
   try{
 
-    resetAnalytics();
+    const data = await buildScanPayload();
 
-    const rawCoins = await fetchCoinGeckoTopCached();
-    if(!Array.isArray(rawCoins)) throw new Error("API error");
-
-    const btc = {
-      state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH"
-    };
-
-    const regime = detectRegime(rawCoins) || "NORMAL";
-    const market = classifyMarket(rawCoins);
-
-    const funnel = {
-      bull:{ candidate:[], almost:[], buildup:[], radar:[] },
-      bear:{ candidate:[], almost:[], buildup:[], radar:[] }
-    };
-
-    const tradeCandidates = [];
-
-    for(const raw of rawCoins){
-
-      const base = normalize(raw);
-      if(!base.symbol || base.price <= 0) continue;
-
-      const flow = detectFlow(base);
-
-      const bullCoin = {
-        ...base,
-        side:"bull",
-        flow,
-        moveScore: calculateScore(base, regime, "bull")
-      };
-
-      const bearCoin = {
-        ...base,
-        side:"bear",
-        flow,
-        moveScore: calculateScore(base, regime, "bear")
-      };
-
-      const bs = bullFilter(bullCoin);
-
-      if(bs){
-        const c = {
-          ...bullCoin,
-          edge: calculateEdge(bullCoin, regime) || 0,
-          stage: bs
-        };
-
-        logAnalytics(c);
-        funnel.bull[bs.toLowerCase()].push(c);
-
-        if(bs === "ALMOST" || bs === "CANDIDATE"){
-          tradeCandidates.push(c);
-        }
-      }
-
-      const br = bearFilter(bearCoin);
-
-      if(br){
-        const c = {
-          ...bearCoin,
-          edge: calculateEdge(bearCoin, regime) || 0,
-          stage: br
-        };
-
-        logAnalytics(c);
-        funnel.bear[br.toLowerCase()].push(c);
-
-        if(br === "ALMOST" || br === "CANDIDATE"){
-          tradeCandidates.push(c);
-        }
-      }
-    }
-
-    // SORT
-    for(const side of ["bull","bear"]){
-      for(const k in funnel[side]){
-        funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
-      }
-    }
-
-    const trades = await processTrades(tradeCandidates, btc, "auto", regime);
-
-    const analytics = getAnalytics();
-    const advice = generateAdvice(analytics);
-
-    let ai = null;
-    if(process.env.AUTO_AI === "true"){
-      ai = autoAdjustV4(advice, market);
-    }
-
-    const payload = {
-      ok:true,
-      btc,
-      regime,
-      market,
-      funnel,
-      trades,
-      analytics,
-      advice,
-      ai,
-      total: rawCoins.length,
-      candidates: tradeCandidates.length
-    };
-
-    setLatestScan(payload);
-
-    return res.status(200).json(payload);
+    return res.status(200).json(data);
 
   }catch(e){
 
