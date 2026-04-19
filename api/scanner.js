@@ -21,76 +21,18 @@ import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
 
 
-// ================= MEMORY =================
+// 🔥 MEMORY (blijft tussen scans)
 const memory = new Map();
 
-const STAGE_SCORE = {
-  RADAR: 1,
-  BUILDUP: 2,
-  ALMOST: 3,
-  CANDIDATE: 4
-};
+const STAGES = ["radar","buildup","almost","candidate"];
 
-function normalizeStage(stage){
-  if(!stage) return "RADAR";
-  if(stage === "ENTRY") return "CANDIDATE";
-  return stage;
+function nextStage(stage){
+  const i = STAGES.indexOf(stage);
+  return STAGES[i + 1] || stage;
 }
 
-function resolveStage(prev, next){
-
-  if(!prev) return "RADAR";
-
-  const p = STAGE_SCORE[prev] || 1;
-  const n = STAGE_SCORE[next] || 1;
-
-  // alleen omhoog
-  if(n > p) return next;
-
-  // reset bij zwakte
-  if(n < p) return "RADAR";
-
-  return prev;
-}
-
-
-// ================= SCORE =================
-function calculateScore(c, regime){
-
-  let score = 0;
-
-  const ch24 = Number(c.change24 || 0);
-  const ch1 = Number(c.change1h || 0);
-
-  if(ch24 > 6) score += 30;
-  else if(ch24 > 3) score += 20;
-  else if(ch24 > 1) score += 10;
-
-  if(ch1 > 1) score += 20;
-  else if(ch1 > 0.3) score += 10;
-
-  if(c.vm > 0.4) score += 25;
-  else if(c.vm > 0.2) score += 15;
-  else if(c.vm > 0.1) score += 8;
-
-  if(regime === "LOW_VOL") score -= 10;
-  if(regime === "HIGH_VOL") score += 5;
-
-  return Math.max(0, Math.min(score, 100));
-}
-
-
-// ================= FLOW =================
-function detectFlow(c){
-
-  const ch1 = Math.abs(Number(c.change1h || 0));
-  const ch24 = Math.abs(Number(c.change24 || 0));
-
-  if(ch1 > 1 && ch24 > 4) return "TREND";
-  if(ch1 > 0.5) return "BUILDING";
-  if(ch24 > 2) return "EARLY";
-
-  return "NEUTRAL";
+function resetStage(){
+  return "radar";
 }
 
 
@@ -141,64 +83,79 @@ export async function buildScanPayload(){
     const base = normalize(raw);
     if(!base.symbol || base.price <= 0) continue;
 
-    const flow = detectFlow(base);
-    const score = calculateScore(base, regime);
     const edge = calculateEdge(base, regime) || 0;
 
     // ===== BULL =====
-    const bullBase = {
+    const bull = {
       ...base,
       side:"bull",
-      flow,
-      moveScore: score,
       edge
     };
 
-    let bullStageRaw = normalizeStage(bullFilter(bullBase));
-    const bullKey = base.symbol + "_bull";
+    const keyBull = base.symbol + "_bull";
+    const prev = memory.get(keyBull);
 
-    const bullStage = resolveStage(
-      memory.get(bullKey),
-      bullStageRaw
-    );
+    const passes = bullFilter(bull);
 
-    memory.set(bullKey, bullStage);
+    let stage;
 
-    const bull = { ...bullBase, stage: bullStage };
+    if(!prev){
+      // 🔥 NIEUWE COIN
+      stage = "radar";
+    }
+    else if(passes){
+      // 🔥 GROEI
+      stage = nextStage(prev);
+    }
+    else{
+      // 🔥 RESET
+      stage = resetStage();
+    }
 
-    funnel.bull[bullStage.toLowerCase()].push(bull);
+    memory.set(keyBull, stage);
+
+    bull.stage = stage;
+
+    funnel.bull[stage].push(bull);
     logAnalytics(bull);
 
-    if(bullStage === "candidate" || bullStage === "almost"){
+    if(stage === "candidate"){
       tradeCandidates.push(bull);
     }
 
 
     // ===== BEAR =====
-    const bearBase = {
+    const bear = {
       ...base,
       side:"bear",
-      flow,
-      moveScore: score,
       edge
     };
 
-    let bearStageRaw = normalizeStage(bearFilter(bearBase));
-    const bearKey = base.symbol + "_bear";
+    const keyBear = base.symbol + "_bear";
+    const prevBear = memory.get(keyBear);
 
-    const bearStage = resolveStage(
-      memory.get(bearKey),
-      bearStageRaw
-    );
+    const passesBear = bearFilter(bear);
 
-    memory.set(bearKey, bearStage);
+    let stageBear;
 
-    const bear = { ...bearBase, stage: bearStage };
+    if(!prevBear){
+      stageBear = "radar";
+    }
+    else if(passesBear){
+      stageBear = nextStage(prevBear);
+    }
+    else{
+      stageBear = resetStage();
+    }
 
-    funnel.bear[bearStage.toLowerCase()].push(bear);
+    memory.set(keyBear, stageBear);
+
+    bear.stage = stageBear;
+
+    funnel.bear[stageBear].push(bear);
     logAnalytics(bear);
 
-    if(bearStage === "candidate" || bearStage === "almost"){
+    if(stageBear === "candidate"){
       tradeCandidates.push(bear);
     }
   }
@@ -206,7 +163,7 @@ export async function buildScanPayload(){
   // SORT
   for(const side of ["bull","bear"]){
     for(const k in funnel[side]){
-      funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
+      funnel[side][k].sort((a,b)=>b.vm-a.vm);
     }
   }
 
@@ -241,15 +198,10 @@ export async function buildScanPayload(){
 export default async function handler(req,res){
 
   try{
-
     const data = await buildScanPayload();
-
     return res.status(200).json(data);
-
   }catch(e){
-
     console.error("SCAN ERROR:", e);
-
     return res.status(500).json({
       ok:false,
       error:e.message
