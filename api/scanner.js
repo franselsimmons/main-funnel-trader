@@ -28,7 +28,56 @@ import {
 
 
 // ================= STAGES =================
-const STAGES = ["radar","buildup","almost","entry"];
+const STAGES = ["radar","buildup","almost","candidate"];
+
+function nextStage(stage){
+  const i = STAGES.indexOf(stage);
+  return STAGES[i + 1] || "candidate";
+}
+
+function resetStage(){
+  return "radar";
+}
+
+
+// ================= FLOW =================
+function detectFlow(c){
+
+  const ch1 = Math.abs(Number(c.change1h || 0));
+  const ch24 = Math.abs(Number(c.change24 || 0));
+
+  if(ch1 > 1 && ch24 > 4) return "TREND";
+  if(ch1 > 0.5) return "BUILDING";
+  if(ch24 > 2) return "EARLY";
+
+  return "NEUTRAL";
+}
+
+
+// ================= SCORE =================
+function calculateScore(c, regime){
+
+  let score = 0;
+
+  const ch24 = Number(c.change24 || 0);
+  const ch1 = Number(c.change1h || 0);
+
+  if(ch24 > 6) score += 30;
+  else if(ch24 > 3) score += 20;
+  else if(ch24 > 1) score += 10;
+
+  if(ch1 > 1) score += 20;
+  else if(ch1 > 0.3) score += 10;
+
+  if(c.vm > 0.4) score += 25;
+  else if(c.vm > 0.2) score += 15;
+  else if(c.vm > 0.1) score += 8;
+
+  if(regime === "LOW_VOL") score -= 10;
+  if(regime === "HIGH_VOL") score += 5;
+
+  return Math.max(0, Math.min(score, 100));
+}
 
 
 // ================= NORMALIZE =================
@@ -51,30 +100,6 @@ function normalize(raw){
 }
 
 
-// ================= STAGE RESOLVER =================
-function resolveStage(prev, next){
-
-  if(!next) return "radar";
-
-  next = next.toLowerCase();
-
-  if(!prev) return "radar";
-
-  const prevIndex = STAGES.indexOf(prev);
-  const nextIndex = STAGES.indexOf(next);
-
-  if(nextIndex === -1) return prev;
-
-  // 🚀 max 1 stap omhoog per scan
-  if(nextIndex > prevIndex){
-    return STAGES[Math.min(prevIndex + 1, nextIndex)];
-  }
-
-  // 🔻 direct terugvallen
-  return next;
-}
-
-
 // ================= CORE =================
 export async function buildScanPayload(){
 
@@ -91,8 +116,8 @@ export async function buildScanPayload(){
   const market = classifyMarket(rawCoins);
 
   const funnel = {
-    bull:{ entry:[], almost:[], buildup:[], radar:[] },
-    bear:{ entry:[], almost:[], buildup:[], radar:[] }
+    bull:{ candidate:[], almost:[], buildup:[], radar:[] },
+    bear:{ candidate:[], almost:[], buildup:[], radar:[] }
   };
 
   const tradeCandidates = [];
@@ -110,29 +135,42 @@ export async function buildScanPayload(){
     activeSymbols.push(base.symbol);
 
     const edge = calculateEdge(base, regime) || 0;
+    const flow = detectFlow(base);
+    const score = calculateScore(base, regime);
 
     // ================= BULL =================
     const bull = {
       ...base,
       side:"bull",
-      edge
+      edge,
+      flow,
+      moveScore: score
     };
 
     const keyBull = base.symbol + "_bull";
     const prevBull = memory[keyBull];
 
-    const filterStageBull = bullFilter(bull); // geeft "RADAR" etc
+    const passesBull = bullFilter(bull);
 
-    const stageBull = resolveStage(prevBull, filterStageBull);
+    let stageBull;
+
+    if(!prevBull){
+      stageBull = "radar";
+    }
+    else if(passesBull){
+      stageBull = nextStage(prevBull);
+    }
+    else{
+      stageBull = resetStage();
+    }
 
     memory[keyBull] = stageBull;
 
     bull.stage = stageBull;
-
     funnel.bull[stageBull].push(bull);
     logAnalytics(bull);
 
-    if(stageBull === "entry"){
+    if(stageBull === "candidate"){
       tradeCandidates.push(bull);
     }
 
@@ -141,50 +179,57 @@ export async function buildScanPayload(){
     const bear = {
       ...base,
       side:"bear",
-      edge
+      edge,
+      flow,
+      moveScore: score
     };
 
     const keyBear = base.symbol + "_bear";
     const prevBear = memory[keyBear];
 
-    const filterStageBear = bearFilter(bear);
+    const passesBear = bearFilter(bear);
 
-    const stageBear = resolveStage(prevBear, filterStageBear);
+    let stageBear;
+
+    if(!prevBear){
+      stageBear = "radar";
+    }
+    else if(passesBear){
+      stageBear = nextStage(prevBear);
+    }
+    else{
+      stageBear = resetStage();
+    }
 
     memory[keyBear] = stageBear;
 
     bear.stage = stageBear;
-
     funnel.bear[stageBear].push(bear);
     logAnalytics(bear);
 
-    if(stageBear === "entry"){
+    if(stageBear === "candidate"){
       tradeCandidates.push(bear);
     }
   }
 
-  // 🔥 CLEAN MEMORY (verwijder oude coins)
+  // 🔥 CLEAN MEMORY
   memory = cleanMemory(memory, activeSymbols);
 
-  // 🔥 SAVE MEMORY
+  // 🔥 SAVE MEMORY (KV)
   await saveStageMemory(memory);
 
-
-  // ================= SORT =================
+  // SORT
   for(const side of ["bull","bear"]){
     for(const k in funnel[side]){
-      funnel[side][k].sort((a,b)=>b.vm-a.vm);
+      funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
     }
   }
 
-
-  // 🔍 DEBUG LOGS (belangrijk)
   console.log("TOTAL:", rawCoins.length);
   console.log("RADAR:", funnel.bull.radar.length);
   console.log("BUILDUP:", funnel.bull.buildup.length);
   console.log("ALMOST:", funnel.bull.almost.length);
-  console.log("ENTRY:", funnel.bull.entry.length);
-
+  console.log("CANDIDATES:", tradeCandidates.length);
 
   const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
