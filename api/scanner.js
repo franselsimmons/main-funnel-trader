@@ -26,6 +26,9 @@ import {
   cleanMemory
 } from "../lib/stageMemory.js";
 
+// 🔥 NIEUW
+import { initDefaultFilters } from "../lib/filterState.js";
+
 
 // ================= DIRECTION =================
 function decideDirection(c){
@@ -82,12 +85,12 @@ function mergeStage(prevStage, filterStage){
   const prevIndex = order.indexOf(prevStage || "radar");
   const newIndex = order.indexOf(filterStage);
 
-  // 🔥 alleen omhoog of klein beetje omlaag
+  // omhoog = direct
   if(newIndex >= prevIndex){
     return filterStage;
   }
 
-  // zachte decay
+  // omlaag = zachte decay
   return order[Math.max(0, prevIndex - 1)];
 }
 
@@ -115,9 +118,13 @@ function normalize(raw){
 // ================= CORE =================
 export async function buildScanPayload(){
 
+  // 🔥 BELANGRIJK: init filters (anders undefined gedrag)
+  initDefaultFilters();
+
   resetAnalytics();
 
   const rawCoins = await fetchCoinGeckoTopCached();
+  if(!Array.isArray(rawCoins)) throw new Error("API error");
 
   const btc = {
     state: rawCoins[0]?.price_change_percentage_24h > 0
@@ -148,7 +155,7 @@ export async function buildScanPayload(){
     const direction = decideDirection(base);
     if(direction === "none") continue;
 
-    // 🔥 pre filter
+    // 🔥 HARD PRE-FILTER (belangrijk voor kwaliteit)
     if(base.vm < 0.1) continue;
     if(Math.abs(base.change24) < 2) continue;
 
@@ -183,21 +190,38 @@ export async function buildScanPayload(){
     funnel[direction][newStage].push(coin);
     logAnalytics(coin);
 
-    if(newStage === "entry" && score > 70 && flow === "TREND"){
+    // 🔥 ENTRY = ALLEEN BESTE
+    if(
+      newStage === "entry" &&
+      score > 70 &&
+      flow === "TREND"
+    ){
       tradeCandidates.push(coin);
     }
   }
 
+  // ================= MEMORY =================
   memory = cleanMemory(memory, activeSymbols);
   await saveStageMemory(memory);
 
+  // ================= SORT =================
   for(const side of ["bull","bear"]){
     for(const k in funnel[side]){
       funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
     }
   }
 
-  const trades = await processTrades(tradeCandidates, btc, "auto", regime);
+  // ================= TRADES =================
+  const trades = await processTrades(
+    tradeCandidates,
+    btc,
+    "auto",
+    regime
+  );
+
+  // 🔥 FIX: analytics maar 1x ophalen
+  const analytics = getAnalytics();
+  const advice = generateAdvice(analytics);
 
   const payload = {
     ok:true,
@@ -206,8 +230,8 @@ export async function buildScanPayload(){
     market,
     funnel,
     trades,
-    analytics: getAnalytics(),
-    advice: generateAdvice(getAnalytics()),
+    analytics,
+    advice,
     total: rawCoins.length,
     candidates: tradeCandidates.length
   };
@@ -225,6 +249,9 @@ export default async function handler(req,res){
     return res.status(200).json(data);
   }catch(e){
     console.error("SCAN ERROR:", e);
-    return res.status(500).json({ ok:false, error:e.message });
+    return res.status(500).json({
+      ok:false,
+      error:e.message
+    });
   }
 }
