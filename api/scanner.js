@@ -17,6 +17,42 @@ import {
 import { generateAdvice } from "../lib/analysisAdvisor.js";
 import { classifyMarket } from "../lib/marketClassifier.js";
 
+import { bullFilter } from "../lib/bullFilters.js";
+import { bearFilter } from "../lib/bearFilters.js";
+
+
+// ================= MEMORY =================
+const memory = new Map();
+
+const STAGE_SCORE = {
+  RADAR: 1,
+  BUILDUP: 2,
+  ALMOST: 3,
+  CANDIDATE: 4
+};
+
+function normalizeStage(stage){
+  if(!stage) return "RADAR";
+  if(stage === "ENTRY") return "CANDIDATE";
+  return stage;
+}
+
+function resolveStage(prev, next){
+
+  if(!prev) return "RADAR";
+
+  const p = STAGE_SCORE[prev] || 1;
+  const n = STAGE_SCORE[next] || 1;
+
+  // alleen omhoog
+  if(n > p) return next;
+
+  // reset bij zwakte
+  if(n < p) return "RADAR";
+
+  return prev;
+}
+
 
 // ================= SCORE =================
 function calculateScore(c, regime){
@@ -26,7 +62,6 @@ function calculateScore(c, regime){
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  // 🔥 realistischer thresholds
   if(ch24 > 6) score += 30;
   else if(ch24 > 3) score += 20;
   else if(ch24 > 1) score += 10;
@@ -111,7 +146,7 @@ export async function buildScanPayload(){
     const edge = calculateEdge(base, regime) || 0;
 
     // ===== BULL =====
-    const bull = {
+    const bullBase = {
       ...base,
       side:"bull",
       flow,
@@ -119,44 +154,51 @@ export async function buildScanPayload(){
       edge
     };
 
-    let stage;
+    let bullStageRaw = normalizeStage(bullFilter(bullBase));
+    const bullKey = base.symbol + "_bull";
 
-    if(score > 65){
-      stage = "candidate";
-    }
-    else if(score > 50){
-      stage = "almost";
-    }
-    else if(score > 35){
-      stage = "buildup";
-    }
-    else{
-      stage = "radar";
-    }
+    const bullStage = resolveStage(
+      memory.get(bullKey),
+      bullStageRaw
+    );
 
-    bull.stage = stage;
-    funnel.bull[stage].push(bull);
+    memory.set(bullKey, bullStage);
+
+    const bull = { ...bullBase, stage: bullStage };
+
+    funnel.bull[bullStage.toLowerCase()].push(bull);
     logAnalytics(bull);
 
-    // 🔥 DOORSTROOM NA TRADE
-    if(stage === "candidate" || stage === "almost"){
+    if(bullStage === "candidate" || bullStage === "almost"){
       tradeCandidates.push(bull);
     }
 
+
     // ===== BEAR =====
-    const bear = {
+    const bearBase = {
       ...base,
       side:"bear",
       flow,
       moveScore: score,
-      edge,
-      stage
+      edge
     };
 
-    funnel.bear[stage].push(bear);
+    let bearStageRaw = normalizeStage(bearFilter(bearBase));
+    const bearKey = base.symbol + "_bear";
+
+    const bearStage = resolveStage(
+      memory.get(bearKey),
+      bearStageRaw
+    );
+
+    memory.set(bearKey, bearStage);
+
+    const bear = { ...bearBase, stage: bearStage };
+
+    funnel.bear[bearStage.toLowerCase()].push(bear);
     logAnalytics(bear);
 
-    if(stage === "candidate" || stage === "almost"){
+    if(bearStage === "candidate" || bearStage === "almost"){
       tradeCandidates.push(bear);
     }
   }
