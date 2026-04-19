@@ -28,11 +28,11 @@ import {
 
 
 // ================= STAGES =================
-const STAGES = ["radar","buildup","almost","candidate"];
+const STAGES = ["radar","buildup","almost","entry"];
 
 function nextStage(stage){
   const i = STAGES.indexOf(stage);
-  return STAGES[i + 1] || "candidate";
+  return STAGES[i + 1] || "entry";
 }
 
 function resetStage(){
@@ -42,7 +42,6 @@ function resetStage(){
 
 // ================= FLOW =================
 function detectFlow(c){
-
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
@@ -116,15 +115,13 @@ export async function buildScanPayload(){
   const market = classifyMarket(rawCoins);
 
   const funnel = {
-    bull:{ candidate:[], almost:[], buildup:[], radar:[] },
-    bear:{ candidate:[], almost:[], buildup:[], radar:[] }
+    bull:{ entry:[], almost:[], buildup:[], radar:[] },
+    bear:{ entry:[], almost:[], buildup:[], radar:[] }
   };
 
   const tradeCandidates = [];
 
-  // 🔥 LOAD MEMORY (KV)
   let memory = await loadStageMemory();
-
   const activeSymbols = [];
 
   for(const raw of rawCoins){
@@ -149,7 +146,6 @@ export async function buildScanPayload(){
 
     const keyBull = base.symbol + "_bull";
     const prevBull = memory[keyBull];
-
     const passesBull = bullFilter(bull);
 
     let stageBull;
@@ -170,7 +166,7 @@ export async function buildScanPayload(){
     funnel.bull[stageBull].push(bull);
     logAnalytics(bull);
 
-    if(stageBull === "candidate"){
+    if(stageBull === "entry"){
       tradeCandidates.push(bull);
     }
 
@@ -186,7 +182,6 @@ export async function buildScanPayload(){
 
     const keyBear = base.symbol + "_bear";
     const prevBear = memory[keyBear];
-
     const passesBear = bearFilter(bear);
 
     let stageBear;
@@ -207,15 +202,13 @@ export async function buildScanPayload(){
     funnel.bear[stageBear].push(bear);
     logAnalytics(bear);
 
-    if(stageBear === "candidate"){
+    if(stageBear === "entry"){
       tradeCandidates.push(bear);
     }
   }
 
-  // 🔥 CLEAN MEMORY
+  // CLEAN MEMORY
   memory = cleanMemory(memory, activeSymbols);
-
-  // 🔥 SAVE MEMORY (KV)
   await saveStageMemory(memory);
 
   // SORT
@@ -229,7 +222,8 @@ export async function buildScanPayload(){
   console.log("RADAR:", funnel.bull.radar.length);
   console.log("BUILDUP:", funnel.bull.buildup.length);
   console.log("ALMOST:", funnel.bull.almost.length);
-  console.log("CANDIDATES:", tradeCandidates.length);
+  console.log("ENTRY:", funnel.bull.entry.length);
+  console.log("TRADES:", tradeCandidates.length);
 
   const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
@@ -257,7 +251,6 @@ export async function buildScanPayload(){
 
 // ================= HANDLER =================
 export default async function handler(req,res){
-
   try{
     const data = await buildScanPayload();
     return res.status(200).json(data);
