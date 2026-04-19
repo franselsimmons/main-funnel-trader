@@ -17,6 +17,7 @@ export default async function handler(req, res) {
     return res.status(200).json(fresh);
 
   } catch (err) {
+
     console.error("PUBLIC-LATEST ERROR:", err);
 
     return res.status(500).json({
