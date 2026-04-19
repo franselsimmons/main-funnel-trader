@@ -16,4 +16,6 @@ export default function handler(req, res){
     const updated = setFilters(req.body);
     return res.json(updated);
   }
+
+  return res.status(405).json({ error:"method not allowed" });
 }
