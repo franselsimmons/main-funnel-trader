@@ -6,12 +6,7 @@ import {
 import { detectRegime } from "../lib/regime.js";
 import { calculateEdge } from "../lib/edge.js";
 import { processTrades } from "../lib/tradeSystem.js";
-
-import {
-  setLatestScan,
-  getStageMemory,
-  setStageMemory
-} from "../lib/scanStore.js";
+import { setLatestScan } from "../lib/scanStore.js";
 
 import {
   resetAnalytics,
@@ -24,6 +19,12 @@ import { classifyMarket } from "../lib/marketClassifier.js";
 
 import { bullFilter } from "../lib/bullFilters.js";
 import { bearFilter } from "../lib/bearFilters.js";
+
+import {
+  loadStageMemory,
+  saveStageMemory,
+  cleanMemory
+} from "../lib/stageMemory.js";
 
 
 // ================= STAGES =================
@@ -81,13 +82,17 @@ export async function buildScanPayload(){
 
   const tradeCandidates = [];
 
-  // 🔥 LAAD MEMORY
-  const memory = getStageMemory();
+  // 🔥 LOAD MEMORY
+  let memory = await loadStageMemory();
+
+  const activeSymbols = [];
 
   for(const raw of rawCoins){
 
     const base = normalize(raw);
     if(!base.symbol || base.price <= 0) continue;
+
+    activeSymbols.push(base.symbol);
 
     const edge = calculateEdge(base, regime) || 0;
 
@@ -106,7 +111,7 @@ export async function buildScanPayload(){
     let stageBull;
 
     if(!prevBull){
-      stageBull = "radar"; // eerste scan
+      stageBull = "radar";
     }
     else if(passesBull){
       stageBull = nextStage(prevBull);
@@ -124,6 +129,7 @@ export async function buildScanPayload(){
     if(stageBull === "candidate"){
       tradeCandidates.push(bull);
     }
+
 
     // ================= BEAR =================
     const bear = {
@@ -160,8 +166,11 @@ export async function buildScanPayload(){
     }
   }
 
-  // 🔥 OPSLAAN MEMORY (CRUCIAAL)
-  setStageMemory(memory);
+  // 🔥 CLEAN MEMORY (BELANGRIJK)
+  memory = cleanMemory(memory, activeSymbols);
+
+  // 🔥 SAVE MEMORY
+  await saveStageMemory(memory);
 
   // SORT
   for(const side of ["bull","bear"]){
