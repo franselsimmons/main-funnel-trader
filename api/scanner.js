@@ -31,17 +31,14 @@ import { initDefaultFilters } from "../lib/filterState.js";
 
 // ================= DIRECTION =================
 function decideDirection(c){
-
   if(c.change24 > 3 && c.change1h > 0.5) return "bull";
   if(c.change24 < -3 && c.change1h < -0.5) return "bear";
-
   return "none";
 }
 
 
 // ================= FLOW =================
 function detectFlow(c){
-
   const ch1 = Math.abs(c.change1h || 0);
   const ch24 = Math.abs(c.change24 || 0);
 
@@ -84,12 +81,10 @@ function mergeStage(prevStage, filterStage){
   const prevIndex = order.indexOf(prevStage || "radar");
   const newIndex = order.indexOf(filterStage);
 
-  // 🔥 direct omhoog
   if(newIndex >= prevIndex){
     return filterStage;
   }
 
-  // 🔥 zachte decay
   return order[Math.max(0, prevIndex - 1)];
 }
 
@@ -101,8 +96,8 @@ function normalize(raw){
   const vol = Number(raw.total_volume || 0);
 
   return {
-    symbol: raw.symbol.toUpperCase(),
-    name: raw.name,
+    symbol: String(raw.symbol || "").toUpperCase(),
+    name: raw.name || "",
     price: Number(raw.current_price || 0),
     change24: Number(raw.price_change_percentage_24h || 0),
     change1h: Number(raw.price_change_percentage_1h_in_currency || 0),
@@ -117,18 +112,14 @@ function normalize(raw){
 // ================= CORE =================
 export async function buildScanPayload(){
 
-  // 🔥 INIT FILTERS (ZEER BELANGRIJK)
   initDefaultFilters();
-
   resetAnalytics();
 
   const rawCoins = await fetchCoinGeckoTopCached();
   if(!Array.isArray(rawCoins)) throw new Error("API error");
 
   const btc = {
-    state: rawCoins[0]?.price_change_percentage_24h > 0
-      ? "BULLISH"
-      : "BEARISH"
+    state: rawCoins[0]?.price_change_percentage_24h > 0 ? "BULLISH" : "BEARISH"
   };
 
   const regime = detectRegime(rawCoins) || "NORMAL";
@@ -154,9 +145,8 @@ export async function buildScanPayload(){
     const direction = decideDirection(base);
     if(direction === "none") continue;
 
-    // ================= 🔥 HARD PRE FILTER =================
-    if(base.vm < 0.12) continue;                 // iets strenger
-    if(Math.abs(base.change24) < 2.5) continue;  // iets strenger
+    if(base.vm < 0.12) continue;
+    if(Math.abs(base.change24) < 2.5) continue;
 
     const flow = detectFlow(base);
     const score = calculateScore(base, regime);
@@ -189,36 +179,22 @@ export async function buildScanPayload(){
     funnel[direction][newStage].push(coin);
     logAnalytics(coin);
 
-    // ================= 🔥 ENTRY GATE =================
-    if(
-      newStage === "entry" &&
-      score > 75 &&           // strenger
-      flow === "TREND"
-    ){
+    if(newStage === "entry" && score > 75 && flow === "TREND"){
       tradeCandidates.push(coin);
     }
   }
 
-  // ================= MEMORY =================
   memory = cleanMemory(memory, activeSymbols);
   await saveStageMemory(memory);
 
-  // ================= SORT =================
   for(const side of ["bull","bear"]){
     for(const k in funnel[side]){
       funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
     }
   }
 
-  // ================= TRADES =================
-  const trades = await processTrades(
-    tradeCandidates,
-    btc,
-    "auto",
-    regime
-  );
+  const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
-  // ================= ANALYTICS =================
   const analytics = getAnalytics();
   const advice = generateAdvice(analytics);
 
@@ -249,10 +225,6 @@ export default async function handler(req,res){
     return res.status(200).json(data);
   }catch(e){
     console.error("SCAN ERROR:", e);
-
-    return res.status(500).json({
-      ok:false,
-      error:e.message
-    });
+    return res.status(500).json({ ok:false, error:e.message });
   }
 }
