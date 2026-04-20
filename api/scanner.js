@@ -1,6 +1,7 @@
 import {
   fetchCoinGeckoTopCached,
-  generateShallowOb
+  generateShallowOb,
+  fetchFuturesTickers // 🔥 BITGET
 } from "../lib/_main_shared.js";
 
 import { detectRegime } from "../lib/regime.js";
@@ -29,13 +30,13 @@ import {
 import { initDefaultFilters } from "../lib/filterState.js";
 
 
-// 🔥 FIXED BTC LOGIC
-function decideDirection(c, btc, regime){
+// ================= BTC LOGIC =================
+function decideDirection(c, btc){
 
   const ch24 = c.change24 || 0;
   const ch1 = c.change1h || 0;
 
-  // BEAR MARKET → ONLY SHORTS (plus elite longs)
+  // 🐻 BEAR → focus shorts
   if(btc.state === "BEARISH"){
 
     if(ch24 < -3 && ch1 < -0.5) return "bear";
@@ -46,16 +47,55 @@ function decideDirection(c, btc, regime){
     return "none";
   }
 
-  // BULL MARKET
+  // 🐂 BULL → focus longs
   if(btc.state === "BULLISH"){
 
     if(ch24 > 3 && ch1 > 0.5) return "bull";
+
+    // beperkte shorts
     if(ch24 < -5 && ch1 < -1) return "bear";
 
     return "none";
   }
 
   return "none";
+}
+
+
+// ================= FLOW =================
+function detectFlow(c){
+
+  const ch1 = Math.abs(c.change1h || 0);
+  const ch24 = Math.abs(c.change24 || 0);
+
+  if(ch1 > 1 && ch24 > 5) return "TREND";
+  if(ch1 > 0.6) return "BUILDING";
+  if(ch24 > 3) return "EARLY";
+
+  return "NEUTRAL";
+}
+
+
+// ================= SCORE =================
+function calculateScore(c, regime){
+
+  let score = 0;
+
+  if(c.change24 > 8) score += 35;
+  else if(c.change24 > 5) score += 25;
+  else if(c.change24 > 2) score += 15;
+
+  if(c.change1h > 1.2) score += 25;
+  else if(c.change1h > 0.5) score += 15;
+
+  if(c.vm > 0.5) score += 25;
+  else if(c.vm > 0.3) score += 15;
+  else if(c.vm > 0.15) score += 8;
+
+  if(regime === "LOW_VOL") score -= 15;
+  if(regime === "HIGH_VOL") score += 5;
+
+  return Math.max(0, Math.min(score, 100));
 }
 
 
@@ -66,6 +106,13 @@ export async function buildScanPayload(){
   resetAnalytics();
 
   const rawCoins = await fetchCoinGeckoTopCached();
+  if(!Array.isArray(rawCoins)) throw new Error("API error");
+
+  // 🔥 BITGET FILTER
+  const futures = await fetchFuturesTickers();
+  const validSymbols = new Set(
+    Array.from(futures.keys()).map(s => s.replace("USDT",""))
+  );
 
   const btc = {
     state: rawCoins[0]?.price_change_percentage_24h > 0
@@ -93,17 +140,21 @@ export async function buildScanPayload(){
       price: raw.current_price,
       change24: raw.price_change_percentage_24h,
       change1h: raw.price_change_percentage_1h_in_currency,
-      vm: raw.total_volume / raw.market_cap,
+      vm: raw.market_cap > 0 ? raw.total_volume / raw.market_cap : 0,
       ob: generateShallowOb()
     };
 
     if(!base.symbol || base.price <= 0) continue;
 
+    // 🔥 BITGET ONLY
+    if(!validSymbols.has(base.symbol)) continue;
+
     activeSymbols.push(base.symbol);
 
-    const direction = decideDirection(base, btc, regime);
+    const direction = decideDirection(base, btc);
     if(direction === "none") continue;
 
+    // 🔥 QUALITY FILTER
     if(base.vm < 0.12) continue;
     if(Math.abs(base.change24) < 3) continue;
 
@@ -134,15 +185,37 @@ export async function buildScanPayload(){
     funnel[direction][filterStage].push(coin);
     logAnalytics(coin);
 
-    if(filterStage === "entry" && score > 75 && flow === "TREND"){
+    // 🔥 ONLY BEST TRADES
+    if(
+      filterStage === "entry" &&
+      score > 75 &&
+      flow === "TREND"
+    ){
       tradeCandidates.push(coin);
     }
   }
 
+  // ================= MEMORY =================
   memory = cleanMemory(memory, activeSymbols);
   await saveStageMemory(memory);
 
-  const trades = await processTrades(tradeCandidates, btc, "auto", regime);
+  // ================= SORT =================
+  for(const side of ["bull","bear"]){
+    for(const k in funnel[side]){
+      funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
+    }
+  }
+
+  // ================= TRADES =================
+  const trades = await processTrades(
+    tradeCandidates,
+    btc,
+    "auto",
+    regime
+  );
+
+  const analytics = getAnalytics();
+  const advice = generateAdvice(analytics);
 
   const payload = {
     ok:true,
@@ -151,6 +224,8 @@ export async function buildScanPayload(){
     market,
     funnel,
     trades,
+    analytics,
+    advice,
     total: rawCoins.length,
     candidates: tradeCandidates.length
   };
@@ -160,11 +235,17 @@ export async function buildScanPayload(){
   return payload;
 }
 
+
+// ================= HANDLER =================
 export default async function handler(req,res){
   try{
     const data = await buildScanPayload();
     return res.status(200).json(data);
   }catch(e){
-    return res.status(500).json({ ok:false, error:e.message });
+    console.error("SCAN ERROR:", e);
+    return res.status(500).json({
+      ok:false,
+      error:e.message
+    });
   }
 }
