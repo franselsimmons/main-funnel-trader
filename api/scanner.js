@@ -29,118 +29,33 @@ import {
 import { initDefaultFilters } from "../lib/filterState.js";
 
 
-// ================= 🔥 REGIME + BTC BIAS =================
+// 🔥 FIXED BTC LOGIC
 function decideDirection(c, btc, regime){
 
   const ch24 = c.change24 || 0;
   const ch1 = c.change1h || 0;
 
-  // ================= 🐻 BEAR =================
-  if(btc.state === "BEARISH" || regime === "BEAR"){
+  // BEAR MARKET → ONLY SHORTS (plus elite longs)
+  if(btc.state === "BEARISH"){
 
-    // sterke shorts
     if(ch24 < -3 && ch1 < -0.5) return "bear";
 
-    // alleen ELITE longs
-    if(ch24 > 7 && ch1 > 1.2) return "bull";
+    // alleen extreme longs
+    if(ch24 > 8 && ch1 > 1.5) return "bull";
 
     return "none";
   }
 
-  // ================= 🐂 BULL =================
-  if(btc.state === "BULLISH" && regime === "TREND"){
+  // BULL MARKET
+  if(btc.state === "BULLISH"){
 
     if(ch24 > 3 && ch1 > 0.5) return "bull";
-
-    // beperkte shorts
-    if(ch24 < -4 && ch1 < -1) return "bear";
-
-    return "none";
-  }
-
-  // ================= ⚖️ RANGE =================
-  if(regime === "RANGE" || regime === "LOW_VOL"){
-
-    if(ch24 > 4 && ch1 > 0.7) return "bull";
-    if(ch24 < -4 && ch1 < -0.7) return "bear";
+    if(ch24 < -5 && ch1 < -1) return "bear";
 
     return "none";
   }
 
   return "none";
-}
-
-
-// ================= FLOW =================
-function detectFlow(c){
-
-  const ch1 = Math.abs(c.change1h || 0);
-  const ch24 = Math.abs(c.change24 || 0);
-
-  if(ch1 > 1 && ch24 > 5) return "TREND";
-  if(ch1 > 0.6) return "BUILDING";
-  if(ch24 > 3) return "EARLY";
-
-  return "NEUTRAL";
-}
-
-
-// ================= SCORE =================
-function calculateScore(c, regime){
-
-  let score = 0;
-
-  if(c.change24 > 8) score += 35;
-  else if(c.change24 > 5) score += 25;
-  else if(c.change24 > 2) score += 15;
-
-  if(c.change1h > 1.2) score += 25;
-  else if(c.change1h > 0.5) score += 15;
-
-  if(c.vm > 0.5) score += 25;
-  else if(c.vm > 0.3) score += 15;
-  else if(c.vm > 0.15) score += 8;
-
-  if(regime === "LOW_VOL") score -= 15;
-  if(regime === "HIGH_VOL") score += 5;
-
-  return Math.max(0, Math.min(score, 100));
-}
-
-
-// ================= STAGE MERGE =================
-function mergeStage(prevStage, filterStage){
-
-  const order = ["radar","buildup","almost","entry"];
-
-  const prevIndex = order.indexOf(prevStage || "radar");
-  const newIndex = order.indexOf(filterStage);
-
-  if(newIndex >= prevIndex){
-    return filterStage;
-  }
-
-  return order[Math.max(0, prevIndex - 1)];
-}
-
-
-// ================= NORMALIZE =================
-function normalize(raw){
-
-  const mc = Number(raw.market_cap || 0);
-  const vol = Number(raw.total_volume || 0);
-
-  return {
-    symbol: String(raw.symbol || "").toUpperCase(),
-    name: raw.name || "",
-    price: Number(raw.current_price || 0),
-    change24: Number(raw.price_change_percentage_24h || 0),
-    change1h: Number(raw.price_change_percentage_1h_in_currency || 0),
-    volume: vol,
-    marketCap: mc,
-    vm: mc > 0 ? vol / mc : 0,
-    ob: generateShallowOb()
-  };
 }
 
 
@@ -151,7 +66,6 @@ export async function buildScanPayload(){
   resetAnalytics();
 
   const rawCoins = await fetchCoinGeckoTopCached();
-  if(!Array.isArray(rawCoins)) throw new Error("API error");
 
   const btc = {
     state: rawCoins[0]?.price_change_percentage_24h > 0
@@ -174,16 +88,22 @@ export async function buildScanPayload(){
 
   for(const raw of rawCoins){
 
-    const base = normalize(raw);
+    const base = {
+      symbol: raw.symbol?.toUpperCase(),
+      price: raw.current_price,
+      change24: raw.price_change_percentage_24h,
+      change1h: raw.price_change_percentage_1h_in_currency,
+      vm: raw.total_volume / raw.market_cap,
+      ob: generateShallowOb()
+    };
+
     if(!base.symbol || base.price <= 0) continue;
 
     activeSymbols.push(base.symbol);
 
-    // 🔥 FIX: BTC + REGIME
     const direction = decideDirection(base, btc, regime);
     if(direction === "none") continue;
 
-    // 🔥 PREFILTER
     if(base.vm < 0.12) continue;
     if(Math.abs(base.change24) < 3) continue;
 
@@ -209,20 +129,12 @@ export async function buildScanPayload(){
 
     if(!filterStage) continue;
 
-    const newStage = mergeStage(prev.stage, filterStage);
+    coin.stage = filterStage;
 
-    memory[key] = { stage:newStage };
-    coin.stage = newStage;
-
-    funnel[direction][newStage].push(coin);
+    funnel[direction][filterStage].push(coin);
     logAnalytics(coin);
 
-    // 🔥 ENTRY = alleen beste
-    if(
-      newStage === "entry" &&
-      score > 75 &&
-      flow === "TREND"
-    ){
+    if(filterStage === "entry" && score > 75 && flow === "TREND"){
       tradeCandidates.push(coin);
     }
   }
@@ -230,21 +142,7 @@ export async function buildScanPayload(){
   memory = cleanMemory(memory, activeSymbols);
   await saveStageMemory(memory);
 
-  for(const side of ["bull","bear"]){
-    for(const k in funnel[side]){
-      funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
-    }
-  }
-
-  const trades = await processTrades(
-    tradeCandidates,
-    btc,
-    "auto",
-    regime
-  );
-
-  const analytics = getAnalytics();
-  const advice = generateAdvice(analytics);
+  const trades = await processTrades(tradeCandidates, btc, "auto", regime);
 
   const payload = {
     ok:true,
@@ -253,8 +151,6 @@ export async function buildScanPayload(){
     market,
     funnel,
     trades,
-    analytics,
-    advice,
     total: rawCoins.length,
     candidates: tradeCandidates.length
   };
@@ -264,20 +160,11 @@ export async function buildScanPayload(){
   return payload;
 }
 
-
-// ================= HANDLER =================
 export default async function handler(req,res){
-
   try{
     const data = await buildScanPayload();
     return res.status(200).json(data);
-
   }catch(e){
-    console.error("SCAN ERROR:", e);
-
-    return res.status(500).json({
-      ok:false,
-      error:e.message
-    });
+    return res.status(500).json({ ok:false, error:e.message });
   }
 }
