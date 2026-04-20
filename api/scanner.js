@@ -1,7 +1,7 @@
 import {
   fetchCoinGeckoTopCached,
   generateShallowOb,
-  fetchFuturesTickers // 🔥 BITGET
+  fetchFuturesTickers
 } from "../lib/_main_shared.js";
 
 import { detectRegime } from "../lib/regime.js";
@@ -33,8 +33,8 @@ import { initDefaultFilters } from "../lib/filterState.js";
 // ================= BTC LOGIC =================
 function decideDirection(c, btc){
 
-  const ch24 = c.change24 || 0;
-  const ch1 = c.change1h || 0;
+  const ch24 = Number(c.change24 || 0);
+  const ch1 = Number(c.change1h || 0);
 
   // 🐻 BEAR → focus shorts
   if(btc.state === "BEARISH"){
@@ -65,8 +65,8 @@ function decideDirection(c, btc){
 // ================= FLOW =================
 function detectFlow(c){
 
-  const ch1 = Math.abs(c.change1h || 0);
-  const ch24 = Math.abs(c.change24 || 0);
+  const ch1 = Math.abs(Number(c.change1h || 0));
+  const ch24 = Math.abs(Number(c.change24 || 0));
 
   if(ch1 > 1 && ch24 > 5) return "TREND";
   if(ch1 > 0.6) return "BUILDING";
@@ -81,21 +81,39 @@ function calculateScore(c, regime){
 
   let score = 0;
 
-  if(c.change24 > 8) score += 35;
-  else if(c.change24 > 5) score += 25;
-  else if(c.change24 > 2) score += 15;
+  const ch24 = Number(c.change24 || 0);
+  const ch1 = Number(c.change1h || 0);
+  const vm = Number(c.vm || 0);
 
-  if(c.change1h > 1.2) score += 25;
-  else if(c.change1h > 0.5) score += 15;
+  if(ch24 > 8) score += 35;
+  else if(ch24 > 5) score += 25;
+  else if(ch24 > 2) score += 15;
 
-  if(c.vm > 0.5) score += 25;
-  else if(c.vm > 0.3) score += 15;
-  else if(c.vm > 0.15) score += 8;
+  if(ch1 > 1.2) score += 25;
+  else if(ch1 > 0.5) score += 15;
+
+  if(vm > 0.5) score += 25;
+  else if(vm > 0.3) score += 15;
+  else if(vm > 0.15) score += 8;
 
   if(regime === "LOW_VOL") score -= 15;
   if(regime === "HIGH_VOL") score += 5;
 
   return Math.max(0, Math.min(score, 100));
+}
+
+
+// ================= SYMBOL NORMALIZER =================
+function normalizeBitgetKey(symbolKey){
+  return String(symbolKey || "")
+    .toUpperCase()
+    .replace(/_UMCBL$/,"")
+    .replace(/_DMCBL$/,"")
+    .replace(/_CMCBL$/,"")
+    .replace(/-UMCBL$/,"")
+    .replace(/-DMCBL$/,"")
+    .replace(/-CMCBL$/,"")
+    .replace(/USDT$/,"");
 }
 
 
@@ -108,10 +126,16 @@ export async function buildScanPayload(){
   const rawCoins = await fetchCoinGeckoTopCached();
   if(!Array.isArray(rawCoins)) throw new Error("API error");
 
-  // 🔥 BITGET FILTER
-  const futures = await fetchFuturesTickers();
+  let futures = new Map();
+
+  try{
+    futures = await fetchFuturesTickers();
+  }catch(e){
+    console.error("BITGET FILTER ERROR:", e.message);
+  }
+
   const validSymbols = new Set(
-    Array.from(futures.keys()).map(s => s.replace("USDT",""))
+    Array.from(futures.keys()).map(normalizeBitgetKey).filter(Boolean)
   );
 
   const btc = {
@@ -124,8 +148,8 @@ export async function buildScanPayload(){
   const market = classifyMarket(rawCoins);
 
   const funnel = {
-    bull:{ entry:[], almost:[], buildup:[], radar:[] },
-    bear:{ entry:[], almost:[], buildup:[], radar:[] }
+    bull: { entry: [], almost: [], buildup: [], radar: [] },
+    bear: { entry: [], almost: [], buildup: [], radar: [] }
   };
 
   const tradeCandidates = [];
@@ -135,19 +159,23 @@ export async function buildScanPayload(){
 
   for(const raw of rawCoins){
 
+    const symbol = String(raw?.symbol || "").toUpperCase();
+    const marketCap = Number(raw?.market_cap || 0);
+    const totalVolume = Number(raw?.total_volume || 0);
+
     const base = {
-      symbol: raw.symbol?.toUpperCase(),
-      price: raw.current_price,
-      change24: raw.price_change_percentage_24h,
-      change1h: raw.price_change_percentage_1h_in_currency,
-      vm: raw.market_cap > 0 ? raw.total_volume / raw.market_cap : 0,
+      symbol,
+      price: Number(raw?.current_price || 0),
+      change24: Number(raw?.price_change_percentage_24h || 0),
+      change1h: Number(raw?.price_change_percentage_1h_in_currency || 0),
+      vm: marketCap > 0 ? totalVolume / marketCap : 0,
       ob: generateShallowOb()
     };
 
     if(!base.symbol || base.price <= 0) continue;
 
     // 🔥 BITGET ONLY
-    if(!validSymbols.has(base.symbol)) continue;
+    if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
 
     activeSymbols.push(base.symbol);
 
@@ -170,8 +198,8 @@ export async function buildScanPayload(){
       edge
     };
 
-    const key = base.symbol + "_" + direction;
-    const prev = memory[key] || { stage:"radar" };
+    const key = `${base.symbol}_${direction}`;
+    const prev = memory[key] || { stage: "radar" };
 
     const filterStage =
       direction === "bull"
@@ -193,6 +221,8 @@ export async function buildScanPayload(){
     ){
       tradeCandidates.push(coin);
     }
+
+    memory[key] = { stage: filterStage, prevStage: prev.stage || "radar" };
   }
 
   // ================= MEMORY =================
@@ -200,9 +230,9 @@ export async function buildScanPayload(){
   await saveStageMemory(memory);
 
   // ================= SORT =================
-  for(const side of ["bull","bear"]){
-    for(const k in funnel[side]){
-      funnel[side][k].sort((a,b)=>b.moveScore-a.moveScore);
+  for(const side of ["bull", "bear"]){
+    for(const stageKey of Object.keys(funnel[side])){
+      funnel[side][stageKey].sort((a, b) => b.moveScore - a.moveScore);
     }
   }
 
@@ -218,7 +248,7 @@ export async function buildScanPayload(){
   const advice = generateAdvice(analytics);
 
   const payload = {
-    ok:true,
+    ok: true,
     btc,
     regime,
     market,
@@ -227,7 +257,8 @@ export async function buildScanPayload(){
     analytics,
     advice,
     total: rawCoins.length,
-    candidates: tradeCandidates.length
+    candidates: tradeCandidates.length,
+    bitgetSymbols: validSymbols.size
   };
 
   setLatestScan(payload);
@@ -244,8 +275,8 @@ export default async function handler(req,res){
   }catch(e){
     console.error("SCAN ERROR:", e);
     return res.status(500).json({
-      ok:false,
-      error:e.message
+      ok: false,
+      error: e.message
     });
   }
 }
