@@ -36,23 +36,19 @@ function decideDirection(c, btc){
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  // 🐻 BEAR → focus shorts
   if(btc.state === "BEARISH"){
 
     if(ch24 < -3 && ch1 < -0.5) return "bear";
 
-    // alleen extreme longs
     if(ch24 > 8 && ch1 > 1.5) return "bull";
 
     return "none";
   }
 
-  // 🐂 BULL → focus longs
   if(btc.state === "BULLISH"){
 
     if(ch24 > 3 && ch1 > 0.5) return "bull";
 
-    // beperkte shorts
     if(ch24 < -5 && ch1 < -1) return "bear";
 
     return "none";
@@ -107,13 +103,13 @@ function calculateScore(c, regime){
 function normalizeBitgetKey(symbolKey){
   return String(symbolKey || "")
     .toUpperCase()
-    .replace(/_UMCBL$/,"")
-    .replace(/_DMCBL$/,"")
-    .replace(/_CMCBL$/,"")
-    .replace(/-UMCBL$/,"")
-    .replace(/-DMCBL$/,"")
-    .replace(/-CMCBL$/,"")
-    .replace(/USDT$/,"");
+    .replace(/_UMCBL$/, "")
+    .replace(/_DMCBL$/, "")
+    .replace(/_CMCBL$/, "")
+    .replace(/-UMCBL$/, "")
+    .replace(/-DMCBL$/, "")
+    .replace(/-CMCBL$/, "")
+    .replace(/USDT$/, "");
 }
 
 
@@ -135,7 +131,9 @@ export async function buildScanPayload(){
   }
 
   const validSymbols = new Set(
-    Array.from(futures.keys()).map(normalizeBitgetKey).filter(Boolean)
+    Array.from(futures.keys())
+      .map(normalizeBitgetKey)
+      .filter(Boolean)
   );
 
   const btc = {
@@ -174,7 +172,6 @@ export async function buildScanPayload(){
 
     if(!base.symbol || base.price <= 0) continue;
 
-    // 🔥 BITGET ONLY
     if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
 
     activeSymbols.push(base.symbol);
@@ -182,7 +179,6 @@ export async function buildScanPayload(){
     const direction = decideDirection(base, btc);
     if(direction === "none") continue;
 
-    // 🔥 QUALITY FILTER
     if(base.vm < 0.12) continue;
     if(Math.abs(base.change24) < 3) continue;
 
@@ -213,7 +209,6 @@ export async function buildScanPayload(){
     funnel[direction][filterStage].push(coin);
     logAnalytics(coin);
 
-    // 🔥 ONLY BEST TRADES
     if(
       filterStage === "entry" &&
       score > 75 &&
@@ -222,21 +217,21 @@ export async function buildScanPayload(){
       tradeCandidates.push(coin);
     }
 
-    memory[key] = { stage: filterStage, prevStage: prev.stage || "radar" };
+    memory[key] = {
+      stage: filterStage,
+      prevStage: prev.stage || "radar"
+    };
   }
 
-  // ================= MEMORY =================
   memory = cleanMemory(memory, activeSymbols);
   await saveStageMemory(memory);
 
-  // ================= SORT =================
   for(const side of ["bull", "bear"]){
     for(const stageKey of Object.keys(funnel[side])){
       funnel[side][stageKey].sort((a, b) => b.moveScore - a.moveScore);
     }
   }
 
-  // ================= TRADES =================
   const trades = await processTrades(
     tradeCandidates,
     btc,
