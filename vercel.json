@@ -1,8 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/scanner",
-      "schedule": "*/15 * * * *"
+      "path": "/api/cron?side=bull",
+      "schedule": "0,15,30,45 * * * *"
+    },
+    {
+      "path": "/api/cron?side=bear",
+      "schedule": "7,22,37,52 * * * *"
     }
   ]
 }
