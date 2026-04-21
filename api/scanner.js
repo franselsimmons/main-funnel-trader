@@ -7,7 +7,7 @@ import {
 import { detectRegime } from "../lib/regime.js";
 import { calculateEdge } from "../lib/edge.js";
 import { processTrades } from "../lib/tradeSystem.js";
-import { setLatestScan } from "../lib/scanStore.js";
+import { setLatestScan, getLatestScan } from "../lib/scanStore.js";
 
 import {
   resetAnalytics,
@@ -30,35 +30,57 @@ import {
 import { initDefaultFilters } from "../lib/filterState.js";
 
 
-// ================= BTC LOGIC =================
-function decideDirection(c, btc){
+// ================= SIDE NORMALIZER =================
+function normalizeScanSide(side){
+
+  const s = String(side || "both").toLowerCase();
+
+  if(s === "bull") return "bull";
+  if(s === "bear") return "bear";
+
+  return "both";
+}
+
+
+// ================= SIDE LOGIC =================
+function directionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  // 🐻 BTC bearish → shorts eerst
-  if(btc.state === "BEARISH"){
+  // ================= BULL SCAN =================
+  if(side === "bull"){
 
-    if(ch24 < -3 && ch1 < -0.5) return "bear";
+    // BTC bullish → normale longs
+    if(btc.state === "BULLISH"){
+      return ch24 > 3 && ch1 > 0.5;
+    }
 
-    // alleen sterke longs tegen BTC trend
-    if(ch24 > 8 && ch1 > 1.5) return "bull";
+    // BTC bearish → alleen sterke longs tegen trend
+    if(btc.state === "BEARISH"){
+      return ch24 > 8 && ch1 > 1.5;
+    }
 
-    return "none";
+    return false;
   }
 
-  // 🐂 BTC bullish → longs eerst
-  if(btc.state === "BULLISH"){
+  // ================= BEAR SCAN =================
+  if(side === "bear"){
 
-    if(ch24 > 3 && ch1 > 0.5) return "bull";
+    // BTC bearish → normale shorts
+    if(btc.state === "BEARISH"){
+      return ch24 < -3 && ch1 < -0.5;
+    }
 
-    // alleen sterke shorts tegen BTC trend
-    if(ch24 < -5 && ch1 < -1) return "bear";
+    // BTC bullish → alleen sterke shorts tegen trend
+    if(btc.state === "BULLISH"){
+      return ch24 < -5 && ch1 < -1;
+    }
 
-    return "none";
+    return false;
   }
 
-  return "none";
+  return false;
 }
 
 
@@ -159,8 +181,102 @@ function normalize(raw){
 }
 
 
+// ================= EMPTY FUNNEL =================
+function emptyFunnel(){
+  return {
+    bull: { entry: [], almost: [], buildup: [], radar: [] },
+    bear: { entry: [], almost: [], buildup: [], radar: [] }
+  };
+}
+
+
+// ================= MERGE PARTIAL SIDE SCAN =================
+function mergeWithPreviousSideScan(currentPayload, scanSide){
+
+  if(scanSide === "both"){
+    return currentPayload;
+  }
+
+  const previous = getLatestScan();
+
+  if(!previous?.ok){
+    return currentPayload;
+  }
+
+  const mergedFunnel = emptyFunnel();
+
+  // huidige kant vervangen
+  mergedFunnel[scanSide] =
+    currentPayload.funnel?.[scanSide] || mergedFunnel[scanSide];
+
+  // andere kant behouden
+  const otherSide = scanSide === "bull" ? "bear" : "bull";
+
+  mergedFunnel[otherSide] =
+    previous.funnel?.[otherSide] || mergedFunnel[otherSide];
+
+  const currentTrades = Array.isArray(currentPayload.trades)
+    ? currentPayload.trades
+    : [];
+
+  const previousTrades = Array.isArray(previous.trades)
+    ? previous.trades
+    : [];
+
+  const otherSideTrades = previousTrades.filter(t => t.side === otherSide);
+
+  const mergedTrades = [...currentTrades, ...otherSideTrades]
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+
+  const mergedAnalytics = {
+    ...(previous.analytics || {}),
+    [scanSide]: currentPayload.analytics?.[scanSide]
+  };
+
+  const mergedAdvice = {
+    ...(previous.advice || {}),
+    [scanSide]: currentPayload.advice?.[scanSide]
+  };
+
+  const candidatesBull =
+    scanSide === "bull"
+      ? currentPayload.candidatesBull
+      : previous.candidatesBull || 0;
+
+  const candidatesBear =
+    scanSide === "bear"
+      ? currentPayload.candidatesBear
+      : previous.candidatesBear || 0;
+
+  return {
+    ...previous,
+    ...currentPayload,
+    funnel: mergedFunnel,
+    trades: mergedTrades,
+    analytics: mergedAnalytics,
+    advice: mergedAdvice,
+    candidatesBull,
+    candidatesBear,
+    candidates: candidatesBull + candidatesBear,
+    lastBullScan:
+      scanSide === "bull"
+        ? Date.now()
+        : previous.lastBullScan || null,
+    lastBearScan:
+      scanSide === "bear"
+        ? Date.now()
+        : previous.lastBearScan || null,
+    lastSideScan: scanSide,
+    scanMode: "merged",
+    updatedAt: Date.now()
+  };
+}
+
+
 // ================= CORE =================
-export async function buildScanPayload(){
+export async function buildScanPayload(options = {}){
+
+  const scanSide = normalizeScanSide(options.side);
 
   initDefaultFilters();
   resetAnalytics();
@@ -196,15 +312,19 @@ export async function buildScanPayload(){
   const regime = detectRegime(rawCoins) || "NORMAL";
   const market = classifyMarket(rawCoins);
 
-  const funnel = {
-    bull: { entry: [], almost: [], buildup: [], radar: [] },
-    bear: { entry: [], almost: [], buildup: [], radar: [] }
-  };
-
+  const funnel = emptyFunnel();
   const tradeCandidates = [];
+
+  let candidatesBull = 0;
+  let candidatesBear = 0;
 
   let memory = await loadStageMemory();
   const activeSymbols = [];
+
+  const sidesToScan =
+    scanSide === "both"
+      ? ["bull", "bear"]
+      : [scanSide];
 
   for(const raw of rawCoins){
 
@@ -217,64 +337,69 @@ export async function buildScanPayload(){
 
     activeSymbols.push(base.symbol);
 
-    const direction = decideDirection(base, btc);
-    if(direction === "none") continue;
-
     // Ruimer dan vroeger, want tradeSystem bewaakt execution kwaliteit.
     if(base.vm < 0.10) continue;
     if(Math.abs(base.change24) < 2.5) continue;
 
-    const flow = detectFlow(base);
-    const score = calculateScore(base, regime, direction);
-    const edge = calculateEdge(base, regime) || 0;
+    for(const direction of sidesToScan){
 
-    const coin = {
-      ...base,
-      side: direction,
-      flow,
-      moveScore: score,
-      edge
-    };
+      if(!directionAllowed(base, btc, direction)) continue;
 
-    const key = `${base.symbol}_${direction}`;
-    const prev = memory[key] || { stage: "radar" };
+      const flow = detectFlow(base);
+      const score = calculateScore(base, regime, direction);
+      const edge = calculateEdge(base, regime) || 0;
 
-    const filterStage =
-      direction === "bull"
-        ? bullFilter(coin)
-        : bearFilter(coin);
+      const coin = {
+        ...base,
+        side: direction,
+        flow,
+        moveScore: score,
+        edge
+      };
 
-    if(!filterStage) continue;
+      const key = `${base.symbol}_${direction}`;
+      const prev = memory[key] || { stage: "radar" };
 
-    const newStage = mergeStage(prev.stage, filterStage);
+      const filterStage =
+        direction === "bull"
+          ? bullFilter(coin)
+          : bearFilter(coin);
 
-    coin.stage = newStage;
+      if(!filterStage) continue;
 
-    funnel[direction][newStage].push(coin);
-    logAnalytics(coin);
+      const newStage = mergeStage(prev.stage, filterStage);
 
-    // Meer goede input naar tradeSystem:
-    // - entry vanaf score 70
-    // - sterke almost vanaf score 80
-    if(
-      (
-        newStage === "entry" &&
-        score >= 70 &&
-        flow === "TREND"
-      ) ||
-      (
-        newStage === "almost" &&
-        score >= 80 &&
-        flow === "TREND"
-      )
-    ){
-      tradeCandidates.push(coin);
+      coin.stage = newStage;
+
+      funnel[direction][newStage].push(coin);
+      logAnalytics(coin);
+
+      // Meer goede input naar tradeSystem:
+      // - entry vanaf score 70
+      // - sterke almost vanaf score 80
+      if(
+        (
+          newStage === "entry" &&
+          score >= 70 &&
+          flow === "TREND"
+        ) ||
+        (
+          newStage === "almost" &&
+          score >= 80 &&
+          flow === "TREND"
+        )
+      ){
+        tradeCandidates.push(coin);
+
+        if(direction === "bull") candidatesBull++;
+        if(direction === "bear") candidatesBear++;
+      }
+
+      memory[key] = {
+        stage: newStage,
+        prevStage: prev.stage || "radar"
+      };
     }
-
-    memory[key] = {
-      stage: newStage,
-      prevStage: prev.stage || "radar"
-    };
   }
 
   memory = cleanMemory(memory, activeSymbols);
@@ -296,8 +421,12 @@ export async function buildScanPayload(){
   const analytics = getAnalytics();
   const advice = generateAdvice(analytics);
 
-  const payload = {
+  const now = Date.now();
+
+  const currentPayload = {
     ok: true,
+    scanSide,
+    scanMode: scanSide,
     btc,
     regime,
     market,
@@ -307,12 +436,19 @@ export async function buildScanPayload(){
     advice,
     total: rawCoins.length,
     candidates: tradeCandidates.length,
-    bitgetSymbols: validSymbols.size
+    candidatesBull,
+    candidatesBear,
+    bitgetSymbols: validSymbols.size,
+    updatedAt: now,
+    lastBullScan: scanSide === "bull" || scanSide === "both" ? now : null,
+    lastBearScan: scanSide === "bear" || scanSide === "both" ? now : null
   };
 
-  setLatestScan(payload);
+  const finalPayload = mergeWithPreviousSideScan(currentPayload, scanSide);
 
-  return payload;
+  setLatestScan(finalPayload);
+
+  return finalPayload;
 }
 
 
@@ -320,7 +456,9 @@ export async function buildScanPayload(){
 export default async function handler(req,res){
 
   try{
-    const data = await buildScanPayload();
+    const side = normalizeScanSide(req?.query?.side);
+    const data = await buildScanPayload({ side });
+
     return res.status(200).json(data);
 
   }catch(e){
