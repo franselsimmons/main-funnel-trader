@@ -220,8 +220,7 @@ export async function buildScanPayload(){
     const direction = decideDirection(base, btc);
     if(direction === "none") continue;
 
-    // ================= QUALITY PREFILTER =================
-    // Iets ruimer, omdat tradeSystem nu execution-quality bewaakt.
+    // Ruimer dan vroeger, want tradeSystem bewaakt execution kwaliteit.
     if(base.vm < 0.10) continue;
     if(Math.abs(base.change24) < 2.5) continue;
 
@@ -254,11 +253,9 @@ export async function buildScanPayload(){
     funnel[direction][newStage].push(coin);
     logAnalytics(coin);
 
-    // ================= TRADE CANDIDATES =================
-    // Meer input naar tradeSystem:
+    // Meer goede input naar tradeSystem:
     // - entry vanaf score 70
     // - sterke almost vanaf score 80
-    // TradeSystem bepaalt daarna met OB/liquidity/liquidation.
     if(
       (
         newStage === "entry" &&
