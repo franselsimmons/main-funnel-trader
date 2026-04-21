@@ -36,19 +36,23 @@ function decideDirection(c, btc){
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
+  // 🐻 BTC bearish → shorts eerst
   if(btc.state === "BEARISH"){
 
     if(ch24 < -3 && ch1 < -0.5) return "bear";
 
+    // alleen sterke longs tegen BTC trend
     if(ch24 > 8 && ch1 > 1.5) return "bull";
 
     return "none";
   }
 
+  // 🐂 BTC bullish → longs eerst
   if(btc.state === "BULLISH"){
 
     if(ch24 > 3 && ch1 > 0.5) return "bull";
 
+    // alleen sterke shorts tegen BTC trend
     if(ch24 < -5 && ch1 < -1) return "bear";
 
     return "none";
@@ -72,15 +76,18 @@ function detectFlow(c){
 }
 
 
-// ================= SCORE =================
-function calculateScore(c, regime){
+// ================= DIRECTIONAL SCORE =================
+function calculateScore(c, regime, side){
 
   let score = 0;
 
-  const ch24 = Number(c.change24 || 0);
-  const ch1 = Number(c.change1h || 0);
+  const dir = side === "bear" ? -1 : 1;
+
+  const ch24 = Number(c.change24 || 0) * dir;
+  const ch1 = Number(c.change1h || 0) * dir;
   const vm = Number(c.vm || 0);
 
+  // momentum richting trade
   if(ch24 > 8) score += 35;
   else if(ch24 > 5) score += 25;
   else if(ch24 > 2) score += 15;
@@ -88,6 +95,7 @@ function calculateScore(c, regime){
   if(ch1 > 1.2) score += 25;
   else if(ch1 > 0.5) score += 15;
 
+  // volume / marketcap
   if(vm > 0.5) score += 25;
   else if(vm > 0.3) score += 15;
   else if(vm > 0.15) score += 8;
@@ -99,8 +107,26 @@ function calculateScore(c, regime){
 }
 
 
+// ================= STAGE MERGE =================
+function mergeStage(prevStage, filterStage){
+
+  const order = ["radar", "buildup", "almost", "entry"];
+
+  const prevIndex = order.indexOf(prevStage || "radar");
+  const newIndex = order.indexOf(filterStage || "radar");
+
+  if(newIndex >= prevIndex){
+    return filterStage;
+  }
+
+  // zachte decay omlaag
+  return order[Math.max(0, prevIndex - 1)];
+}
+
+
 // ================= SYMBOL NORMALIZER =================
 function normalizeBitgetKey(symbolKey){
+
   return String(symbolKey || "")
     .toUpperCase()
     .replace(/_UMCBL$/, "")
@@ -110,6 +136,26 @@ function normalizeBitgetKey(symbolKey){
     .replace(/-DMCBL$/, "")
     .replace(/-CMCBL$/, "")
     .replace(/USDT$/, "");
+}
+
+
+// ================= NORMALIZE =================
+function normalize(raw){
+
+  const marketCap = Number(raw?.market_cap || 0);
+  const totalVolume = Number(raw?.total_volume || 0);
+
+  return {
+    symbol: String(raw?.symbol || "").toUpperCase(),
+    name: raw?.name || "",
+    price: Number(raw?.current_price || 0),
+    change24: Number(raw?.price_change_percentage_24h || 0),
+    change1h: Number(raw?.price_change_percentage_1h_in_currency || 0),
+    volume: totalVolume,
+    marketCap,
+    vm: marketCap > 0 ? totalVolume / marketCap : 0,
+    ob: generateShallowOb()
+  };
 }
 
 
@@ -136,10 +182,15 @@ export async function buildScanPayload(){
       .filter(Boolean)
   );
 
+  const btcRaw =
+    rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") ||
+    rawCoins[0];
+
   const btc = {
-    state: rawCoins[0]?.price_change_percentage_24h > 0
+    state: Number(btcRaw?.price_change_percentage_24h || 0) >= 0
       ? "BULLISH"
-      : "BEARISH"
+      : "BEARISH",
+    chg24: Number(btcRaw?.price_change_percentage_24h || 0)
   };
 
   const regime = detectRegime(rawCoins) || "NORMAL";
@@ -157,21 +208,11 @@ export async function buildScanPayload(){
 
   for(const raw of rawCoins){
 
-    const symbol = String(raw?.symbol || "").toUpperCase();
-    const marketCap = Number(raw?.market_cap || 0);
-    const totalVolume = Number(raw?.total_volume || 0);
-
-    const base = {
-      symbol,
-      price: Number(raw?.current_price || 0),
-      change24: Number(raw?.price_change_percentage_24h || 0),
-      change1h: Number(raw?.price_change_percentage_1h_in_currency || 0),
-      vm: marketCap > 0 ? totalVolume / marketCap : 0,
-      ob: generateShallowOb()
-    };
+    const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
 
+    // Bitget only, maar fallback als Bitget fetch faalt
     if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
 
     activeSymbols.push(base.symbol);
@@ -179,11 +220,13 @@ export async function buildScanPayload(){
     const direction = decideDirection(base, btc);
     if(direction === "none") continue;
 
-    if(base.vm < 0.12) continue;
-    if(Math.abs(base.change24) < 3) continue;
+    // ================= QUALITY PREFILTER =================
+    // Iets ruimer, omdat tradeSystem nu execution-quality bewaakt.
+    if(base.vm < 0.10) continue;
+    if(Math.abs(base.change24) < 2.5) continue;
 
     const flow = detectFlow(base);
-    const score = calculateScore(base, regime);
+    const score = calculateScore(base, regime, direction);
     const edge = calculateEdge(base, regime) || 0;
 
     const coin = {
@@ -204,21 +247,35 @@ export async function buildScanPayload(){
 
     if(!filterStage) continue;
 
-    coin.stage = filterStage;
+    const newStage = mergeStage(prev.stage, filterStage);
 
-    funnel[direction][filterStage].push(coin);
+    coin.stage = newStage;
+
+    funnel[direction][newStage].push(coin);
     logAnalytics(coin);
 
+    // ================= TRADE CANDIDATES =================
+    // Meer input naar tradeSystem:
+    // - entry vanaf score 70
+    // - sterke almost vanaf score 80
+    // TradeSystem bepaalt daarna met OB/liquidity/liquidation.
     if(
-      filterStage === "entry" &&
-      score > 75 &&
-      flow === "TREND"
+      (
+        newStage === "entry" &&
+        score >= 70 &&
+        flow === "TREND"
+      ) ||
+      (
+        newStage === "almost" &&
+        score >= 80 &&
+        flow === "TREND"
+      )
     ){
       tradeCandidates.push(coin);
     }
 
     memory[key] = {
-      stage: filterStage,
+      stage: newStage,
       prevStage: prev.stage || "radar"
     };
   }
@@ -264,11 +321,14 @@ export async function buildScanPayload(){
 
 // ================= HANDLER =================
 export default async function handler(req,res){
+
   try{
     const data = await buildScanPayload();
     return res.status(200).json(data);
+
   }catch(e){
     console.error("SCAN ERROR:", e);
+
     return res.status(500).json({
       ok: false,
       error: e.message
