@@ -29,6 +29,8 @@ import {
 
 import { initDefaultFilters } from "../lib/filterState.js";
 
+const STAGES = ["entry", "almost", "buildup", "radar"];
+
 
 // ================= SIDE NORMALIZER =================
 function normalizeScanSide(side){
@@ -72,6 +74,15 @@ function normalizeStore(value, fallback = true){
 }
 
 
+// ================= STAGE SAFETY =================
+function safeStage(stage){
+
+  return STAGES.includes(stage)
+    ? stage
+    : "radar";
+}
+
+
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
 // Alleen deze logic mag echte tradeCandidates maken.
 function strictDirectionAllowed(c, btc, side){
@@ -110,7 +121,7 @@ function strictDirectionAllowed(c, btc, side){
 
 
 // ================= DISPLAY LOGIC FOR UI/FUNNEL =================
-// Ruimer dan trade logic, zodat frontend coins blijft tonen.
+// Ruimer dan trade logic, zodat alle frontend-pagina's gevuld blijven.
 // Deze logic maakt GEEN extra Discord/trades.
 function displayDirectionAllowed(c, side){
 
@@ -120,17 +131,17 @@ function displayDirectionAllowed(c, side){
 
   if(side === "bull"){
     return (
-      ch24 > 0.3 ||
-      ch1 > 0.05 ||
-      (vm > 0.05 && ch24 > 0)
+      ch24 > 0.25 ||
+      ch1 > 0.03 ||
+      (vm > 0.04 && ch24 > 0)
     );
   }
 
   if(side === "bear"){
     return (
-      ch24 < -0.3 ||
-      ch1 < -0.05 ||
-      (vm > 0.05 && ch24 < 0)
+      ch24 < -0.25 ||
+      ch1 < -0.03 ||
+      (vm > 0.04 && ch24 < 0)
     );
   }
 
@@ -163,7 +174,6 @@ function calculateScore(c, regime, side){
   const ch1 = Number(c.change1h || 0) * dir;
   const vm = Number(c.vm || 0);
 
-  // momentum richting trade
   if(ch24 > 8) score += 35;
   else if(ch24 > 5) score += 25;
   else if(ch24 > 2) score += 15;
@@ -175,7 +185,6 @@ function calculateScore(c, regime, side){
   else if(ch1 > 0.2) score += 7;
   else if(ch1 > 0.03) score += 3;
 
-  // volume / marketcap
   if(vm > 0.5) score += 25;
   else if(vm > 0.3) score += 15;
   else if(vm > 0.15) score += 8;
@@ -189,7 +198,6 @@ function calculateScore(c, regime, side){
 
 
 // ================= UI FALLBACK STAGE =================
-// Bestaat alleen voor frontend zichtbaarheid.
 function fallbackStage(score, flow){
 
   if(flow === "TREND" && score >= 75) return "almost";
@@ -269,7 +277,7 @@ function countSide(funnel, side){
 
   let total = 0;
 
-  for(const stage of ["entry", "almost", "buildup", "radar"]){
+  for(const stage of STAGES){
     total += Array.isArray(funnel[side][stage])
       ? funnel[side][stage].length
       : 0;
@@ -286,7 +294,7 @@ function countFunnel(funnel){
 
 function hasSymbolInSide(funnel, side, symbol){
 
-  for(const stage of ["entry", "almost", "buildup", "radar"]){
+  for(const stage of STAGES){
 
     if(
       Array.isArray(funnel?.[side]?.[stage]) &&
@@ -303,7 +311,7 @@ function hasSymbolInSide(funnel, side, symbol){
 function sortFunnel(funnel){
 
   for(const side of ["bull", "bear"]){
-    for(const stageKey of ["entry", "almost", "buildup", "radar"]){
+    for(const stageKey of STAGES){
       funnel[side][stageKey].sort((a, b) => {
         return Number(b.moveScore || 0) - Number(a.moveScore || 0);
       });
@@ -313,21 +321,20 @@ function sortFunnel(funnel){
 
 
 // ================= UI FALLBACK FILL =================
-// Vult alleen de frontend-funnel.
-// Stuurt GEEN Discord en maakt GEEN tradeCandidate.
+// Vult alleen frontend-funnel.
+// GEEN Discord.
+// GEEN tradeCandidate.
 function fillUiFallback({
   rawCoins,
-  validSymbols,
   regime,
   funnel,
   side,
   max = 30
 }){
 
-  const currentSideCount = countSide(funnel, side);
   const targetMinimum = 12;
 
-  if(currentSideCount >= targetMinimum) return;
+  if(countSide(funnel, side) >= targetMinimum) return;
 
   const list = [];
 
@@ -336,29 +343,20 @@ function fillUiFallback({
     const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
-
-    if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
-
     if(hasSymbolInSide(funnel, side, base.symbol)) continue;
-
-    if(base.vm < 0.025) continue;
+    if(base.vm < 0.02) continue;
 
     const ch24 = Number(base.change24 || 0);
     const ch1 = Number(base.change1h || 0);
 
-    if(side === "bull"){
-      if(ch24 <= 0 && ch1 <= 0) continue;
-    }
-
-    if(side === "bear"){
-      if(ch24 >= 0 && ch1 >= 0) continue;
-    }
+    if(side === "bull" && ch24 <= 0 && ch1 <= 0) continue;
+    if(side === "bear" && ch24 >= 0 && ch1 >= 0) continue;
 
     const flow = detectFlow(base);
     const score = calculateScore(base, regime, side);
     const edge = calculateEdge(base, regime) || 0;
 
-    if(score < 8) continue;
+    if(score < 6) continue;
 
     list.push({
       ...base,
@@ -375,21 +373,21 @@ function fillUiFallback({
   list.sort((a,b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
 
   let added = 0;
-  let seededEntry = funnel[side].entry.length > 0 ? 1 : 0;
+
+  // Als entry leeg is, zet 1 UI-only coin in entry.
+  // Dit is puur voor frontend counts.
+  let entrySeeded = funnel[side].entry.length > 0;
 
   for(const coin of list){
 
     if(added >= max) break;
     if(countSide(funnel, side) >= targetMinimum) break;
 
-    let stage = coin.stage || "radar";
+    let stage = safeStage(coin.stage);
 
-    // Belangrijk voor bestaande frontends/indexen die alleen entry tellen:
-    // als entry leeg is, seed 1 UI-only coin in entry.
-    // Dit maakt géén echte tradeCandidate.
-    if(seededEntry === 0){
+    if(!entrySeeded){
       stage = "entry";
-      seededEntry = 1;
+      entrySeeded = true;
     }
 
     funnel[side][stage].push({
@@ -417,11 +415,9 @@ function mergeWithPreviousSideScan(currentPayload, scanSide){
 
   const mergedFunnel = emptyFunnel();
 
-  // huidige kant vervangen
   mergedFunnel[scanSide] =
     currentPayload.funnel?.[scanSide] || mergedFunnel[scanSide];
 
-  // andere kant behouden
   const otherSide = scanSide === "bull" ? "bear" : "bull";
 
   mergedFunnel[otherSide] =
@@ -495,12 +491,7 @@ export async function buildScanPayload(options = {}){
 
   const scanSide = normalizeScanSide(options.side);
 
-  // Cron/backend: notify true.
-  // public-latest: notify false.
   const notify = options.notify !== false;
-
-  // Cron/backend: store true.
-  // public-latest: store false.
   const store = options.store !== false;
 
   initDefaultFilters();
@@ -557,24 +548,23 @@ export async function buildScanPayload(options = {}){
 
     if(!base.symbol || base.price <= 0) continue;
 
-    // Bitget only, maar fallback als Bitget fetch faalt.
-    if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
-
     activeSymbols.push(base.symbol);
 
+    const symbolTradable =
+      validSymbols.size === 0 || validSymbols.has(base.symbol);
+
     // UI ruim houden.
-    if(base.vm < 0.025) continue;
+    if(base.vm < 0.02) continue;
 
     if(
-      Math.abs(base.change24) < 0.25 &&
-      Math.abs(base.change1h) < 0.03
+      Math.abs(base.change24) < 0.2 &&
+      Math.abs(base.change1h) < 0.02
     ){
       continue;
     }
 
     for(const direction of sidesToScan){
 
-      // UI/funnel gebruikt ruime logic.
       if(!displayDirectionAllowed(base, direction)) continue;
 
       const flow = detectFlow(base);
@@ -599,11 +589,11 @@ export async function buildScanPayload(options = {}){
 
       const uiStage = realFilterStage || fallbackStage(score, flow);
 
-      if(!uiStage) continue;
-
-      const newStage = realFilterStage
-        ? mergeStage(prev.stage, realFilterStage)
-        : uiStage;
+      const newStage = safeStage(
+        realFilterStage
+          ? mergeStage(prev.stage, realFilterStage)
+          : uiStage
+      );
 
       coin.stage = newStage;
       coin.stageSource = realFilterStage ? "filter" : "fallback";
@@ -613,8 +603,8 @@ export async function buildScanPayload(options = {}){
       logAnalytics(coin);
 
       // ================= REAL TRADE CANDIDATES ONLY =================
-      // Alleen echte filterStage + strictDirection mag Discord/trade worden.
       if(
+        symbolTradable &&
         realFilterStage &&
         strictDirectionAllowed(base, btc, direction) &&
         (
@@ -643,11 +633,10 @@ export async function buildScanPayload(options = {}){
     }
   }
 
-  // Zorg dat de frontend nooit lege arrays krijgt wanneer marktdata bestaat.
+  // Zorg dat frontend niet leeg wordt.
   if(scanSide === "both" || scanSide === "bull"){
     fillUiFallback({
       rawCoins,
-      validSymbols,
       regime,
       funnel,
       side: "bull",
@@ -658,7 +647,6 @@ export async function buildScanPayload(options = {}){
   if(scanSide === "both" || scanSide === "bear"){
     fillUiFallback({
       rawCoins,
-      validSymbols,
       regime,
       funnel,
       side: "bear",
@@ -668,7 +656,6 @@ export async function buildScanPayload(options = {}){
 
   memory = cleanMemory(memory, activeSymbols);
 
-  // Silent scans mogen stageMemory niet overschrijven.
   if(store){
     await saveStageMemory(memory);
   }
@@ -716,7 +703,6 @@ export async function buildScanPayload(options = {}){
 
   const finalPayload = mergeWithPreviousSideScan(currentPayload, scanSide);
 
-  // Alleen echte cron/backend scans mogen latestScan overschrijven.
   if(store){
     setLatestScan(finalPayload);
   }
@@ -731,10 +717,7 @@ export default async function handler(req,res){
   try{
     const side = normalizeScanSide(req?.query?.side);
 
-    // Direct /api/scanner is standaard stil.
     const notify = normalizeNotify(req?.query?.notify);
-
-    // Alleen store wanneer expliciet of wanneer notify=true.
     const store = normalizeStore(req?.query?.store, notify);
 
     const data = await buildScanPayload({
