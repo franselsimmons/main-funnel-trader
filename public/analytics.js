@@ -1,22 +1,33 @@
 const el = id => document.getElementById(id);
 window.latestAdvice = {};
 
+
 // ================= HELPERS =================
 function fmtTime(ts){
+
   if(!ts) return "-";
+
   try{
-    return new Date(ts).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+    return new Date(ts).toLocaleTimeString("nl-NL", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
   }catch{
     return "-";
   }
 }
 
+
 function pct(count, total){
+
   if(!total) return 0;
+
   return Number(((count / total) * 100).toFixed(1));
 }
 
+
 function getReasonAdvice(reason){
+
   const map = {
     MAX_OPEN_TRADES: "Max open trades bereikt. Geen filterprobleem.",
     SYMBOL_COOLDOWN: "Cooldown voorkomt dubbele entries op dezelfde coin.",
@@ -43,22 +54,32 @@ function getReasonAdvice(reason){
   if(String(reason || "").startsWith("SYMBOL_ALREADY_OPEN_")){
     return "Er staat al een positie open op deze coin. Correct geblokkeerd.";
   }
+
   return map[reason] || "Geen specifieke actie nodig.";
 }
 
+
 // ================= TOGGLE & UI =================
 window.toggleAdvice = function(adviceId){
+
   const elAdvice = el(adviceId);
   if(!elAdvice) return;
+
   const isHidden = elAdvice.style.display === "none";
   elAdvice.style.display = isHidden ? "block" : "none";
 };
 
+
 function adviceItemToHtml(item){
+
   if(!item) return "";
-  if(typeof item === "string") return `<div>• ${item}</div>`;
+
+  if(typeof item === "string"){
+    return `<div>• ${item}</div>`;
+  }
 
   const message = item.message || "Onbekend advies";
+
   let actionColor = "#a78bfa";
 
   if(item.action === "STRENGER") actionColor = "var(--red)";
@@ -75,12 +96,16 @@ function adviceItemToHtml(item){
   return `<div style="margin-bottom:10px;">• ${action}${message}${values}</div>`;
 }
 
+
 // ================= GLOBAL ADVICE =================
 function renderGlobalAdvice(data){
+
   const global = data?.advice?.global || [];
 
   if(!global.length){
+
     el("globalAdvice").style.display = "block";
+
     const bullCount = Number(data?.bullCount || 0);
     const bearCount = Number(data?.bearCount || 0);
     const candidates = Number(data?.candidates || 0);
@@ -91,16 +116,23 @@ function renderGlobalAdvice(data){
       Echte trade candidates: ${candidates}. TradeSystem outputs: ${trades}.<br>
       <span class="muted" style="font-size: 11px;">Analyse gebruikt alleen echte filter-coins.</span>
     `;
+
     return;
   }
 
   el("globalAdvice").style.display = "block";
-  el("globalAdviceContent").innerHTML = global.map(g => `• ${g}`).join("<br/><br/>");
+  el("globalAdviceContent").innerHTML =
+    global.map(g => `• ${g}`).join("<br/><br/>");
 }
 
-// ================= TRADE SYSTEM =================
+
+// ================= TRADE SYSTEM FALLBACK =================
 function buildTradeSystemFallback(data){
-  const list = Array.isArray(data?.trades) ? data.trades : [];
+
+  const list = Array.isArray(data?.trades)
+    ? data.trades
+    : [];
+
   const total = list.length;
 
   const entries = list.filter(t => t.action === "ENTRY");
@@ -110,54 +142,254 @@ function buildTradeSystemFallback(data){
   const exits = list.filter(t => t.action === "EXIT");
 
   const waitMap = {};
+
   for(const w of waits){
     const key = String(w.reason || "UNKNOWN");
     waitMap[key] = (waitMap[key] || 0) + 1;
   }
 
   const waitReasons = Object.entries(waitMap)
-    .map(([key, count]) => ({ key, count, pct: pct(count, waits.length), advice: getReasonAdvice(key) }))
+    .map(([key, count]) => ({
+      key,
+      count,
+      pct: pct(count, waits.length),
+      advice: getReasonAdvice(key)
+    }))
     .sort((a,b) => b.count - a.count);
 
   const avg = field => {
-    const nums = list.map(x => Number(x?.[field] || 0)).filter(n => Number.isFinite(n));
+
+    const nums = list
+      .map(x => Number(x?.[field] || 0))
+      .filter(n => Number.isFinite(n));
+
     if(!nums.length) return 0;
+
     return Number((nums.reduce((a,b) => a + b, 0) / nums.length).toFixed(2));
   };
 
-  let advice = "TradeSystem gezond. Geen aanpassing nodig.";
-  if(total === 0) advice = "Geen echte tradeCandidates deze scan. Funnel kan gevuld zijn, maar TradeSystem kreeg niets om te beoordelen.";
-  else if(entries.length === 0 && waits.length > 0) advice = "TradeSystem blokkeert alles. Kijk naar grootste WAIT reason voordat je versoepelt.";
-  else if(pct(entries.length, total) > 25) advice = "Veel entries. Kwaliteit bewaken, eventueel iets strenger.";
-  else if(pct(entries.length, total) < 3 && total >= 10) advice = "Weinig entries uit veel candidates. Alleen versoepelen als grootste blokkade geen kwaliteitsfilter is.";
+  const entryRate = pct(entries.length, total);
+  const avgConfluence = avg("confluence");
+  const avgRR = avg("rr");
+  const topReason = waitReasons[0]?.key || null;
 
-  return { total, entries: entries.length, waits: waits.length, holds: holds.length, partials: partials.length, exits: exits.length, entryRate: pct(entries.length, total), waitRate: pct(waits.length, total), avgConfluence: avg("confluence"), avgRR: avg("rr"), avgScore: avg("score"), waitReasons, advice };
+  const recommendations = {
+    moreTrades: [],
+    higherWinrate: [],
+    higherPnl: []
+  };
+
+  if(total === 0){
+    recommendations.moreTrades.push(
+      "Scanner stuurt geen echte tradeCandidates. Meer trades krijg je via scanner-input, niet door TradeSystem filters los te gooien."
+    );
+    recommendations.moreTrades.push(
+      "Veilige test: almost candidate threshold van 88 naar 85, terwijl TradeSystem de eindfilter blijft."
+    );
+  }
+
+  if(total >= 8 && entryRate < 5){
+    recommendations.moreTrades.push(
+      "Entry-rate is laag. Stuur iets meer candidates naar TradeSystem in plaats van OB/confluence filters te versoepelen."
+    );
+  }
+
+  if(topReason === "MAX_OPEN_TRADES"){
+    recommendations.moreTrades.push(
+      "Max open trades blokkeert entries. Overweeg MAX_OPEN_TRADES van 3 naar 4, maar alleen als gesloten trade-history positief blijft."
+    );
+  }
+
+  if(topReason === "SYMBOL_COOLDOWN" || topReason === "COOLDOWN"){
+    recommendations.moreTrades.push(
+      "Cooldown blokkeert herentries. Verlaag cooldown pas na minimaal 30 gesloten trades."
+    );
+  }
+
+  if(topReason === "ENTRY_FILTERED" && avgConfluence >= 78){
+    recommendations.moreTrades.push(
+      "Veel setups halen bijna de eindcheck. Test almost iets ruimer, maar alleen bij confluence ≥ 85."
+    );
+  }
+
+  if(topReason === "OB_NEUTRAL_LOW_CONF" && avgConfluence >= 80){
+    recommendations.moreTrades.push(
+      "OB is vaak neutraal. Laat neutrale OB alleen door bij A-grade + confluence ≥ 88."
+    );
+  }
+
+  if(topReason === "LOW_CONFLUENCE"){
+    recommendations.higherWinrate.push(
+      "Veel setups missen bevestiging. Confluence niet versoepelen; scanner moet betere candidates sturen."
+    );
+  }
+
+  if(topReason === "OB_AGAINST"){
+    recommendations.higherWinrate.push(
+      "Orderboek staat vaak tegen de trade. Dit filter behouden voor hogere winrate."
+    );
+  }
+
+  if(topReason === "BAD_MARKET_QUALITY"){
+    recommendations.higherWinrate.push(
+      "Slechte spread/depth wordt correct geblokkeerd. Dit verhoogt betrouwbaarheid."
+    );
+  }
+
+  if(topReason === "NO_FLOW" || topReason === "LOW_VOL"){
+    recommendations.higherWinrate.push(
+      "Markt heeft te weinig flow/volatiliteit. Niet versoepelen; dit voorkomt chop trades."
+    );
+  }
+
+  if(topReason === "COUNTERTREND_NOT_ELITE"){
+    recommendations.higherWinrate.push(
+      "Countertrend trades worden streng gefilterd. Dit is goed voor blind volgen."
+    );
+  }
+
+  if(entries.length > 0 && avgConfluence < 75){
+    recommendations.higherWinrate.push(
+      "Entries hebben lage gemiddelde confluence. Maak entry alleen geldig bij confluence ≥ 78 of A-grade."
+    );
+  }
+
+  if(entries.length > 0 && avgConfluence >= 80){
+    recommendations.higherWinrate.push(
+      "Entry kwaliteit is gezond. Niet strenger maken zonder verliesdata."
+    );
+  }
+
+  if(entries.length > 0 && avgRR < 1){
+    recommendations.higherPnl.push(
+      "Gemiddelde RR is laag. Laat lage RR alleen toe bij A-grade en hoge confluence."
+    );
+  }
+
+  if(entries.length > 0 && avgRR >= 1.2){
+    recommendations.higherPnl.push(
+      "RR is gezond. PnL verbeteren zit dan vooral in trailing/partials, niet in entries."
+    );
+  }
+
+  if(topReason === "NO_LIQUIDATION_ROOM"){
+    recommendations.higherPnl.push(
+      "Te weinig ruimte naar liquidatie/TP-zone. Dit filter behouden; het beschermt PnL."
+    );
+  }
+
+  if(entries.length > 0 && avgConfluence >= 85){
+    recommendations.higherPnl.push(
+      "Sterke confluence. Voor A-grade trades kun je partial iets later houden om meer upside te pakken."
+    );
+  }
+
+  if(recommendations.moreTrades.length === 0){
+    recommendations.moreTrades.push(
+      "Meer trades nu niet forceren. Eerst huidige kwaliteit meten tot minimaal 20-30 gesloten trades."
+    );
+  }
+
+  if(recommendations.higherWinrate.length === 0){
+    recommendations.higherWinrate.push(
+      "Winrate-filtering ziet er normaal uit. Houd OB, confluence, funding en countertrend guards actief."
+    );
+  }
+
+  if(recommendations.higherPnl.length === 0){
+    recommendations.higherPnl.push(
+      "PnL-advies wordt sterker zodra trade-history gesloten WIN/LOSS trades bevat."
+    );
+  }
+
+  let advice = "TradeSystem gezond. Geen directe wijziging nodig.";
+
+  if(total === 0){
+    advice = "Geen echte tradeCandidates deze scan. Meer trades krijg je via scanner-input, niet door TradeSystem losser te maken.";
+  }else if(entries.length === 0 && waits.length > 0){
+    advice = `Geen entries. Grootste blokkade: ${topReason || "UNKNOWN"}. Bekijk advies hieronder.`;
+  }else if(entryRate > 25){
+    advice = "Veel entries. Let op overtrading; kwaliteit eventueel iets strenger.";
+  }else if(entryRate < 3 && total >= 10){
+    advice = "Weinig entries uit veel candidates. Alleen versoepelen als grootste blokkade geen kwaliteitsfilter is.";
+  }
+
+  return {
+    total,
+    entries: entries.length,
+    waits: waits.length,
+    holds: holds.length,
+    partials: partials.length,
+    exits: exits.length,
+    entryRate,
+    waitRate: pct(waits.length, total),
+    avgConfluence,
+    avgRR,
+    avgScore: avg("score"),
+    waitReasons,
+    recommendations,
+    advice
+  };
 }
 
+
+// ================= RENDER TRADE SYSTEM =================
 function renderTradeSystemAnalysis(data){
+
   const box = el("tradeSystemAnalysis");
   if(!box) return;
 
   const ts = data.tradeSystemAnalysis || buildTradeSystemFallback(data);
-  const waitReasons = Array.isArray(ts.waitReasons) ? ts.waitReasons : [];
+
+  const waitReasons = Array.isArray(ts.waitReasons)
+    ? ts.waitReasons
+    : [];
+
+  const rec = ts.recommendations || {
+    moreTrades: [],
+    higherWinrate: [],
+    higherPnl: []
+  };
+
+  const recHtml = `
+    <div class="system-advice">
+      <strong>📈 Meer trades</strong><br>
+      ${(rec.moreTrades || []).map(x => `• ${x}`).join("<br>")}
+    </div>
+
+    <div class="system-advice">
+      <strong>🎯 Hogere winrate</strong><br>
+      ${(rec.higherWinrate || []).map(x => `• ${x}`).join("<br>")}
+    </div>
+
+    <div class="system-advice">
+      <strong>💰 Hogere PnL</strong><br>
+      ${(rec.higherPnl || []).map(x => `• ${x}`).join("<br>")}
+    </div>
+  `;
 
   const rows = waitReasons.length
     ? waitReasons.map(r => `
-        <div class="blockade-card">
-          <div class="b-header">
-            <span class="b-name">${r.key}</span>
-            <div class="b-stats">
-              <span class="b-badge">${r.count}x</span>
-              <span class="b-badge" style="color: #fff; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2);">${r.pct}%</span>
-            </div>
+        <div style="
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 12px;
+          padding: 12px;
+          margin-bottom: 10px;
+        ">
+          <div style="display:flex; justify-content:space-between; gap:8px; margin-bottom:6px;">
+            <span style="font-weight:800; color:#fff;">${r.key}</span>
+            <span style="color:#a78bfa; font-weight:800;">${r.count}x · ${r.pct}%</span>
           </div>
-          <div class="b-advice">${r.advice}</div>
+          <div style="color:var(--muted); font-size:13px; line-height:1.5;">
+            ${r.advice}
+          </div>
         </div>
       `).join("")
-    : `<div class="muted" style="text-align:center; padding: 10px;">Geen blokkades deze scan.</div>`;
+    : `<div class="muted" style="text-align:center; padding:10px;">Geen blokkades deze scan.</div>`;
 
   box.innerHTML = `
-    <h2 style="color:#a78bfa; margin:0 0 14px; font-size: 20px;">⚡ TradeSystem Analyse</h2>
+    <h2 style="color:#a78bfa; margin:0 0 14px; font-size:20px;">⚡ TradeSystem Analyse</h2>
 
     <div class="metric-grid">
       <div class="metric-box"><span>Total Candidates</span><strong>${ts.total || 0}</strong></div>
@@ -168,18 +400,26 @@ function renderTradeSystemAnalysis(data){
       <div class="metric-box"><span>Avg RR</span><strong>${ts.avgRR || 0}</strong></div>
     </div>
 
-    <div class="system-advice">💡 ${ts.advice || "Geen advies beschikbaar."}</div>
-    
-    <div style="margin-top: 20px; margin-bottom: 8px; font-size: 11px; font-weight: 800; color: #a78bfa; letter-spacing: 1px; text-transform: uppercase;">Top Blokkades</div>
-    
-    <div class="blockade-list">
+    <div class="system-advice">
+      💡 ${ts.advice || "Geen advies beschikbaar."}
+    </div>
+
+    ${recHtml}
+
+    <div style="margin-top:20px; margin-bottom:8px; font-size:11px; font-weight:800; color:#a78bfa; letter-spacing:1px; text-transform:uppercase;">
+      Top Blokkades
+    </div>
+
+    <div>
       ${rows}
     </div>
   `;
 }
 
+
 // ================= FUNNEL BLOKKEN =================
 function block(title, data, side){
+
   if(!data) return "";
 
   const adviceId = `advice-${side}-${title}`;
@@ -215,22 +455,32 @@ function block(title, data, side){
   `;
 }
 
+
 // ================= LOAD SCRIPT =================
 async function load(){
+
   try{
-    const res = await fetch(`/api/public-latest?t=${Date.now()}`, { cache: "no-store" });
+
+    const res = await fetch(`/api/public-latest?t=${Date.now()}`, {
+      cache: "no-store"
+    });
+
     const data = await res.json();
 
-    if(!data?.ok) throw new Error(data?.error || "API error");
+    if(!data?.ok){
+      throw new Error(data?.error || "API error");
+    }
 
     window.latestAdvice = data.advice || {};
 
     if(data.btc && data.regime){
-      el("statusLine").innerText = `BTC: ${data.btc.state} | Regime: ${data.regime} | Laatste scan: ${fmtTime(data.updatedAt || data.storedAt)}`;
+      el("statusLine").innerText =
+        `BTC: ${data.btc.state} | Regime: ${data.regime} | Laatste scan: ${fmtTime(data.updatedAt || data.storedAt)}`;
     }
 
     if(!data.analytics){
-      el("analytics").innerHTML = "<p style='color: var(--red);'>Geen analytics data gevonden.</p>";
+      el("analytics").innerHTML =
+        "<p style='color: var(--red);'>Geen analytics data gevonden.</p>";
       return;
     }
 
@@ -241,6 +491,7 @@ async function load(){
     let html = "";
 
     for(const side of ["bull", "bear"]){
+
       const color = side === "bull" ? "var(--green)" : "var(--red)";
       const icon = side === "bull" ? "🟢" : "🔴";
 
@@ -255,12 +506,24 @@ async function load(){
 
     el("analytics").innerHTML = html;
 
-  } catch(e) {
+  }catch(e){
+
     console.error("Analytics load error:", e);
-    if(el("tradeSystemAnalysis")) el("tradeSystemAnalysis").innerHTML = `<h2 style="color:#a78bfa; margin:0 0 14px;">⚡ TradeSystem Analyse</h2><p style="color:var(--red);">TradeSystem analyse kon niet geladen worden.</p>`;
-    if(el("analytics")) el("analytics").innerHTML = "<p style='color:red;'>Fout bij laden</p>";
+
+    if(el("tradeSystemAnalysis")){
+      el("tradeSystemAnalysis").innerHTML = `
+        <h2 style="color:#a78bfa; margin:0 0 14px;">⚡ TradeSystem Analyse</h2>
+        <p style="color:var(--red);">TradeSystem analyse kon niet geladen worden.</p>
+      `;
+    }
+
+    if(el("analytics")){
+      el("analytics").innerHTML =
+        "<p style='color:red;'>Fout bij laden</p>";
+    }
   }
 }
+
 
 setInterval(load, 15000);
 load();
