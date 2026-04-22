@@ -42,6 +42,15 @@ function normalizeScanSide(side){
 }
 
 
+// ================= NOTIFY NORMALIZER =================
+function normalizeNotify(value){
+
+  const v = String(value || "").toLowerCase();
+
+  return v === "true" || v === "1" || v === "yes";
+}
+
+
 // ================= SIDE LOGIC =================
 function directionAllowed(c, btc, side){
 
@@ -278,6 +287,10 @@ export async function buildScanPayload(options = {}){
 
   const scanSide = normalizeScanSide(options.side);
 
+  // Standaard notify=true voor cron/backend.
+  // public-latest moet expliciet notify:false meegeven.
+  const notify = options.notify !== false;
+
   initDefaultFilters();
   resetAnalytics();
 
@@ -416,7 +429,8 @@ export async function buildScanPayload(options = {}){
     tradeCandidates,
     btc,
     "auto",
-    regime
+    regime,
+    { notify }
   );
 
   const analytics = getAnalytics();
@@ -428,6 +442,7 @@ export async function buildScanPayload(options = {}){
     ok: true,
     scanSide,
     scanMode: scanSide,
+    notify,
     btc,
     regime,
     market,
@@ -458,7 +473,15 @@ export default async function handler(req,res){
 
   try{
     const side = normalizeScanSide(req?.query?.side);
-    const data = await buildScanPayload({ side });
+
+    // Direct /api/scanner is standaard STIL.
+    // Alleen met ?notify=true stuurt hij Discord.
+    const notify = normalizeNotify(req?.query?.notify);
+
+    const data = await buildScanPayload({
+      side,
+      notify
+    });
 
     return res.status(200).json(data);
 
