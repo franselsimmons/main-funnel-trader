@@ -1,4 +1,5 @@
 import { getLatestScan } from "../lib/scanStore.js";
+import { buildScanPayload } from "./scanner.js";
 
 export default async function handler(req, res){
 
@@ -16,14 +17,16 @@ export default async function handler(req, res){
       });
     }
 
-    // BELANGRIJK:
-    // Hier GEEN buildScanPayload() meer.
-    // De site mag nooit scanner triggeren, anders krijg je Discord pas bij openen.
+    // Cache leeg door Vercel cold start.
+    // Dan wel data bouwen voor UI, maar ZONDER Discord.
+    const fresh = await buildScanPayload({
+      side: "both",
+      notify: false
+    });
+
     return res.status(200).json({
-      ok: false,
-      source: "cache",
-      error: "no_cached_scan",
-      message: "Geen scan in runtime memory. Wacht op cron of trigger /api/cron?side=bull en /api/cron?side=bear handmatig.",
+      ...fresh,
+      source: "silent_scan",
       servedAt: Date.now()
     });
 
@@ -33,7 +36,6 @@ export default async function handler(req, res){
 
     return res.status(500).json({
       ok: false,
-      source: "cache",
       error: err?.message || "public_latest_failed",
       servedAt: Date.now()
     });
