@@ -72,21 +72,18 @@ function normalizeStore(value, fallback = true){
 }
 
 
-// ================= SIDE LOGIC =================
-function directionAllowed(c, btc, side){
+// ================= STRICT SIDE LOGIC FOR REAL TRADES =================
+function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
 
-  // ================= BULL SCAN =================
   if(side === "bull"){
 
-    // BTC bullish → normale longs
     if(btc.state === "BULLISH"){
       return ch24 > 3 && ch1 > 0.5;
     }
 
-    // BTC bearish → alleen sterke longs tegen trend
     if(btc.state === "BEARISH"){
       return ch24 > 8 && ch1 > 1.5;
     }
@@ -94,17 +91,67 @@ function directionAllowed(c, btc, side){
     return false;
   }
 
-  // ================= BEAR SCAN =================
   if(side === "bear"){
 
-    // BTC bearish → normale shorts
     if(btc.state === "BEARISH"){
       return ch24 < -3 && ch1 < -0.5;
     }
 
-    // BTC bullish → alleen sterke shorts tegen trend
     if(btc.state === "BULLISH"){
       return ch24 < -5 && ch1 < -1;
+    }
+
+    return false;
+  }
+
+  return false;
+}
+
+
+// ================= LOOSE SIDE LOGIC FOR UI / FUNNEL =================
+function displayDirectionAllowed(c, btc, side){
+
+  const ch24 = Number(c.change24 || 0);
+  const ch1 = Number(c.change1h || 0);
+  const vm = Number(c.vm || 0);
+
+  if(side === "bull"){
+
+    if(btc.state === "BULLISH"){
+      return (
+        ch24 > 1.2 ||
+        ch1 > 0.25 ||
+        (vm > 0.20 && ch24 > 0)
+      );
+    }
+
+    if(btc.state === "BEARISH"){
+      return (
+        ch24 > 4 ||
+        ch1 > 0.8 ||
+        (vm > 0.30 && ch24 > 2)
+      );
+    }
+
+    return false;
+  }
+
+  if(side === "bear"){
+
+    if(btc.state === "BEARISH"){
+      return (
+        ch24 < -1.2 ||
+        ch1 < -0.25 ||
+        (vm > 0.20 && ch24 < 0)
+      );
+    }
+
+    if(btc.state === "BULLISH"){
+      return (
+        ch24 < -4 ||
+        ch1 < -0.8 ||
+        (vm > 0.30 && ch24 < -2)
+      );
     }
 
     return false;
@@ -143,19 +190,34 @@ function calculateScore(c, regime, side){
   if(ch24 > 8) score += 35;
   else if(ch24 > 5) score += 25;
   else if(ch24 > 2) score += 15;
+  else if(ch24 > 1) score += 8;
 
   if(ch1 > 1.2) score += 25;
   else if(ch1 > 0.5) score += 15;
+  else if(ch1 > 0.2) score += 7;
 
   // volume / marketcap
   if(vm > 0.5) score += 25;
   else if(vm > 0.3) score += 15;
   else if(vm > 0.15) score += 8;
+  else if(vm > 0.08) score += 4;
 
   if(regime === "LOW_VOL") score -= 15;
   if(regime === "HIGH_VOL") score += 5;
 
   return Math.max(0, Math.min(score, 100));
+}
+
+
+// ================= FALLBACK STAGE FOR UI ONLY =================
+function fallbackStage(score, flow){
+
+  if(flow === "TREND" && score >= 65) return "buildup";
+  if(flow === "TREND" && score >= 55) return "radar";
+  if(flow === "BUILDING" && score >= 45) return "radar";
+  if(flow === "EARLY" && score >= 35) return "radar";
+
+  return null;
 }
 
 
@@ -217,6 +279,25 @@ function emptyFunnel(){
     bull: { entry: [], almost: [], buildup: [], radar: [] },
     bear: { entry: [], almost: [], buildup: [], radar: [] }
   };
+}
+
+
+// ================= FUNNEL COUNT =================
+function countFunnel(funnel){
+
+  if(!funnel) return 0;
+
+  let total = 0;
+
+  for(const side of ["bull", "bear"]){
+    for(const stage of ["entry", "almost", "buildup", "radar"]){
+      total += Array.isArray(funnel?.[side]?.[stage])
+        ? funnel[side][stage].length
+        : 0;
+    }
+  }
+
+  return total;
 }
 
 
@@ -282,6 +363,7 @@ function mergeWithPreviousSideScan(currentPayload, scanSide){
     ...previous,
     ...currentPayload,
     funnel: mergedFunnel,
+    funnelCount: countFunnel(mergedFunnel),
     trades: mergedTrades,
     analytics: mergedAnalytics,
     advice: mergedAdvice,
@@ -314,7 +396,6 @@ export async function buildScanPayload(options = {}){
 
   // Standaard store=true voor cron/backend.
   // public-latest moet expliciet store:false meegeven.
-  // Daardoor overschrijft een silent scan de echte cron-cache niet.
   const store = options.store !== false;
 
   initDefaultFilters();
@@ -376,13 +457,20 @@ export async function buildScanPayload(options = {}){
 
     activeSymbols.push(base.symbol);
 
-    // Ruim genoeg voor scanner, tradeSystem bewaakt kwaliteit.
-    if(base.vm < 0.10) continue;
-    if(Math.abs(base.change24) < 2.5) continue;
+    // UI ruimer, tradeSystem bewaakt echte kwaliteit.
+    if(base.vm < 0.06) continue;
+
+    if(
+      Math.abs(base.change24) < 1.0 &&
+      Math.abs(base.change1h) < 0.2
+    ){
+      continue;
+    }
 
     for(const direction of sidesToScan){
 
-      if(!directionAllowed(base, btc, direction)) continue;
+      // UI/funnel gebruikt ruimere logic
+      if(!displayDirectionAllowed(base, btc, direction)) continue;
 
       const flow = detectFlow(base);
       const score = calculateScore(base, regime, direction);
@@ -399,34 +487,44 @@ export async function buildScanPayload(options = {}){
       const key = `${base.symbol}_${direction}`;
       const prev = memory[key] || { stage: "radar" };
 
-      const filterStage =
+      const realFilterStage =
         direction === "bull"
           ? bullFilter(coin)
           : bearFilter(coin);
 
-      if(!filterStage) continue;
+      // Als echte filter geen stage geeft, mag hij alsnog zichtbaar zijn in UI.
+      // Maar hij wordt dan géén tradeCandidate.
+      const uiStage = realFilterStage || fallbackStage(score, flow);
 
-      const newStage = mergeStage(prev.stage, filterStage);
+      if(!uiStage) continue;
+
+      const newStage = realFilterStage
+        ? mergeStage(prev.stage, realFilterStage)
+        : uiStage;
 
       coin.stage = newStage;
+      coin.stageSource = realFilterStage ? "filter" : "fallback";
 
       funnel[direction][newStage].push(coin);
       logAnalytics(coin);
 
-      // ================= QUALITY MODE =================
-      // Minder trades, hogere kwaliteit:
-      // - entry vanaf score 75
-      // - almost alleen elite vanaf score 88
+      // ================= QUALITY MODE FOR REAL TRADES ONLY =================
+      // Alleen echte filter-stages mogen naar tradeSystem.
+      // UI fallback coins blijven alleen zichtbaar, geen Discord.
       if(
+        realFilterStage &&
+        strictDirectionAllowed(base, btc, direction) &&
         (
-          newStage === "entry" &&
-          score >= 75 &&
-          flow === "TREND"
-        ) ||
-        (
-          newStage === "almost" &&
-          score >= 88 &&
-          flow === "TREND"
+          (
+            newStage === "entry" &&
+            score >= 75 &&
+            flow === "TREND"
+          ) ||
+          (
+            newStage === "almost" &&
+            score >= 88 &&
+            flow === "TREND"
+          )
         )
       ){
         tradeCandidates.push(coin);
@@ -443,7 +541,11 @@ export async function buildScanPayload(options = {}){
   }
 
   memory = cleanMemory(memory, activeSymbols);
-  await saveStageMemory(memory);
+
+  // Silent scans voor UI mogen stage memory niet overschrijven.
+  if(store){
+    await saveStageMemory(memory);
+  }
 
   for(const side of ["bull", "bear"]){
     for(const stageKey of Object.keys(funnel[side])){
@@ -474,6 +576,7 @@ export async function buildScanPayload(options = {}){
     regime,
     market,
     funnel,
+    funnelCount: countFunnel(funnel),
     trades,
     analytics,
     advice,
@@ -489,9 +592,8 @@ export async function buildScanPayload(options = {}){
 
   const finalPayload = mergeWithPreviousSideScan(currentPayload, scanSide);
 
-  // Belangrijk:
   // Alleen echte cron/backend scans mogen latestScan overschrijven.
-  // Silent scans voor de UI niet.
+  // Silent UI scans niet.
   if(store){
     setLatestScan(finalPayload);
   }
