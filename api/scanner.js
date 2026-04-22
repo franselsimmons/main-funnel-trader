@@ -504,14 +504,154 @@ function buildTradeSystemAnalysis(trades){
   const entryRate = pct(entries.length, total);
   const waitRate = pct(waits.length, total);
 
-  let advice = "TradeSystem gezond. Geen aanpassing nodig.";
+  const avgConfluence = avg(list, "confluence");
+  const avgRR = avg(list, "rr");
+  const avgScore = avg(list, "score");
+
+  const topReason = waitReasons[0]?.key || null;
+  const topReasonPct = waitReasons[0]?.pct || 0;
+
+  const recommendations = {
+    moreTrades: [],
+    higherWinrate: [],
+    higherPnl: []
+  };
+
+  // ================= MEER TRADES =================
+  if(total === 0){
+    recommendations.moreTrades.push(
+      "Scanner stuurt geen echte tradeCandidates. Meer trades krijg je via scanner-input, niet door TradeSystem filters los te gooien."
+    );
+    recommendations.moreTrades.push(
+      "Veilige test: almost candidate threshold van 88 naar 85, terwijl TradeSystem de eindfilter blijft."
+    );
+  }
+
+  if(total >= 8 && entryRate < 5){
+    recommendations.moreTrades.push(
+      "Entry-rate is laag. Stuur iets meer candidates naar TradeSystem in plaats van OB/confluence filters te versoepelen."
+    );
+  }
+
+  if(topReason === "MAX_OPEN_TRADES"){
+    recommendations.moreTrades.push(
+      "Max open trades blokkeert entries. Overweeg MAX_OPEN_TRADES van 3 naar 4, maar alleen als gesloten trade-history positief blijft."
+    );
+  }
+
+  if(topReason === "SYMBOL_COOLDOWN" || topReason === "COOLDOWN"){
+    recommendations.moreTrades.push(
+      "Cooldown blokkeert herentries. Verlaag cooldown pas na minimaal 30 gesloten trades."
+    );
+  }
+
+  if(topReason === "ENTRY_FILTERED" && avgConfluence >= 78){
+    recommendations.moreTrades.push(
+      "Veel setups halen bijna de eindcheck. Test almost iets ruimer, maar alleen bij confluence ≥ 85."
+    );
+  }
+
+  if(topReason === "OB_NEUTRAL_LOW_CONF" && avgConfluence >= 80){
+    recommendations.moreTrades.push(
+      "OB is vaak neutraal. Laat neutrale OB alleen door bij A-grade + confluence ≥ 88."
+    );
+  }
+
+  // ================= HOGERE WINRATE =================
+  if(topReason === "LOW_CONFLUENCE"){
+    recommendations.higherWinrate.push(
+      "Veel setups missen bevestiging. Confluence niet versoepelen; scanner moet betere candidates sturen."
+    );
+  }
+
+  if(topReason === "OB_AGAINST"){
+    recommendations.higherWinrate.push(
+      "Orderboek staat vaak tegen de trade. Dit filter behouden voor hogere winrate."
+    );
+  }
+
+  if(topReason === "BAD_MARKET_QUALITY"){
+    recommendations.higherWinrate.push(
+      "Slechte spread/depth wordt correct geblokkeerd. Dit verhoogt betrouwbaarheid."
+    );
+  }
+
+  if(topReason === "NO_FLOW" || topReason === "LOW_VOL"){
+    recommendations.higherWinrate.push(
+      "Markt heeft te weinig flow/volatiliteit. Niet versoepelen; dit voorkomt chop trades."
+    );
+  }
+
+  if(topReason === "COUNTERTREND_NOT_ELITE"){
+    recommendations.higherWinrate.push(
+      "Countertrend trades worden streng gefilterd. Dit is goed voor blind volgen."
+    );
+  }
+
+  if(entries.length > 0 && avgConfluence < 75){
+    recommendations.higherWinrate.push(
+      "Entries hebben lage gemiddelde confluence. Maak entry alleen geldig bij confluence ≥ 78 of A-grade."
+    );
+  }
+
+  if(entries.length > 0 && avgConfluence >= 80){
+    recommendations.higherWinrate.push(
+      "Entry kwaliteit is gezond. Niet strenger maken zonder verliesdata."
+    );
+  }
+
+  // ================= HOGERE PNL =================
+  if(entries.length > 0 && avgRR < 1){
+    recommendations.higherPnl.push(
+      "Gemiddelde RR is laag. Laat lage RR alleen toe bij A-grade en hoge confluence."
+    );
+  }
+
+  if(entries.length > 0 && avgRR >= 1.2){
+    recommendations.higherPnl.push(
+      "RR is gezond. PnL verbeteren zit dan vooral in trailing/partials, niet in entries."
+    );
+  }
+
+  if(topReason === "NO_LIQUIDATION_ROOM"){
+    recommendations.higherPnl.push(
+      "Te weinig ruimte naar liquidatie/TP-zone. Dit filter behouden; het beschermt PnL."
+    );
+  }
+
+  if(entries.length > 0 && avgConfluence >= 85){
+    recommendations.higherPnl.push(
+      "Sterke confluence. Voor A-grade trades kun je partial iets later houden om meer upside te pakken."
+    );
+  }
+
+  // ================= DEFAULTS =================
+  if(recommendations.moreTrades.length === 0){
+    recommendations.moreTrades.push(
+      "Meer trades nu niet forceren. Eerst huidige kwaliteit meten tot minimaal 20-30 gesloten trades."
+    );
+  }
+
+  if(recommendations.higherWinrate.length === 0){
+    recommendations.higherWinrate.push(
+      "Winrate-filtering ziet er normaal uit. Houd OB, confluence, funding en countertrend guards actief."
+    );
+  }
+
+  if(recommendations.higherPnl.length === 0){
+    recommendations.higherPnl.push(
+      "PnL-advies wordt sterker zodra trade-history gesloten WIN/LOSS trades bevat."
+    );
+  }
+
+  let advice = "TradeSystem gezond. Geen directe wijziging nodig.";
 
   if(total === 0){
-    advice = "Geen echte tradeCandidates deze scan. Funnel kan gevuld zijn, maar TradeSystem kreeg niets om te beoordelen.";
+    advice = "Geen echte tradeCandidates deze scan. Meer trades krijg je via scanner-input, niet door TradeSystem losser te maken.";
   }else if(entries.length === 0 && waits.length > 0){
-    advice = "TradeSystem blokkeert alles. Kijk naar grootste WAIT reason voordat je versoepelt.";
+    advice = `Geen entries. Grootste blokkade: ${topReason || "UNKNOWN"}. Bekijk advies hieronder.`;
   }else if(entryRate > 25){
-    advice = "Veel entries. Kwaliteit bewaken, eventueel iets strenger.";
+    advice = "Veel entries. Let op overtrading; kwaliteit eventueel iets strenger.";
   }else if(entryRate < 3 && total >= 10){
     advice = "Weinig entries uit veel candidates. Alleen versoepelen als grootste blokkade geen kwaliteitsfilter is.";
   }
@@ -527,9 +667,12 @@ function buildTradeSystemAnalysis(trades){
     entryRate,
     waitRate,
 
-    avgConfluence: avg(list, "confluence"),
-    avgRR: avg(list, "rr"),
-    avgScore: avg(list, "score"),
+    avgConfluence,
+    avgRR,
+    avgScore,
+
+    topReason,
+    topReasonPct,
 
     actions: toRows(actionGroup, total),
     grades: toRows(gradeGroup, total),
@@ -537,6 +680,7 @@ function buildTradeSystemAnalysis(trades){
     sides: toRows(sideGroup, total),
     waitReasons,
 
+    recommendations,
     advice
   };
 }
@@ -696,7 +840,6 @@ export async function buildScanPayload(options = {}){
     const symbolTradable =
       validSymbols.size === 0 || validSymbols.has(base.symbol);
 
-    // UI ruim houden.
     if(base.vm < 0.02) continue;
 
     if(
@@ -744,14 +887,10 @@ export async function buildScanPayload(options = {}){
 
       funnel[direction][newStage].push(coin);
 
-      // Belangrijk:
-      // Alleen echte filter-coins tellen mee voor analyse.
-      // UI fallback mag systeemadvies niet vervuilen.
       if(!coin.uiOnly && coin.stageSource === "filter"){
         logAnalytics(coin);
       }
 
-      // ================= REAL TRADE CANDIDATES ONLY =================
       if(
         symbolTradable &&
         realFilterStage &&
@@ -782,7 +921,6 @@ export async function buildScanPayload(options = {}){
     }
   }
 
-  // Zorg dat frontend niet leeg wordt.
   if(scanSide === "both" || scanSide === "bull"){
     fillUiFallback({
       rawCoins,
