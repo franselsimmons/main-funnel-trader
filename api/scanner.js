@@ -84,7 +84,6 @@ function safeStage(stage){
 
 
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
-// Alleen deze logic mag echte tradeCandidates maken.
 function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -121,8 +120,6 @@ function strictDirectionAllowed(c, btc, side){
 
 
 // ================= DISPLAY LOGIC FOR UI/FUNNEL =================
-// Ruimer dan trade logic, zodat alle frontend-pagina's gevuld blijven.
-// Deze logic maakt GEEN extra Discord/trades.
 function displayDirectionAllowed(c, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -321,9 +318,6 @@ function sortFunnel(funnel){
 
 
 // ================= UI FALLBACK FILL =================
-// Vult alleen frontend-funnel.
-// GEEN Discord.
-// GEEN tradeCandidate.
 function fillUiFallback({
   rawCoins,
   regime,
@@ -373,9 +367,6 @@ function fillUiFallback({
   list.sort((a,b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
 
   let added = 0;
-
-  // Als entry leeg is, zet 1 UI-only coin in entry.
-  // Dit is puur voor frontend counts.
   let entrySeeded = funnel[side].entry.length > 0;
 
   for(const coin of list){
@@ -397,6 +388,157 @@ function fillUiFallback({
 
     added++;
   }
+}
+
+
+// ================= TRADE SYSTEM ANALYSIS =================
+function pct(count, total){
+
+  if(!total) return 0;
+
+  return Number(((count / total) * 100).toFixed(1));
+}
+
+
+function avg(list, field){
+
+  const nums = list
+    .map(x => Number(x?.[field] || 0))
+    .filter(n => Number.isFinite(n));
+
+  if(!nums.length) return 0;
+
+  return Number((nums.reduce((a,b) => a + b, 0) / nums.length).toFixed(2));
+}
+
+
+function groupByCount(list, field){
+
+  const out = {};
+
+  for(const item of list){
+
+    const key = String(item?.[field] || "UNKNOWN");
+
+    if(!out[key]){
+      out[key] = 0;
+    }
+
+    out[key]++;
+  }
+
+  return out;
+}
+
+
+function toRows(group, total){
+
+  return Object.entries(group)
+    .map(([key, count]) => ({
+      key,
+      count,
+      pct: pct(count, total)
+    }))
+    .sort((a,b) => b.count - a.count);
+}
+
+
+function getReasonAdvice(reason){
+
+  const map = {
+    MAX_OPEN_TRADES: "Max open trades bereikt. Geen filterprobleem.",
+    SYMBOL_COOLDOWN: "Cooldown voorkomt dubbele entries op dezelfde coin.",
+    COOLDOWN: "Cooldown actief na vorige trade.",
+    OPPOSITE_POSITION_OPEN: "Tegengestelde positie wordt correct geblokkeerd.",
+    DUPLICATE_PROCESSING_LOCK: "Duplicate protection werkt.",
+    LOW_VOL: "Te weinig volatiliteit. Correct geblokkeerd.",
+    NO_FLOW: "Geen duidelijke flow. Correct geblokkeerd.",
+    LOW_CONFLUENCE: "Setup mist bevestiging. Confluence niet versoepelen.",
+    FAKE_BREAKOUT: "Fake breakout bescherming werkt.",
+    OB_AGAINST: "Orderboek staat tegen trade. Correct geblokkeerd.",
+    NO_LIQUIDATION_ROOM: "Te weinig ruimte naar liquidation/TP-zone.",
+    BAD_MARKET_QUALITY: "Spread/depth slecht. Correct geblokkeerd.",
+    OB_NEUTRAL_LOW_CONF: "Orderboek neutraal. Alleen doorlaten bij hoge confluence.",
+    EXTREME_FUNDING: "Funding-risico. Correct geblokkeerd.",
+    BULL_CROWDED_FUNDING: "Long te crowded. Correct geblokkeerd.",
+    BEAR_CROWDED_FUNDING: "Short te crowded. Correct geblokkeerd.",
+    BTC_BULL_BLOCK_SHORT: "Short tegen bullish BTC geblokkeerd.",
+    BTC_BEAR_BLOCK_LONG: "Long tegen bearish BTC geblokkeerd.",
+    COUNTERTREND_NOT_ELITE: "Countertrend is niet elite genoeg. Correct.",
+    ENTRY_FILTERED: "Entry kwam niet door laatste kwaliteitscheck."
+  };
+
+  if(String(reason || "").startsWith("SYMBOL_ALREADY_OPEN_")){
+    return "Er staat al een positie open op deze coin. Correct geblokkeerd.";
+  }
+
+  return map[reason] || "Geen specifieke actie nodig.";
+}
+
+
+function buildTradeSystemAnalysis(trades){
+
+  const list = Array.isArray(trades)
+    ? trades
+    : [];
+
+  const total = list.length;
+
+  const entries = list.filter(t => t.action === "ENTRY");
+  const waits = list.filter(t => t.action === "WAIT");
+  const holds = list.filter(t => t.action === "HOLD");
+  const partials = list.filter(t => t.action === "PARTIAL");
+  const exits = list.filter(t => t.action === "EXIT");
+
+  const reasonGroup = groupByCount(waits, "reason");
+  const gradeGroup = groupByCount(list, "grade");
+  const actionGroup = groupByCount(list, "action");
+  const obGroup = groupByCount(list, "obBias");
+  const sideGroup = groupByCount(list, "side");
+
+  const waitReasons = toRows(reasonGroup, waits.length).map(row => ({
+    ...row,
+    advice: getReasonAdvice(row.key)
+  }));
+
+  const entryRate = pct(entries.length, total);
+  const waitRate = pct(waits.length, total);
+
+  let advice = "TradeSystem gezond. Geen aanpassing nodig.";
+
+  if(total === 0){
+    advice = "Geen echte tradeCandidates deze scan. Funnel kan gevuld zijn, maar TradeSystem kreeg niets om te beoordelen.";
+  }else if(entries.length === 0 && waits.length > 0){
+    advice = "TradeSystem blokkeert alles. Kijk naar grootste WAIT reason voordat je versoepelt.";
+  }else if(entryRate > 25){
+    advice = "Veel entries. Kwaliteit bewaken, eventueel iets strenger.";
+  }else if(entryRate < 3 && total >= 10){
+    advice = "Weinig entries uit veel candidates. Alleen versoepelen als grootste blokkade geen kwaliteitsfilter is.";
+  }
+
+  return {
+    total,
+    entries: entries.length,
+    waits: waits.length,
+    holds: holds.length,
+    partials: partials.length,
+    exits: exits.length,
+
+    entryRate,
+    waitRate,
+
+    avgConfluence: avg(list, "confluence"),
+    avgRR: avg(list, "rr"),
+    avgScore: avg(list, "score"),
+
+    actions: toRows(actionGroup, total),
+    grades: toRows(gradeGroup, total),
+    obBias: toRows(obGroup, total),
+    sides: toRows(sideGroup, total),
+    waitReasons,
+
+    advice
+  };
 }
 
 
@@ -468,6 +610,7 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
     trades: mergedTrades,
     analytics: mergedAnalytics,
     advice: mergedAdvice,
+    tradeSystemAnalysis: buildTradeSystemAnalysis(mergedTrades),
     candidatesBull,
     candidatesBear,
     candidates: candidatesBull + candidatesBear,
@@ -600,7 +743,13 @@ export async function buildScanPayload(options = {}){
       coin.uiOnly = !realFilterStage;
 
       funnel[direction][newStage].push(coin);
-      logAnalytics(coin);
+
+      // Belangrijk:
+      // Alleen echte filter-coins tellen mee voor analyse.
+      // UI fallback mag systeemadvies niet vervuilen.
+      if(!coin.uiOnly && coin.stageSource === "filter"){
+        logAnalytics(coin);
+      }
 
       // ================= REAL TRADE CANDIDATES ONLY =================
       if(
@@ -672,6 +821,7 @@ export async function buildScanPayload(options = {}){
 
   const analytics = getAnalytics();
   const advice = generateAdvice(analytics);
+  const tradeSystemAnalysis = buildTradeSystemAnalysis(trades);
 
   const now = Date.now();
 
@@ -691,6 +841,7 @@ export async function buildScanPayload(options = {}){
     trades,
     analytics,
     advice,
+    tradeSystemAnalysis,
     total: rawCoins.length,
     candidates: tradeCandidates.length,
     candidatesBull,
