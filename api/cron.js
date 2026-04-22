@@ -10,25 +10,20 @@ function normalizeSide(side){
   return null;
 }
 
-
-// fallback als query niet meekomt
 function inferSideFromMinute(){
 
   const minute = new Date().getUTCMinutes();
 
-  // bull schema: 0,15,30,45
   if([0, 15, 30, 45].includes(minute)){
     return "bull";
   }
 
-  // bear schema: 7,22,37,52
   if([7, 22, 37, 52].includes(minute)){
     return "bear";
   }
 
   return "both";
 }
-
 
 export default async function handler(req, res){
 
@@ -39,14 +34,9 @@ export default async function handler(req, res){
     const querySide = normalizeSide(req?.query?.side);
     const side = querySide || inferSideFromMinute();
 
-    console.log("CRON RUN:", {
-      side,
-      querySide,
-      at: new Date().toISOString()
-    });
-
     const data = await buildScanPayload({
-      side
+      side,
+      notify: true
     });
 
     return res.status(200).json({
