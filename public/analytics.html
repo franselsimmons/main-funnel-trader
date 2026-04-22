@@ -6,260 +6,87 @@
   <title>Analytics Desk</title>
   <link rel="stylesheet" href="main.css">
   <style>
-    .header h1 {
-      color: #a78bfa;
-      margin: 0 0 4px;
-      font-size: 28px;
-    }
+    /* Algemene Componenten */
+    .muted { color: var(--muted); }
+    
+    /* Header Styling */
+    .header h1 { color: #a78bfa; margin: 0 0 4px; font-size: 28px; }
+    #statusLine { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
 
-    #statusLine {
-      color: var(--muted);
-      font-size: 14px;
-      margin-bottom: 16px;
-    }
+    /* Navigatie balk */
+    .nav { display: flex; gap: 5px; margin-bottom: 24px; }
+    .btn { flex: 1; text-align: center; padding: 10px 4px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .btn.active.purple { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
 
-    .nav {
-      display: flex;
-      gap: 5px;
-      margin-bottom: 24px;
-    }
+    /* Titel Stijlen */
+    .side-title { font-size: 20px; font-weight: 800; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; letter-spacing: 1px; }
 
-    .btn {
-      flex: 1;
-      text-align: center;
-      padding: 10px 4px;
-      border-radius: 12px;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      color: var(--text);
-      text-decoration: none;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
+    /* Analyse Kaarten (Funnels) */
+    .analysis-card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 18px; margin-bottom: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+    .a-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .a-title { font-size: 16px; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
+    .a-total { background: rgba(255, 255, 255, 0.08); padding: 6px 12px; border-radius: 12px; font-size: 14px; font-weight: 800; }
+    
+    /* Statistieken (Grid) */
+    .a-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .a-stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; background: rgba(255, 255, 255, 0.02); padding: 8px 12px; border-radius: 10px; }
+    .a-stat-label { color: var(--muted); }
+    .a-stat-val { font-weight: 800; font-size: 14px; }
+    .a-stat-val.good { color: var(--green); }
 
-    .btn.active.purple {
-      background: #8b5cf6;
-      color: #fff;
-      border-color: #8b5cf6;
-    }
+    /* Accordeon Advies (In Kaarten) */
+    .advice-content { display: none; margin-top: 12px; background: rgba(139, 92, 246, 0.1); border-left: 4px solid #8b5cf6; padding: 12px 14px; border-radius: 4px 12px 12px 4px; font-size: 13px; line-height: 1.6; }
+    .advice-content strong { color: #a78bfa; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+    .advice-toggle-btn { background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: #a78bfa; width: 100%; padding: 10px; text-align: center; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 13px; margin-top: 10px; }
 
-    .side-title {
-      font-size: 20px;
-      font-weight: 800;
-      margin: 32px 0 16px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 8px;
-      letter-spacing: 1px;
-    }
+    /* Trade System Sectie */
+    .trade-system-card { background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.35); border-radius: 20px; padding: 18px; margin-bottom: 24px; }
+    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .metric-box { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px; }
+    .metric-box span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .metric-box strong { font-size: 18px; color: #fff; }
+    
+    .system-advice { background: rgba(139, 92, 246, 0.14); border-left: 4px solid #8b5cf6; border-radius: 4px 12px 12px 4px; padding: 12px; margin-bottom: 14px; color: #e2e8f0; line-height: 1.5; font-size: 13px; }
 
-    .analysis-card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 18px;
-      margin-bottom: 16px;
-      box-shadow: 0 8px 25px rgba(0,0,0,0.2);
-    }
-
-    .a-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-    }
-
-    .a-title {
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 2px;
-      color: var(--muted);
-    }
-
-    .a-total {
-      background: rgba(255, 255, 255, 0.08);
-      padding: 6px 12px;
-      border-radius: 12px;
-      font-size: 14px;
-      font-weight: 800;
-    }
-
-    .a-stats {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-
-    .a-stat-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 13px;
-      background: rgba(255, 255, 255, 0.02);
-      padding: 8px 12px;
-      border-radius: 10px;
-    }
-
-    .a-stat-label {
-      color: var(--muted);
-    }
-
-    .a-stat-val {
-      font-weight: 800;
-      font-size: 14px;
-    }
-
-    .a-stat-val.good {
-      color: var(--green);
-    }
-
-    .advice-content {
-      display: none;
-      margin-top: 12px;
-      background: rgba(139, 92, 246, 0.1);
-      border-left: 4px solid #8b5cf6;
-      padding: 12px 14px;
-      border-radius: 4px 12px 12px 4px;
-      font-size: 13px;
-      line-height: 1.6;
-    }
-
-    .advice-content strong {
-      color: #a78bfa;
-      font-size: 12px;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      display: block;
-      margin-bottom: 4px;
-    }
-
-    .advice-toggle-btn {
-      background: rgba(139, 92, 246, 0.1);
-      border: 1px solid rgba(139, 92, 246, 0.3);
-      border-radius: 8px;
-      color: #a78bfa;
-      width: 100%;
-      padding: 10px;
-      text-align: center;
-      font-weight: bold;
-      cursor: pointer;
-      transition: 0.2s;
-      font-size: 13px;
-      margin-top: 10px;
-    }
-
-    .trade-system-card {
-      background: rgba(139, 92, 246, 0.08);
-      border: 1px solid rgba(139, 92, 246, 0.35);
-      border-radius: 20px;
-      padding: 18px;
-      margin-bottom: 24px;
-    }
-
-    .metric-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-
-    .metric-box {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 12px;
-      padding: 12px;
-    }
-
-    .metric-box span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 6px;
-    }
-
-    .metric-box strong {
-      font-size: 18px;
-      color: #fff;
-    }
-
-    .system-advice {
-      background: rgba(139, 92, 246, 0.14);
-      border-left: 4px solid #8b5cf6;
-      border-radius: 4px 12px 12px 4px;
-      padding: 12px;
-      margin-bottom: 14px;
-      color: #e2e8f0;
-      line-height: 1.5;
-      font-size: 13px;
-    }
-
-    .analysis-table {
-      width: 100%;
-      border-collapse: collapse;
-      overflow: hidden;
-      border-radius: 12px;
-      font-size: 12px;
-    }
-
-    .analysis-table th,
-    .analysis-table td {
-      padding: 10px 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.07);
-      text-align: left;
-      vertical-align: top;
-    }
-
-    .analysis-table th {
-      color: #a78bfa;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      background: rgba(255,255,255,0.04);
-    }
-
-    .analysis-table td {
-      color: #e2e8f0;
-    }
-
-    .muted {
-      color: var(--muted);
-    }
+    /* Tabel voor Blokkades */
+    .analysis-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 12px; font-size: 12px; }
+    .analysis-table th, .analysis-table td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.07); text-align: left; vertical-align: top; }
+    .analysis-table th { color: #a78bfa; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; background: rgba(255,255,255,0.04); }
+    .analysis-table td { color: #e2e8f0; }
   </style>
 </head>
 <body>
 
   <div class="pageShell">
 
-    <div class="header">
+    <header class="header">
       <h1>📊 ANALYTICS DESK</h1>
       <div id="statusLine">Laden...</div>
-
-      <div class="nav">
+      <nav class="nav">
         <a href="index.html" class="btn">Home</a>
         <a href="bull.html" class="btn">Bull</a>
         <a href="bear.html" class="btn">Bear</a>
         <a href="signals.html" class="btn">Trade</a>
         <a href="analytics.html" class="btn active purple">Analyse</a>
-      </div>
-    </div>
+      </nav>
+    </header>
 
-    <div class="trade-section">
+    <main class="trade-section">
 
-      <div id="globalAdvice" style="display:none; background:var(--panel); border:1px solid #8b5cf6; padding:16px; border-radius:16px; margin-bottom:24px; box-shadow:0 5px 20px rgba(139, 92, 246, 0.15);">
+      <section id="globalAdvice" style="display:none; background:var(--panel); border:1px solid #8b5cf6; padding:16px; border-radius:16px; margin-bottom:24px; box-shadow:0 5px 20px rgba(139, 92, 246, 0.15);">
         <div style="font-size:12px; letter-spacing:2px; color:#a78bfa; margin-bottom:8px; font-weight:bold;">🧠 GLOBALE STATUS</div>
         <div id="globalAdviceContent" style="color:#e2e8f0; font-size:14px; line-height:1.6; font-weight:bold;"></div>
-      </div>
+      </section>
 
-      <div id="tradeSystemAnalysis" class="trade-system-card">
+      <section id="tradeSystemAnalysis" class="trade-system-card">
         <p class="muted">TradeSystem analyse laden...</p>
-      </div>
+      </section>
 
       <div id="analytics">
         <p style="color:var(--muted); text-align:center; margin-top:40px;">Data ophalen...</p>
       </div>
 
-    </div>
+    </main>
   </div>
 
   <script src="analytics.js?v=trade-system-3"></script>
