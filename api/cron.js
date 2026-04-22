@@ -12,17 +12,17 @@ function normalizeSide(side){
 }
 
 
-// fallback als Vercel query soms niet meekomt
+// ================= SIDE FROM MINUTE =================
+// 00 / 15 / 30 / 45 = bull
+// 07 / 22 / 37 / 52 = bear
 function inferSideFromMinute(){
 
   const minute = new Date().getUTCMinutes();
 
-  // bull schema: 0,15,30,45
   if([0, 15, 30, 45].includes(minute)){
     return "bull";
   }
 
-  // bear schema: 7,22,37,52
   if([7, 22, 37, 52].includes(minute)){
     return "bear";
   }
@@ -33,31 +33,43 @@ function inferSideFromMinute(){
 
 export default async function handler(req, res){
 
+  const startedAt = Date.now();
+
   try{
 
     res.setHeader("Cache-Control", "no-store, max-age=0");
 
+    // Handmatig testen blijft mogelijk:
+    // /api/cron?side=bull
+    // /api/cron?side=bear
+    // /api/cron?side=both
     const querySide = normalizeSide(req?.query?.side);
+
+    // Echte Vercel cron gebruikt geen query meer.
+    // Daarom bepalen we automatisch via UTC minuut.
     const side = querySide || inferSideFromMinute();
 
-    console.log("CRON RUN:", {
+    const utcMinute = new Date().getUTCMinutes();
+
+    console.log("CRON START:", {
       side,
       querySide,
+      utcMinute,
       at: new Date().toISOString()
     });
 
-    // Cron draait altijd met notify=true:
-    // Discord mag dus alleen vanuit cron/triggers gestuurd worden.
     const data = await buildScanPayload({
       side,
-      notify: true
+      notify: true,
+      store: true
     });
 
-    return res.status(200).json({
+    const result = {
       ok: true,
       source: "cron",
       side,
       ranAt: Date.now(),
+      durationMs: Date.now() - startedAt,
 
       scanSide: data?.scanSide || side,
       scanMode: data?.scanMode || side,
@@ -80,7 +92,11 @@ export default async function handler(req, res){
       lastBullScan: data?.lastBullScan || null,
       lastBearScan: data?.lastBearScan || null,
       updatedAt: data?.updatedAt || null
-    });
+    };
+
+    console.log("CRON DONE:", result);
+
+    return res.status(200).json(result);
 
   }catch(err){
 
@@ -90,7 +106,8 @@ export default async function handler(req, res){
       ok: false,
       source: "cron",
       error: err?.message || "cron_failed",
-      ranAt: Date.now()
+      ranAt: Date.now(),
+      durationMs: Date.now() - startedAt
     });
   }
 }
