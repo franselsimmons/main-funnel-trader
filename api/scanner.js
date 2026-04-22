@@ -73,6 +73,7 @@ function normalizeStore(value, fallback = true){
 
 
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
+// Alleen deze logic mag echte tradeCandidates maken.
 function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -108,28 +109,28 @@ function strictDirectionAllowed(c, btc, side){
 }
 
 
-// ================= LOOSE SIDE LOGIC FOR UI / FUNNEL =================
-function displayDirectionAllowed(c, btc, side){
+// ================= DISPLAY LOGIC FOR UI/FUNNEL =================
+// Ruimer dan trade logic, zodat frontend coins blijft tonen.
+// Deze logic maakt GEEN extra Discord/trades.
+function displayDirectionAllowed(c, side){
 
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
   const vm = Number(c.vm || 0);
 
   if(side === "bull"){
-
     return (
-      ch24 > 0.8 ||
-      ch1 > 0.15 ||
-      (vm > 0.12 && ch24 > 0)
+      ch24 > 0.3 ||
+      ch1 > 0.05 ||
+      (vm > 0.05 && ch24 > 0)
     );
   }
 
   if(side === "bear"){
-
     return (
-      ch24 < -0.8 ||
-      ch1 < -0.15 ||
-      (vm > 0.12 && ch24 < 0)
+      ch24 < -0.3 ||
+      ch1 < -0.05 ||
+      (vm > 0.05 && ch24 < 0)
     );
   }
 
@@ -162,21 +163,23 @@ function calculateScore(c, regime, side){
   const ch1 = Number(c.change1h || 0) * dir;
   const vm = Number(c.vm || 0);
 
+  // momentum richting trade
   if(ch24 > 8) score += 35;
   else if(ch24 > 5) score += 25;
   else if(ch24 > 2) score += 15;
   else if(ch24 > 1) score += 8;
-  else if(ch24 > 0.3) score += 4;
+  else if(ch24 > 0.25) score += 4;
 
   if(ch1 > 1.2) score += 25;
   else if(ch1 > 0.5) score += 15;
   else if(ch1 > 0.2) score += 7;
-  else if(ch1 > 0.05) score += 3;
+  else if(ch1 > 0.03) score += 3;
 
+  // volume / marketcap
   if(vm > 0.5) score += 25;
   else if(vm > 0.3) score += 15;
   else if(vm > 0.15) score += 8;
-  else if(vm > 0.06) score += 4;
+  else if(vm > 0.04) score += 4;
 
   if(regime === "LOW_VOL") score -= 15;
   if(regime === "HIGH_VOL") score += 5;
@@ -185,13 +188,15 @@ function calculateScore(c, regime, side){
 }
 
 
-// ================= FALLBACK STAGE FOR UI ONLY =================
+// ================= UI FALLBACK STAGE =================
+// Bestaat alleen voor frontend zichtbaarheid.
 function fallbackStage(score, flow){
 
-  if(flow === "TREND" && score >= 65) return "buildup";
-  if(flow === "TREND" && score >= 50) return "radar";
-  if(flow === "BUILDING" && score >= 35) return "radar";
-  if(flow === "EARLY" && score >= 25) return "radar";
+  if(flow === "TREND" && score >= 75) return "almost";
+  if(flow === "TREND" && score >= 60) return "buildup";
+  if(flow === "TREND" && score >= 35) return "radar";
+  if(flow === "BUILDING" && score >= 25) return "radar";
+  if(flow === "EARLY") return "radar";
 
   return "radar";
 }
@@ -275,7 +280,6 @@ function countSide(funnel, side){
 
 
 function countFunnel(funnel){
-
   return countSide(funnel, "bull") + countSide(funnel, "bear");
 }
 
@@ -283,6 +287,7 @@ function countFunnel(funnel){
 function hasSymbolInSide(funnel, side, symbol){
 
   for(const stage of ["entry", "almost", "buildup", "radar"]){
+
     if(
       Array.isArray(funnel?.[side]?.[stage]) &&
       funnel[side][stage].some(c => c.symbol === symbol)
@@ -295,19 +300,34 @@ function hasSymbolInSide(funnel, side, symbol){
 }
 
 
+function sortFunnel(funnel){
+
+  for(const side of ["bull", "bear"]){
+    for(const stageKey of ["entry", "almost", "buildup", "radar"]){
+      funnel[side][stageKey].sort((a, b) => {
+        return Number(b.moveScore || 0) - Number(a.moveScore || 0);
+      });
+    }
+  }
+}
+
+
 // ================= UI FALLBACK FILL =================
-// Zorgt dat site coins toont, maar maakt GEEN tradeCandidates.
+// Vult alleen de frontend-funnel.
+// Stuurt GEEN Discord en maakt GEEN tradeCandidate.
 function fillUiFallback({
   rawCoins,
   validSymbols,
-  btc,
   regime,
   funnel,
   side,
-  max = 20
+  max = 30
 }){
 
-  if(countSide(funnel, side) > 0) return;
+  const currentSideCount = countSide(funnel, side);
+  const targetMinimum = 12;
+
+  if(currentSideCount >= targetMinimum) return;
 
   const list = [];
 
@@ -319,7 +339,9 @@ function fillUiFallback({
 
     if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
 
-    if(base.vm < 0.04) continue;
+    if(hasSymbolInSide(funnel, side, base.symbol)) continue;
+
+    if(base.vm < 0.025) continue;
 
     const ch24 = Number(base.change24 || 0);
     const ch1 = Number(base.change1h || 0);
@@ -336,7 +358,7 @@ function fillUiFallback({
     const score = calculateScore(base, regime, side);
     const edge = calculateEdge(base, regime) || 0;
 
-    if(score < 15) continue;
+    if(score < 8) continue;
 
     list.push({
       ...base,
@@ -345,18 +367,38 @@ function fillUiFallback({
       moveScore: score,
       edge,
       stage: fallbackStage(score, flow),
-      stageSource: "ui_fallback"
+      stageSource: "ui_fallback",
+      uiOnly: true
     });
   }
 
-  list
-    .sort((a,b) => Number(b.moveScore || 0) - Number(a.moveScore || 0))
-    .slice(0, max)
-    .forEach(coin => {
-      if(!hasSymbolInSide(funnel, side, coin.symbol)){
-        funnel[side][coin.stage || "radar"].push(coin);
-      }
+  list.sort((a,b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
+
+  let added = 0;
+  let seededEntry = funnel[side].entry.length > 0 ? 1 : 0;
+
+  for(const coin of list){
+
+    if(added >= max) break;
+    if(countSide(funnel, side) >= targetMinimum) break;
+
+    let stage = coin.stage || "radar";
+
+    // Belangrijk voor bestaande frontends/indexen die alleen entry tellen:
+    // als entry leeg is, seed 1 UI-only coin in entry.
+    // Dit maakt géén echte tradeCandidate.
+    if(seededEntry === 0){
+      stage = "entry";
+      seededEntry = 1;
+    }
+
+    funnel[side][stage].push({
+      ...coin,
+      stage
     });
+
+    added++;
+  }
 }
 
 
@@ -375,9 +417,11 @@ function mergeWithPreviousSideScan(currentPayload, scanSide){
 
   const mergedFunnel = emptyFunnel();
 
+  // huidige kant vervangen
   mergedFunnel[scanSide] =
     currentPayload.funnel?.[scanSide] || mergedFunnel[scanSide];
 
+  // andere kant behouden
   const otherSide = scanSide === "bull" ? "bear" : "bull";
 
   mergedFunnel[otherSide] =
@@ -416,6 +460,8 @@ function mergeWithPreviousSideScan(currentPayload, scanSide){
       ? currentPayload.candidatesBear
       : previous.candidatesBear || 0;
 
+  sortFunnel(mergedFunnel);
+
   return {
     ...previous,
     ...currentPayload,
@@ -448,7 +494,13 @@ function mergeWithPreviousSideScan(currentPayload, scanSide){
 export async function buildScanPayload(options = {}){
 
   const scanSide = normalizeScanSide(options.side);
+
+  // Cron/backend: notify true.
+  // public-latest: notify false.
   const notify = options.notify !== false;
+
+  // Cron/backend: store true.
+  // public-latest: store false.
   const store = options.store !== false;
 
   initDefaultFilters();
@@ -505,23 +557,25 @@ export async function buildScanPayload(options = {}){
 
     if(!base.symbol || base.price <= 0) continue;
 
+    // Bitget only, maar fallback als Bitget fetch faalt.
     if(validSymbols.size > 0 && !validSymbols.has(base.symbol)) continue;
 
     activeSymbols.push(base.symbol);
 
-    // UI ruim genoeg houden.
-    if(base.vm < 0.04) continue;
+    // UI ruim houden.
+    if(base.vm < 0.025) continue;
 
     if(
-      Math.abs(base.change24) < 0.4 &&
-      Math.abs(base.change1h) < 0.05
+      Math.abs(base.change24) < 0.25 &&
+      Math.abs(base.change1h) < 0.03
     ){
       continue;
     }
 
     for(const direction of sidesToScan){
 
-      if(!displayDirectionAllowed(base, btc, direction)) continue;
+      // UI/funnel gebruikt ruime logic.
+      if(!displayDirectionAllowed(base, direction)) continue;
 
       const flow = detectFlow(base);
       const score = calculateScore(base, regime, direction);
@@ -553,11 +607,13 @@ export async function buildScanPayload(options = {}){
 
       coin.stage = newStage;
       coin.stageSource = realFilterStage ? "filter" : "fallback";
+      coin.uiOnly = !realFilterStage;
 
       funnel[direction][newStage].push(coin);
       logAnalytics(coin);
 
       // ================= REAL TRADE CANDIDATES ONLY =================
+      // Alleen echte filterStage + strictDirection mag Discord/trade worden.
       if(
         realFilterStage &&
         strictDirectionAllowed(base, btc, direction) &&
@@ -587,16 +643,15 @@ export async function buildScanPayload(options = {}){
     }
   }
 
-  // Laat site nooit leeg zijn als er marktdata is.
+  // Zorg dat de frontend nooit lege arrays krijgt wanneer marktdata bestaat.
   if(scanSide === "both" || scanSide === "bull"){
     fillUiFallback({
       rawCoins,
       validSymbols,
-      btc,
       regime,
       funnel,
       side: "bull",
-      max: 25
+      max: 30
     });
   }
 
@@ -604,25 +659,21 @@ export async function buildScanPayload(options = {}){
     fillUiFallback({
       rawCoins,
       validSymbols,
-      btc,
       regime,
       funnel,
       side: "bear",
-      max: 25
+      max: 30
     });
   }
 
   memory = cleanMemory(memory, activeSymbols);
 
+  // Silent scans mogen stageMemory niet overschrijven.
   if(store){
     await saveStageMemory(memory);
   }
 
-  for(const side of ["bull", "bear"]){
-    for(const stageKey of Object.keys(funnel[side])){
-      funnel[side][stageKey].sort((a, b) => b.moveScore - a.moveScore);
-    }
-  }
+  sortFunnel(funnel);
 
   const trades = await processTrades(
     tradeCandidates,
@@ -665,6 +716,7 @@ export async function buildScanPayload(options = {}){
 
   const finalPayload = mergeWithPreviousSideScan(currentPayload, scanSide);
 
+  // Alleen echte cron/backend scans mogen latestScan overschrijven.
   if(store){
     setLatestScan(finalPayload);
   }
@@ -678,7 +730,11 @@ export default async function handler(req,res){
 
   try{
     const side = normalizeScanSide(req?.query?.side);
+
+    // Direct /api/scanner is standaard stil.
     const notify = normalizeNotify(req?.query?.notify);
+
+    // Alleen store wanneer expliciet of wanneer notify=true.
     const store = normalizeStore(req?.query?.store, notify);
 
     const data = await buildScanPayload({
