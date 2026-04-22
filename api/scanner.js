@@ -337,7 +337,7 @@ export async function buildScanPayload(options = {}){
 
     activeSymbols.push(base.symbol);
 
-    // Ruimer dan vroeger, want tradeSystem bewaakt execution kwaliteit.
+    // Ruim genoeg voor scanner, tradeSystem bewaakt kwaliteit.
     if(base.vm < 0.10) continue;
     if(Math.abs(base.change24) < 2.5) continue;
 
@@ -374,18 +374,19 @@ export async function buildScanPayload(options = {}){
       funnel[direction][newStage].push(coin);
       logAnalytics(coin);
 
-      // Meer goede input naar tradeSystem:
-      // - entry vanaf score 70
-      // - sterke almost vanaf score 80
+      // ================= QUALITY MODE =================
+      // Minder trades, hogere kwaliteit:
+      // - entry vanaf score 75
+      // - almost alleen elite vanaf score 88
       if(
         (
           newStage === "entry" &&
-          score >= 70 &&
+          score >= 75 &&
           flow === "TREND"
         ) ||
         (
           newStage === "almost" &&
-          score >= 80 &&
+          score >= 88 &&
           flow === "TREND"
         )
       ){
