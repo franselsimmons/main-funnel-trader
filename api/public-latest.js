@@ -18,10 +18,13 @@ export default async function handler(req, res){
     }
 
     // Cache leeg door Vercel cold start.
-    // Dan wel data bouwen voor UI, maar ZONDER Discord.
+    // Dan wel data bouwen voor UI, maar:
+    // - GEEN Discord
+    // - GEEN latestScan overschrijven
     const fresh = await buildScanPayload({
       side: "both",
-      notify: false
+      notify: false,
+      store: false
     });
 
     return res.status(200).json({
