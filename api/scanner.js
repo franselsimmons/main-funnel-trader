@@ -401,13 +401,13 @@ function fillUiFallback({
 
 
 // ================= MERGE PARTIAL SIDE SCAN =================
-function mergeWithPreviousSideScan(currentPayload, scanSide){
+async function mergeWithPreviousSideScan(currentPayload, scanSide){
 
   if(scanSide === "both"){
     return currentPayload;
   }
 
-  const previous = getLatestScan();
+  const previous = await getLatestScan();
 
   if(!previous?.ok){
     return currentPayload;
@@ -701,10 +701,13 @@ export async function buildScanPayload(options = {}){
     lastBearScan: scanSide === "bear" || scanSide === "both" ? now : null
   };
 
-  const finalPayload = mergeWithPreviousSideScan(currentPayload, scanSide);
+  const finalPayload = await mergeWithPreviousSideScan(
+    currentPayload,
+    scanSide
+  );
 
   if(store){
-    setLatestScan(finalPayload);
+    await setLatestScan(finalPayload);
   }
 
   return finalPayload;
