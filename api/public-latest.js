@@ -1,6 +1,11 @@
 import { getLatestScan } from "../lib/scanStore.js";
 import { buildScanPayload } from "./scanner.js";
 
+const UI_CACHE_TTL = 12 * 1000;
+let uiCache = null;
+
+const STAGES = ["entry", "almost", "buildup", "radar"];
+
 function emptySide(){
   return {
     entry: [],
@@ -36,7 +41,7 @@ function countSide(funnel, side){
 
   let total = 0;
 
-  for(const stage of ["entry", "almost", "buildup", "radar"]){
+  for(const stage of STAGES){
     total += Array.isArray(f?.[side]?.[stage])
       ? f[side][stage].length
       : 0;
@@ -74,44 +79,123 @@ function withSafeShape(payload, source){
 }
 
 
+function hasGoodFunnel(payload){
+
+  return Boolean(
+    payload?.ok &&
+    countFunnel(payload?.funnel) > 0
+  );
+}
+
+
+function mergeUiFreshWithCached(fresh, cached){
+
+  const cachedTrades = Array.isArray(cached?.trades)
+    ? cached.trades
+    : [];
+
+  const freshTrades = Array.isArray(fresh?.trades)
+    ? fresh.trades
+    : [];
+
+  return {
+    ...fresh,
+
+    // Funnel komt altijd uit fresh UI-safe scan.
+    funnel: fresh?.funnel,
+
+    // Trades liever uit cron-cache houden als die er zijn.
+    trades: cachedTrades.length ? cachedTrades : freshTrades,
+
+    // Laatste cron metadata bewaren waar nuttig.
+    lastBullScan: cached?.lastBullScan || fresh?.lastBullScan || null,
+    lastBearScan: cached?.lastBearScan || fresh?.lastBearScan || null,
+
+    cachedAt: cached?.storedAt || cached?.updatedAt || null,
+    previousCacheHadData: Boolean(cached?.ok),
+    previousFunnelCount: countFunnel(cached?.funnel)
+  };
+}
+
+
 export default async function handler(req, res){
 
   try{
 
     res.setHeader("Cache-Control", "no-store, max-age=0");
 
-    const cached = getLatestScan();
-    const cachedFunnelCount = countFunnel(cached?.funnel);
+    const now = Date.now();
 
-    // Cache alleen gebruiken als hij echt frontend-data heeft.
-    if(cached && cached.ok && cachedFunnelCount > 0){
+    // Zelfde tab / snelle navigatie: gebruik korte UI-cache.
+    if(
+      uiCache?.data &&
+      now - uiCache.createdAt < UI_CACHE_TTL &&
+      hasGoodFunnel(uiCache.data)
+    ){
       return res.status(200).json(
-        withSafeShape(cached, "cache")
+        withSafeShape(uiCache.data, "ui_cache")
       );
     }
 
-    // Cache leeg of cache heeft 0 coins:
-    // Bouw UI-data zonder Discord en zonder latestScan overwrite.
+    const cached = getLatestScan();
+
+    // Bouw altijd een UI-safe scan voor pagina's.
+    // Geen Discord, geen latestScan overwrite.
     const fresh = await buildScanPayload({
       side: "both",
       notify: false,
       store: false
     });
 
+    if(hasGoodFunnel(fresh)){
+
+      const merged = mergeUiFreshWithCached(fresh, cached);
+
+      uiCache = {
+        createdAt: now,
+        data: merged
+      };
+
+      return res.status(200).json(
+        withSafeShape(merged, cached?.ok ? "silent_scan_merged" : "silent_scan")
+      );
+    }
+
+    // Als fresh faalt/leeg is, val terug op cron-cache.
+    if(hasGoodFunnel(cached)){
+      return res.status(200).json(
+        withSafeShape(cached, "cache_fallback")
+      );
+    }
+
+    // Laatste fallback: veilige lege shape, zodat frontend niet crasht.
     return res.status(200).json(
       withSafeShape(
         {
-          ...fresh,
-          previousCacheHadData: Boolean(cached?.ok),
-          previousFunnelCount: cachedFunnelCount
+          ok: true,
+          funnel: {
+            bull: emptySide(),
+            bear: emptySide()
+          },
+          trades: [],
+          btc: { state: "UNKNOWN", chg24: 0 },
+          regime: "UNKNOWN"
         },
-        cached?.ok ? "silent_scan_cache_empty" : "silent_scan_no_cache"
+        "empty_safe_shape"
       )
     );
 
   }catch(err){
 
     console.error("PUBLIC-LATEST ERROR:", err);
+
+    const cached = getLatestScan();
+
+    if(hasGoodFunnel(cached)){
+      return res.status(200).json(
+        withSafeShape(cached, "cache_after_error")
+      );
+    }
 
     return res.status(500).json({
       ok: false,
