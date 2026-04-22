@@ -51,6 +51,27 @@ function normalizeNotify(value){
 }
 
 
+// ================= STORE NORMALIZER =================
+function normalizeStore(value, fallback = true){
+
+  if(value === undefined || value === null){
+    return fallback;
+  }
+
+  const v = String(value || "").toLowerCase();
+
+  if(v === "false" || v === "0" || v === "no"){
+    return false;
+  }
+
+  if(v === "true" || v === "1" || v === "yes"){
+    return true;
+  }
+
+  return fallback;
+}
+
+
 // ================= SIDE LOGIC =================
 function directionAllowed(c, btc, side){
 
@@ -291,6 +312,11 @@ export async function buildScanPayload(options = {}){
   // public-latest moet expliciet notify:false meegeven.
   const notify = options.notify !== false;
 
+  // Standaard store=true voor cron/backend.
+  // public-latest moet expliciet store:false meegeven.
+  // Daardoor overschrijft een silent scan de echte cron-cache niet.
+  const store = options.store !== false;
+
   initDefaultFilters();
   resetAnalytics();
 
@@ -443,6 +469,7 @@ export async function buildScanPayload(options = {}){
     scanSide,
     scanMode: scanSide,
     notify,
+    store,
     btc,
     regime,
     market,
@@ -462,7 +489,12 @@ export async function buildScanPayload(options = {}){
 
   const finalPayload = mergeWithPreviousSideScan(currentPayload, scanSide);
 
-  setLatestScan(finalPayload);
+  // Belangrijk:
+  // Alleen echte cron/backend scans mogen latestScan overschrijven.
+  // Silent scans voor de UI niet.
+  if(store){
+    setLatestScan(finalPayload);
+  }
 
   return finalPayload;
 }
@@ -478,9 +510,14 @@ export default async function handler(req,res){
     // Alleen met ?notify=true stuurt hij Discord.
     const notify = normalizeNotify(req?.query?.notify);
 
+    // Direct /api/scanner mag standaard NIET de cron-cache overschrijven
+    // tenzij je expliciet ?store=true meegeeft.
+    const store = normalizeStore(req?.query?.store, notify);
+
     const data = await buildScanPayload({
       side,
-      notify
+      notify,
+      store
     });
 
     return res.status(200).json(data);
