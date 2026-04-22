@@ -1,14 +1,12 @@
 const el = id => document.getElementById(id);
 window.latestAdvice = {};
 
-// ==========================================
-// HELPERS
-// ==========================================
+// ================= HELPERS =================
 function fmtTime(ts){
   if(!ts) return "-";
-  try {
+  try{
     return new Date(ts).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
-  } catch {
+  }catch{
     return "-";
   }
 }
@@ -48,9 +46,7 @@ function getReasonAdvice(reason){
   return map[reason] || "Geen specifieke actie nodig.";
 }
 
-// ==========================================
-// UI INTERACTIE
-// ==========================================
+// ================= TOGGLE & UI =================
 window.toggleAdvice = function(adviceId){
   const elAdvice = el(adviceId);
   if(!elAdvice) return;
@@ -64,6 +60,7 @@ function adviceItemToHtml(item){
 
   const message = item.message || "Onbekend advies";
   let actionColor = "#a78bfa";
+
   if(item.action === "STRENGER") actionColor = "var(--red)";
   if(item.action === "SOEPELER") actionColor = "var(--green)";
 
@@ -78,12 +75,10 @@ function adviceItemToHtml(item){
   return `<div style="margin-bottom:10px;">• ${action}${message}${values}</div>`;
 }
 
-// ==========================================
-// GLOBAAL & TRADE SYSTEEM
-// ==========================================
+// ================= GLOBAL ADVICE =================
 function renderGlobalAdvice(data){
   const global = data?.advice?.global || [];
-  
+
   if(!global.length){
     el("globalAdvice").style.display = "block";
     const bullCount = Number(data?.bullCount || 0);
@@ -94,7 +89,7 @@ function renderGlobalAdvice(data){
     el("globalAdviceContent").innerHTML = `
       Funnel gevuld: Bull ${bullCount}, Bear ${bearCount}.<br>
       Echte trade candidates: ${candidates}. TradeSystem outputs: ${trades}.<br>
-      <span class="muted" style="font-size:11px;">Analyse gebruikt alleen echte filter-coins.</span>
+      <span class="muted" style="font-size: 11px;">Analyse gebruikt alleen echte filter-coins.</span>
     `;
     return;
   }
@@ -103,10 +98,11 @@ function renderGlobalAdvice(data){
   el("globalAdviceContent").innerHTML = global.map(g => `• ${g}`).join("<br/><br/>");
 }
 
+// ================= TRADE SYSTEM =================
 function buildTradeSystemFallback(data){
   const list = Array.isArray(data?.trades) ? data.trades : [];
   const total = list.length;
-  
+
   const entries = list.filter(t => t.action === "ENTRY");
   const waits = list.filter(t => t.action === "WAIT");
   const holds = list.filter(t => t.action === "HOLD");
@@ -146,11 +142,23 @@ function renderTradeSystemAnalysis(data){
   const waitReasons = Array.isArray(ts.waitReasons) ? ts.waitReasons : [];
 
   const rows = waitReasons.length
-    ? waitReasons.map(r => `<tr><td>${r.key}</td><td>${r.count}</td><td>${r.pct}%</td><td>${r.advice}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="muted">Geen blokkades deze scan.</td></tr>`;
+    ? waitReasons.map(r => `
+        <div class="blockade-card">
+          <div class="b-header">
+            <span class="b-name">${r.key}</span>
+            <div class="b-stats">
+              <span class="b-badge">${r.count}x</span>
+              <span class="b-badge" style="color: #fff; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2);">${r.pct}%</span>
+            </div>
+          </div>
+          <div class="b-advice">${r.advice}</div>
+        </div>
+      `).join("")
+    : `<div class="muted" style="text-align:center; padding: 10px;">Geen blokkades deze scan.</div>`;
 
   box.innerHTML = `
-    <h2 style="color:#a78bfa; margin:0 0 14px;">⚡ TradeSystem Analyse</h2>
+    <h2 style="color:#a78bfa; margin:0 0 14px; font-size: 20px;">⚡ TradeSystem Analyse</h2>
+
     <div class="metric-grid">
       <div class="metric-box"><span>Total Candidates</span><strong>${ts.total || 0}</strong></div>
       <div class="metric-box"><span>Entries</span><strong>${ts.entries || 0}</strong></div>
@@ -159,17 +167,18 @@ function renderTradeSystemAnalysis(data){
       <div class="metric-box"><span>Avg Confluence</span><strong>${ts.avgConfluence || 0}</strong></div>
       <div class="metric-box"><span>Avg RR</span><strong>${ts.avgRR || 0}</strong></div>
     </div>
+
     <div class="system-advice">💡 ${ts.advice || "Geen advies beschikbaar."}</div>
-    <table class="analysis-table">
-      <thead><tr><th>Blokkade</th><th>Aantal</th><th>%</th><th>Advies</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    
+    <div style="margin-top: 20px; margin-bottom: 8px; font-size: 11px; font-weight: 800; color: #a78bfa; letter-spacing: 1px; text-transform: uppercase;">Top Blokkades</div>
+    
+    <div class="blockade-list">
+      ${rows}
+    </div>
   `;
 }
 
-// ==========================================
-// FUNNEL COMPONENTEN
-// ==========================================
+// ================= FUNNEL BLOKKEN =================
 function block(title, data, side){
   if(!data) return "";
 
@@ -187,6 +196,7 @@ function block(title, data, side){
         <div class="a-title">${title}</div>
         <div class="a-total">Total: ${data.total || 0}</div>
       </div>
+
       <div class="a-stats">
         <div class="a-stat-row"><span class="a-stat-label">Good</span><span class="a-stat-val good">${data.reasons?.good || "0%"}</span></div>
         <div class="a-stat-row"><span class="a-stat-label">Low Score</span><span class="a-stat-val">${data.reasons?.lowScore || "0%"}</span></div>
@@ -194,28 +204,29 @@ function block(title, data, side){
         <div class="a-stat-row"><span class="a-stat-label">Low Volume</span><span class="a-stat-val">${data.reasons?.lowVolume || "0%"}</span></div>
         <div class="a-stat-row"><span class="a-stat-label">Bad OB</span><span class="a-stat-val">${data.reasons?.badOB || "0%"}</span></div>
       </div>
+
       <div class="advice-content" id="${adviceId}">
         <strong>💡 Filter Advies</strong>
         ${adviceHtml}
       </div>
+
       <div class="advice-toggle-btn" onclick="toggleAdvice('${adviceId}')">💡 Bekijk Systeem Advies</div>
     </div>
   `;
 }
 
-// ==========================================
-// MAIN LOGIC
-// ==========================================
+// ================= LOAD SCRIPT =================
 async function load(){
   try{
     const res = await fetch(`/api/public-latest?t=${Date.now()}`, { cache: "no-store" });
     const data = await res.json();
+
     if(!data?.ok) throw new Error(data?.error || "API error");
 
     window.latestAdvice = data.advice || {};
 
     if(data.btc && data.regime){
-      el("statusLine").innerText = `BTC: ${data.btc.state} | Regime: ${data.regime} | Scan: ${fmtTime(data.updatedAt || data.storedAt)}`;
+      el("statusLine").innerText = `BTC: ${data.btc.state} | Regime: ${data.regime} | Laatste scan: ${fmtTime(data.updatedAt || data.storedAt)}`;
     }
 
     if(!data.analytics){
@@ -228,14 +239,20 @@ async function load(){
 
     const a = data.analytics;
     let html = "";
+
     for(const side of ["bull", "bear"]){
       const color = side === "bull" ? "var(--green)" : "var(--red)";
       const icon = side === "bull" ? "🟢" : "🔴";
+
       html += `<h2 class="side-title" style="color:${color};">${icon} ${side.toUpperCase()}</h2>`;
+
       for(const stage of ["entry", "almost", "buildup", "radar"]){
-        if(a[side]?.[stage]) html += block(stage.toUpperCase(), a[side][stage], side);
+        if(a[side]?.[stage]){
+          html += block(stage.toUpperCase(), a[side][stage], side);
+        }
       }
     }
+
     el("analytics").innerHTML = html;
 
   } catch(e) {
