@@ -84,6 +84,8 @@ function safeStage(stage){
 
 
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
+// Breder dan vroeger zodat scanner meer uitvoerbare mid-caps doorlaat.
+// TradeSystem blijft de laatste kwaliteitslaag.
 function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -92,11 +94,11 @@ function strictDirectionAllowed(c, btc, side){
   if(side === "bull"){
 
     if(btc.state === "BULLISH"){
-      return ch24 > 3 && ch1 > 0.5;
+      return ch24 > 2 && ch1 > 0.30;
     }
 
     if(btc.state === "BEARISH"){
-      return ch24 > 8 && ch1 > 1.5;
+      return ch24 > 6.5 && ch1 > 1.0;
     }
 
     return false;
@@ -105,11 +107,11 @@ function strictDirectionAllowed(c, btc, side){
   if(side === "bear"){
 
     if(btc.state === "BEARISH"){
-      return ch24 < -3 && ch1 < -0.5;
+      return ch24 < -2 && ch1 < -0.30;
     }
 
     if(btc.state === "BULLISH"){
-      return ch24 < -5 && ch1 < -1;
+      return ch24 < -4 && ch1 < -0.8;
     }
 
     return false;
@@ -128,17 +130,17 @@ function displayDirectionAllowed(c, side){
 
   if(side === "bull"){
     return (
-      ch24 > 0.25 ||
-      ch1 > 0.03 ||
-      (vm > 0.04 && ch24 > 0)
+      ch24 > 0.15 ||
+      ch1 > 0.02 ||
+      (vm > 0.03 && ch24 > 0)
     );
   }
 
   if(side === "bear"){
     return (
-      ch24 < -0.25 ||
-      ch1 < -0.03 ||
-      (vm > 0.04 && ch24 < 0)
+      ch24 < -0.15 ||
+      ch1 < -0.02 ||
+      (vm > 0.03 && ch24 < 0)
     );
   }
 
@@ -152,15 +154,49 @@ function detectFlow(c){
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
-  if(ch1 > 1 && ch24 > 5) return "TREND";
-  if(ch1 > 0.6) return "BUILDING";
-  if(ch24 > 3) return "EARLY";
+  if(ch1 > 1 && ch24 > 4) return "TREND";
+  if(ch1 > 0.45) return "BUILDING";
+  if(ch24 > 2.5) return "EARLY";
 
   return "NEUTRAL";
 }
 
 
+// ================= FRESHNESS =================
+// Beloont verse uitbraken meer dan oude 24h pumps.
+function calculateFreshness(c, side){
+
+  const dir = side === "bear" ? -1 : 1;
+
+  const ch24 = Math.max(0, Number(c.change24 || 0) * dir);
+  const ch1 = Math.max(0, Number(c.change1h || 0) * dir);
+
+  let freshness = 0;
+
+  if(ch1 > 1.5) freshness += 18;
+  else if(ch1 > 0.9) freshness += 13;
+  else if(ch1 > 0.45) freshness += 9;
+  else if(ch1 > 0.2) freshness += 5;
+
+  if(ch24 > 0){
+    const ratio = ch1 / Math.max(ch24, 0.01);
+
+    if(ratio > 0.45) freshness += 8;
+    else if(ratio > 0.25) freshness += 5;
+    else if(ratio > 0.12) freshness += 2;
+  }
+
+  // Straf voor laat achter de pump aan rennen
+  if(ch24 > 8 && ch1 < 0.25) freshness -= 8;
+  if(ch24 > 12 && ch1 < 0.10) freshness -= 10;
+
+  return Math.max(0, Math.min(freshness, 30));
+}
+
+
 // ================= DIRECTIONAL SCORE =================
+// Minder gewicht op oude 24h move, meer op 1h/freshness.
+// Daardoor vang je eerder verse uitbrekende munten.
 function calculateScore(c, regime, side){
 
   let score = 0;
@@ -170,38 +206,43 @@ function calculateScore(c, regime, side){
   const ch24 = Number(c.change24 || 0) * dir;
   const ch1 = Number(c.change1h || 0) * dir;
   const vm = Number(c.vm || 0);
+  const freshness = calculateFreshness(c, side);
 
-  if(ch24 > 8) score += 35;
-  else if(ch24 > 5) score += 25;
-  else if(ch24 > 2) score += 15;
-  else if(ch24 > 1) score += 8;
-  else if(ch24 > 0.25) score += 4;
+  if(ch24 > 10) score += 22;
+  else if(ch24 > 6) score += 16;
+  else if(ch24 > 3) score += 10;
+  else if(ch24 > 1) score += 5;
+  else if(ch24 > 0.25) score += 2;
 
-  if(ch1 > 1.2) score += 25;
-  else if(ch1 > 0.5) score += 15;
+  if(ch1 > 2) score += 32;
+  else if(ch1 > 1.1) score += 24;
+  else if(ch1 > 0.55) score += 15;
   else if(ch1 > 0.2) score += 7;
   else if(ch1 > 0.03) score += 3;
 
-  if(vm > 0.5) score += 25;
-  else if(vm > 0.3) score += 15;
-  else if(vm > 0.15) score += 8;
-  else if(vm > 0.04) score += 4;
+  if(vm > 0.40) score += 20;
+  else if(vm > 0.20) score += 12;
+  else if(vm > 0.10) score += 7;
+  else if(vm > 0.04) score += 3;
 
-  if(regime === "LOW_VOL") score -= 15;
-  if(regime === "HIGH_VOL") score += 5;
+  score += freshness;
+
+  if(regime === "LOW_VOL") score -= 8;
+  if(regime === "HIGH_VOL") score += 4;
 
   return Math.max(0, Math.min(score, 100));
 }
 
 
 // ================= UI FALLBACK STAGE =================
-function fallbackStage(score, flow){
+function fallbackStage(score, flow, freshness = 0){
 
-  if(flow === "TREND" && score >= 75) return "almost";
-  if(flow === "TREND" && score >= 60) return "buildup";
-  if(flow === "TREND" && score >= 35) return "radar";
-  if(flow === "BUILDING" && score >= 25) return "radar";
-  if(flow === "EARLY") return "radar";
+  if(flow === "TREND" && score >= 82) return "entry";
+  if(flow === "TREND" && score >= 70) return "almost";
+  if(flow === "TREND" && score >= 52) return "buildup";
+  if(flow === "BUILDING" && score >= 34) return "buildup";
+  if(flow === "BUILDING" && freshness >= 8) return "radar";
+  if(flow === "EARLY" && score >= 22) return "radar";
 
   return "radar";
 }
@@ -349,6 +390,7 @@ function fillUiFallback({
     const flow = detectFlow(base);
     const score = calculateScore(base, regime, side);
     const edge = calculateEdge(base, regime) || 0;
+    const freshness = calculateFreshness(base, side);
 
     if(score < 6) continue;
 
@@ -356,9 +398,10 @@ function fillUiFallback({
       ...base,
       side,
       flow,
+      freshness,
       moveScore: score,
       edge,
-      stage: fallbackStage(score, flow),
+      stage: fallbackStage(score, flow, freshness),
       stageSource: "ui_fallback",
       uiOnly: true
     });
@@ -453,19 +496,20 @@ function getReasonAdvice(reason){
     DUPLICATE_PROCESSING_LOCK: "Duplicate protection werkt.",
     LOW_VOL: "Te weinig volatiliteit. Correct geblokkeerd.",
     NO_FLOW: "Geen duidelijke flow. Correct geblokkeerd.",
-    LOW_CONFLUENCE: "Setup mist bevestiging. Confluence niet versoepelen.",
-    FAKE_BREAKOUT: "Fake breakout bescherming werkt.",
+    LOW_CONFLUENCE: "Setup mist bevestiging. Confluence niet zomaar versoepelen.",
+    LOW_RR: "Risk/reward is te zwak. Dit voorkomt late entries.",
+    FAKE_BREAKOUT: "Dynamische fake breakout-bescherming werkt.",
     OB_AGAINST: "Orderboek staat tegen trade. Correct geblokkeerd.",
     NO_LIQUIDATION_ROOM: "Te weinig ruimte naar liquidation/TP-zone.",
     BAD_MARKET_QUALITY: "Spread/depth slecht. Correct geblokkeerd.",
-    OB_NEUTRAL_LOW_CONF: "Orderboek neutraal. Alleen doorlaten bij hoge confluence.",
+    OB_NEUTRAL_LOW_CONF: "Orderboek neutraal. Alleen sterke uitzonderingen mogen nog door.",
     EXTREME_FUNDING: "Funding-risico. Correct geblokkeerd.",
     BULL_CROWDED_FUNDING: "Long te crowded. Correct geblokkeerd.",
     BEAR_CROWDED_FUNDING: "Short te crowded. Correct geblokkeerd.",
     BTC_BULL_BLOCK_SHORT: "Short tegen bullish BTC geblokkeerd.",
     BTC_BEAR_BLOCK_LONG: "Long tegen bearish BTC geblokkeerd.",
     COUNTERTREND_NOT_ELITE: "Countertrend is niet elite genoeg. Correct.",
-    ENTRY_FILTERED: "Entry kwam niet door laatste kwaliteitscheck."
+    ENTRY_FILTERED: "Entry kwam niet door de laatste kwaliteitscheck."
   };
 
   if(String(reason || "").startsWith("SYMBOL_ALREADY_OPEN_")){
@@ -520,140 +564,139 @@ function buildTradeSystemAnalysis(trades){
   // ================= MEER TRADES =================
   if(total === 0){
     recommendations.moreTrades.push(
-      "Scanner stuurt geen echte tradeCandidates. Meer trades krijg je via scanner-input, niet door TradeSystem filters los te gooien."
+      "Scanner stuurde deze run geen echte tradeCandidates. Meer trades haal je nu vooral uit betere scanner-input."
     );
     recommendations.moreTrades.push(
-      "Veilige test: almost candidate threshold van 88 naar 85, terwijl TradeSystem de eindfilter blijft."
+      "Veilige test: almost candidate threshold stap voor stap iets omlaag, terwijl TradeSystem de laatste kwaliteitslaag blijft."
     );
   }
 
   if(total >= 8 && entryRate < 5){
     recommendations.moreTrades.push(
-      "Entry-rate is laag. Stuur iets meer candidates naar TradeSystem in plaats van OB/confluence filters te versoepelen."
+      "Entry-rate is laag. Eerst scanner-input verbeteren in plaats van TradeSystem guards los te gooien."
     );
   }
 
   if(topReason === "MAX_OPEN_TRADES"){
     recommendations.moreTrades.push(
-      "Max open trades blokkeert entries. Overweeg MAX_OPEN_TRADES van 3 naar 4, maar alleen als gesloten trade-history positief blijft."
+      "MAX_OPEN_TRADES blokkeert trades. Verhoog alleen naar 4 als gesloten trade-history positief blijft."
     );
   }
 
   if(topReason === "SYMBOL_COOLDOWN" || topReason === "COOLDOWN"){
     recommendations.moreTrades.push(
-      "Cooldown blokkeert herentries. Verlaag cooldown pas na minimaal 30 gesloten trades."
+      "Cooldown blokkeert herentries. Pas verlagen na voldoende gesloten trades."
     );
   }
 
   if(topReason === "ENTRY_FILTERED" && avgConfluence >= 78){
     recommendations.moreTrades.push(
-      "Veel setups halen bijna de eindcheck. Test almost iets ruimer, maar alleen bij confluence ≥ 85."
+      "Veel setups halen bijna de eindcheck. Test eerst iets meer almost candidates vanuit de scanner."
     );
   }
 
   if(topReason === "OB_NEUTRAL_LOW_CONF" && avgConfluence >= 80){
     recommendations.moreTrades.push(
-      "OB is vaak neutraal. Laat neutrale OB alleen door bij A-grade + confluence ≥ 88."
+      "Neutral orderboek is nog een bottleneck. Laat neutrale OB alleen door bij sterke confluence en hoge sniper."
     );
   }
 
   // ================= HOGERE WINRATE =================
   if(topReason === "LOW_CONFLUENCE"){
     recommendations.higherWinrate.push(
-      "Veel setups missen bevestiging. Confluence niet versoepelen; scanner moet betere candidates sturen."
+      "Confluence niet versoepelen. De scanner moet sterkere setups aanleveren."
     );
   }
 
   if(topReason === "OB_AGAINST"){
     recommendations.higherWinrate.push(
-      "Orderboek staat vaak tegen de trade. Dit filter behouden voor hogere winrate."
+      "Orderboek tegen de trade moet geblokkeerd blijven."
     );
   }
 
   if(topReason === "BAD_MARKET_QUALITY"){
     recommendations.higherWinrate.push(
-      "Slechte spread/depth wordt correct geblokkeerd. Dit verhoogt betrouwbaarheid."
+      "Spread/depth guards beschermen winrate en blind execution."
     );
   }
 
   if(topReason === "NO_FLOW" || topReason === "LOW_VOL"){
     recommendations.higherWinrate.push(
-      "Markt heeft te weinig flow/volatiliteit. Niet versoepelen; dit voorkomt chop trades."
+      "Flow/volatiliteit guards niet versoepelen; die voorkomen chop trades."
     );
   }
 
   if(topReason === "COUNTERTREND_NOT_ELITE"){
     recommendations.higherWinrate.push(
-      "Countertrend trades worden streng gefilterd. Dit is goed voor blind volgen."
+      "Countertrend filtering is gezond voor blind volgen."
     );
   }
 
   if(entries.length > 0 && avgConfluence < 75){
     recommendations.higherWinrate.push(
-      "Entries hebben lage gemiddelde confluence. Maak entry alleen geldig bij confluence ≥ 78 of A-grade."
+      "Gemiddelde confluence van entries is laag. Entry mag dan strakker."
     );
   }
 
   if(entries.length > 0 && avgConfluence >= 80){
     recommendations.higherWinrate.push(
-      "Entry kwaliteit is gezond. Niet strenger maken zonder verliesdata."
+      "Entry-kwaliteit is gezond. Niet strenger maken zonder closed-trade data."
     );
   }
 
   // ================= HOGERE PNL =================
   if(entries.length > 0 && avgRR < 1){
     recommendations.higherPnl.push(
-      "Gemiddelde RR is laag. Laat lage RR alleen toe bij A-grade en hoge confluence."
+      "Gemiddelde RR is laag. Filter lage RR harder of laat scanner frissere moves door."
     );
   }
 
   if(entries.length > 0 && avgRR >= 1.2){
     recommendations.higherPnl.push(
-      "RR is gezond. PnL verbeteren zit dan vooral in trailing/partials, niet in entries."
+      "RR is gezond. Meer PnL haal je dan eerder uit trailing/partials dan uit soepelere entries."
     );
   }
 
   if(topReason === "NO_LIQUIDATION_ROOM"){
     recommendations.higherPnl.push(
-      "Te weinig ruimte naar liquidatie/TP-zone. Dit filter behouden; het beschermt PnL."
+      "Liquidation-room guard beschermt TP-potentieel. Niet losser zetten."
     );
   }
 
   if(entries.length > 0 && avgConfluence >= 85){
     recommendations.higherPnl.push(
-      "Sterke confluence. Voor A-grade trades kun je partial iets later houden om meer upside te pakken."
+      "Sterke confluence. Bij A-grade trades kun je later testen met iets later partial nemen."
     );
   }
 
-  // ================= DEFAULTS =================
   if(recommendations.moreTrades.length === 0){
     recommendations.moreTrades.push(
-      "Meer trades nu niet forceren. Eerst huidige kwaliteit meten tot minimaal 20-30 gesloten trades."
+      "Meer trades nu niet forceren. Eerst de nieuwe scanner-output meten op gesloten trades."
     );
   }
 
   if(recommendations.higherWinrate.length === 0){
     recommendations.higherWinrate.push(
-      "Winrate-filtering ziet er normaal uit. Houd OB, confluence, funding en countertrend guards actief."
+      "Winrate-filters ogen gezond. Houd OB, confluence, funding en countertrend guards actief."
     );
   }
 
   if(recommendations.higherPnl.length === 0){
     recommendations.higherPnl.push(
-      "PnL-advies wordt sterker zodra trade-history gesloten WIN/LOSS trades bevat."
+      "PnL-advies wordt sterker zodra er voldoende gesloten trades gelogd zijn."
     );
   }
 
   let advice = "TradeSystem gezond. Geen directe wijziging nodig.";
 
   if(total === 0){
-    advice = "Geen echte tradeCandidates deze scan. Meer trades krijg je via scanner-input, niet door TradeSystem losser te maken.";
+    advice = "Geen echte tradeCandidates deze scan. Meer trades krijg je nu vooral via betere scanner-input.";
   }else if(entries.length === 0 && waits.length > 0){
-    advice = `Geen entries. Grootste blokkade: ${topReason || "UNKNOWN"}. Bekijk advies hieronder.`;
+    advice = `Geen entries. Grootste blokkade: ${topReason || "UNKNOWN"}.`;
   }else if(entryRate > 25){
-    advice = "Veel entries. Let op overtrading; kwaliteit eventueel iets strenger.";
+    advice = "Veel entries. Let op overtrading; kwaliteit eventueel later iets strenger.";
   }else if(entryRate < 3 && total >= 10){
-    advice = "Weinig entries uit veel candidates. Alleen versoepelen als grootste blokkade geen kwaliteitsfilter is.";
+    advice = "Weinig entries uit veel candidates. Eerst scanner-output verbeteren.";
   }
 
   return {
@@ -856,11 +899,13 @@ export async function buildScanPayload(options = {}){
       const flow = detectFlow(base);
       const score = calculateScore(base, regime, direction);
       const edge = calculateEdge(base, regime) || 0;
+      const freshness = calculateFreshness(base, direction);
 
       const coin = {
         ...base,
         side: direction,
         flow,
+        freshness,
         moveScore: score,
         edge
       };
@@ -873,7 +918,7 @@ export async function buildScanPayload(options = {}){
           ? bullFilter(coin)
           : bearFilter(coin);
 
-      const uiStage = realFilterStage || fallbackStage(score, flow);
+      const uiStage = realFilterStage || fallbackStage(score, flow, freshness);
 
       const newStage = safeStage(
         realFilterStage
@@ -887,10 +932,13 @@ export async function buildScanPayload(options = {}){
 
       funnel[direction][newStage].push(coin);
 
+      // Alleen echte filter-coins meenemen in analytics
       if(!coin.uiOnly && coin.stageSource === "filter"){
         logAnalytics(coin);
       }
 
+      // ================= REAL TRADE CANDIDATES ONLY =================
+      // Scanner nu iets breder zodat TradeSystem meer werkbare setups krijgt.
       if(
         symbolTradable &&
         realFilterStage &&
@@ -898,12 +946,12 @@ export async function buildScanPayload(options = {}){
         (
           (
             newStage === "entry" &&
-            score >= 75 &&
+            score >= 72 &&
             flow === "TREND"
           ) ||
           (
             newStage === "almost" &&
-            score >= 88 &&
+            score >= 84 &&
             flow === "TREND"
           )
         )
@@ -921,6 +969,7 @@ export async function buildScanPayload(options = {}){
     }
   }
 
+  // Zorg dat frontend niet leeg wordt
   if(scanSide === "both" || scanSide === "bull"){
     fillUiFallback({
       rawCoins,
