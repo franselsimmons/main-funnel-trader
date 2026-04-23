@@ -365,7 +365,6 @@ function fillUiFallback({
   funnel,
   side,
   validSymbols,
-  bitgetUniverseReady,
   max = 30
 }){
 
@@ -380,14 +379,7 @@ function fillUiFallback({
     const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
-
-    if(
-      bitgetUniverseReady &&
-      !validSymbols.has(base.symbol)
-    ){
-      continue;
-    }
-
+    if(!validSymbols.has(base.symbol)) continue;
     if(hasSymbolInSide(funnel, side, base.symbol)) continue;
     if(base.vm < 0.02) continue;
 
@@ -413,7 +405,8 @@ function fillUiFallback({
       edge,
       stage: fallbackStage(score, flow, freshness),
       stageSource: "ui_fallback",
-      uiOnly: true
+      uiOnly: true,
+      symbolTradable: true
     });
   }
 
@@ -827,6 +820,28 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
 }
 
 
+// ================= BITGET FAILURE HANDLER =================
+async function handleBitgetUniverseUnavailable(scanSide){
+
+  const previous = await getLatestScan();
+
+  if(previous?.ok){
+    return {
+      ...previous,
+      ok: true,
+      stale: true,
+      staleReason: "bitget_universe_unavailable",
+      bitgetSymbols: 0,
+      bitgetUniverseReady: false,
+      scanRequestedSide: scanSide,
+      servedAt: Date.now()
+    };
+  }
+
+  throw new Error("bitget_universe_unavailable");
+}
+
+
 // ================= CORE =================
 export async function buildScanPayload(options = {}){
 
@@ -856,6 +871,13 @@ export async function buildScanPayload(options = {}){
   );
 
   const bitgetUniverseReady = validSymbols.size > 0;
+
+  // Belangrijk:
+  // Geen Bitget universe = geen nieuwe scan bouwen.
+  // Liever laatste goede scan tonen dan stiekem non-Bitget coins pushen.
+  if(!bitgetUniverseReady){
+    return await handleBitgetUniverseUnavailable(scanSide);
+  }
 
   const btcRaw =
     rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") ||
@@ -891,12 +913,10 @@ export async function buildScanPayload(options = {}){
 
     if(!base.symbol || base.price <= 0) continue;
 
-    const symbolTradable =
-      bitgetUniverseReady &&
-      validSymbols.has(base.symbol);
+    const symbolTradable = validSymbols.has(base.symbol);
 
-    // Als Bitget universe bekend is, toon en scan alleen uitvoerbare symbols.
-    if(bitgetUniverseReady && !symbolTradable){
+    // Vanaf RADAR al Bitget-only
+    if(!symbolTradable){
       continue;
     }
 
@@ -927,7 +947,7 @@ export async function buildScanPayload(options = {}){
         freshness,
         moveScore: score,
         edge,
-        symbolTradable
+        symbolTradable: true
       };
 
       const key = `${base.symbol}_${direction}`;
@@ -958,9 +978,7 @@ export async function buildScanPayload(options = {}){
       }
 
       // ================= REAL TRADE CANDIDATES ONLY =================
-      // Alleen als Bitget universe succesvol geladen is én symbol uitvoerbaar is.
       if(
-        symbolTradable &&
         realFilterStage &&
         strictDirectionAllowed(base, btc, direction) &&
         (
@@ -997,7 +1015,6 @@ export async function buildScanPayload(options = {}){
       funnel,
       side: "bull",
       validSymbols,
-      bitgetUniverseReady,
       max: 30
     });
   }
@@ -1009,7 +1026,6 @@ export async function buildScanPayload(options = {}){
       funnel,
       side: "bear",
       validSymbols,
-      bitgetUniverseReady,
       max: 30
     });
   }
@@ -1058,7 +1074,7 @@ export async function buildScanPayload(options = {}){
     candidatesBull,
     candidatesBear,
     bitgetSymbols: validSymbols.size,
-    bitgetUniverseReady,
+    bitgetUniverseReady: true,
     updatedAt: now,
     lastBullScan: scanSide === "bull" || scanSide === "both" ? now : null,
     lastBearScan: scanSide === "bear" || scanSide === "both" ? now : null
