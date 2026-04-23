@@ -364,6 +364,8 @@ function fillUiFallback({
   regime,
   funnel,
   side,
+  validSymbols,
+  bitgetUniverseReady,
   max = 30
 }){
 
@@ -378,6 +380,14 @@ function fillUiFallback({
     const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
+
+    if(
+      bitgetUniverseReady &&
+      !validSymbols.has(base.symbol)
+    ){
+      continue;
+    }
+
     if(hasSymbolInSide(funnel, side, base.symbol)) continue;
     if(base.vm < 0.02) continue;
 
@@ -509,7 +519,8 @@ function getReasonAdvice(reason){
     BTC_BULL_BLOCK_SHORT: "Short tegen bullish BTC geblokkeerd.",
     BTC_BEAR_BLOCK_LONG: "Long tegen bearish BTC geblokkeerd.",
     COUNTERTREND_NOT_ELITE: "Countertrend is niet elite genoeg. Correct.",
-    ENTRY_FILTERED: "Entry kwam niet door de laatste kwaliteitscheck."
+    ENTRY_FILTERED: "Entry kwam niet door de laatste kwaliteitscheck.",
+    ORDERBOOK_FETCH_FAILED: "Orderboek kon niet worden opgehaald. Geen blind entry zonder uitvoerbare live marktdata."
   };
 
   if(String(reason || "").startsWith("SYMBOL_ALREADY_OPEN_")){
@@ -844,6 +855,8 @@ export async function buildScanPayload(options = {}){
       .filter(Boolean)
   );
 
+  const bitgetUniverseReady = validSymbols.size > 0;
+
   const btcRaw =
     rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") ||
     rawCoins[0];
@@ -878,10 +891,16 @@ export async function buildScanPayload(options = {}){
 
     if(!base.symbol || base.price <= 0) continue;
 
-    activeSymbols.push(base.symbol);
-
     const symbolTradable =
-      validSymbols.size === 0 || validSymbols.has(base.symbol);
+      bitgetUniverseReady &&
+      validSymbols.has(base.symbol);
+
+    // Als Bitget universe bekend is, toon en scan alleen uitvoerbare symbols.
+    if(bitgetUniverseReady && !symbolTradable){
+      continue;
+    }
+
+    activeSymbols.push(base.symbol);
 
     if(base.vm < 0.02) continue;
 
@@ -907,7 +926,8 @@ export async function buildScanPayload(options = {}){
         flow,
         freshness,
         moveScore: score,
-        edge
+        edge,
+        symbolTradable
       };
 
       const key = `${base.symbol}_${direction}`;
@@ -938,7 +958,7 @@ export async function buildScanPayload(options = {}){
       }
 
       // ================= REAL TRADE CANDIDATES ONLY =================
-      // Scanner nu iets breder zodat TradeSystem meer werkbare setups krijgt.
+      // Alleen als Bitget universe succesvol geladen is én symbol uitvoerbaar is.
       if(
         symbolTradable &&
         realFilterStage &&
@@ -976,6 +996,8 @@ export async function buildScanPayload(options = {}){
       regime,
       funnel,
       side: "bull",
+      validSymbols,
+      bitgetUniverseReady,
       max: 30
     });
   }
@@ -986,6 +1008,8 @@ export async function buildScanPayload(options = {}){
       regime,
       funnel,
       side: "bear",
+      validSymbols,
+      bitgetUniverseReady,
       max: 30
     });
   }
@@ -1034,6 +1058,7 @@ export async function buildScanPayload(options = {}){
     candidatesBull,
     candidatesBear,
     bitgetSymbols: validSymbols.size,
+    bitgetUniverseReady,
     updatedAt: now,
     lastBullScan: scanSide === "bull" || scanSide === "both" ? now : null,
     lastBearScan: scanSide === "bear" || scanSide === "both" ? now : null
