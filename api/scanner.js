@@ -84,8 +84,6 @@ function safeStage(stage){
 
 
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
-// Breder dan vroeger zodat scanner meer uitvoerbare mid-caps doorlaat.
-// TradeSystem blijft de laatste kwaliteitslaag.
 function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -163,7 +161,6 @@ function detectFlow(c){
 
 
 // ================= FRESHNESS =================
-// Beloont verse uitbraken meer dan oude 24h pumps.
 function calculateFreshness(c, side){
 
   const dir = side === "bear" ? -1 : 1;
@@ -186,7 +183,6 @@ function calculateFreshness(c, side){
     else if(ratio > 0.12) freshness += 2;
   }
 
-  // Straf voor laat achter de pump aan rennen
   if(ch24 > 8 && ch1 < 0.25) freshness -= 8;
   if(ch24 > 12 && ch1 < 0.10) freshness -= 10;
 
@@ -195,8 +191,6 @@ function calculateFreshness(c, side){
 
 
 // ================= DIRECTIONAL SCORE =================
-// Minder gewicht op oude 24h move, meer op 1h/freshness.
-// Daardoor vang je eerder verse uitbrekende munten.
 function calculateScore(c, regime, side){
 
   let score = 0;
@@ -333,7 +327,6 @@ function countFunnel(funnel){
 function hasSymbolInSide(funnel, side, symbol){
 
   for(const stage of STAGES){
-
     if(
       Array.isArray(funnel?.[side]?.[stage]) &&
       funnel[side][stage].some(c => c.symbol === symbol)
@@ -535,7 +528,6 @@ function buildTradeSystemAnalysis(trades){
   const entries = list.filter(t => t.action === "ENTRY");
   const waits = list.filter(t => t.action === "WAIT");
   const holds = list.filter(t => t.action === "HOLD");
-  const partials = list.filter(t => t.action === "PARTIAL");
   const exits = list.filter(t => t.action === "EXIT");
 
   const reasonGroup = groupByCount(waits, "reason");
@@ -565,7 +557,6 @@ function buildTradeSystemAnalysis(trades){
     higherPnl: []
   };
 
-  // ================= MEER TRADES =================
   if(total === 0){
     recommendations.moreTrades.push(
       "Scanner stuurde deze run geen echte tradeCandidates. Meer trades haal je nu vooral uit betere scanner-input."
@@ -605,7 +596,6 @@ function buildTradeSystemAnalysis(trades){
     );
   }
 
-  // ================= HOGERE WINRATE =================
   if(topReason === "LOW_CONFLUENCE"){
     recommendations.higherWinrate.push(
       "Confluence niet versoepelen. De scanner moet sterkere setups aanleveren."
@@ -648,7 +638,6 @@ function buildTradeSystemAnalysis(trades){
     );
   }
 
-  // ================= HOGERE PNL =================
   if(entries.length > 0 && avgRR < 1){
     recommendations.higherPnl.push(
       "Gemiddelde RR is laag. Filter lage RR harder of laat scanner frissere moves door."
@@ -657,7 +646,7 @@ function buildTradeSystemAnalysis(trades){
 
   if(entries.length > 0 && avgRR >= 1.2){
     recommendations.higherPnl.push(
-      "RR is gezond. Meer PnL haal je dan eerder uit trailing/partials dan uit soepelere entries."
+      "RR is gezond. Meer PnL haal je vooral uit betere TP/SL-kwaliteit en sterkere trade-selectie."
     );
   }
 
@@ -669,7 +658,7 @@ function buildTradeSystemAnalysis(trades){
 
   if(entries.length > 0 && avgConfluence >= 85){
     recommendations.higherPnl.push(
-      "Sterke confluence. Bij A-grade trades kun je later testen met iets later partial nemen."
+      "Sterke confluence. Test later alleen ruimere TP-projectie als closed trades dat ondersteunen."
     );
   }
 
@@ -708,7 +697,7 @@ function buildTradeSystemAnalysis(trades){
     entries: entries.length,
     waits: waits.length,
     holds: holds.length,
-    partials: partials.length,
+    partials: 0,
     exits: exits.length,
 
     entryRate,
@@ -872,9 +861,6 @@ export async function buildScanPayload(options = {}){
 
   const bitgetUniverseReady = validSymbols.size > 0;
 
-  // Belangrijk:
-  // Geen Bitget universe = geen nieuwe scan bouwen.
-  // Liever laatste goede scan tonen dan stiekem non-Bitget coins pushen.
   if(!bitgetUniverseReady){
     return await handleBitgetUniverseUnavailable(scanSide);
   }
@@ -915,7 +901,6 @@ export async function buildScanPayload(options = {}){
 
     const symbolTradable = validSymbols.has(base.symbol);
 
-    // Vanaf RADAR al Bitget-only
     if(!symbolTradable){
       continue;
     }
@@ -972,12 +957,10 @@ export async function buildScanPayload(options = {}){
 
       funnel[direction][newStage].push(coin);
 
-      // Alleen echte filter-coins meenemen in analytics
       if(!coin.uiOnly && coin.stageSource === "filter"){
         logAnalytics(coin);
       }
 
-      // ================= REAL TRADE CANDIDATES ONLY =================
       if(
         realFilterStage &&
         strictDirectionAllowed(base, btc, direction) &&
@@ -1007,7 +990,6 @@ export async function buildScanPayload(options = {}){
     }
   }
 
-  // Zorg dat frontend niet leeg wordt
   if(scanSide === "both" || scanSide === "bull"){
     fillUiFallback({
       rawCoins,
@@ -1043,7 +1025,10 @@ export async function buildScanPayload(options = {}){
     btc,
     "auto",
     regime,
-    { notify }
+    {
+      notify,
+      log: true
+    }
   );
 
   const analytics = getAnalytics();
