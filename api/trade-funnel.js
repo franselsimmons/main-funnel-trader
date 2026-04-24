@@ -501,11 +501,14 @@ function getTradeFunnelCandidates(latest){
 
     const key = `${symbol}_${side}`;
 
+    // NIEUW: expliciet exchangeSymbol en marketSymbol doorgeven
     map.set(key, {
       ...coin,
       symbol,
       side,
-      stage: "entry"
+      stage: "entry",
+      exchangeSymbol: coin.exchangeSymbol || coin.marketSymbol || `${symbol}USDT`,
+      marketSymbol: coin.marketSymbol || coin.exchangeSymbol || `${symbol}USDT`
     });
   }
 
