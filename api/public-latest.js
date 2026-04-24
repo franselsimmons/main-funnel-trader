@@ -1,6 +1,29 @@
-import { getLatestScan } from "../lib/scanStore.js";
+import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 
 const STAGES = ["entry", "almost", "buildup", "radar"];
+
+function safeArray(value){
+  return Array.isArray(value) ? value : [];
+}
+
+function safeNumber(value, fallback = 0){
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeCounterMap(map){
+  const out = {};
+
+  for(const [key, value] of Object.entries(map || {})){
+    const n = Math.round(Number(value || 0));
+
+    if(n > 0){
+      out[String(key)] = n;
+    }
+  }
+
+  return out;
+}
 
 function emptySide(){
   return {
@@ -11,7 +34,6 @@ function emptySide(){
   };
 }
 
-
 function emptyFunnel(){
   return {
     bull: emptySide(),
@@ -19,6 +41,83 @@ function emptyFunnel(){
   };
 }
 
+function emptyDashboardStats(now = Date.now()){
+  return {
+    startedAt: now,
+    lastResetAt: now,
+    lastScanAt: 0,
+
+    totalScans: 0,
+    totalEntries: 0,
+    totalRejected: 0,
+    totalOtherTrades: 0,
+    totalFunnelCoins: 0,
+    totalCandidates: 0,
+
+    lastEntries: 0,
+    lastRejected: 0,
+    lastOtherTrades: 0,
+    lastFunnelCoins: 0,
+    lastCandidates: 0,
+
+    rejectReasonCounts: {},
+    actionCounts: {},
+
+    entryRows: [],
+    rejectedRows: [],
+    tradeRows: []
+  };
+}
+
+function normalizeDashboardStats(stats, fallbackPayload = null){
+  const now = Date.now();
+
+  const trades = safeArray(fallbackPayload?.trades);
+  const entries = trades.filter(t => String(t?.action || "").toUpperCase() === "ENTRY");
+  const waits = trades.filter(t => String(t?.action || "").toUpperCase() === "WAIT");
+  const otherTrades = trades.filter(t => {
+    const action = String(t?.action || "").toUpperCase();
+    return action !== "WAIT" && action !== "ENTRY";
+  });
+
+  const base = stats
+    ? { ...stats }
+    : {
+        ...emptyDashboardStats(now),
+        lastScanAt: safeNumber(fallbackPayload?.updatedAt, 0),
+        lastEntries: entries.length,
+        lastRejected: waits.length,
+        lastOtherTrades: otherTrades.length,
+        lastFunnelCoins: safeNumber(fallbackPayload?.funnelCount, 0),
+        lastCandidates: safeNumber(fallbackPayload?.candidates, 0)
+      };
+
+  return {
+    startedAt: safeNumber(base?.startedAt, now),
+    lastResetAt: safeNumber(base?.lastResetAt, safeNumber(base?.startedAt, now)),
+    lastScanAt: safeNumber(base?.lastScanAt, safeNumber(fallbackPayload?.updatedAt, 0)),
+
+    totalScans: safeNumber(base?.totalScans, 0),
+    totalEntries: safeNumber(base?.totalEntries, 0),
+    totalRejected: safeNumber(base?.totalRejected, 0),
+    totalOtherTrades: safeNumber(base?.totalOtherTrades, 0),
+    totalFunnelCoins: safeNumber(base?.totalFunnelCoins, 0),
+    totalCandidates: safeNumber(base?.totalCandidates, 0),
+
+    lastEntries: safeNumber(base?.lastEntries, entries.length),
+    lastRejected: safeNumber(base?.lastRejected, waits.length),
+    lastOtherTrades: safeNumber(base?.lastOtherTrades, otherTrades.length),
+    lastFunnelCoins: safeNumber(base?.lastFunnelCoins, safeNumber(fallbackPayload?.funnelCount, 0)),
+    lastCandidates: safeNumber(base?.lastCandidates, safeNumber(fallbackPayload?.candidates, 0)),
+
+    rejectReasonCounts: normalizeCounterMap(base?.rejectReasonCounts),
+    actionCounts: normalizeCounterMap(base?.actionCounts),
+
+    entryRows: safeArray(base?.entryRows),
+    rejectedRows: safeArray(base?.rejectedRows),
+    tradeRows: safeArray(base?.tradeRows)
+  };
+}
 
 function normalizeFunnel(funnel){
 
@@ -38,7 +137,6 @@ function normalizeFunnel(funnel){
   };
 }
 
-
 function countSide(funnel, side){
 
   const f = normalizeFunnel(funnel);
@@ -54,15 +152,14 @@ function countSide(funnel, side){
   return total;
 }
 
-
 function countFunnel(funnel){
   return countSide(funnel, "bull") + countSide(funnel, "bear");
 }
 
-
 function safePayload(payload, source){
 
   const funnel = normalizeFunnel(payload?.funnel);
+  const dashboardStats = normalizeDashboardStats(payload?.dashboardStats, payload);
 
   return {
     ...(payload || {}),
@@ -78,16 +175,55 @@ function safePayload(payload, source){
     market: payload?.market || null,
     analytics: payload?.analytics || {},
     advice: payload?.advice || {},
+    dashboardStats,
     servedAt: Date.now()
   };
 }
 
+async function resetStoredStats(){
+  const latest = await getLatestScan();
+
+  if(!latest?.ok){
+    return {
+      ok: true,
+      message: "Geen opgeslagen scan om te resetten."
+    };
+  }
+
+  const now = Date.now();
+
+  const updated = {
+    ...latest,
+    dashboardStats: {
+      ...emptyDashboardStats(now),
+      lastScanAt: safeNumber(latest?.updatedAt, 0),
+      lastFunnelCoins: safeNumber(latest?.funnelCount, countFunnel(latest?.funnel)),
+      lastCandidates: safeNumber(latest?.candidates, 0)
+    },
+    statsResetAt: now,
+    servedAt: now
+  };
+
+  await setLatestScan(updated);
+
+  return safePayload(updated, "stats_reset");
+}
 
 export default async function handler(req, res){
 
   try{
 
     res.setHeader("Cache-Control", "no-store, max-age=0");
+
+    const action =
+      String(req?.query?.action || req?.body?.action || "")
+        .trim()
+        .toLowerCase();
+
+    if(req.method === "POST" && action === "resetstats"){
+      const resetResult = await resetStoredStats();
+      return res.status(200).json(resetResult);
+    }
 
     const latest = await getLatestScan();
 
@@ -106,6 +242,7 @@ export default async function handler(req, res){
         trades: [],
         btc: { state: "UNKNOWN", chg24: 0 },
         regime: "UNKNOWN",
+        dashboardStats: emptyDashboardStats(Date.now()),
         updatedAt: null
       }, "no_locked_scan")
     );
@@ -124,6 +261,7 @@ export default async function handler(req, res){
       trades: [],
       btc: { state: "UNKNOWN", chg24: 0 },
       regime: "UNKNOWN",
+      dashboardStats: emptyDashboardStats(Date.now()),
       servedAt: Date.now()
     });
   }
