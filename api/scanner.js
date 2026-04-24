@@ -558,10 +558,14 @@ function buildCoinTimeframeMeta(coin){
   }
 }
 
+// ================= TRADE INPUT GATE =================
+// Bewust soepeler gemaakt zodat meer scanner-candidates
+// naar TradeSystem gaan en daar echte WAIT-reasons krijgen.
 function shouldSendToTradeSystem(coin, btc, realFilterStage){
 
   if(!realFilterStage) return false;
 
+  const stage = safeStage(realFilterStage);
   const score = Number(coin.moveScore || 0);
   const freshness = Number(coin.freshness || 0);
   const tfStrength = Number(coin.tfStrength || 0);
@@ -569,38 +573,40 @@ function shouldSendToTradeSystem(coin, btc, realFilterStage){
 
   const strictOK = strictDirectionAllowed(coin, btc, coin.side);
 
-  const eliteOverride =
-    flow === "TREND" &&
-    score >= 62 &&
-    tfStrength >= 2 &&
-    freshness >= 5;
-
-  if(!strictOK && !eliteOverride){
-    return false;
-  }
-
-  if(realFilterStage === "entry"){
+  if(stage === "entry"){
     return (
-      score >= 50 &&
-      tfStrength >= 1 &&
-      flow !== "NEUTRAL"
+      score >= 30 &&
+      (
+        flow !== "NEUTRAL" ||
+        tfStrength >= 1 ||
+        strictOK
+      )
     );
   }
 
-  if(realFilterStage === "almost"){
+  if(stage === "almost"){
     return (
-      score >= 44 &&
-      tfStrength >= 1 &&
-      flow !== "NEUTRAL"
+      score >= 24 &&
+      (
+        flow === "BUILDING" ||
+        flow === "TREND" ||
+        tfStrength >= 1 ||
+        freshness >= 6 ||
+        strictOK
+      )
     );
   }
 
-  if(realFilterStage === "buildup"){
+  if(stage === "buildup"){
     return (
-      score >= 40 &&
-      tfStrength >= 1 &&
-      (flow === "BUILDING" || flow === "TREND") &&
-      freshness >= 3
+      score >= 18 &&
+      (
+        flow === "BUILDING" ||
+        flow === "TREND" ||
+        freshness >= 5 ||
+        tfStrength >= 1 ||
+        strictOK
+      )
     );
   }
 
