@@ -120,7 +120,6 @@ function normalizeDashboardStats(stats, fallbackPayload = null){
 }
 
 function normalizeFunnel(funnel){
-
   return {
     bull: {
       entry: Array.isArray(funnel?.bull?.entry) ? funnel.bull.entry : [],
@@ -138,7 +137,6 @@ function normalizeFunnel(funnel){
 }
 
 function countSide(funnel, side){
-
   const f = normalizeFunnel(funnel);
 
   let total = 0;
@@ -157,14 +155,9 @@ function countFunnel(funnel){
 }
 
 function safePayload(payload, source){
-
   const funnel = normalizeFunnel(payload?.funnel);
-  const dashboardStats = normalizeDashboardStats(payload?.dashboardStats, payload);
-
-  return {
+  const normalizedPayload = {
     ...(payload || {}),
-    ok: payload?.ok !== false,
-    source,
     funnel,
     funnelCount: countFunnel(funnel),
     bullCount: countSide(funnel, "bull"),
@@ -174,7 +167,18 @@ function safePayload(payload, source){
     regime: payload?.regime || "UNKNOWN",
     market: payload?.market || null,
     analytics: payload?.analytics || {},
-    advice: payload?.advice || {},
+    advice: payload?.advice || {}
+  };
+
+  const dashboardStats = normalizeDashboardStats(
+    payload?.dashboardStats,
+    normalizedPayload
+  );
+
+  return {
+    ...normalizedPayload,
+    ok: payload?.ok !== false,
+    source,
     dashboardStats,
     servedAt: Date.now()
   };
@@ -210,9 +214,7 @@ async function resetStoredStats(){
 }
 
 export default async function handler(req, res){
-
   try{
-
     res.setHeader("Cache-Control", "no-store, max-age=0");
 
     const action =
@@ -248,7 +250,6 @@ export default async function handler(req, res){
     );
 
   }catch(err){
-
     console.error("PUBLIC-LATEST ERROR:", err);
 
     return res.status(500).json({
