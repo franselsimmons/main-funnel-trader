@@ -204,6 +204,36 @@ function normalizeDashboardStats(data){
   };
 }
 
+function withScanTs(rows, fallbackTs){
+  return safeArray(rows).map(row => ({
+    ...row,
+    scanTs: toNumber(row?.scanTs) || toNumber(fallbackTs) || 0
+  }));
+}
+
+function uniqueRows(rows){
+  const seen = new Set();
+  const out = [];
+
+  for(const row of safeArray(rows)){
+    const key = [
+      String(row?.scanTs || 0),
+      String(row?.symbol || ""),
+      String(row?.side || ""),
+      String(row?.action || ""),
+      String(row?.reason || ""),
+      String(row?.stage || "")
+    ].join("|");
+
+    if(seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(row);
+  }
+
+  return out;
+}
+
 function flattenFunnel(funnel){
   const rows = [];
 
@@ -267,6 +297,17 @@ function buildRejectOverviewFromCounts(reasonCounts){
   return rows.sort((a, b) => b.count - a.count);
 }
 
+function buildRejectOverviewFromRows(rows){
+  const reasonCounts = {};
+
+  for(const row of safeArray(rows)){
+    const key = String(row?.reason || "UNKNOWN");
+    reasonCounts[key] = (reasonCounts[key] || 0) + 1;
+  }
+
+  return buildRejectOverviewFromCounts(reasonCounts);
+}
+
 function tableHtml(columns, rows, emptyText, rowClassFn = null){
   if(!rows.length){
     return `<div class="emptyState">${escapeHtml(emptyText)}</div>`;
@@ -304,7 +345,7 @@ function tableHtml(columns, rows, emptyText, rowClassFn = null){
 }
 
 function renderEntries(entries){
-  const rows = [...entries].sort((a, b) => {
+  const rows = uniqueRows(withScanTs(entries, 0)).sort((a, b) => {
     const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
     if(tsDiff !== 0) return tsDiff;
     return Number(b.score || 0) - Number(a.score || 0);
@@ -360,8 +401,11 @@ function renderFunnel(funnelRows){
   );
 }
 
-function renderRejectOverview(reasonCounts){
-  const rows = buildRejectOverviewFromCounts(reasonCounts);
+function renderRejectOverview(reasonCounts, fallbackRejectedRows = []){
+  const rowsFromCounts = buildRejectOverviewFromCounts(reasonCounts);
+  const rows = rowsFromCounts.length
+    ? rowsFromCounts
+    : buildRejectOverviewFromRows(fallbackRejectedRows);
 
   const columns = [
     { label: "Filter / Reason", render: r => `<strong>${fmtText(r.label)}</strong>` },
@@ -380,7 +424,7 @@ function renderRejectOverview(reasonCounts){
 }
 
 function renderRejectedTrades(waitRows){
-  const rows = [...waitRows].sort((a, b) => {
+  const rows = uniqueRows(withScanTs(waitRows, 0)).sort((a, b) => {
     const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
     if(tsDiff !== 0) return tsDiff;
     return Number(b.score || 0) - Number(a.score || 0);
@@ -415,7 +459,7 @@ function renderRejectedTrades(waitRows){
 }
 
 function renderTradeResults(nonWaitTrades){
-  const rows = [...nonWaitTrades].sort((a, b) => {
+  const rows = uniqueRows(withScanTs(nonWaitTrades, 0)).sort((a, b) => {
     const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
     if(tsDiff !== 0) return tsDiff;
 
@@ -522,12 +566,41 @@ async function load(){
     const latestTrades = sortTrades(data?.trades);
     const latestFunnelRows = flattenFunnel(data?.funnel);
 
+    const fallbackScanTs =
+      stats.lastScanAt ||
+      toNumber(data?.updatedAt) ||
+      Date.now();
+
+    const latestEntryRows = latestTrades
+      .filter(t => String(t?.action || "").toUpperCase() === "ENTRY")
+      .map(row => ({ ...row, scanTs: toNumber(row?.scanTs) || fallbackScanTs }));
+
+    const latestRejectedRows = latestTrades
+      .filter(t => String(t?.action || "").toUpperCase() === "WAIT")
+      .map(row => ({ ...row, scanTs: toNumber(row?.scanTs) || fallbackScanTs }));
+
+    const latestTradeRows = latestTrades
+      .filter(t => String(t?.action || "").toUpperCase() !== "WAIT")
+      .map(row => ({ ...row, scanTs: toNumber(row?.scanTs) || fallbackScanTs }));
+
+    const entryRows = stats.entryRows.length
+      ? withScanTs(stats.entryRows, fallbackScanTs)
+      : latestEntryRows;
+
+    const rejectedRows = stats.rejectedRows.length
+      ? withScanTs(stats.rejectedRows, fallbackScanTs)
+      : latestRejectedRows;
+
+    const tradeRows = stats.tradeRows.length
+      ? withScanTs(stats.tradeRows, fallbackScanTs)
+      : latestTradeRows;
+
     renderStatus(data, stats, latestFunnelRows);
-    renderEntries(stats.entryRows);
+    renderEntries(entryRows);
     renderFunnel(latestFunnelRows);
-    renderRejectOverview(stats.rejectReasonCounts);
-    renderRejectedTrades(stats.rejectedRows);
-    renderTradeResults(stats.tradeRows);
+    renderRejectOverview(stats.rejectReasonCounts, rejectedRows);
+    renderRejectedTrades(rejectedRows);
+    renderTradeResults(tradeRows);
 
     return latestTrades;
   }catch(e){
