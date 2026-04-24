@@ -6,6 +6,188 @@
   <title>Trade Signals</title>
   <link rel="stylesheet" href="main.css">
   <link rel="stylesheet" href="signals.css">
+
+  <style>
+    .pageShell{
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .metrics{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0 20px;
+    }
+
+    .metric{
+      background: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+
+    .metricLabel{
+      font-size: 12px;
+      color: var(--muted, #94a3b8);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .metricValue{
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text, #e2e8f0);
+    }
+
+    .trade-section{
+      margin-top: 22px;
+      background: rgba(15, 23, 42, 0.60);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 16px;
+      padding: 16px;
+    }
+
+    .trade-section h2{
+      margin: 0 0 14px;
+      font-size: 18px;
+      color: var(--text, #e2e8f0);
+    }
+
+    .tableWrap{
+      overflow-x: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .signalTable{
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1100px;
+      background: rgba(2, 6, 23, 0.55);
+    }
+
+    .signalTable thead th{
+      position: sticky;
+      top: 0;
+      background: rgba(15, 23, 42, 0.95);
+      color: var(--muted, #94a3b8);
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      padding: 12px 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+      white-space: nowrap;
+    }
+
+    .signalTable td{
+      padding: 11px 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+      color: var(--text, #e2e8f0);
+      font-size: 13px;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+
+    .signalTable tbody tr:hover{
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .row-entry{
+      background: rgba(34, 197, 94, 0.06);
+    }
+
+    .row-hold{
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .row-wait{
+      background: rgba(245, 158, 11, 0.04);
+    }
+
+    .row-exit{
+      background: rgba(239, 68, 68, 0.04);
+    }
+
+    .pill{
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .pill-action.action-entry{
+      color: #22c55e;
+      border-color: rgba(34, 197, 94, 0.35);
+      background: rgba(34, 197, 94, 0.12);
+    }
+
+    .pill-action.action-hold{
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.12);
+    }
+
+    .pill-action.action-wait{
+      color: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.35);
+      background: rgba(245, 158, 11, 0.12);
+    }
+
+    .pill-action.action-exit{
+      color: #ef4444;
+      border-color: rgba(239, 68, 68, 0.35);
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    .pill-stage.stage-entry{
+      color: #22c55e;
+    }
+
+    .pill-stage.stage-almost{
+      color: #eab308;
+    }
+
+    .pill-stage.stage-buildup{
+      color: #38bdf8;
+    }
+
+    .pill-stage.stage-radar{
+      color: #cbd5e1;
+    }
+
+    .pill-side.side-bull{
+      color: #22c55e;
+      border-color: rgba(34, 197, 94, 0.25);
+      background: rgba(34, 197, 94, 0.10);
+    }
+
+    .pill-side.side-bear{
+      color: #ef4444;
+      border-color: rgba(239, 68, 68, 0.25);
+      background: rgba(239, 68, 68, 0.10);
+    }
+
+    .emptyState{
+      color: var(--muted, #94a3b8);
+      padding: 18px 10px;
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px){
+      .metrics{
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
 <body>
 
@@ -13,7 +195,7 @@
     <div class="header">
       <h1>⚡ TRADE SYSTEM</h1>
       <div id="statusLine">Laden...</div>
-      
+
       <div class="nav">
         <a href="index.html" class="btn">Home</a>
         <a href="bull.html" class="btn">Bull</a>
@@ -23,9 +205,36 @@
       </div>
     </div>
 
+    <div class="metrics">
+      <div class="metric">
+        <div class="metricLabel">Entry signalen</div>
+        <div id="entriesCount" class="metricValue">0</div>
+      </div>
+
+      <div class="metric">
+        <div class="metricLabel">Trade resultaten</div>
+        <div id="tradeCount" class="metricValue">0</div>
+      </div>
+
+      <div class="metric">
+        <div class="metricLabel">Coins in funnel</div>
+        <div id="funnelCount" class="metricValue">0</div>
+      </div>
+    </div>
+
     <div class="trade-section">
-      <h2>ACTIEVE SIGNALEN</h2>
-      <div id="trades"></div>
+      <h2>ENTRY SIGNALEN</h2>
+      <div id="entriesTable"></div>
+    </div>
+
+    <div class="trade-section">
+      <h2>TRADE RESULTATEN</h2>
+      <div id="tradeResultsTable"></div>
+    </div>
+
+    <div class="trade-section">
+      <h2>SCANNER / FUNNEL INPUT</h2>
+      <div id="funnelTable"></div>
     </div>
   </div>
 
