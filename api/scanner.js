@@ -294,60 +294,95 @@ function mergeStage(prevStage, filterStage){
 }
 
 
-// ================= SYMBOL NORMALIZER =================
-function normalizeBitgetKey(symbolKey){
+// ================= BITGET SYMBOL NORMALIZERS (aangepast) =================
+function normalizeBitgetContractSymbol(symbolKey){
   return String(symbolKey || "")
     .toUpperCase()
+    .trim()
     .replace(/_UMCBL$/, "")
     .replace(/_DMCBL$/, "")
     .replace(/_CMCBL$/, "")
     .replace(/-UMCBL$/, "")
     .replace(/-DMCBL$/, "")
-    .replace(/-CMCBL$/, "")
-    .replace(/USDT$/, "");
+    .replace(/-CMCBL$/, "");
 }
 
-// ================= NIEUWE HELPERS VOOR USDT FUTURES FILTER =================
-function isUsdtFuturesContract(symbolKey, meta){
-  const rawKey = String(meta?.symbol || symbolKey || "")
-    .toUpperCase()
-    .replace(/-/g, "_");
-
-  const productType = String(
-    meta?.productType ||
-    meta?.producttype ||
-    ""
-  ).toUpperCase();
-
-  return (
-    productType === "USDT-FUTURES" ||
-    rawKey.endsWith("_UMCBL")
-  );
+function normalizeBitgetKey(symbolKey){
+  return normalizeBitgetContractSymbol(symbolKey)
+    .replace(/USDT$/, "")
+    .replace(/USDC$/, "");
 }
 
-function buildBitgetUsdtFuturesMap(futures){
-  const map = new Map();
+function normalizeBitgetProductType(productType, rawSymbol = ""){
+  const p = String(productType || "").toUpperCase();
+  const raw = String(rawSymbol || "").toUpperCase();
 
-  for(const [symbolKey, meta] of futures.entries()){
-    if(!isUsdtFuturesContract(symbolKey, meta)) continue;
+  if(p === "USDT-FUTURES" || p === "COIN-FUTURES" || p === "USDC-FUTURES"){
+    return p;
+  }
 
-    const exchangeSymbol = String(meta?.symbol || symbolKey || "")
-      .toUpperCase()
-      .replace(/-/g, "_");
+  if(raw.includes("_UMCBL") || raw.includes("-UMCBL") || raw.endsWith("USDT")){
+    return "USDT-FUTURES";
+  }
 
-    const normalized = normalizeBitgetKey(exchangeSymbol);
-    if(!normalized) continue;
+  if(raw.includes("_DMCBL") || raw.includes("-DMCBL")){
+    return "COIN-FUTURES";
+  }
 
-    if(!map.has(normalized)){
-      map.set(normalized, {
-        bitgetSymbol: exchangeSymbol,
-        productType: "USDT-FUTURES"
-      });
+  if(raw.includes("_CMCBL") || raw.includes("-CMCBL") || raw.endsWith("USDC")){
+    return "USDC-FUTURES";
+  }
+
+  return "USDT-FUTURES";
+}
+
+function buildTradableSymbolMap(futures){
+  const out = new Map();
+
+  for(const [key, value] of futures instanceof Map ? futures.entries() : []){
+    const rawBitgetSymbol =
+      String(
+        value?.symbol ||
+        value?.instId ||
+        value?.tickerId ||
+        key ||
+        ""
+      ).toUpperCase().trim();
+
+    if(!rawBitgetSymbol) continue;
+
+    const bitgetSymbol = normalizeBitgetContractSymbol(rawBitgetSymbol);
+    const baseSymbol = normalizeBitgetKey(rawBitgetSymbol);
+    const productType = normalizeBitgetProductType(
+      value?.productType,
+      rawBitgetSymbol
+    );
+
+    if(!bitgetSymbol || !baseSymbol) continue;
+
+    const candidate = {
+      baseSymbol,
+      bitgetSymbol,
+      productType,
+      rawBitgetSymbol
+    };
+
+    const prev = out.get(baseSymbol);
+
+    if(!prev){
+      out.set(baseSymbol, candidate);
+      continue;
+    }
+
+    // Altijd USDT futures prefereren
+    if(prev.productType !== "USDT-FUTURES" && candidate.productType === "USDT-FUTURES"){
+      out.set(baseSymbol, candidate);
     }
   }
 
-  return map;
+  return out;
 }
+
 
 // ================= NORMALIZE =================
 function normalize(raw){
@@ -443,13 +478,13 @@ function sortFunnel(funnel){
 }
 
 
-// ================= UI FALLBACK FILL =================
+// ================= UI FALLBACK FILL (aangepast) =================
 function fillUiFallback({
   rawCoins,
   regime,
   funnel,
   side,
-  validSymbols,
+  tradableSymbolMap,
   max = 30
 }){
   const targetMinimum = 12;
@@ -462,7 +497,8 @@ function fillUiFallback({
     const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
-    if(!validSymbols.has(base.symbol)) continue;
+    const contractMeta = tradableSymbolMap.get(base.symbol);
+    if(!contractMeta) continue;
     if(hasSymbolInSide(funnel, side, base.symbol)) continue;
     if(base.vm < 0.02) continue;
 
@@ -498,6 +534,9 @@ function fillUiFallback({
       stageSource: "ui_fallback",
       uiOnly: true,
       symbolTradable: true,
+      bitgetSymbol: contractMeta.bitgetSymbol,
+      productType: contractMeta.productType,
+      rawBitgetSymbol: contractMeta.rawBitgetSymbol,
       tfContext: tfMeta.tfContext,
       tfScore: tfMeta.tfScore,
       tfStrength: tfMeta.tfStrength,
@@ -648,10 +687,9 @@ export async function buildScanPayload(options = {}){
     console.error("BITGET FILTER ERROR:", e.message);
   }
 
-  // Filter alleen USDT futures contracten
-  const bitgetUsdtMap = buildBitgetUsdtFuturesMap(futures);
-  const validSymbols = new Set(Array.from(bitgetUsdtMap.keys()));
-  const bitgetUniverseReady = validSymbols.size > 0;
+  const tradableSymbolMap = buildTradableSymbolMap(futures);
+  const validSymbols = new Set(tradableSymbolMap.keys());
+  const bitgetUniverseReady = tradableSymbolMap.size > 0;
 
   if(!bitgetUniverseReady){
     return await handleBitgetUniverseUnavailable(scanSide);
@@ -689,8 +727,8 @@ export async function buildScanPayload(options = {}){
 
     if(!base.symbol || base.price <= 0) continue;
 
-    const bitgetMeta = bitgetUsdtMap.get(base.symbol);
-    const symbolTradable = Boolean(bitgetMeta?.bitgetSymbol);
+    const contractMeta = tradableSymbolMap.get(base.symbol);
+    const symbolTradable = Boolean(contractMeta);
 
     if(!symbolTradable) continue;
 
@@ -730,8 +768,9 @@ export async function buildScanPayload(options = {}){
         moveScore: score,
         edge,
         symbolTradable: true,
-        bitgetSymbol: bitgetMeta.bitgetSymbol,
-        productType: bitgetMeta.productType,
+        bitgetSymbol: contractMeta.bitgetSymbol,
+        productType: contractMeta.productType,
+        rawBitgetSymbol: contractMeta.rawBitgetSymbol,
         tfContext: tfMeta.tfContext,
         tfScore: tfMeta.tfScore,
         tfStrength: tfMeta.tfStrength,
@@ -782,7 +821,7 @@ export async function buildScanPayload(options = {}){
       regime,
       funnel,
       side: "bull",
-      validSymbols,
+      tradableSymbolMap,
       max: 30
     });
   }
@@ -793,7 +832,7 @@ export async function buildScanPayload(options = {}){
       regime,
       funnel,
       side: "bear",
-      validSymbols,
+      tradableSymbolMap,
       max: 30
     });
   }
