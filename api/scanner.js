@@ -32,6 +32,248 @@ import { buildTimeframeContext } from "../lib/timeframe.js";
 
 const STAGES = ["entry", "almost", "buildup", "radar"];
 
+const MAX_STORED_ENTRY_ROWS = 250;
+const MAX_STORED_REJECT_ROWS = 500;
+const MAX_STORED_TRADE_ROWS = 500;
+
+
+// ================= GENERIC HELPERS =================
+function safeArray(value){
+  return Array.isArray(value) ? value : [];
+}
+
+function safeNumber(value, fallback = 0){
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function safeText(value, fallback = ""){
+  if(value === undefined || value === null) return fallback;
+  return String(value);
+}
+
+function normalizeCounterMap(map){
+  const out = {};
+
+  for(const [key, value] of Object.entries(map || {})){
+    const n = Math.round(Number(value || 0));
+
+    if(n > 0){
+      out[String(key)] = n;
+    }
+  }
+
+  return out;
+}
+
+function mergeCounterMaps(base = {}, extra = {}){
+  const out = { ...normalizeCounterMap(base) };
+
+  for(const [key, value] of Object.entries(normalizeCounterMap(extra))){
+    out[key] = (out[key] || 0) + value;
+  }
+
+  return out;
+}
+
+function buildCounterMap(rows, field){
+  const out = {};
+
+  for(const row of safeArray(rows)){
+    const key = safeText(row?.[field], "UNKNOWN");
+    out[key] = (out[key] || 0) + 1;
+  }
+
+  return out;
+}
+
+function compactTradeRow(row, scanTs){
+  const symbol = safeText(row?.symbol, "UNKNOWN");
+  const side = safeText(row?.side, "unknown");
+  const action = safeText(row?.action, "UNKNOWN");
+  const reason = safeText(row?.reason, "UNKNOWN");
+  const stage = safeText(row?.stage, "radar");
+
+  return {
+    uid: `${scanTs}_${symbol}_${side}_${action}_${reason}_${stage}`,
+    scanTs,
+    symbol,
+    side,
+    action,
+    reason,
+    stage,
+
+    score: safeNumber(row?.score ?? row?.moveScore, 0),
+    confluence: safeNumber(row?.confluence, 0),
+    rr: safeNumber(row?.rr, 0),
+
+    price: safeNumber(row?.price, 0),
+    entry: safeNumber(row?.entry, 0),
+    sl: safeNumber(row?.sl, 0),
+    tp: safeNumber(row?.tp, 0),
+
+    grade: safeText(row?.grade, "N/A"),
+    flow: safeText(row?.flow, "NEUTRAL"),
+    sniper: safeText(row?.sniper, "NONE"),
+    obBias: safeText(row?.obBias, "NEUTRAL"),
+
+    tfScore: safeNumber(row?.tfScore, 0),
+    tfStrength: safeNumber(row?.tfStrength, 0),
+    tfAlignment: safeText(row?.tfAlignment, "UNKNOWN")
+  };
+}
+
+function mergeStoredRows(prevRows, nextRows, max){
+  const merged = [];
+  const seen = new Set();
+
+  for(const row of [...safeArray(nextRows), ...safeArray(prevRows)]){
+    const uid =
+      safeText(
+        row?.uid,
+        `${safeNumber(row?.scanTs, 0)}_${safeText(row?.symbol)}_${safeText(row?.action)}_${safeText(row?.reason)}_${safeText(row?.side)}_${safeText(row?.stage)}`
+      );
+
+    if(seen.has(uid)) continue;
+
+    seen.add(uid);
+    merged.push({
+      ...row,
+      uid
+    });
+  }
+
+  merged.sort((a, b) => {
+    const tsDiff = safeNumber(b?.scanTs, 0) - safeNumber(a?.scanTs, 0);
+    if(tsDiff !== 0) return tsDiff;
+
+    return safeNumber(b?.score, 0) - safeNumber(a?.score, 0);
+  });
+
+  return merged.slice(0, max);
+}
+
+function emptyDashboardStats(now = Date.now()){
+  return {
+    startedAt: now,
+    lastResetAt: now,
+    lastScanAt: 0,
+
+    totalScans: 0,
+    totalEntries: 0,
+    totalRejected: 0,
+    totalOtherTrades: 0,
+    totalFunnelCoins: 0,
+    totalCandidates: 0,
+
+    lastEntries: 0,
+    lastRejected: 0,
+    lastOtherTrades: 0,
+    lastFunnelCoins: 0,
+    lastCandidates: 0,
+
+    rejectReasonCounts: {},
+    actionCounts: {},
+
+    entryRows: [],
+    rejectedRows: [],
+    tradeRows: []
+  };
+}
+
+function normalizeDashboardStats(stats, now = Date.now()){
+  const base = stats ? { ...stats } : emptyDashboardStats(now);
+
+  return {
+    startedAt: safeNumber(base?.startedAt, now),
+    lastResetAt: safeNumber(base?.lastResetAt, safeNumber(base?.startedAt, now)),
+    lastScanAt: safeNumber(base?.lastScanAt, 0),
+
+    totalScans: safeNumber(base?.totalScans, 0),
+    totalEntries: safeNumber(base?.totalEntries, 0),
+    totalRejected: safeNumber(base?.totalRejected, 0),
+    totalOtherTrades: safeNumber(base?.totalOtherTrades, 0),
+    totalFunnelCoins: safeNumber(base?.totalFunnelCoins, 0),
+    totalCandidates: safeNumber(base?.totalCandidates, 0),
+
+    lastEntries: safeNumber(base?.lastEntries, 0),
+    lastRejected: safeNumber(base?.lastRejected, 0),
+    lastOtherTrades: safeNumber(base?.lastOtherTrades, 0),
+    lastFunnelCoins: safeNumber(base?.lastFunnelCoins, 0),
+    lastCandidates: safeNumber(base?.lastCandidates, 0),
+
+    rejectReasonCounts: normalizeCounterMap(base?.rejectReasonCounts),
+    actionCounts: normalizeCounterMap(base?.actionCounts),
+
+    entryRows: mergeStoredRows([], safeArray(base?.entryRows), MAX_STORED_ENTRY_ROWS),
+    rejectedRows: mergeStoredRows([], safeArray(base?.rejectedRows), MAX_STORED_REJECT_ROWS),
+    tradeRows: mergeStoredRows([], safeArray(base?.tradeRows), MAX_STORED_TRADE_ROWS)
+  };
+}
+
+function buildDashboardStats(prevStats, trades, funnelCount, candidates, now, resetStats = false){
+  const prev = resetStats
+    ? emptyDashboardStats(now)
+    : normalizeDashboardStats(prevStats, now);
+
+  const allTrades = safeArray(trades);
+  const entries = allTrades.filter(t => safeText(t?.action).toUpperCase() === "ENTRY");
+  const waits = allTrades.filter(t => safeText(t?.action).toUpperCase() === "WAIT");
+  const otherTrades = allTrades.filter(t => {
+    const action = safeText(t?.action).toUpperCase();
+    return action !== "WAIT" && action !== "ENTRY";
+  });
+
+  const nonWaitTrades = allTrades.filter(t => safeText(t?.action).toUpperCase() !== "WAIT");
+
+  return {
+    startedAt: resetStats ? now : prev.startedAt,
+    lastResetAt: resetStats ? now : prev.lastResetAt,
+    lastScanAt: now,
+
+    totalScans: (resetStats ? 0 : prev.totalScans) + 1,
+    totalEntries: (resetStats ? 0 : prev.totalEntries) + entries.length,
+    totalRejected: (resetStats ? 0 : prev.totalRejected) + waits.length,
+    totalOtherTrades: (resetStats ? 0 : prev.totalOtherTrades) + otherTrades.length,
+    totalFunnelCoins: (resetStats ? 0 : prev.totalFunnelCoins) + safeNumber(funnelCount, 0),
+    totalCandidates: (resetStats ? 0 : prev.totalCandidates) + safeNumber(candidates, 0),
+
+    lastEntries: entries.length,
+    lastRejected: waits.length,
+    lastOtherTrades: otherTrades.length,
+    lastFunnelCoins: safeNumber(funnelCount, 0),
+    lastCandidates: safeNumber(candidates, 0),
+
+    rejectReasonCounts: mergeCounterMaps(
+      resetStats ? {} : prev.rejectReasonCounts,
+      buildCounterMap(waits, "reason")
+    ),
+
+    actionCounts: mergeCounterMaps(
+      resetStats ? {} : prev.actionCounts,
+      buildCounterMap(allTrades, "action")
+    ),
+
+    entryRows: mergeStoredRows(
+      resetStats ? [] : prev.entryRows,
+      entries.map(row => compactTradeRow(row, now)),
+      MAX_STORED_ENTRY_ROWS
+    ),
+
+    rejectedRows: mergeStoredRows(
+      resetStats ? [] : prev.rejectedRows,
+      waits.map(row => compactTradeRow(row, now)),
+      MAX_STORED_REJECT_ROWS
+    ),
+
+    tradeRows: mergeStoredRows(
+      resetStats ? [] : prev.tradeRows,
+      nonWaitTrades.map(row => compactTradeRow(row, now)),
+      MAX_STORED_TRADE_ROWS
+    )
+  };
+}
+
 
 // ================= SIDE NORMALIZER =================
 function normalizeScanSide(side){
@@ -85,8 +327,6 @@ function safeStage(stage){
 
 
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
-// Minder strak dan eerst, zodat de scanner echt candidates doorstuurt.
-// TradeSystem blijft de eindfilter.
 function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -150,8 +390,6 @@ function displayDirectionAllowed(c, side){
 
 
 // ================= FLOW =================
-// Iets soepeler gemaakt.
-// Dit was een grote reden waarom entry/almost amper gevuld werden.
 function detectFlow(c){
 
   const ch1 = Math.abs(Number(c.change1h || 0));
@@ -871,6 +1109,7 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
     trades: mergedTrades,
     analytics: mergedAnalytics,
     advice: mergedAdvice,
+    dashboardStats: currentPayload.dashboardStats || previous.dashboardStats || emptyDashboardStats(Date.now()),
     tradeSystemAnalysis: buildTradeSystemAnalysis(mergedTrades),
     candidatesBull,
     candidatesBear,
@@ -919,11 +1158,12 @@ export async function buildScanPayload(options = {}){
 
   const notify = options.notify !== false;
   const store = options.store !== false;
+  const resetStats = options.resetStats === true;
 
-  // Force reset naar huidige defaults.
-  // Dit was één van de redenen dat de funnel soms leeg bleef.
   initDefaultFilters(true);
   resetAnalytics();
+
+  const previousLatest = await getLatestScan().catch(() => null);
 
   const rawCoins = await fetchCoinGeckoTopCached();
   if(!Array.isArray(rawCoins)) throw new Error("API error");
@@ -1122,6 +1362,16 @@ export async function buildScanPayload(options = {}){
   const tradeSystemAnalysis = buildTradeSystemAnalysis(trades);
 
   const now = Date.now();
+  const funnelCount = countFunnel(funnel);
+
+  const dashboardStats = buildDashboardStats(
+    previousLatest?.dashboardStats,
+    trades,
+    funnelCount,
+    tradeCandidates.length,
+    now,
+    resetStats
+  );
 
   const currentPayload = {
     ok: true,
@@ -1129,16 +1379,18 @@ export async function buildScanPayload(options = {}){
     scanMode: scanSide,
     notify,
     store,
+    resetStats,
     btc,
     regime,
     market,
     funnel,
-    funnelCount: countFunnel(funnel),
+    funnelCount,
     bullCount: countSide(funnel, "bull"),
     bearCount: countSide(funnel, "bear"),
     trades,
     analytics,
     advice,
+    dashboardStats,
     tradeSystemAnalysis,
     total: rawCoins.length,
     candidates: tradeCandidates.length,
@@ -1172,11 +1424,15 @@ export default async function handler(req,res){
 
     const notify = normalizeNotify(req?.query?.notify);
     const store = normalizeStore(req?.query?.store, notify);
+    const resetStats =
+      normalizeStore(req?.query?.resetStats, false) ||
+      normalizeStore(req?.query?.reset, false);
 
     const data = await buildScanPayload({
       side,
       notify,
-      store
+      store,
+      resetStats
     });
 
     return res.status(200).json(data);
