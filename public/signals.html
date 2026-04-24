@@ -9,14 +9,14 @@
 
   <style>
     .pageShell{
-      max-width: 1600px;
+      max-width: 1700px;
       margin: 0 auto;
       padding: 20px;
     }
 
     .metrics{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
       margin: 18px 0 20px;
     }
@@ -51,9 +51,15 @@
     }
 
     .trade-section h2{
-      margin: 0 0 14px;
+      margin: 0 0 8px;
       font-size: 18px;
       color: var(--text, #e2e8f0);
+    }
+
+    .sectionSub{
+      margin: 0 0 14px;
+      font-size: 13px;
+      color: var(--muted, #94a3b8);
     }
 
     .tableWrap{
@@ -65,7 +71,7 @@
     .signalTable{
       width: 100%;
       border-collapse: collapse;
-      min-width: 1100px;
+      min-width: 1150px;
       background: rgba(2, 6, 23, 0.55);
     }
 
@@ -106,11 +112,11 @@
     }
 
     .row-wait{
-      background: rgba(245, 158, 11, 0.04);
+      background: rgba(245, 158, 11, 0.05);
     }
 
     .row-exit{
-      background: rgba(239, 68, 68, 0.04);
+      background: rgba(239, 68, 68, 0.05);
     }
 
     .pill{
@@ -148,21 +154,10 @@
       background: rgba(239, 68, 68, 0.12);
     }
 
-    .pill-stage.stage-entry{
-      color: #22c55e;
-    }
-
-    .pill-stage.stage-almost{
-      color: #eab308;
-    }
-
-    .pill-stage.stage-buildup{
-      color: #38bdf8;
-    }
-
-    .pill-stage.stage-radar{
-      color: #cbd5e1;
-    }
+    .pill-stage.stage-entry{ color: #22c55e; }
+    .pill-stage.stage-almost{ color: #eab308; }
+    .pill-stage.stage-buildup{ color: #38bdf8; }
+    .pill-stage.stage-radar{ color: #cbd5e1; }
 
     .pill-side.side-bull{
       color: #22c55e;
@@ -182,7 +177,13 @@
       font-size: 14px;
     }
 
-    @media (max-width: 900px){
+    @media (max-width: 1100px){
+      .metrics{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 700px){
       .metrics{
         grid-template-columns: 1fr;
       }
@@ -212,7 +213,12 @@
       </div>
 
       <div class="metric">
-        <div class="metricLabel">Trade resultaten</div>
+        <div class="metricLabel">Afgekeurde candidates</div>
+        <div id="rejectCount" class="metricValue">0</div>
+      </div>
+
+      <div class="metric">
+        <div class="metricLabel">Overige trade regels</div>
         <div id="tradeCount" class="metricValue">0</div>
       </div>
 
@@ -224,17 +230,32 @@
 
     <div class="trade-section">
       <h2>ENTRY SIGNALEN</h2>
+      <p class="sectionSub">Hier zie je alleen de signalen die echt als ENTRY uit de trade-engine komen.</p>
       <div id="entriesTable"></div>
     </div>
 
     <div class="trade-section">
-      <h2>TRADE RESULTATEN</h2>
-      <div id="tradeResultsTable"></div>
+      <h2>SCANNER / FUNNEL INPUT</h2>
+      <p class="sectionSub">Dit is alles wat vanuit de scanner/funnel binnenkomt, inclusief stage, timeframe-score en bron.</p>
+      <div id="funnelTable"></div>
     </div>
 
     <div class="trade-section">
-      <h2>SCANNER / FUNNEL INPUT</h2>
-      <div id="funnelTable"></div>
+      <h2>AFKEUR OVERZICHT PER FILTER</h2>
+      <p class="sectionSub">Hier zie je op welke filter de doorgestuurde candidates het vaakst stuklopen. Zo zie je direct welke regels mogelijk te streng staan.</p>
+      <div id="rejectOverviewTable"></div>
+    </div>
+
+    <div class="trade-section">
+      <h2>AFGEKEURDE TRADE CANDIDATES</h2>
+      <p class="sectionSub">Per coin zie je hier precies waarom hij is afgekeurd in de trade-engine.</p>
+      <div id="rejectedTradesTable"></div>
+    </div>
+
+    <div class="trade-section">
+      <h2>TRADE RESULTATEN</h2>
+      <p class="sectionSub">Hier staan ENTRY, HOLD en EXIT regels. WAIT staat hierboven apart zodat je blokkades beter kunt analyseren.</p>
+      <div id="tradeResultsTable"></div>
     </div>
   </div>
 
