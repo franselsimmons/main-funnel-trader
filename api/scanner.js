@@ -307,6 +307,21 @@ function normalizeBitgetKey(symbolKey){
     .replace(/USDT$/, "");
 }
 
+// ================= NIEUWE HELPER: EXCHANGE SYMBOL MAP =================
+function buildExchangeSymbolMap(futures){
+  const out = new Map();
+
+  for(const key of Array.from(futures.keys())){
+    const normalized = normalizeBitgetKey(key);
+
+    if(!normalized) continue;
+    if(!out.has(normalized)){
+      out.set(normalized, String(key));
+    }
+  }
+
+  return out;
+}
 
 // ================= NORMALIZE =================
 function normalize(raw){
@@ -613,6 +628,9 @@ export async function buildScanPayload(options = {}){
       .filter(Boolean)
   );
 
+  // NIEUW: map van genormaliseerd symbool naar exacte Bitget futures symbool
+  const exchangeSymbolMap = buildExchangeSymbolMap(futures);
+
   const bitgetUniverseReady = validSymbols.size > 0;
 
   if(!bitgetUniverseReady){
@@ -685,6 +703,7 @@ export async function buildScanPayload(options = {}){
         edge
       });
 
+      // NIEUW: voeg exchangeSymbol en marketSymbol toe
       const coin = {
         ...base,
         side: direction,
@@ -693,6 +712,8 @@ export async function buildScanPayload(options = {}){
         moveScore: score,
         edge,
         symbolTradable: true,
+        exchangeSymbol: exchangeSymbolMap.get(base.symbol) || `${base.symbol}USDT`,
+        marketSymbol: exchangeSymbolMap.get(base.symbol) || `${base.symbol}USDT`,
         tfContext: tfMeta.tfContext,
         tfScore: tfMeta.tfScore,
         tfStrength: tfMeta.tfStrength,
