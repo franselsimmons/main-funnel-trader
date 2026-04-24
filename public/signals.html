@@ -14,6 +14,20 @@
       padding: 20px;
     }
 
+    .headerActions{
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 12px;
+      margin-bottom: 10px;
+    }
+
+    .infoLine{
+      color: var(--muted, #94a3b8);
+      font-size: 13px;
+    }
+
     .metrics{
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -197,6 +211,12 @@
       <h1>⚡ TRADE SYSTEM</h1>
       <div id="statusLine">Laden...</div>
 
+      <div class="headerActions">
+        <button id="refreshBtn" class="btn yellow">Refresh nu</button>
+        <button id="resetStatsBtn" class="btn">Reset teller</button>
+        <div id="statsInfo" class="infoLine"></div>
+      </div>
+
       <div class="nav">
         <a href="index.html" class="btn">Home</a>
         <a href="bull.html" class="btn">Bull</a>
@@ -208,53 +228,53 @@
 
     <div class="metrics">
       <div class="metric">
-        <div class="metricLabel">Entry signalen</div>
+        <div class="metricLabel">Entries sinds reset</div>
         <div id="entriesCount" class="metricValue">0</div>
       </div>
 
       <div class="metric">
-        <div class="metricLabel">Afgekeurde candidates</div>
+        <div class="metricLabel">Afgekeurd sinds reset</div>
         <div id="rejectCount" class="metricValue">0</div>
       </div>
 
       <div class="metric">
-        <div class="metricLabel">Overige trade regels</div>
+        <div class="metricLabel">Overige trades sinds reset</div>
         <div id="tradeCount" class="metricValue">0</div>
       </div>
 
       <div class="metric">
-        <div class="metricLabel">Coins in funnel</div>
+        <div class="metricLabel">Funnel coins sinds reset</div>
         <div id="funnelCount" class="metricValue">0</div>
       </div>
     </div>
 
     <div class="trade-section">
       <h2>ENTRY SIGNALEN</h2>
-      <p class="sectionSub">Hier zie je alleen de signalen die echt als ENTRY uit de trade-engine komen.</p>
+      <p class="sectionSub">Bewaarde entry-signalen sinds laatste reset.</p>
       <div id="entriesTable"></div>
     </div>
 
     <div class="trade-section">
       <h2>SCANNER / FUNNEL INPUT</h2>
-      <p class="sectionSub">Dit is alles wat vanuit de scanner/funnel binnenkomt, inclusief stage, timeframe-score en bron.</p>
+      <p class="sectionSub">Dit is de meest recente scanner/funnel input van de laatste scan.</p>
       <div id="funnelTable"></div>
     </div>
 
     <div class="trade-section">
       <h2>AFKEUR OVERZICHT PER FILTER</h2>
-      <p class="sectionSub">Hier zie je op welke filter de doorgestuurde candidates het vaakst stuklopen. Zo zie je direct welke regels mogelijk te streng staan.</p>
+      <p class="sectionSub">Hier zie je op welke filter de doorgestuurde candidates het vaakst stuklopen. Dit telt door totdat je reset.</p>
       <div id="rejectOverviewTable"></div>
     </div>
 
     <div class="trade-section">
       <h2>AFGEKEURDE TRADE CANDIDATES</h2>
-      <p class="sectionSub">Per coin zie je hier precies waarom hij is afgekeurd in de trade-engine.</p>
+      <p class="sectionSub">Bewaarde WAIT/afkeur-regels sinds laatste reset.</p>
       <div id="rejectedTradesTable"></div>
     </div>
 
     <div class="trade-section">
       <h2>TRADE RESULTATEN</h2>
-      <p class="sectionSub">Hier staan ENTRY, HOLD en EXIT regels. WAIT staat hierboven apart zodat je blokkades beter kunt analyseren.</p>
+      <p class="sectionSub">Bewaarde ENTRY, HOLD en EXIT regels sinds laatste reset. WAIT staat hierboven apart.</p>
       <div id="tradeResultsTable"></div>
     </div>
   </div>
