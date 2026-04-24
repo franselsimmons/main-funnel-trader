@@ -154,8 +154,17 @@ function countFunnel(funnel){
   return countSide(funnel, "bull") + countSide(funnel, "bear");
 }
 
+function hasStoredScanSinceReset(stats){
+  const totalScans = safeNumber(stats?.totalScans, 0);
+  const lastScanAt = safeNumber(stats?.lastScanAt, 0);
+  const lastResetAt = safeNumber(stats?.lastResetAt, 0);
+
+  return totalScans > 0 && lastScanAt > 0 && lastScanAt >= lastResetAt;
+}
+
 function safePayload(payload, source){
   const funnel = normalizeFunnel(payload?.funnel);
+
   const normalizedPayload = {
     ...(payload || {}),
     funnel,
@@ -180,6 +189,7 @@ function safePayload(payload, source){
     ok: payload?.ok !== false,
     source,
     dashboardStats,
+    hasStoredScanSinceReset: hasStoredScanSinceReset(dashboardStats),
     servedAt: Date.now()
   };
 }
@@ -198,12 +208,7 @@ async function resetStoredStats(){
 
   const updated = {
     ...latest,
-    dashboardStats: {
-      ...emptyDashboardStats(now),
-      lastScanAt: safeNumber(latest?.updatedAt, 0),
-      lastFunnelCoins: safeNumber(latest?.funnelCount, countFunnel(latest?.funnel)),
-      lastCandidates: safeNumber(latest?.candidates, 0)
-    },
+    dashboardStats: emptyDashboardStats(now),
     statsResetAt: now,
     servedAt: now
   };
