@@ -479,7 +479,7 @@ function buildTradeSystemAnalysis(trades){
 }
 
 
-// ================= TRADE INPUT =================
+// ================= TRADE INPUT (aangepast) =================
 function getTradeFunnelCandidates(latest){
   const raw = [
     ...safeArray(latest?.funnel?.bull?.entry),
@@ -495,20 +495,23 @@ function getTradeFunnelCandidates(latest){
 
     const symbol = String(coin.symbol || "").toUpperCase();
     const side = String(coin.side || "").toLowerCase();
+    const bitgetSymbol = String(coin.bitgetSymbol || "").toUpperCase();
+    const productType = String(coin.productType || "USDT-FUTURES").toUpperCase();
 
     if(!symbol) continue;
     if(side !== "bull" && side !== "bear") continue;
+    if(!bitgetSymbol) continue;
 
     const key = `${symbol}_${side}`;
 
-    // NIEUW: expliciet exchangeSymbol en marketSymbol doorgeven
     map.set(key, {
       ...coin,
       symbol,
       side,
       stage: "entry",
-      exchangeSymbol: coin.exchangeSymbol || coin.marketSymbol || `${symbol}USDT`,
-      marketSymbol: coin.marketSymbol || coin.exchangeSymbol || `${symbol}USDT`
+      bitgetSymbol,
+      productType,
+      rawBitgetSymbol: String(coin.rawBitgetSymbol || bitgetSymbol).toUpperCase()
     });
   }
 
