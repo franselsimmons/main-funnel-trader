@@ -28,6 +28,7 @@ import {
 } from "../lib/stageMemory.js";
 
 import { initDefaultFilters } from "../lib/filterState.js";
+import { buildTimeframeContext } from "../lib/timeframe.js";
 
 const STAGES = ["entry", "almost", "buildup", "radar"];
 
@@ -292,6 +293,29 @@ function normalize(raw){
   };
 }
 
+function buildCoinTimeframeMeta(coin){
+  try{
+    const ctx = buildTimeframeContext(coin) || {};
+    const score = Number.isFinite(Number(ctx?.score))
+      ? Number(ctx.score)
+      : 0;
+
+    return {
+      tfContext: ctx,
+      tfScore: score,
+      tfStrength: Math.abs(score),
+      tfAlignment: String(ctx?.alignment || "UNKNOWN")
+    };
+  }catch{
+    return {
+      tfContext: {},
+      tfScore: 0,
+      tfStrength: 0,
+      tfAlignment: "UNKNOWN"
+    };
+  }
+}
+
 
 // ================= EMPTY FUNNEL =================
 function emptyFunnel(){
@@ -318,11 +342,9 @@ function countSide(funnel, side){
   return total;
 }
 
-
 function countFunnel(funnel){
   return countSide(funnel, "bull") + countSide(funnel, "bear");
 }
-
 
 function hasSymbolInSide(funnel, side, symbol){
 
@@ -337,7 +359,6 @@ function hasSymbolInSide(funnel, side, symbol){
 
   return false;
 }
-
 
 function sortFunnel(funnel){
 
@@ -386,6 +407,14 @@ function fillUiFallback({
     const score = calculateScore(base, regime, side);
     const edge = calculateEdge(base, regime) || 0;
     const freshness = calculateFreshness(base, side);
+    const tfMeta = buildCoinTimeframeMeta({
+      ...base,
+      side,
+      flow,
+      moveScore: score,
+      freshness,
+      edge
+    });
 
     if(score < 6) continue;
 
@@ -399,11 +428,15 @@ function fillUiFallback({
       stage: fallbackStage(score, flow, freshness),
       stageSource: "ui_fallback",
       uiOnly: true,
-      symbolTradable: true
+      symbolTradable: true,
+      tfContext: tfMeta.tfContext,
+      tfScore: tfMeta.tfScore,
+      tfStrength: tfMeta.tfStrength,
+      tfAlignment: tfMeta.tfAlignment
     });
   }
 
-  list.sort((a,b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
+  list.sort((a, b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
 
   let added = 0;
   let entrySeeded = funnel[side].entry.length > 0;
@@ -438,7 +471,6 @@ function pct(count, total){
   return Number(((count / total) * 100).toFixed(1));
 }
 
-
 function avg(list, field){
 
   const nums = list
@@ -447,9 +479,8 @@ function avg(list, field){
 
   if(!nums.length) return 0;
 
-  return Number((nums.reduce((a,b) => a + b, 0) / nums.length).toFixed(2));
+  return Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2));
 }
-
 
 function groupByCount(list, field){
 
@@ -469,7 +500,6 @@ function groupByCount(list, field){
   return out;
 }
 
-
 function toRows(group, total){
 
   return Object.entries(group)
@@ -478,9 +508,8 @@ function toRows(group, total){
       count,
       pct: pct(count, total)
     }))
-    .sort((a,b) => b.count - a.count);
+    .sort((a, b) => b.count - a.count);
 }
-
 
 function getReasonAdvice(reason){
 
@@ -515,7 +544,6 @@ function getReasonAdvice(reason){
 
   return map[reason] || "Geen specifieke actie nodig.";
 }
-
 
 function buildTradeSystemAnalysis(trades){
 
@@ -925,6 +953,15 @@ export async function buildScanPayload(options = {}){
       const edge = calculateEdge(base, regime) || 0;
       const freshness = calculateFreshness(base, direction);
 
+      const tfMeta = buildCoinTimeframeMeta({
+        ...base,
+        side: direction,
+        flow,
+        freshness,
+        moveScore: score,
+        edge
+      });
+
       const coin = {
         ...base,
         side: direction,
@@ -932,7 +969,11 @@ export async function buildScanPayload(options = {}){
         freshness,
         moveScore: score,
         edge,
-        symbolTradable: true
+        symbolTradable: true,
+        tfContext: tfMeta.tfContext,
+        tfScore: tfMeta.tfScore,
+        tfStrength: tfMeta.tfStrength,
+        tfAlignment: tfMeta.tfAlignment
       };
 
       const key = `${base.symbol}_${direction}`;
@@ -961,21 +1002,24 @@ export async function buildScanPayload(options = {}){
         logAnalytics(coin);
       }
 
+      const candidateStageOK =
+        (
+          newStage === "entry" &&
+          score >= 72 &&
+          flow === "TREND" &&
+          coin.tfStrength >= 1
+        ) ||
+        (
+          newStage === "almost" &&
+          score >= 84 &&
+          flow === "TREND" &&
+          coin.tfStrength >= 2
+        );
+
       if(
         realFilterStage &&
         strictDirectionAllowed(base, btc, direction) &&
-        (
-          (
-            newStage === "entry" &&
-            score >= 72 &&
-            flow === "TREND"
-          ) ||
-          (
-            newStage === "almost" &&
-            score >= 84 &&
-            flow === "TREND"
-          )
-        )
+        candidateStageOK
       ){
         tradeCandidates.push(coin);
 
