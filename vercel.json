@@ -3,6 +3,10 @@
     {
       "path": "/api/cron",
       "schedule": "0,7,15,22,30,37,45,52 * * * *"
+    },
+    {
+      "path": "/api/trade-funnel?notify=true&store=true",
+      "schedule": "*/2 * * * *"
     }
   ]
 }
