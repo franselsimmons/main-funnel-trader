@@ -559,48 +559,9 @@ function buildCoinTimeframeMeta(coin){
 }
 
 // ================= TRADE INPUT GATE =================
-// Doel:
-// scanner moet NIET al te veel coins blokkeren voordat de trade-funnel
-// kan bepalen waarom iets WAIT wordt. Dus entry/almost bijna altijd door,
-// buildup ook ruim genoeg zodat reject-overzicht echt gevuld raakt.
+// Alleen ENTRY coins gaan naar trade systeem.
 function shouldSendToTradeSystem(coin, btc, realFilterStage){
-
-  if(!realFilterStage) return false;
-
-  const stage = safeStage(realFilterStage);
-  const score = Number(coin.moveScore || 0);
-  const freshness = Number(coin.freshness || 0);
-  const tfStrength = Number(coin.tfStrength || 0);
-  const flow = String(coin.flow || "NEUTRAL").toUpperCase();
-
-  const strictOK = strictDirectionAllowed(coin, btc, coin.side);
-
-  if(stage === "entry"){
-    return true;
-  }
-
-  if(stage === "almost"){
-    return (
-      score >= 12 ||
-      flow !== "NEUTRAL" ||
-      tfStrength >= 0 ||
-      freshness >= 0 ||
-      strictOK
-    );
-  }
-
-  if(stage === "buildup"){
-    return (
-      score >= 10 ||
-      flow === "BUILDING" ||
-      flow === "TREND" ||
-      tfStrength >= 0 ||
-      freshness >= 0 ||
-      strictOK
-    );
-  }
-
-  return false;
+  return realFilterStage === "entry";
 }
 
 
@@ -1093,6 +1054,9 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
       ? currentPayload.candidatesBear
       : previous.candidatesBear || 0;
 
+  // Behoud de meest recente dashboardStats
+  const dashboardStats = currentPayload.dashboardStats || previous.dashboardStats || emptyDashboardStats(Date.now());
+
   sortFunnel(mergedFunnel);
 
   return {
@@ -1105,7 +1069,7 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
     trades: mergedTrades,
     analytics: mergedAnalytics,
     advice: mergedAdvice,
-    dashboardStats: currentPayload.dashboardStats || previous.dashboardStats || emptyDashboardStats(Date.now()),
+    dashboardStats,
     tradeSystemAnalysis: buildTradeSystemAnalysis(mergedTrades),
     candidatesBull,
     candidatesBear,
@@ -1293,12 +1257,11 @@ export async function buildScanPayload(options = {}){
         logAnalytics(coin);
       }
 
-      if(
-        shouldSendToTradeSystem(coin, btc, realFilterStage)
-      ){
+      // Alleen ENTRY coins gaan naar trade systeem
+      if(shouldSendToTradeSystem(coin, btc, realFilterStage)){
         tradeCandidates.push({
           ...coin,
-          stage: realFilterStage
+          stage: "entry"   // forceer entry
         });
 
         if(direction === "bull") candidatesBull++;
