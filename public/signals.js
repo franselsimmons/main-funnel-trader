@@ -74,9 +74,38 @@ function fmtBool(value){
 function fmtDate(ts){
   const n = Number(ts);
 
-  if(!Number.isFinite(n)) return "onbekend";
+  if(!Number.isFinite(n) || n <= 0){
+    return "onbekend";
+  }
 
   return new Date(n).toLocaleString("nl-NL");
+}
+
+function pickLatestTimestamp(...values){
+  const valid = values
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v) && v > 0);
+
+  if(!valid.length) return null;
+
+  return Math.max(...valid);
+}
+
+function getRealScanTimestamp(data){
+  return pickLatestTimestamp(
+    data?.updatedAt,
+    data?.lastBullScan,
+    data?.lastBearScan
+  );
+}
+
+function getPayloadSeenTimestamp(data){
+  return pickLatestTimestamp(
+    data?.servedAt,
+    data?.updatedAt,
+    data?.lastBullScan,
+    data?.lastBearScan
+  );
 }
 
 function stageBadge(stage){
@@ -398,11 +427,35 @@ function renderTradeResults(nonWaitTrades){
 }
 
 function renderStatus(data, entries, waitRows, nonWaitTrades, funnelRows){
-  const updated = fmtDate(data?.updatedAt || data?.servedAt);
+  const scanTs = getRealScanTimestamp(data);
+  const seenTs = getPayloadSeenTimestamp(data);
+  const browserRefreshTs = Date.now();
+
+  const scanText = fmtDate(scanTs);
+  const seenText = fmtDate(seenTs);
+  const browserText = fmtDate(browserRefreshTs);
+
+  const stale = Boolean(data?.stale);
+  const staleReason = data?.staleReason ? ` (${String(data.staleReason)})` : "";
+
+  const pieces = [
+    `Laatste scan: ${scanText}`,
+    `Payload gezien: ${seenText}`,
+    `Pagina refresh: ${browserText}`,
+    `Entries: ${entries.length}`,
+    `Afgekeurd: ${waitRows.length}`,
+    `Overige trades: ${nonWaitTrades.length}`,
+    `Funnel coins: ${funnelRows.length}`
+  ];
+
+  if(stale){
+    pieces.unshift(`STALE DATA${staleReason}`);
+  }else{
+    pieces.unshift("LIVE");
+  }
 
   if(el("statusLine")){
-    el("statusLine").innerText =
-      `Laatste update: ${updated} | Entries: ${entries.length} | Afgekeurd: ${waitRows.length} | Overige trades: ${nonWaitTrades.length} | Funnel coins: ${funnelRows.length}`;
+    el("statusLine").innerText = pieces.join(" | ");
   }
 
   if(el("entriesCount")) el("entriesCount").innerText = String(entries.length);
@@ -413,7 +466,13 @@ function renderStatus(data, entries, waitRows, nonWaitTrades, funnelRows){
 
 async function load(){
   try{
-    const res = await fetch("/api/public-latest");
+    const res = await fetch(`/api/public-latest?_=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache"
+      }
+    });
+
     const data = await res.json();
 
     const trades = sortTrades(data?.trades);
