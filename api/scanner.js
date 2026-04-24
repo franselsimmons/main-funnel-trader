@@ -95,11 +95,11 @@ function strictDirectionAllowed(c, btc, side){
   if(side === "bull"){
 
     if(btc.state === "BULLISH"){
-      return ch24 > 1.2 && ch1 > 0.15;
+      return ch24 > 0.6 && ch1 > 0.05;
     }
 
     if(btc.state === "BEARISH"){
-      return ch24 > 4.5 && ch1 > 0.65;
+      return ch24 > 3.0 && ch1 > 0.35;
     }
 
     return false;
@@ -108,11 +108,11 @@ function strictDirectionAllowed(c, btc, side){
   if(side === "bear"){
 
     if(btc.state === "BEARISH"){
-      return ch24 < -1.2 && ch1 < -0.15;
+      return ch24 < -0.6 && ch1 < -0.05;
     }
 
     if(btc.state === "BULLISH"){
-      return ch24 < -3.5 && ch1 < -0.60;
+      return ch24 < -2.5 && ch1 < -0.35;
     }
 
     return false;
@@ -157,9 +157,9 @@ function detectFlow(c){
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
-  if(ch1 > 0.75 && ch24 > 3.0) return "TREND";
-  if(ch1 > 0.30 || ch24 > 1.6) return "BUILDING";
-  if(ch24 > 1.0) return "EARLY";
+  if(ch1 > 0.55 && ch24 > 2.2) return "TREND";
+  if(ch1 > 0.18 || ch24 > 0.9) return "BUILDING";
+  if(ch24 > 0.6) return "EARLY";
 
   return "NEUTRAL";
 }
@@ -236,12 +236,12 @@ function calculateScore(c, regime, side){
 // ================= UI FALLBACK STAGE =================
 function fallbackStage(score, flow, freshness = 0){
 
-  if(flow === "TREND" && score >= 78) return "entry";
-  if(flow === "TREND" && score >= 66) return "almost";
-  if(flow === "TREND" && score >= 48) return "buildup";
-  if(flow === "BUILDING" && score >= 32) return "buildup";
-  if(flow === "BUILDING" && freshness >= 8) return "radar";
-  if(flow === "EARLY" && score >= 22) return "radar";
+  if(flow === "TREND" && score >= 74) return "entry";
+  if(flow === "TREND" && score >= 60) return "almost";
+  if(flow === "TREND" && score >= 44) return "buildup";
+  if(flow === "BUILDING" && score >= 28) return "buildup";
+  if(flow === "BUILDING" && freshness >= 6) return "radar";
+  if(flow === "EARLY" && score >= 18) return "radar";
 
   return "radar";
 }
@@ -318,6 +318,55 @@ function buildCoinTimeframeMeta(coin){
       tfAlignment: "UNKNOWN"
     };
   }
+}
+
+function shouldSendToTradeSystem(coin, btc, realFilterStage){
+
+  if(!realFilterStage) return false;
+
+  const score = Number(coin.moveScore || 0);
+  const freshness = Number(coin.freshness || 0);
+  const tfStrength = Number(coin.tfStrength || 0);
+  const flow = String(coin.flow || "NEUTRAL").toUpperCase();
+
+  const strictOK = strictDirectionAllowed(coin, btc, coin.side);
+
+  const eliteOverride =
+    flow === "TREND" &&
+    score >= 62 &&
+    tfStrength >= 2 &&
+    freshness >= 5;
+
+  if(!strictOK && !eliteOverride){
+    return false;
+  }
+
+  if(realFilterStage === "entry"){
+    return (
+      score >= 50 &&
+      tfStrength >= 1 &&
+      flow !== "NEUTRAL"
+    );
+  }
+
+  if(realFilterStage === "almost"){
+    return (
+      score >= 44 &&
+      tfStrength >= 1 &&
+      flow !== "NEUTRAL"
+    );
+  }
+
+  if(realFilterStage === "buildup"){
+    return (
+      score >= 40 &&
+      tfStrength >= 1 &&
+      (flow === "BUILDING" || flow === "TREND") &&
+      freshness >= 3
+    );
+  }
+
+  return false;
 }
 
 
@@ -1008,36 +1057,13 @@ export async function buildScanPayload(options = {}){
         logAnalytics(coin);
       }
 
-      // Belangrijk:
-      // Hier was de scanner te streng NA de filters.
-      // Nu sluiten we beter aan op bull/bear filters.
-      const candidateStageOK =
-        (
-          newStage === "entry" &&
-          score >= 58 &&
-          coin.tfStrength >= 1 &&
-          flow !== "NEUTRAL"
-        ) ||
-        (
-          newStage === "almost" &&
-          score >= 52 &&
-          coin.tfStrength >= 1 &&
-          flow !== "NEUTRAL"
-        ) ||
-        (
-          newStage === "buildup" &&
-          score >= 76 &&
-          coin.tfStrength >= 2 &&
-          flow === "TREND" &&
-          freshness >= 8
-        );
-
       if(
-        realFilterStage &&
-        strictDirectionAllowed(base, btc, direction) &&
-        candidateStageOK
+        shouldSendToTradeSystem(coin, btc, realFilterStage)
       ){
-        tradeCandidates.push(coin);
+        tradeCandidates.push({
+          ...coin,
+          stage: realFilterStage
+        });
 
         if(direction === "bull") candidatesBull++;
         if(direction === "bear") candidatesBear++;
