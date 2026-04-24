@@ -330,7 +330,7 @@ function getReasonAdvice(reason){
     BEAR_CROWDED_FUNDING: "Short te crowded. Correct geblokkeerd.",
     BTC_BULL_BLOCK_SHORT: "Short tegen bullish BTC geblokkeerd.",
     BTC_BEAR_BLOCK_LONG: "Long tegen bearish BTC geblokkeerd.",
-    COUNTERTREND_NOT_ELITE: "Countertrend is niet elite genoeg. Correct.",
+    COUNTERTREND_NOT_ELITE: "Countertrend is niet elite genoeg. Correct geblokkeerd.",
     ENTRY_FILTERED: "Entry kwam niet door de laatste kwaliteitscheck.",
     ORDERBOOK_FETCH_FAILED: "Orderboek kon niet worden opgehaald. Geen blind entry zonder uitvoerbare live marktdata."
   };
@@ -479,12 +479,11 @@ function buildTradeSystemAnalysis(trades){
 }
 
 
-// ================= TRADE INPUT (aangepast) =================
+// ================= TRADE INPUT =================
 function getTradeFunnelCandidates(latest){
-  const raw = [
-    ...safeArray(latest?.funnel?.bull?.entry),
-    ...safeArray(latest?.funnel?.bear?.entry)
-  ];
+  const bullEntry = safeArray(latest?.funnel?.bull?.entry);
+  const bearEntry = safeArray(latest?.funnel?.bear?.entry);
+  const raw = [...bullEntry, ...bearEntry];
 
   const map = new Map();
 
@@ -493,14 +492,21 @@ function getTradeFunnelCandidates(latest){
     if(Boolean(coin.uiOnly)) continue;
     if(String(coin.stage || "").toLowerCase() !== "entry") continue;
 
-    const symbol = String(coin.symbol || "").toUpperCase();
-    const side = String(coin.side || "").toLowerCase();
-    const bitgetSymbol = String(coin.bitgetSymbol || "").toUpperCase();
-    const productType = String(coin.productType || "USDT-FUTURES").toUpperCase();
+    const symbol = String(coin.symbol || "").toUpperCase().trim();
+    const side = String(coin.side || "").toLowerCase().trim();
 
     if(!symbol) continue;
     if(side !== "bull" && side !== "bear") continue;
-    if(!bitgetSymbol) continue;
+
+    const bitgetSymbol = String(
+      coin.bitgetSymbol ||
+      coin.rawBitgetSymbol ||
+      `${symbol}USDT`
+    ).toUpperCase();
+
+    const productType = String(
+      coin.productType || "USDT-FUTURES"
+    ).toUpperCase();
 
     const key = `${symbol}_${side}`;
 
@@ -511,7 +517,9 @@ function getTradeFunnelCandidates(latest){
       stage: "entry",
       bitgetSymbol,
       productType,
-      rawBitgetSymbol: String(coin.rawBitgetSymbol || bitgetSymbol).toUpperCase()
+      rawBitgetSymbol: String(
+        coin.rawBitgetSymbol || bitgetSymbol
+      ).toUpperCase()
     });
   }
 
@@ -530,6 +538,10 @@ export async function runTradeFunnel(options = {}){
   if(!latest?.ok){
     throw new Error("no_latest_scan_available");
   }
+
+  const sourceBullEntryCount = safeArray(latest?.funnel?.bull?.entry).length;
+  const sourceBearEntryCount = safeArray(latest?.funnel?.bear?.entry).length;
+  const sourceEntryCount = sourceBullEntryCount + sourceBearEntryCount;
 
   const candidates = getTradeFunnelCandidates(latest);
   const now = Date.now();
@@ -572,9 +584,14 @@ export async function runTradeFunnel(options = {}){
     dashboardStats,
     tradeSystemAnalysis,
 
+    tradeFunnelSourceEntryCount: sourceEntryCount,
+    tradeFunnelSourceBullEntryCount: sourceBullEntryCount,
+    tradeFunnelSourceBearEntryCount: sourceBearEntryCount,
+
     tradeFunnelInputCount: candidates.length,
     tradeFunnelInputBull: bullInput,
     tradeFunnelInputBear: bearInput,
+    tradeFunnelInputSymbols: candidates.map(c => `${c.symbol}_${c.side}`),
 
     tradeFunnelUpdatedAt: now,
     updatedAt: now
