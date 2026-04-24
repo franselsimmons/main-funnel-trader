@@ -559,8 +559,10 @@ function buildCoinTimeframeMeta(coin){
 }
 
 // ================= TRADE INPUT GATE =================
-// Bewust soepeler gemaakt zodat meer scanner-candidates
-// naar TradeSystem gaan en daar echte WAIT-reasons krijgen.
+// Doel:
+// scanner moet NIET al te veel coins blokkeren voordat de trade-funnel
+// kan bepalen waarom iets WAIT wordt. Dus entry/almost bijna altijd door,
+// buildup ook ruim genoeg zodat reject-overzicht echt gevuld raakt.
 function shouldSendToTradeSystem(coin, btc, realFilterStage){
 
   if(!realFilterStage) return false;
@@ -574,39 +576,27 @@ function shouldSendToTradeSystem(coin, btc, realFilterStage){
   const strictOK = strictDirectionAllowed(coin, btc, coin.side);
 
   if(stage === "entry"){
-    return (
-      score >= 30 &&
-      (
-        flow !== "NEUTRAL" ||
-        tfStrength >= 1 ||
-        strictOK
-      )
-    );
+    return true;
   }
 
   if(stage === "almost"){
     return (
-      score >= 24 &&
-      (
-        flow === "BUILDING" ||
-        flow === "TREND" ||
-        tfStrength >= 1 ||
-        freshness >= 6 ||
-        strictOK
-      )
+      score >= 12 ||
+      flow !== "NEUTRAL" ||
+      tfStrength >= 0 ||
+      freshness >= 0 ||
+      strictOK
     );
   }
 
   if(stage === "buildup"){
     return (
-      score >= 18 &&
-      (
-        flow === "BUILDING" ||
-        flow === "TREND" ||
-        freshness >= 5 ||
-        tfStrength >= 1 ||
-        strictOK
-      )
+      score >= 10 ||
+      flow === "BUILDING" ||
+      flow === "TREND" ||
+      tfStrength >= 0 ||
+      freshness >= 0 ||
+      strictOK
     );
   }
 
