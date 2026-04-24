@@ -81,33 +81,6 @@ function fmtDate(ts){
   return new Date(n).toLocaleString("nl-NL");
 }
 
-function pickLatestTimestamp(...values){
-  const valid = values
-    .map(v => Number(v))
-    .filter(v => Number.isFinite(v) && v > 0);
-
-  if(!valid.length) return null;
-
-  return Math.max(...valid);
-}
-
-function getRealScanTimestamp(data){
-  return pickLatestTimestamp(
-    data?.updatedAt,
-    data?.lastBullScan,
-    data?.lastBearScan
-  );
-}
-
-function getPayloadSeenTimestamp(data){
-  return pickLatestTimestamp(
-    data?.servedAt,
-    data?.updatedAt,
-    data?.lastBullScan,
-    data?.lastBearScan
-  );
-}
-
 function stageBadge(stage){
   const s = String(stage || "radar").toLowerCase();
   return `<span class="pill pill-stage stage-${escapeHtml(s)}">${escapeHtml(s)}</span>`;
@@ -196,6 +169,41 @@ function reasonAdvice(reason){
   return advice[r] || "Controleer deze blokkade handmatig.";
 }
 
+function normalizeDashboardStats(data){
+  const raw = data?.dashboardStats || {};
+
+  return {
+    startedAt: toNumber(raw.startedAt) || 0,
+    lastResetAt: toNumber(raw.lastResetAt) || 0,
+    lastScanAt: toNumber(raw.lastScanAt) || toNumber(data?.updatedAt) || 0,
+
+    totalScans: toNumber(raw.totalScans) || 0,
+    totalEntries: toNumber(raw.totalEntries) || 0,
+    totalRejected: toNumber(raw.totalRejected) || 0,
+    totalOtherTrades: toNumber(raw.totalOtherTrades) || 0,
+    totalFunnelCoins: toNumber(raw.totalFunnelCoins) || 0,
+    totalCandidates: toNumber(raw.totalCandidates) || 0,
+
+    lastEntries: toNumber(raw.lastEntries) || 0,
+    lastRejected: toNumber(raw.lastRejected) || 0,
+    lastOtherTrades: toNumber(raw.lastOtherTrades) || 0,
+    lastFunnelCoins: toNumber(raw.lastFunnelCoins) || 0,
+    lastCandidates: toNumber(raw.lastCandidates) || 0,
+
+    rejectReasonCounts: raw.rejectReasonCounts && typeof raw.rejectReasonCounts === "object"
+      ? raw.rejectReasonCounts
+      : {},
+
+    actionCounts: raw.actionCounts && typeof raw.actionCounts === "object"
+      ? raw.actionCounts
+      : {},
+
+    entryRows: safeArray(raw.entryRows),
+    rejectedRows: safeArray(raw.rejectedRows),
+    tradeRows: safeArray(raw.tradeRows)
+  };
+}
+
 function flattenFunnel(funnel){
   const rows = [];
 
@@ -234,32 +242,29 @@ function sortTrades(trades){
   });
 }
 
-function buildRejectOverview(waitRows){
-  const grouped = new Map();
+function buildRejectOverviewFromCounts(reasonCounts){
+  const rows = [];
 
-  for(const row of waitRows){
-    const key = String(row?.reason || "UNKNOWN");
+  const total = Object.values(reasonCounts || {}).reduce((sum, value) => {
+    const n = Number(value || 0);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
 
-    if(!grouped.has(key)){
-      grouped.set(key, {
-        reason: key,
-        count: 0
-      });
-    }
+  for(const [reason, count] of Object.entries(reasonCounts || {})){
+    const n = Number(count || 0);
 
-    grouped.get(key).count += 1;
+    if(!Number.isFinite(n) || n <= 0) continue;
+
+    rows.push({
+      reason,
+      count: n,
+      label: reasonLabel(reason),
+      advice: reasonAdvice(reason),
+      pct: total > 0 ? Number(((n / total) * 100).toFixed(1)) : 0
+    });
   }
 
-  const total = waitRows.length || 1;
-
-  return Array.from(grouped.values())
-    .map(item => ({
-      ...item,
-      label: reasonLabel(item.reason),
-      advice: reasonAdvice(item.reason),
-      pct: Number(((item.count / total) * 100).toFixed(1))
-    }))
-    .sort((a, b) => b.count - a.count);
+  return rows.sort((a, b) => b.count - a.count);
 }
 
 function tableHtml(columns, rows, emptyText, rowClassFn = null){
@@ -299,9 +304,14 @@ function tableHtml(columns, rows, emptyText, rowClassFn = null){
 }
 
 function renderEntries(entries){
-  const rows = [...entries].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const rows = [...entries].sort((a, b) => {
+    const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
+    if(tsDiff !== 0) return tsDiff;
+    return Number(b.score || 0) - Number(a.score || 0);
+  });
 
   const columns = [
+    { label: "Scan tijd", render: r => fmtText(fmtDate(r.scanTs)) },
     { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
     { label: "Side", render: r => sideBadge(r.side) },
     { label: "Stage", render: r => stageBadge(r.stage) },
@@ -321,7 +331,7 @@ function renderEntries(entries){
   el("entriesTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Geen entry-signalen in deze scan.",
+    "Nog geen bewaarde entry-signalen.",
     () => "row-entry"
   );
 }
@@ -350,8 +360,8 @@ function renderFunnel(funnelRows){
   );
 }
 
-function renderRejectOverview(waitRows){
-  const rows = buildRejectOverview(waitRows);
+function renderRejectOverview(reasonCounts){
+  const rows = buildRejectOverviewFromCounts(reasonCounts);
 
   const columns = [
     { label: "Filter / Reason", render: r => `<strong>${fmtText(r.label)}</strong>` },
@@ -364,15 +374,20 @@ function renderRejectOverview(waitRows){
   el("rejectOverviewTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Geen afgekeurde trade-candidates in deze scan.",
+    "Nog geen afgekeurde trade-candidates opgeslagen.",
     () => "row-wait"
   );
 }
 
 function renderRejectedTrades(waitRows){
-  const rows = [...waitRows].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const rows = [...waitRows].sort((a, b) => {
+    const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
+    if(tsDiff !== 0) return tsDiff;
+    return Number(b.score || 0) - Number(a.score || 0);
+  });
 
   const columns = [
+    { label: "Scan tijd", render: r => fmtText(fmtDate(r.scanTs)) },
     { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
     { label: "Side", render: r => sideBadge(r.side) },
     { label: "Action", render: r => actionBadge(r.action) },
@@ -394,13 +409,27 @@ function renderRejectedTrades(waitRows){
   el("rejectedTradesTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Geen afgekeurde trade-candidates gevonden.",
+    "Nog geen afgekeurde trade-candidates opgeslagen.",
     () => "row-wait"
   );
 }
 
 function renderTradeResults(nonWaitTrades){
+  const rows = [...nonWaitTrades].sort((a, b) => {
+    const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
+    if(tsDiff !== 0) return tsDiff;
+
+    const actionDiff =
+      (ACTION_ORDER[String(b.action || "").toUpperCase()] || 0) -
+      (ACTION_ORDER[String(a.action || "").toUpperCase()] || 0);
+
+    if(actionDiff !== 0) return actionDiff;
+
+    return Number(b.score || 0) - Number(a.score || 0);
+  });
+
   const columns = [
+    { label: "Scan tijd", render: r => fmtText(fmtDate(r.scanTs)) },
     { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
     { label: "Side", render: r => sideBadge(r.side) },
     { label: "Action", render: r => actionBadge(r.action) },
@@ -420,48 +449,62 @@ function renderTradeResults(nonWaitTrades){
 
   el("tradeResultsTable").innerHTML = tableHtml(
     columns,
-    nonWaitTrades,
-    "Geen actieve of afgeronde trade-resultaten beschikbaar.",
+    rows,
+    "Nog geen bewaarde trade-resultaten beschikbaar.",
     r => `row-${String(r.action || "").toLowerCase()}`
   );
 }
 
-function renderStatus(data, entries, waitRows, nonWaitTrades, funnelRows){
-  const scanTs = getRealScanTimestamp(data);
-  const seenTs = getPayloadSeenTimestamp(data);
-  const browserRefreshTs = Date.now();
-
-  const scanText = fmtDate(scanTs);
-  const seenText = fmtDate(seenTs);
-  const browserText = fmtDate(browserRefreshTs);
-
-  const stale = Boolean(data?.stale);
-  const staleReason = data?.staleReason ? ` (${String(data.staleReason)})` : "";
-
-  const pieces = [
-    `Laatste scan: ${scanText}`,
-    `Payload gezien: ${seenText}`,
-    `Pagina refresh: ${browserText}`,
-    `Entries: ${entries.length}`,
-    `Afgekeurd: ${waitRows.length}`,
-    `Overige trades: ${nonWaitTrades.length}`,
-    `Funnel coins: ${funnelRows.length}`
-  ];
-
-  if(stale){
-    pieces.unshift(`STALE DATA${staleReason}`);
-  }else{
-    pieces.unshift("LIVE");
-  }
+function renderStatus(data, stats, funnelRows){
+  const statusLine = [
+    "LIVE",
+    `Laatste update: ${fmtDate(stats.lastScanAt || data?.updatedAt)}`,
+    `Entries: ${fmtInt(stats.lastEntries)}`,
+    `Afgekeurd: ${fmtInt(stats.lastRejected)}`,
+    `Overige trades: ${fmtInt(stats.lastOtherTrades)}`,
+    `Funnel coins: ${fmtInt(stats.lastFunnelCoins || funnelRows.length)}`
+  ].join(" | ");
 
   if(el("statusLine")){
-    el("statusLine").innerText = pieces.join(" | ");
+    el("statusLine").innerText = statusLine;
   }
 
-  if(el("entriesCount")) el("entriesCount").innerText = String(entries.length);
-  if(el("rejectCount")) el("rejectCount").innerText = String(waitRows.length);
-  if(el("tradeCount")) el("tradeCount").innerText = String(nonWaitTrades.length);
-  if(el("funnelCount")) el("funnelCount").innerText = String(funnelRows.length);
+  if(el("statsInfo")){
+    el("statsInfo").innerText =
+      `Sinds reset: scans ${fmtInt(stats.totalScans)} | candidates ${fmtInt(stats.totalCandidates)} | reset op ${fmtDate(stats.lastResetAt)}`;
+  }
+
+  if(el("entriesCount")) el("entriesCount").innerText = fmtInt(stats.totalEntries);
+  if(el("rejectCount")) el("rejectCount").innerText = fmtInt(stats.totalRejected);
+  if(el("tradeCount")) el("tradeCount").innerText = fmtInt(stats.totalOtherTrades);
+  if(el("funnelCount")) el("funnelCount").innerText = fmtInt(stats.totalFunnelCoins);
+}
+
+async function resetStats(){
+  const ok = window.confirm("Weet je zeker dat je alle opgeslagen tellerstanden en tabellen wilt resetten?");
+  if(!ok) return;
+
+  try{
+    const res = await fetch("/api/public-latest?action=resetStats", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache"
+      },
+      body: JSON.stringify({ action: "resetStats" })
+    });
+
+    const data = await res.json();
+
+    if(!res.ok || data?.ok === false){
+      throw new Error(data?.error || "reset_failed");
+    }
+
+    await load();
+  }catch(err){
+    console.error(err);
+    alert("Reset mislukt.");
+  }
 }
 
 async function load(){
@@ -474,24 +517,28 @@ async function load(){
     });
 
     const data = await res.json();
+    const stats = normalizeDashboardStats(data);
 
-    const trades = sortTrades(data?.trades);
-    const entries = trades.filter(t => String(t?.action || "").toUpperCase() === "ENTRY");
-    const waitRows = trades.filter(t => String(t?.action || "").toUpperCase() === "WAIT");
-    const nonWaitTrades = trades.filter(t => String(t?.action || "").toUpperCase() !== "WAIT");
-    const funnelRows = flattenFunnel(data?.funnel);
+    const latestTrades = sortTrades(data?.trades);
+    const latestFunnelRows = flattenFunnel(data?.funnel);
 
-    renderStatus(data, entries, waitRows, nonWaitTrades, funnelRows);
-    renderEntries(entries);
-    renderFunnel(funnelRows);
-    renderRejectOverview(waitRows);
-    renderRejectedTrades(waitRows);
-    renderTradeResults(nonWaitTrades);
+    renderStatus(data, stats, latestFunnelRows);
+    renderEntries(stats.entryRows);
+    renderFunnel(latestFunnelRows);
+    renderRejectOverview(stats.rejectReasonCounts);
+    renderRejectedTrades(stats.rejectedRows);
+    renderTradeResults(stats.tradeRows);
+
+    return latestTrades;
   }catch(e){
     console.error(e);
 
     if(el("statusLine")){
       el("statusLine").innerText = "Fout bij laden van signalen.";
+    }
+
+    if(el("statsInfo")){
+      el("statsInfo").innerText = "";
     }
 
     const fail = `<div class="emptyState">Kon data niet laden.</div>`;
@@ -502,6 +549,18 @@ async function load(){
     if(el("rejectedTradesTable")) el("rejectedTradesTable").innerHTML = fail;
     if(el("tradeResultsTable")) el("tradeResultsTable").innerHTML = fail;
   }
+}
+
+if(el("refreshBtn")){
+  el("refreshBtn").addEventListener("click", () => {
+    load();
+  });
+}
+
+if(el("resetStatsBtn")){
+  el("resetStatsBtn").addEventListener("click", () => {
+    resetStats();
+  });
 }
 
 setInterval(load, 10000);
