@@ -85,6 +85,8 @@ function safeStage(stage){
 
 
 // ================= STRICT SIDE LOGIC FOR REAL TRADES =================
+// Minder strak dan eerst, zodat de scanner echt candidates doorstuurt.
+// TradeSystem blijft de eindfilter.
 function strictDirectionAllowed(c, btc, side){
 
   const ch24 = Number(c.change24 || 0);
@@ -93,11 +95,11 @@ function strictDirectionAllowed(c, btc, side){
   if(side === "bull"){
 
     if(btc.state === "BULLISH"){
-      return ch24 > 2 && ch1 > 0.30;
+      return ch24 > 1.2 && ch1 > 0.15;
     }
 
     if(btc.state === "BEARISH"){
-      return ch24 > 6.5 && ch1 > 1.0;
+      return ch24 > 4.5 && ch1 > 0.65;
     }
 
     return false;
@@ -106,11 +108,11 @@ function strictDirectionAllowed(c, btc, side){
   if(side === "bear"){
 
     if(btc.state === "BEARISH"){
-      return ch24 < -2 && ch1 < -0.30;
+      return ch24 < -1.2 && ch1 < -0.15;
     }
 
     if(btc.state === "BULLISH"){
-      return ch24 < -4 && ch1 < -0.8;
+      return ch24 < -3.5 && ch1 < -0.60;
     }
 
     return false;
@@ -148,14 +150,16 @@ function displayDirectionAllowed(c, side){
 
 
 // ================= FLOW =================
+// Iets soepeler gemaakt.
+// Dit was een grote reden waarom entry/almost amper gevuld werden.
 function detectFlow(c){
 
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
-  if(ch1 > 1 && ch24 > 4) return "TREND";
-  if(ch1 > 0.45) return "BUILDING";
-  if(ch24 > 2.5) return "EARLY";
+  if(ch1 > 0.75 && ch24 > 3.0) return "TREND";
+  if(ch1 > 0.30 || ch24 > 1.6) return "BUILDING";
+  if(ch24 > 1.0) return "EARLY";
 
   return "NEUTRAL";
 }
@@ -232,10 +236,10 @@ function calculateScore(c, regime, side){
 // ================= UI FALLBACK STAGE =================
 function fallbackStage(score, flow, freshness = 0){
 
-  if(flow === "TREND" && score >= 82) return "entry";
-  if(flow === "TREND" && score >= 70) return "almost";
-  if(flow === "TREND" && score >= 52) return "buildup";
-  if(flow === "BUILDING" && score >= 34) return "buildup";
+  if(flow === "TREND" && score >= 78) return "entry";
+  if(flow === "TREND" && score >= 66) return "almost";
+  if(flow === "TREND" && score >= 48) return "buildup";
+  if(flow === "BUILDING" && score >= 32) return "buildup";
   if(flow === "BUILDING" && freshness >= 8) return "radar";
   if(flow === "EARLY" && score >= 22) return "radar";
 
@@ -867,7 +871,9 @@ export async function buildScanPayload(options = {}){
   const notify = options.notify !== false;
   const store = options.store !== false;
 
-  initDefaultFilters();
+  // Force reset naar huidige defaults.
+  // Dit was één van de redenen dat de funnel soms leeg bleef.
+  initDefaultFilters(true);
   resetAnalytics();
 
   const rawCoins = await fetchCoinGeckoTopCached();
@@ -1002,18 +1008,28 @@ export async function buildScanPayload(options = {}){
         logAnalytics(coin);
       }
 
+      // Belangrijk:
+      // Hier was de scanner te streng NA de filters.
+      // Nu sluiten we beter aan op bull/bear filters.
       const candidateStageOK =
         (
           newStage === "entry" &&
-          score >= 72 &&
-          flow === "TREND" &&
-          coin.tfStrength >= 1
+          score >= 58 &&
+          coin.tfStrength >= 1 &&
+          flow !== "NEUTRAL"
         ) ||
         (
           newStage === "almost" &&
-          score >= 84 &&
+          score >= 52 &&
+          coin.tfStrength >= 1 &&
+          flow !== "NEUTRAL"
+        ) ||
+        (
+          newStage === "buildup" &&
+          score >= 76 &&
+          coin.tfStrength >= 2 &&
           flow === "TREND" &&
-          coin.tfStrength >= 2
+          freshness >= 8
         );
 
       if(
