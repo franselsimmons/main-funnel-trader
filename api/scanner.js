@@ -6,7 +6,6 @@ import {
 
 import { detectRegime } from "../lib/regime.js";
 import { calculateEdge } from "../lib/edge.js";
-import { processTrades } from "../lib/tradeSystem.js";
 import { setLatestScan, getLatestScan } from "../lib/scanStore.js";
 
 import {
@@ -32,10 +31,6 @@ import { buildTimeframeContext } from "../lib/timeframe.js";
 
 const STAGES = ["entry", "almost", "buildup", "radar"];
 
-const MAX_STORED_ENTRY_ROWS = 250;
-const MAX_STORED_REJECT_ROWS = 500;
-const MAX_STORED_TRADE_ROWS = 500;
-
 
 // ================= GENERIC HELPERS =================
 function safeArray(value){
@@ -45,11 +40,6 @@ function safeArray(value){
 function safeNumber(value, fallback = 0){
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function safeText(value, fallback = ""){
-  if(value === undefined || value === null) return fallback;
-  return String(value);
 }
 
 function normalizeCounterMap(map){
@@ -64,93 +54,6 @@ function normalizeCounterMap(map){
   }
 
   return out;
-}
-
-function mergeCounterMaps(base = {}, extra = {}){
-  const out = { ...normalizeCounterMap(base) };
-
-  for(const [key, value] of Object.entries(normalizeCounterMap(extra))){
-    out[key] = (out[key] || 0) + value;
-  }
-
-  return out;
-}
-
-function buildCounterMap(rows, field){
-  const out = {};
-
-  for(const row of safeArray(rows)){
-    const key = safeText(row?.[field], "UNKNOWN");
-    out[key] = (out[key] || 0) + 1;
-  }
-
-  return out;
-}
-
-function compactTradeRow(row, scanTs){
-  const symbol = safeText(row?.symbol, "UNKNOWN");
-  const side = safeText(row?.side, "unknown");
-  const action = safeText(row?.action, "UNKNOWN");
-  const reason = safeText(row?.reason, "UNKNOWN");
-  const stage = safeText(row?.stage, "radar");
-
-  return {
-    uid: `${scanTs}_${symbol}_${side}_${action}_${reason}_${stage}`,
-    scanTs,
-    symbol,
-    side,
-    action,
-    reason,
-    stage,
-
-    score: safeNumber(row?.score ?? row?.moveScore, 0),
-    confluence: safeNumber(row?.confluence, 0),
-    rr: safeNumber(row?.rr, 0),
-
-    price: safeNumber(row?.price, 0),
-    entry: safeNumber(row?.entry, 0),
-    sl: safeNumber(row?.sl, 0),
-    tp: safeNumber(row?.tp, 0),
-
-    grade: safeText(row?.grade, "N/A"),
-    flow: safeText(row?.flow, "NEUTRAL"),
-    sniper: safeText(row?.sniper, "NONE"),
-    obBias: safeText(row?.obBias, "NEUTRAL"),
-
-    tfScore: safeNumber(row?.tfScore, 0),
-    tfStrength: safeNumber(row?.tfStrength, 0),
-    tfAlignment: safeText(row?.tfAlignment, "UNKNOWN")
-  };
-}
-
-function mergeStoredRows(prevRows, nextRows, max){
-  const merged = [];
-  const seen = new Set();
-
-  for(const row of [...safeArray(nextRows), ...safeArray(prevRows)]){
-    const uid =
-      safeText(
-        row?.uid,
-        `${safeNumber(row?.scanTs, 0)}_${safeText(row?.symbol)}_${safeText(row?.action)}_${safeText(row?.reason)}_${safeText(row?.side)}_${safeText(row?.stage)}`
-      );
-
-    if(seen.has(uid)) continue;
-
-    seen.add(uid);
-    merged.push({
-      ...row,
-      uid
-    });
-  }
-
-  merged.sort((a, b) => {
-    const tsDiff = safeNumber(b?.scanTs, 0) - safeNumber(a?.scanTs, 0);
-    if(tsDiff !== 0) return tsDiff;
-
-    return safeNumber(b?.score, 0) - safeNumber(a?.score, 0);
-  });
-
-  return merged.slice(0, max);
 }
 
 function emptyDashboardStats(now = Date.now()){
@@ -205,79 +108,15 @@ function normalizeDashboardStats(stats, now = Date.now()){
     rejectReasonCounts: normalizeCounterMap(base?.rejectReasonCounts),
     actionCounts: normalizeCounterMap(base?.actionCounts),
 
-    entryRows: mergeStoredRows([], safeArray(base?.entryRows), MAX_STORED_ENTRY_ROWS),
-    rejectedRows: mergeStoredRows([], safeArray(base?.rejectedRows), MAX_STORED_REJECT_ROWS),
-    tradeRows: mergeStoredRows([], safeArray(base?.tradeRows), MAX_STORED_TRADE_ROWS)
-  };
-}
-
-function buildDashboardStats(prevStats, trades, funnelCount, candidates, now, resetStats = false){
-  const prev = resetStats
-    ? emptyDashboardStats(now)
-    : normalizeDashboardStats(prevStats, now);
-
-  const allTrades = safeArray(trades);
-  const entries = allTrades.filter(t => safeText(t?.action).toUpperCase() === "ENTRY");
-  const waits = allTrades.filter(t => safeText(t?.action).toUpperCase() === "WAIT");
-  const otherTrades = allTrades.filter(t => {
-    const action = safeText(t?.action).toUpperCase();
-    return action !== "WAIT" && action !== "ENTRY";
-  });
-
-  const nonWaitTrades = allTrades.filter(t => safeText(t?.action).toUpperCase() !== "WAIT");
-
-  return {
-    startedAt: resetStats ? now : prev.startedAt,
-    lastResetAt: resetStats ? now : prev.lastResetAt,
-    lastScanAt: now,
-
-    totalScans: (resetStats ? 0 : prev.totalScans) + 1,
-    totalEntries: (resetStats ? 0 : prev.totalEntries) + entries.length,
-    totalRejected: (resetStats ? 0 : prev.totalRejected) + waits.length,
-    totalOtherTrades: (resetStats ? 0 : prev.totalOtherTrades) + otherTrades.length,
-    totalFunnelCoins: (resetStats ? 0 : prev.totalFunnelCoins) + safeNumber(funnelCount, 0),
-    totalCandidates: (resetStats ? 0 : prev.totalCandidates) + safeNumber(candidates, 0),
-
-    lastEntries: entries.length,
-    lastRejected: waits.length,
-    lastOtherTrades: otherTrades.length,
-    lastFunnelCoins: safeNumber(funnelCount, 0),
-    lastCandidates: safeNumber(candidates, 0),
-
-    rejectReasonCounts: mergeCounterMaps(
-      resetStats ? {} : prev.rejectReasonCounts,
-      buildCounterMap(waits, "reason")
-    ),
-
-    actionCounts: mergeCounterMaps(
-      resetStats ? {} : prev.actionCounts,
-      buildCounterMap(allTrades, "action")
-    ),
-
-    entryRows: mergeStoredRows(
-      resetStats ? [] : prev.entryRows,
-      entries.map(row => compactTradeRow(row, now)),
-      MAX_STORED_ENTRY_ROWS
-    ),
-
-    rejectedRows: mergeStoredRows(
-      resetStats ? [] : prev.rejectedRows,
-      waits.map(row => compactTradeRow(row, now)),
-      MAX_STORED_REJECT_ROWS
-    ),
-
-    tradeRows: mergeStoredRows(
-      resetStats ? [] : prev.tradeRows,
-      nonWaitTrades.map(row => compactTradeRow(row, now)),
-      MAX_STORED_TRADE_ROWS
-    )
+    entryRows: safeArray(base?.entryRows),
+    rejectedRows: safeArray(base?.rejectedRows),
+    tradeRows: safeArray(base?.tradeRows)
   };
 }
 
 
 // ================= SIDE NORMALIZER =================
 function normalizeScanSide(side){
-
   const s = String(side || "both").toLowerCase();
 
   if(s === "bull") return "bull";
@@ -289,16 +128,13 @@ function normalizeScanSide(side){
 
 // ================= NOTIFY NORMALIZER =================
 function normalizeNotify(value){
-
   const v = String(value || "").toLowerCase();
-
   return v === "true" || v === "1" || v === "yes";
 }
 
 
 // ================= STORE NORMALIZER =================
 function normalizeStore(value, fallback = true){
-
   if(value === undefined || value === null){
     return fallback;
   }
@@ -319,52 +155,14 @@ function normalizeStore(value, fallback = true){
 
 // ================= STAGE SAFETY =================
 function safeStage(stage){
-
   return STAGES.includes(stage)
     ? stage
     : "radar";
 }
 
 
-// ================= STRICT SIDE LOGIC FOR REAL TRADES =================
-function strictDirectionAllowed(c, btc, side){
-
-  const ch24 = Number(c.change24 || 0);
-  const ch1 = Number(c.change1h || 0);
-
-  if(side === "bull"){
-
-    if(btc.state === "BULLISH"){
-      return ch24 > 0.6 && ch1 > 0.05;
-    }
-
-    if(btc.state === "BEARISH"){
-      return ch24 > 3.0 && ch1 > 0.35;
-    }
-
-    return false;
-  }
-
-  if(side === "bear"){
-
-    if(btc.state === "BEARISH"){
-      return ch24 < -0.6 && ch1 < -0.05;
-    }
-
-    if(btc.state === "BULLISH"){
-      return ch24 < -2.5 && ch1 < -0.35;
-    }
-
-    return false;
-  }
-
-  return false;
-}
-
-
 // ================= DISPLAY LOGIC FOR UI/FUNNEL =================
 function displayDirectionAllowed(c, side){
-
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
   const vm = Number(c.vm || 0);
@@ -391,7 +189,6 @@ function displayDirectionAllowed(c, side){
 
 // ================= FLOW =================
 function detectFlow(c){
-
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
@@ -405,7 +202,6 @@ function detectFlow(c){
 
 // ================= FRESHNESS =================
 function calculateFreshness(c, side){
-
   const dir = side === "bear" ? -1 : 1;
 
   const ch24 = Math.max(0, Number(c.change24 || 0) * dir);
@@ -435,7 +231,6 @@ function calculateFreshness(c, side){
 
 // ================= DIRECTIONAL SCORE =================
 function calculateScore(c, regime, side){
-
   let score = 0;
 
   const dir = side === "bear" ? -1 : 1;
@@ -473,7 +268,6 @@ function calculateScore(c, regime, side){
 
 // ================= UI FALLBACK STAGE =================
 function fallbackStage(score, flow, freshness = 0){
-
   if(flow === "TREND" && score >= 74) return "entry";
   if(flow === "TREND" && score >= 60) return "almost";
   if(flow === "TREND" && score >= 44) return "buildup";
@@ -487,7 +281,6 @@ function fallbackStage(score, flow, freshness = 0){
 
 // ================= STAGE MERGE =================
 function mergeStage(prevStage, filterStage){
-
   const order = ["radar", "buildup", "almost", "entry"];
 
   const prevIndex = order.indexOf(prevStage || "radar");
@@ -503,7 +296,6 @@ function mergeStage(prevStage, filterStage){
 
 // ================= SYMBOL NORMALIZER =================
 function normalizeBitgetKey(symbolKey){
-
   return String(symbolKey || "")
     .toUpperCase()
     .replace(/_UMCBL$/, "")
@@ -518,7 +310,6 @@ function normalizeBitgetKey(symbolKey){
 
 // ================= NORMALIZE =================
 function normalize(raw){
-
   const marketCap = Number(raw?.market_cap || 0);
   const totalVolume = Number(raw?.total_volume || 0);
 
@@ -558,12 +349,6 @@ function buildCoinTimeframeMeta(coin){
   }
 }
 
-// ================= TRADE INPUT GATE =================
-// Alleen ENTRY coins gaan naar trade systeem.
-function shouldSendToTradeSystem(coin, btc, realFilterStage){
-  return realFilterStage === "entry";
-}
-
 
 // ================= EMPTY FUNNEL =================
 function emptyFunnel(){
@@ -576,7 +361,6 @@ function emptyFunnel(){
 
 // ================= COUNT HELPERS =================
 function countSide(funnel, side){
-
   if(!funnel?.[side]) return 0;
 
   let total = 0;
@@ -595,7 +379,6 @@ function countFunnel(funnel){
 }
 
 function hasSymbolInSide(funnel, side, symbol){
-
   for(const stage of STAGES){
     if(
       Array.isArray(funnel?.[side]?.[stage]) &&
@@ -609,7 +392,6 @@ function hasSymbolInSide(funnel, side, symbol){
 }
 
 function sortFunnel(funnel){
-
   for(const side of ["bull", "bear"]){
     for(const stageKey of STAGES){
       funnel[side][stageKey].sort((a, b) => {
@@ -629,7 +411,6 @@ function fillUiFallback({
   validSymbols,
   max = 30
 }){
-
   const targetMinimum = 12;
 
   if(countSide(funnel, side) >= targetMinimum) return;
@@ -637,7 +418,6 @@ function fillUiFallback({
   const list = [];
 
   for(const raw of rawCoins){
-
     const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
@@ -690,7 +470,6 @@ function fillUiFallback({
   let entrySeeded = funnel[side].entry.length > 0;
 
   for(const coin of list){
-
     if(added >= max) break;
     if(countSide(funnel, side) >= targetMinimum) break;
 
@@ -711,296 +490,8 @@ function fillUiFallback({
 }
 
 
-// ================= TRADE SYSTEM ANALYSIS =================
-function pct(count, total){
-
-  if(!total) return 0;
-
-  return Number(((count / total) * 100).toFixed(1));
-}
-
-function avg(list, field){
-
-  const nums = list
-    .map(x => Number(x?.[field] || 0))
-    .filter(n => Number.isFinite(n));
-
-  if(!nums.length) return 0;
-
-  return Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2));
-}
-
-function groupByCount(list, field){
-
-  const out = {};
-
-  for(const item of list){
-
-    const key = String(item?.[field] || "UNKNOWN");
-
-    if(!out[key]){
-      out[key] = 0;
-    }
-
-    out[key]++;
-  }
-
-  return out;
-}
-
-function toRows(group, total){
-
-  return Object.entries(group)
-    .map(([key, count]) => ({
-      key,
-      count,
-      pct: pct(count, total)
-    }))
-    .sort((a, b) => b.count - a.count);
-}
-
-function getReasonAdvice(reason){
-
-  const map = {
-    MAX_OPEN_TRADES: "Max open trades bereikt. Geen filterprobleem.",
-    SYMBOL_COOLDOWN: "Cooldown voorkomt dubbele entries op dezelfde coin.",
-    COOLDOWN: "Cooldown actief na vorige trade.",
-    OPPOSITE_POSITION_OPEN: "Tegengestelde positie wordt correct geblokkeerd.",
-    DUPLICATE_PROCESSING_LOCK: "Duplicate protection werkt.",
-    LOW_VOL: "Te weinig volatiliteit. Correct geblokkeerd.",
-    NO_FLOW: "Geen duidelijke flow. Correct geblokkeerd.",
-    LOW_CONFLUENCE: "Setup mist bevestiging. Confluence niet zomaar versoepelen.",
-    LOW_RR: "Risk/reward is te zwak. Dit voorkomt late entries.",
-    FAKE_BREAKOUT: "Dynamische fake breakout-bescherming werkt.",
-    OB_AGAINST: "Orderboek staat tegen trade. Correct geblokkeerd.",
-    NO_LIQUIDATION_ROOM: "Te weinig ruimte naar liquidation/TP-zone.",
-    BAD_MARKET_QUALITY: "Spread/depth slecht. Correct geblokkeerd.",
-    OB_NEUTRAL_LOW_CONF: "Orderboek neutraal. Alleen sterke uitzonderingen mogen nog door.",
-    EXTREME_FUNDING: "Funding-risico. Correct geblokkeerd.",
-    BULL_CROWDED_FUNDING: "Long te crowded. Correct geblokkeerd.",
-    BEAR_CROWDED_FUNDING: "Short te crowded. Correct geblokkeerd.",
-    BTC_BULL_BLOCK_SHORT: "Short tegen bullish BTC geblokkeerd.",
-    BTC_BEAR_BLOCK_LONG: "Long tegen bearish BTC geblokkeerd.",
-    COUNTERTREND_NOT_ELITE: "Countertrend is niet elite genoeg. Correct.",
-    ENTRY_FILTERED: "Entry kwam niet door de laatste kwaliteitscheck.",
-    ORDERBOOK_FETCH_FAILED: "Orderboek kon niet worden opgehaald. Geen blind entry zonder uitvoerbare live marktdata."
-  };
-
-  if(String(reason || "").startsWith("SYMBOL_ALREADY_OPEN_")){
-    return "Er staat al een positie open op deze coin. Correct geblokkeerd.";
-  }
-
-  return map[reason] || "Geen specifieke actie nodig.";
-}
-
-function buildTradeSystemAnalysis(trades){
-
-  const list = Array.isArray(trades)
-    ? trades
-    : [];
-
-  const total = list.length;
-
-  const entries = list.filter(t => t.action === "ENTRY");
-  const waits = list.filter(t => t.action === "WAIT");
-  const holds = list.filter(t => t.action === "HOLD");
-  const exits = list.filter(t => t.action === "EXIT");
-
-  const reasonGroup = groupByCount(waits, "reason");
-  const gradeGroup = groupByCount(list, "grade");
-  const actionGroup = groupByCount(list, "action");
-  const obGroup = groupByCount(list, "obBias");
-  const sideGroup = groupByCount(list, "side");
-
-  const waitReasons = toRows(reasonGroup, waits.length).map(row => ({
-    ...row,
-    advice: getReasonAdvice(row.key)
-  }));
-
-  const entryRate = pct(entries.length, total);
-  const waitRate = pct(waits.length, total);
-
-  const avgConfluence = avg(list, "confluence");
-  const avgRR = avg(list, "rr");
-  const avgScore = avg(list, "score");
-
-  const topReason = waitReasons[0]?.key || null;
-  const topReasonPct = waitReasons[0]?.pct || 0;
-
-  const recommendations = {
-    moreTrades: [],
-    higherWinrate: [],
-    higherPnl: []
-  };
-
-  if(total === 0){
-    recommendations.moreTrades.push(
-      "Scanner stuurde deze run geen echte tradeCandidates. Meer trades haal je nu vooral uit betere scanner-input."
-    );
-    recommendations.moreTrades.push(
-      "Veilige test: almost candidate threshold stap voor stap iets omlaag, terwijl TradeSystem de laatste kwaliteitslaag blijft."
-    );
-  }
-
-  if(total >= 8 && entryRate < 5){
-    recommendations.moreTrades.push(
-      "Entry-rate is laag. Eerst scanner-input verbeteren in plaats van TradeSystem guards los te gooien."
-    );
-  }
-
-  if(topReason === "MAX_OPEN_TRADES"){
-    recommendations.moreTrades.push(
-      "MAX_OPEN_TRADES blokkeert trades. Verhoog alleen naar 4 als gesloten trade-history positief blijft."
-    );
-  }
-
-  if(topReason === "SYMBOL_COOLDOWN" || topReason === "COOLDOWN"){
-    recommendations.moreTrades.push(
-      "Cooldown blokkeert herentries. Pas verlagen na voldoende gesloten trades."
-    );
-  }
-
-  if(topReason === "ENTRY_FILTERED" && avgConfluence >= 78){
-    recommendations.moreTrades.push(
-      "Veel setups halen bijna de eindcheck. Test eerst iets meer almost candidates vanuit de scanner."
-    );
-  }
-
-  if(topReason === "OB_NEUTRAL_LOW_CONF" && avgConfluence >= 80){
-    recommendations.moreTrades.push(
-      "Neutral orderboek is nog een bottleneck. Laat neutrale OB alleen door bij sterke confluence en hoge sniper."
-    );
-  }
-
-  if(topReason === "LOW_CONFLUENCE"){
-    recommendations.higherWinrate.push(
-      "Confluence niet versoepelen. De scanner moet sterkere setups aanleveren."
-    );
-  }
-
-  if(topReason === "OB_AGAINST"){
-    recommendations.higherWinrate.push(
-      "Orderboek tegen de trade moet geblokkeerd blijven."
-    );
-  }
-
-  if(topReason === "BAD_MARKET_QUALITY"){
-    recommendations.higherWinrate.push(
-      "Spread/depth guards beschermen winrate en blind execution."
-    );
-  }
-
-  if(topReason === "NO_FLOW" || topReason === "LOW_VOL"){
-    recommendations.higherWinrate.push(
-      "Flow/volatiliteit guards niet versoepelen; die voorkomen chop trades."
-    );
-  }
-
-  if(topReason === "COUNTERTREND_NOT_ELITE"){
-    recommendations.higherWinrate.push(
-      "Countertrend filtering is gezond voor blind volgen."
-    );
-  }
-
-  if(entries.length > 0 && avgConfluence < 75){
-    recommendations.higherWinrate.push(
-      "Gemiddelde confluence van entries is laag. Entry mag dan strakker."
-    );
-  }
-
-  if(entries.length > 0 && avgConfluence >= 80){
-    recommendations.higherWinrate.push(
-      "Entry-kwaliteit is gezond. Niet strenger maken zonder closed-trade data."
-    );
-  }
-
-  if(entries.length > 0 && avgRR < 1){
-    recommendations.higherPnl.push(
-      "Gemiddelde RR is laag. Filter lage RR harder of laat scanner frissere moves door."
-    );
-  }
-
-  if(entries.length > 0 && avgRR >= 1.2){
-    recommendations.higherPnl.push(
-      "RR is gezond. Meer PnL haal je vooral uit betere TP/SL-kwaliteit en sterkere trade-selectie."
-    );
-  }
-
-  if(topReason === "NO_LIQUIDATION_ROOM"){
-    recommendations.higherPnl.push(
-      "Liquidation-room guard beschermt TP-potentieel. Niet losser zetten."
-    );
-  }
-
-  if(entries.length > 0 && avgConfluence >= 85){
-    recommendations.higherPnl.push(
-      "Sterke confluence. Test later alleen ruimere TP-projectie als closed trades dat ondersteunen."
-    );
-  }
-
-  if(recommendations.moreTrades.length === 0){
-    recommendations.moreTrades.push(
-      "Meer trades nu niet forceren. Eerst de nieuwe scanner-output meten op gesloten trades."
-    );
-  }
-
-  if(recommendations.higherWinrate.length === 0){
-    recommendations.higherWinrate.push(
-      "Winrate-filters ogen gezond. Houd OB, confluence, funding en countertrend guards actief."
-    );
-  }
-
-  if(recommendations.higherPnl.length === 0){
-    recommendations.higherPnl.push(
-      "PnL-advies wordt sterker zodra er voldoende gesloten trades gelogd zijn."
-    );
-  }
-
-  let advice = "TradeSystem gezond. Geen directe wijziging nodig.";
-
-  if(total === 0){
-    advice = "Geen echte tradeCandidates deze scan. Meer trades krijg je nu vooral via betere scanner-input.";
-  }else if(entries.length === 0 && waits.length > 0){
-    advice = `Geen entries. Grootste blokkade: ${topReason || "UNKNOWN"}.`;
-  }else if(entryRate > 25){
-    advice = "Veel entries. Let op overtrading; kwaliteit eventueel later iets strenger.";
-  }else if(entryRate < 3 && total >= 10){
-    advice = "Weinig entries uit veel candidates. Eerst scanner-output verbeteren.";
-  }
-
-  return {
-    total,
-    entries: entries.length,
-    waits: waits.length,
-    holds: holds.length,
-    partials: 0,
-    exits: exits.length,
-
-    entryRate,
-    waitRate,
-
-    avgConfluence,
-    avgRR,
-    avgScore,
-
-    topReason,
-    topReasonPct,
-
-    actions: toRows(actionGroup, total),
-    grades: toRows(gradeGroup, total),
-    obBias: toRows(obGroup, total),
-    sides: toRows(sideGroup, total),
-    waitReasons,
-
-    recommendations,
-    advice
-  };
-}
-
-
 // ================= MERGE PARTIAL SIDE SCAN =================
 async function mergeWithPreviousSideScan(currentPayload, scanSide){
-
   if(scanSide === "both"){
     return currentPayload;
   }
@@ -1020,19 +511,6 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
 
   mergedFunnel[otherSide] =
     previous.funnel?.[otherSide] || mergedFunnel[otherSide];
-
-  const currentTrades = Array.isArray(currentPayload.trades)
-    ? currentPayload.trades
-    : [];
-
-  const previousTrades = Array.isArray(previous.trades)
-    ? previous.trades
-    : [];
-
-  const otherSideTrades = previousTrades.filter(t => t.side === otherSide);
-
-  const mergedTrades = [...currentTrades, ...otherSideTrades]
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
 
   const mergedAnalytics = {
     ...(previous.analytics || {}),
@@ -1054,9 +532,6 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
       ? currentPayload.candidatesBear
       : previous.candidatesBear || 0;
 
-  // Behoud de meest recente dashboardStats
-  const dashboardStats = currentPayload.dashboardStats || previous.dashboardStats || emptyDashboardStats(Date.now());
-
   sortFunnel(mergedFunnel);
 
   return {
@@ -1066,11 +541,11 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
     funnelCount: countFunnel(mergedFunnel),
     bullCount: countSide(mergedFunnel, "bull"),
     bearCount: countSide(mergedFunnel, "bear"),
-    trades: mergedTrades,
     analytics: mergedAnalytics,
     advice: mergedAdvice,
-    dashboardStats,
-    tradeSystemAnalysis: buildTradeSystemAnalysis(mergedTrades),
+    trades: safeArray(currentPayload.trades),
+    dashboardStats: currentPayload.dashboardStats || previous.dashboardStats || emptyDashboardStats(Date.now()),
+    tradeSystemAnalysis: currentPayload.tradeSystemAnalysis || previous.tradeSystemAnalysis || null,
     candidatesBull,
     candidatesBear,
     candidates: candidatesBull + candidatesBear,
@@ -1091,7 +566,6 @@ async function mergeWithPreviousSideScan(currentPayload, scanSide){
 
 // ================= BITGET FAILURE HANDLER =================
 async function handleBitgetUniverseUnavailable(scanSide){
-
   const previous = await getLatestScan();
 
   if(previous?.ok){
@@ -1113,12 +587,9 @@ async function handleBitgetUniverseUnavailable(scanSide){
 
 // ================= CORE =================
 export async function buildScanPayload(options = {}){
-
   const scanSide = normalizeScanSide(options.side);
-
   const notify = options.notify !== false;
   const store = options.store !== false;
-  const resetStats = options.resetStats === true;
 
   initDefaultFilters(true);
   resetAnalytics();
@@ -1163,7 +634,6 @@ export async function buildScanPayload(options = {}){
   const market = classifyMarket(rawCoins);
 
   const funnel = emptyFunnel();
-  const tradeCandidates = [];
 
   let candidatesBull = 0;
   let candidatesBear = 0;
@@ -1177,7 +647,6 @@ export async function buildScanPayload(options = {}){
       : [scanSide];
 
   for(const raw of rawCoins){
-
     const base = normalize(raw);
 
     if(!base.symbol || base.price <= 0) continue;
@@ -1200,7 +669,6 @@ export async function buildScanPayload(options = {}){
     }
 
     for(const direction of sidesToScan){
-
       if(!displayDirectionAllowed(base, direction)) continue;
 
       const flow = detectFlow(base);
@@ -1257,13 +725,7 @@ export async function buildScanPayload(options = {}){
         logAnalytics(coin);
       }
 
-      // Alleen ENTRY coins gaan naar trade systeem
-      if(shouldSendToTradeSystem(coin, btc, realFilterStage)){
-        tradeCandidates.push({
-          ...coin,
-          stage: "entry"   // forceer entry
-        });
-
+      if(realFilterStage === "entry"){
         if(direction === "bull") candidatesBull++;
         if(direction === "bear") candidatesBear++;
       }
@@ -1305,32 +767,10 @@ export async function buildScanPayload(options = {}){
 
   sortFunnel(funnel);
 
-  const trades = await processTrades(
-    tradeCandidates,
-    btc,
-    "auto",
-    regime,
-    {
-      notify,
-      log: true
-    }
-  );
-
   const analytics = getAnalytics();
   const advice = generateAdvice(analytics);
-  const tradeSystemAnalysis = buildTradeSystemAnalysis(trades);
 
   const now = Date.now();
-  const funnelCount = countFunnel(funnel);
-
-  const dashboardStats = buildDashboardStats(
-    previousLatest?.dashboardStats,
-    trades,
-    funnelCount,
-    tradeCandidates.length,
-    now,
-    resetStats
-  );
 
   const currentPayload = {
     ok: true,
@@ -1338,26 +778,36 @@ export async function buildScanPayload(options = {}){
     scanMode: scanSide,
     notify,
     store,
-    resetStats,
+
     btc,
     regime,
     market,
+
     funnel,
-    funnelCount,
+    funnelCount: countFunnel(funnel),
     bullCount: countSide(funnel, "bull"),
     bearCount: countSide(funnel, "bear"),
-    trades,
+
+    // scanner bewaart trade-funnel output, maar runt hem niet zelf
+    trades: safeArray(previousLatest?.trades),
+    dashboardStats: normalizeDashboardStats(previousLatest?.dashboardStats, now),
+    tradeSystemAnalysis: previousLatest?.tradeSystemAnalysis || null,
+
     analytics,
     advice,
-    dashboardStats,
-    tradeSystemAnalysis,
+
     total: rawCoins.length,
-    candidates: tradeCandidates.length,
+    candidates: candidatesBull + candidatesBear,
     candidatesBull,
     candidatesBear,
+
     bitgetSymbols: validSymbols.size,
     bitgetUniverseReady: true,
+
+    scannerUpdatedAt: now,
+    tradeFunnelUpdatedAt: previousLatest?.tradeFunnelUpdatedAt || null,
     updatedAt: now,
+
     lastBullScan: scanSide === "bull" || scanSide === "both" ? now : null,
     lastBearScan: scanSide === "bear" || scanSide === "both" ? now : null
   };
@@ -1376,22 +826,16 @@ export async function buildScanPayload(options = {}){
 
 
 // ================= HANDLER =================
-export default async function handler(req,res){
-
+export default async function handler(req, res){
   try{
     const side = normalizeScanSide(req?.query?.side);
-
     const notify = normalizeNotify(req?.query?.notify);
     const store = normalizeStore(req?.query?.store, notify);
-    const resetStats =
-      normalizeStore(req?.query?.resetStats, false) ||
-      normalizeStore(req?.query?.reset, false);
 
     const data = await buildScanPayload({
       side,
       notify,
-      store,
-      resetStats
+      store
     });
 
     return res.status(200).json(data);
