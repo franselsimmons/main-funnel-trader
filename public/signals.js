@@ -94,7 +94,13 @@ function actionBadge(action){
 
 function sideBadge(side){
   const s = String(side || "").toLowerCase();
-  const label = s === "bull" ? "LONG" : s === "bear" ? "SHORT" : s.toUpperCase();
+  const label =
+    s === "bull"
+      ? "LONG"
+      : s === "bear"
+        ? "SHORT"
+        : s.toUpperCase();
+
   return `<span class="pill pill-side side-${escapeHtml(s)}">${escapeHtml(label)}</span>`;
 }
 
@@ -190,13 +196,15 @@ function normalizeDashboardStats(data){
     lastFunnelCoins: toNumber(raw.lastFunnelCoins) || 0,
     lastCandidates: toNumber(raw.lastCandidates) || 0,
 
-    rejectReasonCounts: raw.rejectReasonCounts && typeof raw.rejectReasonCounts === "object"
-      ? raw.rejectReasonCounts
-      : {},
+    rejectReasonCounts:
+      raw.rejectReasonCounts && typeof raw.rejectReasonCounts === "object"
+        ? raw.rejectReasonCounts
+        : {},
 
-    actionCounts: raw.actionCounts && typeof raw.actionCounts === "object"
-      ? raw.actionCounts
-      : {},
+    actionCounts:
+      raw.actionCounts && typeof raw.actionCounts === "object"
+        ? raw.actionCounts
+        : {},
 
     entryRows: safeArray(raw.entryRows),
     rejectedRows: safeArray(raw.rejectedRows),
@@ -204,17 +212,10 @@ function normalizeDashboardStats(data){
   };
 }
 
-function normalizeTradeRows(rows, fallbackTs){
+function withFallbackScanTs(rows, fallbackTs){
   return safeArray(rows).map(row => ({
     ...row,
-    scanTs: toNumber(row?.scanTs) || fallbackTs || 0,
-    score: toNumber(row?.score ?? row?.moveScore) || 0,
-    confluence: toNumber(row?.confluence) || 0,
-    rr: toNumber(row?.rr) || 0,
-    entry: toNumber(row?.entry),
-    sl: toNumber(row?.sl),
-    tp: toNumber(row?.tp),
-    tfStrength: toNumber(row?.tfStrength) || 0
+    scanTs: row?.scanTs || fallbackTs || 0
   }));
 }
 
@@ -256,11 +257,11 @@ function sortTrades(trades){
   });
 }
 
-function buildReasonCountMap(rows){
+function buildCounterMapFromRows(rows, field){
   const out = {};
 
   for(const row of safeArray(rows)){
-    const key = String(row?.reason || "UNKNOWN");
+    const key = String(row?.[field] || "UNKNOWN");
     out[key] = (out[key] || 0) + 1;
   }
 
@@ -356,7 +357,7 @@ function renderEntries(entries){
   el("entriesTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Nog geen bewaarde entry-signalen.",
+    "Nog geen entry-signalen beschikbaar.",
     () => "row-entry"
   );
 }
@@ -399,7 +400,7 @@ function renderRejectOverview(reasonCounts){
   el("rejectOverviewTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Nog geen afgekeurde trade-candidates opgeslagen.",
+    "Nog geen afgekeurde trade-candidates beschikbaar.",
     () => "row-wait"
   );
 }
@@ -434,7 +435,7 @@ function renderRejectedTrades(waitRows){
   el("rejectedTradesTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Nog geen afgekeurde trade-candidates opgeslagen.",
+    "Nog geen afgekeurde trade-candidates beschikbaar.",
     () => "row-wait"
   );
 }
@@ -475,19 +476,32 @@ function renderTradeResults(nonWaitTrades){
   el("tradeResultsTable").innerHTML = tableHtml(
     columns,
     rows,
-    "Nog geen bewaarde trade-resultaten beschikbaar.",
+    "Nog geen trade-resultaten beschikbaar.",
     r => `row-${String(r.action || "").toLowerCase()}`
   );
 }
 
-function renderStatus(data, stats, funnelRows){
+function renderStatus(data, stats, liveEntries, liveWaitRows, liveNonWaitTrades, funnelRows){
+  const hasStoredScans = Number(stats.totalScans || 0) > 0;
+
+  const shownEntries = hasStoredScans ? Number(stats.lastEntries || 0) : liveEntries.length;
+  const shownRejected = hasStoredScans ? Number(stats.lastRejected || 0) : liveWaitRows.length;
+  const shownOtherTrades = hasStoredScans ? Number(stats.lastOtherTrades || 0) : liveNonWaitTrades.length;
+  const shownFunnel = hasStoredScans
+    ? Number(stats.lastFunnelCoins || funnelRows.length)
+    : funnelRows.length;
+
+  const liveLabel = hasStoredScans
+    ? "LIVE + OPSLAG"
+    : "LIVE (nog geen scan opgeslagen sinds reset)";
+
   const statusLine = [
-    "LIVE",
+    liveLabel,
     `Laatste update: ${fmtDate(stats.lastScanAt || data?.updatedAt)}`,
-    `Entries: ${fmtInt(stats.lastEntries)}`,
-    `Afgekeurd: ${fmtInt(stats.lastRejected)}`,
-    `Overige trades: ${fmtInt(stats.lastOtherTrades)}`,
-    `Funnel coins: ${fmtInt(stats.lastFunnelCoins || funnelRows.length)}`
+    `Entries: ${fmtInt(shownEntries)}`,
+    `Afgekeurd: ${fmtInt(shownRejected)}`,
+    `Overige trades: ${fmtInt(shownOtherTrades)}`,
+    `Funnel coins: ${fmtInt(shownFunnel)}`
   ].join(" | ");
 
   if(el("statusLine")){
@@ -495,14 +509,34 @@ function renderStatus(data, stats, funnelRows){
   }
 
   if(el("statsInfo")){
-    el("statsInfo").innerText =
-      `Sinds reset: scans ${fmtInt(stats.totalScans)} | candidates ${fmtInt(stats.totalCandidates)} | reset op ${fmtDate(stats.lastResetAt)}`;
+    el("statsInfo").innerText = hasStoredScans
+      ? `Sinds reset: scans ${fmtInt(stats.totalScans)} | candidates ${fmtInt(stats.totalCandidates)} | reset op ${fmtDate(stats.lastResetAt)}`
+      : `Nog geen nieuwe opgeslagen scan sinds reset | reset op ${fmtDate(stats.lastResetAt)}`;
   }
 
-  if(el("entriesCount")) el("entriesCount").innerText = fmtInt(stats.totalEntries);
-  if(el("rejectCount")) el("rejectCount").innerText = fmtInt(stats.totalRejected);
-  if(el("tradeCount")) el("tradeCount").innerText = fmtInt(stats.totalOtherTrades);
-  if(el("funnelCount")) el("funnelCount").innerText = fmtInt(stats.totalFunnelCoins);
+  if(el("entriesCount")){
+    el("entriesCount").innerText = hasStoredScans
+      ? fmtInt(stats.totalEntries)
+      : fmtInt(liveEntries.length);
+  }
+
+  if(el("rejectCount")){
+    el("rejectCount").innerText = hasStoredScans
+      ? fmtInt(stats.totalRejected)
+      : fmtInt(liveWaitRows.length);
+  }
+
+  if(el("tradeCount")){
+    el("tradeCount").innerText = hasStoredScans
+      ? fmtInt(stats.totalOtherTrades)
+      : fmtInt(liveNonWaitTrades.length);
+  }
+
+  if(el("funnelCount")){
+    el("funnelCount").innerText = hasStoredScans
+      ? fmtInt(stats.totalFunnelCoins)
+      : fmtInt(funnelRows.length);
+  }
 }
 
 async function resetStats(){
@@ -543,49 +577,44 @@ async function load(){
 
     const data = await res.json();
     const stats = normalizeDashboardStats(data);
+    const liveScanTs = stats.lastScanAt || toNumber(data?.updatedAt) || Date.now();
 
-    const latestTrades = sortTrades(data?.trades);
+    const latestTrades = withFallbackScanTs(sortTrades(data?.trades), liveScanTs);
     const latestFunnelRows = flattenFunnel(data?.funnel);
-    const fallbackTs = toNumber(stats.lastScanAt) || toNumber(data?.updatedAt) || Date.now();
 
-    const liveEntries = normalizeTradeRows(
-      latestTrades.filter(t => String(t?.action || "").toUpperCase() === "ENTRY"),
-      fallbackTs
+    const liveEntries = latestTrades.filter(t => String(t?.action || "").toUpperCase() === "ENTRY");
+    const liveWaitRows = latestTrades.filter(t => String(t?.action || "").toUpperCase() === "WAIT");
+    const liveNonWaitTrades = latestTrades.filter(t => String(t?.action || "").toUpperCase() !== "WAIT");
+
+    const storedEntries = withFallbackScanTs(stats.entryRows, liveScanTs);
+    const storedRejected = withFallbackScanTs(stats.rejectedRows, liveScanTs);
+    const storedTrades = withFallbackScanTs(stats.tradeRows, liveScanTs);
+
+    const entriesToShow = storedEntries.length ? storedEntries : liveEntries;
+    const rejectedToShow = storedRejected.length ? storedRejected : liveWaitRows;
+    const tradeResultsToShow = storedTrades.length ? storedTrades : liveNonWaitTrades;
+
+    const rejectReasonCountsToShow =
+      Object.keys(stats.rejectReasonCounts || {}).length
+        ? stats.rejectReasonCounts
+        : buildCounterMapFromRows(rejectedToShow, "reason");
+
+    renderStatus(
+      data,
+      stats,
+      liveEntries,
+      liveWaitRows,
+      liveNonWaitTrades,
+      latestFunnelRows
     );
 
-    const liveWaitRows = normalizeTradeRows(
-      latestTrades.filter(t => String(t?.action || "").toUpperCase() === "WAIT"),
-      fallbackTs
-    );
-
-    const liveNonWaitTrades = normalizeTradeRows(
-      latestTrades.filter(t => String(t?.action || "").toUpperCase() !== "WAIT"),
-      fallbackTs
-    );
-
-    const storedEntries = normalizeTradeRows(stats.entryRows, fallbackTs);
-    const storedRejected = normalizeTradeRows(stats.rejectedRows, fallbackTs);
-    const storedTradeRows = normalizeTradeRows(stats.tradeRows, fallbackTs);
-
-    const entryRowsToShow = storedEntries.length ? storedEntries : liveEntries;
-    const rejectedRowsToShow = storedRejected.length ? storedRejected : liveWaitRows;
-    const tradeRowsToShow = storedTradeRows.length ? storedTradeRows : liveNonWaitTrades;
-
-    const hasStoredRejectCounts =
-      stats.rejectReasonCounts &&
-      Object.keys(stats.rejectReasonCounts).length > 0;
-
-    const rejectReasonCountsToShow = hasStoredRejectCounts
-      ? stats.rejectReasonCounts
-      : buildReasonCountMap(rejectedRowsToShow);
-
-    renderStatus(data, stats, latestFunnelRows);
-    renderEntries(entryRowsToShow);
+    renderEntries(entriesToShow);
     renderFunnel(latestFunnelRows);
     renderRejectOverview(rejectReasonCountsToShow);
-    renderRejectedTrades(rejectedRowsToShow);
-    renderTradeResults(tradeRowsToShow);
+    renderRejectedTrades(rejectedToShow);
+    renderTradeResults(tradeResultsToShow);
 
+    return latestTrades;
   }catch(e){
     console.error(e);
 
