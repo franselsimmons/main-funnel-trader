@@ -49,22 +49,17 @@ function fmtText(value, fallback = "—"){
 | value === ""){
     return fallback;
   }
-
   return escapeHtml(String(value));
 }
 
 function fmtNum(value){
   const n = toNumber(value);
-
   if(n === null) return "—";
-
   const abs = Math.abs(n);
-
   if(abs >= 1000) return n.toFixed(2);
   if(abs >= 1) return n.toFixed(4);
   if(abs >= 0.01) return n.toFixed(5);
   if(abs === 0) return "0";
-
   return n.toFixed(8);
 }
 
@@ -84,13 +79,11 @@ function fmtBool(value){
 
 function fmtDate(ts){
   const n = Number(ts);
-
   if(!Number.isFinite(n) |
 
 | n <= 0){
     return "onbekend";
   }
-
   return new Date(n).toLocaleString("nl-NL");
 }
 
@@ -113,13 +106,7 @@ function sideBadge(side){
   const s = String(side |
 
 | "").toLowerCase();
-  const label =
-    s === "bull"
-     ? "LONG"
-      : s === "bear"
-       ? "SHORT"
-        : s.toUpperCase();
-
+  const label = s === "bull"? "LONG" : s === "bear"? "SHORT" : s.toUpperCase();
   return `<span class="pill pill-side side-${escapeHtml(s)}">${escapeHtml(label)}</span>`;
 }
 
@@ -127,7 +114,6 @@ function reasonLabel(reason){
   const r = String(reason |
 
 | "UNKNOWN");
-
   const labels = {
     MAX_OPEN_TRADES: "Max open trades bereikt",
     SYMBOL_COOLDOWN: "Symbol cooldown",
@@ -167,7 +153,6 @@ function reasonAdvice(reason){
   const r = String(reason |
 
 | "UNKNOWN");
-
   const advice = {
     MAX_OPEN_TRADES: "Niet per se te streng. Eerst kijken of dit bewust risicobeheer is.",
     SYMBOL_COOLDOWN: "Alleen aanpassen als je bewust sneller wilt re-enteren.",
