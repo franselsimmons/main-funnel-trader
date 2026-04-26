@@ -8,13 +8,13 @@
   <link rel="stylesheet" href="signals.css">
 
   <style>
-    .pageShell{
+   .pageShell{
       max-width: 1700px;
       margin: 0 auto;
       padding: 20px;
     }
 
-    .headerActions{
+   .headerActions{
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
@@ -23,40 +23,40 @@
       margin-bottom: 10px;
     }
 
-    .infoLine{
+   .infoLine{
       color: var(--muted, #94a3b8);
       font-size: 13px;
     }
 
-    .metrics{
+   .metrics{
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
       margin: 18px 0 20px;
     }
 
-    .metric{
+   .metric{
       background: rgba(15, 23, 42, 0.72);
       border: 1px solid rgba(148, 163, 184, 0.15);
       border-radius: 14px;
       padding: 14px 16px;
     }
 
-    .metricLabel{
+   .metricLabel{
       font-size: 12px;
       color: var(--muted, #94a3b8);
       margin-bottom: 6px;
       text-transform: uppercase;
-      letter-spacing: .06em;
+      letter-spacing:.06em;
     }
 
-    .metricValue{
+   .metricValue{
       font-size: 26px;
       font-weight: 700;
       color: var(--text, #e2e8f0);
     }
 
-    .trade-section{
+   .trade-section{
       margin-top: 22px;
       background: rgba(15, 23, 42, 0.60);
       border: 1px solid rgba(148, 163, 184, 0.12);
@@ -64,32 +64,66 @@
       padding: 16px;
     }
 
-    .trade-section h2{
-      margin: 0 0 8px;
-      font-size: 18px;
-      color: var(--text, #e2e8f0);
+    /* Nieuwe CSS voor de uitklapbare (accordion) headers */
+   .trade-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+      padding-bottom: 8px;
     }
 
-    .sectionSub{
+   .trade-section-header h2 {
+      margin: 0;
+      font-size: 18px;
+      color: var(--text, #e2e8f0);
+      border-bottom: none;
+    }
+
+   .toggle-icon {
+      font-size: 14px;
+      color: var(--muted, #94a3b8);
+      transition: transform 0.3s ease;
+    }
+
+   .trade-section.collapsed.toggle-icon {
+      transform: rotate(-90deg);
+    }
+
+   .trade-section.collapsed.section-content {
+      display: none;
+    }
+
+   .section-content {
+      animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+   .sectionSub{
       margin: 0 0 14px;
       font-size: 13px;
       color: var(--muted, #94a3b8);
     }
 
-    .tableWrap{
+   .tableWrap{
       overflow-x: auto;
       border-radius: 12px;
       border: 1px solid rgba(148, 163, 184, 0.12);
     }
 
-    .signalTable{
+   .signalTable{
       width: 100%;
       border-collapse: collapse;
       min-width: 1150px;
       background: rgba(2, 6, 23, 0.55);
     }
 
-    .signalTable thead th{
+   .signalTable thead th{
       position: sticky;
       top: 0;
       background: rgba(15, 23, 42, 0.95);
@@ -97,14 +131,14 @@
       text-align: left;
       font-size: 12px;
       font-weight: 700;
-      letter-spacing: .04em;
+      letter-spacing:.04em;
       text-transform: uppercase;
       padding: 12px 10px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.15);
       white-space: nowrap;
     }
 
-    .signalTable td{
+   .signalTable td{
       padding: 11px 10px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.08);
       color: var(--text, #e2e8f0);
@@ -113,27 +147,16 @@
       vertical-align: middle;
     }
 
-    .signalTable tbody tr:hover{
+   .signalTable tbody tr:hover{
       background: rgba(255, 255, 255, 0.03);
     }
 
-    .row-entry{
-      background: rgba(34, 197, 94, 0.06);
-    }
+   .row-entry{ background: rgba(34, 197, 94, 0.06); }
+   .row-hold{ background: rgba(59, 130, 246, 0.05); }
+   .row-wait{ background: rgba(245, 158, 11, 0.05); }
+   .row-exit{ background: rgba(239, 68, 68, 0.05); }
 
-    .row-hold{
-      background: rgba(59, 130, 246, 0.05);
-    }
-
-    .row-wait{
-      background: rgba(245, 158, 11, 0.05);
-    }
-
-    .row-exit{
-      background: rgba(239, 68, 68, 0.05);
-    }
-
-    .pill{
+   .pill{
       display: inline-flex;
       align-items: center;
       padding: 4px 8px;
@@ -144,61 +167,61 @@
       background: rgba(255, 255, 255, 0.04);
     }
 
-    .pill-action.action-entry{
+   .pill-action.action-entry{
       color: #22c55e;
       border-color: rgba(34, 197, 94, 0.35);
       background: rgba(34, 197, 94, 0.12);
     }
 
-    .pill-action.action-hold{
+   .pill-action.action-hold{
       color: #38bdf8;
       border-color: rgba(56, 189, 248, 0.35);
       background: rgba(56, 189, 248, 0.12);
     }
 
-    .pill-action.action-wait{
+   .pill-action.action-wait{
       color: #f59e0b;
       border-color: rgba(245, 158, 11, 0.35);
       background: rgba(245, 158, 11, 0.12);
     }
 
-    .pill-action.action-exit{
+   .pill-action.action-exit{
       color: #ef4444;
       border-color: rgba(239, 68, 68, 0.35);
       background: rgba(239, 68, 68, 0.12);
     }
 
-    .pill-stage.stage-entry{ color: #22c55e; }
-    .pill-stage.stage-almost{ color: #eab308; }
-    .pill-stage.stage-buildup{ color: #38bdf8; }
-    .pill-stage.stage-radar{ color: #cbd5e1; }
+   .pill-stage.stage-entry{ color: #22c55e; }
+   .pill-stage.stage-almost{ color: #eab308; }
+   .pill-stage.stage-buildup{ color: #38bdf8; }
+   .pill-stage.stage-radar{ color: #cbd5e1; }
 
-    .pill-side.side-bull{
+   .pill-side.side-bull{
       color: #22c55e;
       border-color: rgba(34, 197, 94, 0.25);
       background: rgba(34, 197, 94, 0.10);
     }
 
-    .pill-side.side-bear{
+   .pill-side.side-bear{
       color: #ef4444;
       border-color: rgba(239, 68, 68, 0.25);
       background: rgba(239, 68, 68, 0.10);
     }
 
-    .emptyState{
+   .emptyState{
       color: var(--muted, #94a3b8);
       padding: 18px 10px;
       font-size: 14px;
     }
 
     @media (max-width: 1100px){
-      .metrics{
+     .metrics{
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
 
     @media (max-width: 700px){
-      .metrics{
+     .metrics{
         grid-template-columns: 1fr;
       }
     }
@@ -248,35 +271,61 @@
       </div>
     </div>
 
-    <div class="trade-section">
-      <h2>ENTRY SIGNALEN</h2>
-      <p class="sectionSub">Bewaarde entry-signalen sinds laatste reset.</p>
-      <div id="entriesTable"></div>
+    <div class="trade-section" id="sec-bottlenecks">
+      <div class="trade-section-header" onclick="toggleSection('sec-bottlenecks')">
+        <h2>AFKEUR OVERZICHT PER FILTER</h2>
+        <span class="toggle-icon">▼</span>
+      </div>
+      <div class="section-content">
+        <p class="sectionSub">Hier zie je op welke filter de doorgestuurde candidates het vaakst stuklopen. Dit telt door totdat je reset.</p>
+        <div id="rejectOverviewTable"></div>
+      </div>
     </div>
 
-    <div class="trade-section">
-      <h2>SCANNER / FUNNEL INPUT</h2>
-      <p class="sectionSub">Dit is de meest recente scanner/funnel input van de laatste scan.</p>
-      <div id="funnelTable"></div>
+    <div class="trade-section" id="sec-entries">
+      <div class="trade-section-header" onclick="toggleSection('sec-entries')">
+        <h2>ENTRY SIGNALEN</h2>
+        <span class="toggle-icon">▼</span>
+      </div>
+      <div class="section-content">
+        <p class="sectionSub">Bewaarde entry-signalen sinds laatste reset.</p>
+        <div id="entriesTable"></div>
+      </div>
     </div>
 
-    <div class="trade-section">
-      <h2>AFKEUR OVERZICHT PER FILTER</h2>
-      <p class="sectionSub">Hier zie je op welke filter de doorgestuurde candidates het vaakst stuklopen. Dit telt door totdat je reset.</p>
-      <div id="rejectOverviewTable"></div>
+    <div class="trade-section" id="sec-results">
+      <div class="trade-section-header" onclick="toggleSection('sec-results')">
+        <h2>TRADE RESULTATEN</h2>
+        <span class="toggle-icon">▼</span>
+      </div>
+      <div class="section-content">
+        <p class="sectionSub">Bewaarde ENTRY, HOLD en EXIT regels sinds laatste reset. WAIT staat hierboven apart.</p>
+        <div id="tradeResultsTable"></div>
+      </div>
     </div>
 
-    <div class="trade-section">
-      <h2>AFGEKEURDE TRADE CANDIDATES</h2>
-      <p class="sectionSub">Bewaarde WAIT/afkeur-regels sinds laatste reset.</p>
-      <div id="rejectedTradesTable"></div>
+    <div class="trade-section collapsed" id="sec-rejected">
+      <div class="trade-section-header" onclick="toggleSection('sec-rejected')">
+        <h2>AFGEKEURDE TRADE CANDIDATES</h2>
+        <span class="toggle-icon">▼</span>
+      </div>
+      <div class="section-content">
+        <p class="sectionSub">Bewaarde WAIT/afkeur-regels sinds laatste reset.</p>
+        <div id="rejectedTradesTable"></div>
+      </div>
     </div>
 
-    <div class="trade-section">
-      <h2>TRADE RESULTATEN</h2>
-      <p class="sectionSub">Bewaarde ENTRY, HOLD en EXIT regels sinds laatste reset. WAIT staat hierboven apart.</p>
-      <div id="tradeResultsTable"></div>
+    <div class="trade-section collapsed" id="sec-funnel">
+      <div class="trade-section-header" onclick="toggleSection('sec-funnel')">
+        <h2>SCANNER / FUNNEL INPUT</h2>
+        <span class="toggle-icon">▼</span>
+      </div>
+      <div class="section-content">
+        <p class="sectionSub">Dit is de meest recente scanner/funnel input van de laatste scan.</p>
+        <div id="funnelTable"></div>
+      </div>
     </div>
+
   </div>
 
   <script src="signals.js"></script>
