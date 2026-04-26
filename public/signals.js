@@ -1,11 +1,3 @@
-// Toggle functie voor uitklapbare secties
-function toggleSection(id) {
-  const section = document.getElementById(id);
-  if (section) {
-    section.classList.toggle('collapsed');
-  }
-}
-
 const el = id => document.getElementById(id);
 
 const STAGES = ["entry", "almost", "buildup", "radar"];
@@ -25,95 +17,96 @@ const ACTION_ORDER = {
 };
 
 function safeArray(value){
-  return Array.isArray(value)? value :;
+  return Array.isArray(value) ? value : [];
 }
 
 function toNumber(value){
   const n = Number(value);
-  return Number.isFinite(n)? n : null;
+  return Number.isFinite(n) ? n : null;
 }
 
 function escapeHtml(value){
-  return String(value?? "")
-   .replace(/&/g, "&amp;")
-   .replace(/</g, "&lt;")
-   .replace(/>/g, "&gt;")
-   .replace(/"/g, "&quot;")
-   .replace(/'/g, "&#039;");
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function fmtText(value, fallback = "—"){
-  if(value === undefined |
-
-| value === null |
-| value === ""){
+  if(value === undefined || value === null || value === ""){
     return fallback;
   }
+
   return escapeHtml(String(value));
 }
 
 function fmtNum(value){
   const n = toNumber(value);
+
   if(n === null) return "—";
+
   const abs = Math.abs(n);
+
   if(abs >= 1000) return n.toFixed(2);
   if(abs >= 1) return n.toFixed(4);
   if(abs >= 0.01) return n.toFixed(5);
   if(abs === 0) return "0";
+
   return n.toFixed(8);
 }
 
 function fmtInt(value){
   const n = toNumber(value);
-  return n === null? "0" : String(Math.round(n));
+  return n === null ? "0" : String(Math.round(n));
 }
 
 function fmtPct(value){
   const n = toNumber(value);
-  return n === null? "0%" : `${n.toFixed(1)}%`;
+  return n === null ? "0%" : `${n.toFixed(1)}%`;
 }
 
 function fmtBool(value){
-  return value? "ja" : "nee";
+  return value ? "ja" : "nee";
 }
 
 function fmtDate(ts){
   const n = Number(ts);
-  if(!Number.isFinite(n) |
 
-| n <= 0){
+  if(!Number.isFinite(n) || n <= 0){
     return "onbekend";
   }
+
   return new Date(n).toLocaleString("nl-NL");
 }
 
 function stageBadge(stage){
-  const s = String(stage |
-
-| "radar").toLowerCase();
+  const s = String(stage || "radar").toLowerCase();
   return `<span class="pill pill-stage stage-${escapeHtml(s)}">${escapeHtml(s)}</span>`;
 }
 
 function actionBadge(action){
-  const a = String(action |
-
-| "WAIT").toUpperCase();
+  const a = String(action || "WAIT").toUpperCase();
   const cls = a.toLowerCase();
   return `<span class="pill pill-action action-${escapeHtml(cls)}">${escapeHtml(a)}</span>`;
 }
 
 function sideBadge(side){
-  const s = String(side |
+  const s = String(side || "").toLowerCase();
+  const label =
+    s === "bull"
+      ? "LONG"
+      : s === "bear"
+        ? "SHORT"
+        : s.toUpperCase();
 
-| "").toLowerCase();
-  const label = s === "bull"? "LONG" : s === "bear"? "SHORT" : s.toUpperCase();
   return `<span class="pill pill-side side-${escapeHtml(s)}">${escapeHtml(label)}</span>`;
 }
 
 function reasonLabel(reason){
-  const r = String(reason |
+  const r = String(reason || "UNKNOWN");
 
-| "UNKNOWN");
   const labels = {
     MAX_OPEN_TRADES: "Max open trades bereikt",
     SYMBOL_COOLDOWN: "Symbol cooldown",
@@ -144,15 +137,12 @@ function reasonLabel(reason){
     return "Symbol heeft al open positie";
   }
 
-  return labels[r] |
-
-| r;
+  return labels[r] || r;
 }
 
 function reasonAdvice(reason){
-  const r = String(reason |
+  const r = String(reason || "UNKNOWN");
 
-| "UNKNOWN");
   const advice = {
     MAX_OPEN_TRADES: "Niet per se te streng. Eerst kijken of dit bewust risicobeheer is.",
     SYMBOL_COOLDOWN: "Alleen aanpassen als je bewust sneller wilt re-enteren.",
@@ -182,71 +172,38 @@ function reasonAdvice(reason){
     return "Geen filterprobleem; voorkomt dubbele entries op dezelfde coin.";
   }
 
-  return advice[r] |
-
-| "Controleer deze blokkade handmatig.";
+  return advice[r] || "Controleer deze blokkade handmatig.";
 }
 
 function normalizeDashboardStats(data){
-  const raw = data?.dashboardStats |
-
-| {};
+  const raw = data?.dashboardStats || {};
 
   return {
-    startedAt: toNumber(raw.startedAt) |
+    startedAt: toNumber(raw.startedAt) || 0,
+    lastResetAt: toNumber(raw.lastResetAt) || 0,
+    lastScanAt: toNumber(raw.lastScanAt) || toNumber(data?.updatedAt) || 0,
 
-| 0,
-    lastResetAt: toNumber(raw.lastResetAt) |
+    totalScans: toNumber(raw.totalScans) || 0,
+    totalEntries: toNumber(raw.totalEntries) || 0,
+    totalRejected: toNumber(raw.totalRejected) || 0,
+    totalOtherTrades: toNumber(raw.totalOtherTrades) || 0,
+    totalFunnelCoins: toNumber(raw.totalFunnelCoins) || 0,
+    totalCandidates: toNumber(raw.totalCandidates) || 0,
 
-| 0,
-    lastScanAt: toNumber(raw.lastScanAt) |
-
-| toNumber(data?.updatedAt) |
-| 0,
-
-    totalScans: toNumber(raw.totalScans) |
-
-| 0,
-    totalEntries: toNumber(raw.totalEntries) |
-
-| 0,
-    totalRejected: toNumber(raw.totalRejected) |
-
-| 0,
-    totalOtherTrades: toNumber(raw.totalOtherTrades) |
-
-| 0,
-    totalFunnelCoins: toNumber(raw.totalFunnelCoins) |
-
-| 0,
-    totalCandidates: toNumber(raw.totalCandidates) |
-
-| 0,
-
-    lastEntries: toNumber(raw.lastEntries) |
-
-| 0,
-    lastRejected: toNumber(raw.lastRejected) |
-
-| 0,
-    lastOtherTrades: toNumber(raw.lastOtherTrades) |
-
-| 0,
-    lastFunnelCoins: toNumber(raw.lastFunnelCoins) |
-
-| 0,
-    lastCandidates: toNumber(raw.lastCandidates) |
-
-| 0,
+    lastEntries: toNumber(raw.lastEntries) || 0,
+    lastRejected: toNumber(raw.lastRejected) || 0,
+    lastOtherTrades: toNumber(raw.lastOtherTrades) || 0,
+    lastFunnelCoins: toNumber(raw.lastFunnelCoins) || 0,
+    lastCandidates: toNumber(raw.lastCandidates) || 0,
 
     rejectReasonCounts:
       raw.rejectReasonCounts && typeof raw.rejectReasonCounts === "object"
-       ? raw.rejectReasonCounts
+        ? raw.rejectReasonCounts
         : {},
 
     actionCounts:
       raw.actionCounts && typeof raw.actionCounts === "object"
-       ? raw.actionCounts
+        ? raw.actionCounts
         : {},
 
     entryRows: safeArray(raw.entryRows),
@@ -257,28 +214,21 @@ function normalizeDashboardStats(data){
 
 function withFallbackScanTs(rows, fallbackTs){
   return safeArray(rows).map(row => ({
-   ...row,
-    scanTs: row?.scanTs |
-
-| fallbackTs |
-| 0
+    ...row,
+    scanTs: row?.scanTs || fallbackTs || 0
   }));
 }
 
 function flattenFunnel(funnel){
-  const rows =;
+  const rows = [];
 
   for(const side of ["bull", "bear"]){
     for(const stage of STAGES){
       for(const coin of safeArray(funnel?.[side]?.[stage])){
         rows.push({
-         ...coin,
-          side: coin?.side |
-
-| side,
-          stage: coin?.stage |
-
-| stage
+          ...coin,
+          side: coin?.side || side,
+          stage: coin?.stage || stage
         });
       }
     }
@@ -286,38 +236,24 @@ function flattenFunnel(funnel){
 
   return rows.sort((a, b) => {
     const stageDiff =
-      (STAGE_ORDER |
+      (STAGE_ORDER[String(b.stage || "").toLowerCase()] || 0) -
+      (STAGE_ORDER[String(a.stage || "").toLowerCase()] || 0);
 
-| 0) -
-      (STAGE_ORDER |
+    if(stageDiff !== 0) return stageDiff;
 
-| 0);
-
-    if(stageDiff!== 0) return stageDiff;
-
-    return Number(b.moveScore |
-
-| 0) - Number(a.moveScore |
-| 0);
+    return Number(b.moveScore || 0) - Number(a.moveScore || 0);
   });
 }
 
 function sortTrades(trades){
   return [...safeArray(trades)].sort((a, b) => {
     const actionDiff =
-      (ACTION_ORDER |
+      (ACTION_ORDER[String(b.action || "").toUpperCase()] || 0) -
+      (ACTION_ORDER[String(a.action || "").toUpperCase()] || 0);
 
-| 0) -
-      (ACTION_ORDER |
+    if(actionDiff !== 0) return actionDiff;
 
-| 0);
-
-    if(actionDiff!== 0) return actionDiff;
-
-    return Number(b.score |
-
-| 0) - Number(a.score |
-| 0);
+    return Number(b.score || 0) - Number(a.score || 0);
   });
 }
 
@@ -325,46 +261,32 @@ function buildCounterMapFromRows(rows, field){
   const out = {};
 
   for(const row of safeArray(rows)){
-    const key = String(row?.[field] |
-
-| "UNKNOWN");
-    out[key] = (out[key] |
-
-| 0) + 1;
+    const key = String(row?.[field] || "UNKNOWN");
+    out[key] = (out[key] || 0) + 1;
   }
 
   return out;
 }
 
 function buildRejectOverviewFromCounts(reasonCounts){
-  const rows =;
+  const rows = [];
 
-  const total = Object.values(reasonCounts |
-
-| {}).reduce((sum, value) => {
-    const n = Number(value |
-
-| 0);
-    return sum + (Number.isFinite(n)? n : 0);
+  const total = Object.values(reasonCounts || {}).reduce((sum, value) => {
+    const n = Number(value || 0);
+    return sum + (Number.isFinite(n) ? n : 0);
   }, 0);
 
-  for(const [reason, count] of Object.entries(reasonCounts |
+  for(const [reason, count] of Object.entries(reasonCounts || {})){
+    const n = Number(count || 0);
 
-| {})){
-    const n = Number(count |
-
-| 0);
-
-    if(!Number.isFinite(n) |
-
-| n <= 0) continue;
+    if(!Number.isFinite(n) || n <= 0) continue;
 
     rows.push({
       reason,
       count: n,
       label: reasonLabel(reason),
       advice: reasonAdvice(reason),
-      pct: total > 0? Number(((n / total) * 100).toFixed(1)) : 0
+      pct: total > 0 ? Number(((n / total) * 100).toFixed(1)) : 0
     });
   }
 
@@ -385,12 +307,12 @@ function tableHtml(columns, rows, emptyText, rowClassFn = null){
   `;
 
   const body = rows.map(row => {
-    const rowClass = rowClassFn? rowClassFn(row) : "";
+    const rowClass = rowClassFn ? rowClassFn(row) : "";
 
     return `
       <tr class="${escapeHtml(rowClass)}">
         ${columns.map(col => {
-          const cell = col.render? col.render(row) : fmtText(row[col.key]);
+          const cell = col.render ? col.render(row) : fmtText(row[col.key]);
           return `<td>${cell}</td>`;
         }).join("")}
       </tr>
@@ -409,18 +331,28 @@ function tableHtml(columns, rows, emptyText, rowClassFn = null){
 
 function renderEntries(entries){
   const rows = [...entries].sort((a, b) => {
-    const tsDiff = Number(b.scanTs |
-
-| 0) - Number(a.scanTs |
-| 0);
-    if(tsDiff!== 0) return tsDiff;
-    return Number(b.score |
-
-| 0) - Number(a.score |
-| 0);
+    const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
+    if(tsDiff !== 0) return tsDiff;
+    return Number(b.score || 0) - Number(a.score || 0);
   });
 
-  const columns =;
+  const columns = [
+    { label: "Scan tijd", render: r => fmtText(fmtDate(r.scanTs)) },
+    { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
+    { label: "Side", render: r => sideBadge(r.side) },
+    { label: "Stage", render: r => stageBadge(r.stage) },
+    { label: "Score", render: r => fmtInt(r.score) },
+    { label: "Grade", render: r => fmtText(r.grade) },
+    { label: "Confluence", render: r => fmtInt(r.confluence) },
+    { label: "RR", render: r => fmtNum(r.rr) },
+    { label: "Entry", render: r => fmtNum(r.entry) },
+    { label: "SL", render: r => fmtNum(r.sl) },
+    { label: "TP", render: r => fmtNum(r.tp) },
+    { label: "Flow", render: r => fmtText(r.flow) },
+    { label: "Sniper", render: r => fmtText(r.sniper) },
+    { label: "OB", render: r => fmtText(r.obBias) },
+    { label: "TF", render: r => fmtText(r.tfStrength) }
+  ];
 
   el("entriesTable").innerHTML = tableHtml(
     columns,
@@ -431,22 +363,39 @@ function renderEntries(entries){
 }
 
 function renderFunnel(funnelRows){
-  const columns =;
+  const columns = [
+    { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
+    { label: "Side", render: r => sideBadge(r.side) },
+    { label: "Stage", render: r => stageBadge(r.stage) },
+    { label: "Score", render: r => fmtInt(r.moveScore) },
+    { label: "Flow", render: r => fmtText(r.flow) },
+    { label: "Freshness", render: r => fmtInt(r.freshness) },
+    { label: "TF Score", render: r => fmtText(r.tfScore) },
+    { label: "TF Strength", render: r => fmtText(r.tfStrength) },
+    { label: "TF Align", render: r => fmtText(r.tfAlignment) },
+    { label: "VM", render: r => fmtNum(r.vm) },
+    { label: "Source", render: r => fmtText(r.stageSource) },
+    { label: "UI only", render: r => fmtBool(Boolean(r.uiOnly)) }
+  ];
 
   el("funnelTable").innerHTML = tableHtml(
     columns,
     funnelRows,
     "Geen scanner/funnel data beschikbaar.",
-    r => `row-stage-${String(r.stage |
-
-| "").toLowerCase()}`
+    r => `row-stage-${String(r.stage || "").toLowerCase()}`
   );
 }
 
 function renderRejectOverview(reasonCounts){
   const rows = buildRejectOverviewFromCounts(reasonCounts);
 
-  const columns =;
+  const columns = [
+    { label: "Filter / Reason", render: r => `<strong>${fmtText(r.label)}</strong>` },
+    { label: "Code", render: r => fmtText(r.reason) },
+    { label: "Aantal", render: r => fmtInt(r.count) },
+    { label: "Aandeel", render: r => fmtPct(r.pct) },
+    { label: "Interpretatie", render: r => fmtText(r.advice) }
+  ];
 
   el("rejectOverviewTable").innerHTML = tableHtml(
     columns,
@@ -457,19 +406,31 @@ function renderRejectOverview(reasonCounts){
 }
 
 function renderRejectedTrades(waitRows){
-  const rows =.sort((a, b) => {
-    const tsDiff = Number(b.scanTs |
-
-| 0) - Number(a.scanTs |
-| 0);
-    if(tsDiff!== 0) return tsDiff;
-    return Number(b.score |
-
-| 0) - Number(a.score |
-| 0);
+  const rows = [...waitRows].sort((a, b) => {
+    const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
+    if(tsDiff !== 0) return tsDiff;
+    return Number(b.score || 0) - Number(a.score || 0);
   });
 
-  const columns =;
+  const columns = [
+    { label: "Scan tijd", render: r => fmtText(fmtDate(r.scanTs)) },
+    { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
+    { label: "Side", render: r => sideBadge(r.side) },
+    { label: "Action", render: r => actionBadge(r.action) },
+    { label: "Stage", render: r => stageBadge(r.stage) },
+    { label: "Afgekeurd op", render: r => `<strong>${fmtText(reasonLabel(r.reason))}</strong>` },
+    { label: "Code", render: r => fmtText(r.reason) },
+    { label: "Score", render: r => fmtInt(r.score) },
+    { label: "Flow", render: r => fmtText(r.flow) },
+    { label: "Confluence", render: r => fmtInt(r.confluence) },
+    { label: "RR", render: r => fmtNum(r.rr) },
+    { label: "Entry", render: r => fmtNum(r.entry) },
+    { label: "SL", render: r => fmtNum(r.sl) },
+    { label: "TP", render: r => fmtNum(r.tp) },
+    { label: "Grade", render: r => fmtText(r.grade) },
+    { label: "OB", render: r => fmtText(r.obBias) },
+    { label: "TF", render: r => fmtText(r.tfStrength) }
+  ];
 
   el("rejectedTradesTable").innerHTML = tableHtml(
     columns,
@@ -480,66 +441,68 @@ function renderRejectedTrades(waitRows){
 }
 
 function renderTradeResults(nonWaitTrades){
-  const rows =.sort((a, b) => {
-    const tsDiff = Number(b.scanTs |
-
-| 0) - Number(a.scanTs |
-| 0);
-    if(tsDiff!== 0) return tsDiff;
+  const rows = [...nonWaitTrades].sort((a, b) => {
+    const tsDiff = Number(b.scanTs || 0) - Number(a.scanTs || 0);
+    if(tsDiff !== 0) return tsDiff;
 
     const actionDiff =
-      (ACTION_ORDER |
+      (ACTION_ORDER[String(b.action || "").toUpperCase()] || 0) -
+      (ACTION_ORDER[String(a.action || "").toUpperCase()] || 0);
 
-| 0) -
-      (ACTION_ORDER |
+    if(actionDiff !== 0) return actionDiff;
 
-| 0);
-
-    if(actionDiff!== 0) return actionDiff;
-
-    return Number(b.score |
-
-| 0) - Number(a.score |
-| 0);
+    return Number(b.score || 0) - Number(a.score || 0);
   });
 
-  const columns =;
+  const columns = [
+    { label: "Scan tijd", render: r => fmtText(fmtDate(r.scanTs)) },
+    { label: "Coin", render: r => `<strong>${fmtText(r.symbol)}</strong>` },
+    { label: "Side", render: r => sideBadge(r.side) },
+    { label: "Action", render: r => actionBadge(r.action) },
+    { label: "Stage", render: r => stageBadge(r.stage) },
+    { label: "Reason", render: r => fmtText(r.reason) },
+    { label: "Score", render: r => fmtInt(r.score) },
+    { label: "Flow", render: r => fmtText(r.flow) },
+    { label: "Confluence", render: r => fmtInt(r.confluence) },
+    { label: "RR", render: r => fmtNum(r.rr) },
+    { label: "Entry", render: r => fmtNum(r.entry) },
+    { label: "SL", render: r => fmtNum(r.sl) },
+    { label: "TP", render: r => fmtNum(r.tp) },
+    { label: "Grade", render: r => fmtText(r.grade) },
+    { label: "OB", render: r => fmtText(r.obBias) },
+    { label: "TF", render: r => fmtText(r.tfStrength) }
+  ];
 
   el("tradeResultsTable").innerHTML = tableHtml(
     columns,
     rows,
     "Nog geen trade-resultaten beschikbaar.",
-    r => `row-${String(r.action |
-
-| "").toLowerCase()}`
+    r => `row-${String(r.action || "").toLowerCase()}`
   );
 }
 
 function renderStatus(data, stats, liveEntries, liveWaitRows, liveNonWaitTrades, funnelRows){
-  const hasStoredScans = Number(stats.totalScans |
+  const hasStoredScans = Number(stats.totalScans || 0) > 0;
 
-| 0) > 0;
-
-  const shownEntries = hasStoredScans? Number(stats.lastEntries |
-
-| 0) : liveEntries.length;
-  const shownRejected = hasStoredScans? Number(stats.lastRejected |
-
-| 0) : liveWaitRows.length;
-  const shownOtherTrades = hasStoredScans? Number(stats.lastOtherTrades |
-
-| 0) : liveNonWaitTrades.length;
+  const shownEntries = hasStoredScans ? Number(stats.lastEntries || 0) : liveEntries.length;
+  const shownRejected = hasStoredScans ? Number(stats.lastRejected || 0) : liveWaitRows.length;
+  const shownOtherTrades = hasStoredScans ? Number(stats.lastOtherTrades || 0) : liveNonWaitTrades.length;
   const shownFunnel = hasStoredScans
-   ? Number(stats.lastFunnelCoins |
-
-| funnelRows.length)
+    ? Number(stats.lastFunnelCoins || funnelRows.length)
     : funnelRows.length;
 
   const liveLabel = hasStoredScans
-   ? "LIVE + OPSLAG"
+    ? "LIVE + OPSLAG"
     : "LIVE (nog geen scan opgeslagen sinds reset)";
 
-  const statusLine =.join(" | ");
+  const statusLine = [
+    liveLabel,
+    `Laatste update: ${fmtDate(stats.lastScanAt || data?.updatedAt)}`,
+    `Entries: ${fmtInt(shownEntries)}`,
+    `Afgekeurd: ${fmtInt(shownRejected)}`,
+    `Overige trades: ${fmtInt(shownOtherTrades)}`,
+    `Funnel coins: ${fmtInt(shownFunnel)}`
+  ].join(" | ");
 
   if(el("statusLine")){
     el("statusLine").innerText = statusLine;
@@ -547,31 +510,31 @@ function renderStatus(data, stats, liveEntries, liveWaitRows, liveNonWaitTrades,
 
   if(el("statsInfo")){
     el("statsInfo").innerText = hasStoredScans
-     ? `Sinds reset: scans ${fmtInt(stats.totalScans)} | candidates ${fmtInt(stats.totalCandidates)} | reset op ${fmtDate(stats.lastResetAt)}`
+      ? `Sinds reset: scans ${fmtInt(stats.totalScans)} | candidates ${fmtInt(stats.totalCandidates)} | reset op ${fmtDate(stats.lastResetAt)}`
       : `Nog geen nieuwe opgeslagen scan sinds reset | reset op ${fmtDate(stats.lastResetAt)}`;
   }
 
   if(el("entriesCount")){
     el("entriesCount").innerText = hasStoredScans
-     ? fmtInt(stats.totalEntries)
+      ? fmtInt(stats.totalEntries)
       : fmtInt(liveEntries.length);
   }
 
   if(el("rejectCount")){
     el("rejectCount").innerText = hasStoredScans
-     ? fmtInt(stats.totalRejected)
+      ? fmtInt(stats.totalRejected)
       : fmtInt(liveWaitRows.length);
   }
 
   if(el("tradeCount")){
     el("tradeCount").innerText = hasStoredScans
-     ? fmtInt(stats.totalOtherTrades)
+      ? fmtInt(stats.totalOtherTrades)
       : fmtInt(liveNonWaitTrades.length);
   }
 
   if(el("funnelCount")){
     el("funnelCount").innerText = hasStoredScans
-     ? fmtInt(stats.totalFunnelCoins)
+      ? fmtInt(stats.totalFunnelCoins)
       : fmtInt(funnelRows.length);
   }
 }
@@ -592,12 +555,8 @@ async function resetStats(){
 
     const data = await res.json();
 
-    if(!res.ok |
-
-| data?.ok === false){
-      throw new Error(data?.error |
-
-| "reset_failed");
+    if(!res.ok || data?.ok === false){
+      throw new Error(data?.error || "reset_failed");
     }
 
     await load();
@@ -618,37 +577,26 @@ async function load(){
 
     const data = await res.json();
     const stats = normalizeDashboardStats(data);
-    const liveScanTs = stats.lastScanAt |
-
-| toNumber(data?.updatedAt) |
-| Date.now();
+    const liveScanTs = stats.lastScanAt || toNumber(data?.updatedAt) || Date.now();
 
     const latestTrades = withFallbackScanTs(sortTrades(data?.trades), liveScanTs);
     const latestFunnelRows = flattenFunnel(data?.funnel);
 
-    const liveEntries = latestTrades.filter(t => String(t?.action |
-
-| "").toUpperCase() === "ENTRY");
-    const liveWaitRows = latestTrades.filter(t => String(t?.action |
-
-| "").toUpperCase() === "WAIT");
-    const liveNonWaitTrades = latestTrades.filter(t => String(t?.action |
-
-| "").toUpperCase()!== "WAIT");
+    const liveEntries = latestTrades.filter(t => String(t?.action || "").toUpperCase() === "ENTRY");
+    const liveWaitRows = latestTrades.filter(t => String(t?.action || "").toUpperCase() === "WAIT");
+    const liveNonWaitTrades = latestTrades.filter(t => String(t?.action || "").toUpperCase() !== "WAIT");
 
     const storedEntries = withFallbackScanTs(stats.entryRows, liveScanTs);
     const storedRejected = withFallbackScanTs(stats.rejectedRows, liveScanTs);
     const storedTrades = withFallbackScanTs(stats.tradeRows, liveScanTs);
 
-    const entriesToShow = storedEntries.length? storedEntries : liveEntries;
-    const rejectedToShow = storedRejected.length? storedRejected : liveWaitRows;
-    const tradeResultsToShow = storedTrades.length? storedTrades : liveNonWaitTrades;
+    const entriesToShow = storedEntries.length ? storedEntries : liveEntries;
+    const rejectedToShow = storedRejected.length ? storedRejected : liveWaitRows;
+    const tradeResultsToShow = storedTrades.length ? storedTrades : liveNonWaitTrades;
 
     const rejectReasonCountsToShow =
-      Object.keys(stats.rejectReasonCounts |
-
-| {}).length
-       ? stats.rejectReasonCounts
+      Object.keys(stats.rejectReasonCounts || {}).length
+        ? stats.rejectReasonCounts
         : buildCounterMapFromRows(rejectedToShow, "reason");
 
     renderStatus(
