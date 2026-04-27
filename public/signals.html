@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trade Signals – Expectancy, Shortfall & Top Coin Analyse</title>
+  <title>Trade Signals – Data-Driven Advies</title>
   <style>
     /* ===== BASIS STIJLEN ===== */
     :root {
@@ -153,6 +153,14 @@
       padding: 8px 12px;
       border-radius: 10px;
     }
+    .advice-box {
+      background: rgba(0,0,0,0.3);
+      border-left: 4px solid var(--accent);
+      padding: 12px;
+      font-size: 14px;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
     .emptyState {
       color: var(--muted);
       padding: 18px 10px;
@@ -192,11 +200,18 @@
     <div class="metric"><div class="metricLabel">Funnel coins sinds reset</div><div id="funnelCount" class="metricValue">0</div></div>
   </div>
 
-  <!-- 🔥 TOP COIN ANALYSE (NIEUW) -->
+  <!-- 🎯 DATA-DRIVEN ADVIES (NIEUW) -->
   <div class="trade-section">
-    <h2>🔥 TOP COIN ANALYSE</h2>
-    <p class="sectionSub">Gebaseerd op beste setups (score ≥70 / grade A/B) – gemiddelde RR en Confluence + advies.</p>
-    <div id="topCoinAnalysis"></div>
+    <h2>🎯 DATA-DRIVEN ADVIES</h2>
+    <p class="sectionSub">Optimale RR‑ en Confluence‑targets op basis van jouw eigen top trades (score≥70 / grade A/B).</p>
+    <div id="topAdvice" class="advice-box">🔄 Laden...</div>
+  </div>
+
+  <!-- 🔥 TOP COIN STATISTIEKEN (optioneel) -->
+  <div class="trade-section">
+    <h2>🔥 TOP COIN STATISTIEKEN</h2>
+    <p class="sectionSub">Gemiddelden, min/max van jouw beste trades.</p>
+    <div id="topCoinStats"></div>
   </div>
 
   <!-- 📈 EXPECTANCY -->
@@ -213,10 +228,10 @@
     <div id="shortfallSection"></div>
   </div>
 
-  <!-- 🚫 BOTTLENECK + ADVIES -->
+  <!-- 🚫 BOTTLENECK + ADVIES (oud, blijft) -->
   <div class="trade-section">
     <h2>🚫 BOTTLENECK (TOP COINS + ADVIES)</h2>
-    <p class="sectionSub">Alleen top‑candidates (score≥70, confluence≥70, grade A/B) – welk filter blokkeert je beste setups? Met advies.</p>
+    <p class="sectionSub">Alleen top‑candidates – welk filter blokkeert je beste setups? Met advies.</p>
     <div id="rejectOverviewTable"></div>
   </div>
 
@@ -313,11 +328,11 @@
       const cls = item.avgShortfall < 0 ? "negative" : "positive";
       html += `<tr><td>${escapeHtml(item.reason)}</td><td>${item.count}</td><td class="${cls}">${avg}</td></tr>`;
     }
-    html += `</tbody></table><div class="shortfall-note">💡 Negatief = onder target (filter streng), positief = boven target (mild). Target LOW_RR = 1.5, LOW_CONFLUENCE = 70.</div>`;
+    html += `</tbody></tr><div class="shortfall-note">💡 Negatief = onder target (filter streng), positief = boven target (mild). Target LOW_RR = 1.5, LOW_CONFLUENCE = 70.</div>`;
     container.innerHTML = html;
   }
 
-  // ================= BOTTLENECK + ADVIES =================
+  // ================= BOTTLENECK + OUD ADVIES (behouden) =================
   function getAdvice(reason, avg){
     reason = String(reason || "").toUpperCase();
     if(reason === "LOW_RR"){
@@ -356,46 +371,67 @@
     container.innerHTML = html;
   }
 
-  // ================= TOP COIN ANALYSE (NIEUW) =================
-  function calculateTopCoinAverages(trades){
-    const top = trades.filter(t => Number(t.score || 0) >= 70 || Number(t.confluence || 0) >= 70 || t.grade === "A" || t.grade === "B");
-    if(!top.length) return null;
-    let rrSum = 0, rrCount = 0, confSum = 0, confCount = 0;
+  // ================= NIEUW: DATA-DRIVEN ADVIES (GEEN HARDCODED GRENZEN) =================
+  function calculateTopCoinStats(trades){
+    const top = trades.filter(t =>
+      Number(t.score || 0) >= 70 ||
+      Number(t.confluence || 0) >= 70 ||
+      t.grade === "A" || t.grade === "B"
+    );
+    const rr = [];
+    const conf = [];
     for(const t of top){
-      const rr = toNumber(t.rr);
-      const conf = toNumber(t.confluence);
-      if(rr !== null){ rrSum += rr; rrCount++; }
-      if(conf !== null){ confSum += conf; confCount++; }
+      const r = toNumber(t.rr);
+      const c = toNumber(t.confluence);
+      if(r !== null) rr.push(r);
+      if(c !== null) conf.push(c);
     }
-    return { avgRR: rrCount ? rrSum / rrCount : null, avgConf: confCount ? confSum / confCount : null, count: top.length };
+    function avg(arr){ if(!arr.length) return null; return arr.reduce((a,b)=>a+b,0) / arr.length; }
+    return {
+      count: top.length,
+      rrAvg: avg(rr),
+      rrMin: rr.length ? Math.min(...rr) : null,
+      rrMax: rr.length ? Math.max(...rr) : null,
+      confAvg: avg(conf),
+      confMin: conf.length ? Math.min(...conf) : null,
+      confMax: conf.length ? Math.max(...conf) : null
+    };
   }
-  function getTopCoinAdvice(avgRR, avgConf){
-    let advice = [];
-    if(avgRR !== null){
-      if(avgRR < 1.3) advice.push("⚠️ RR te laag → mik op 1.3 – 1.6");
-      else if(avgRR > 1.8) advice.push("⚠️ RR te hoog → mogelijk te streng (1.4 – 1.6 beter)");
-      else advice.push("✅ RR zit goed (1.3 – 1.7 zone)");
-    }
-    if(avgConf !== null){
-      if(avgConf < 65) advice.push("⚠️ Confluence te laag → kwaliteit omhoog");
-      else if(avgConf > 80) advice.push("⚠️ Confluence te streng → mogelijk kansen missen");
-      else advice.push("✅ Confluence zit goed (65 – 75)");
-    }
-    return advice;
+
+  function getDataDrivenAdvice(stats){
+    if(!stats || stats.count === 0 || stats.rrAvg === null) return "Nog geen top trades beschikbaar (score≥70 / grade A/B)";
+    const rrLow = (stats.rrAvg - 0.15).toFixed(2);
+    const rrHigh = (stats.rrAvg + 0.15).toFixed(2);
+    const confLow = Math.round(stats.confAvg - 5);
+    const confHigh = Math.round(stats.confAvg + 5);
+    return `🎯 OPTIMALE SETTINGS (op basis van ${stats.count} top trades):
+
+RR target: ${rrLow} – ${rrHigh}
+Confluence target: ${confLow} – ${confHigh}
+
+💡 Dit zijn de zones waar jouw beste setups zich bevinden.
+📊 Min RR: ${stats.rrMin?.toFixed(2) ?? "—"}  |  Max RR: ${stats.rrMax?.toFixed(2) ?? "—"}
+📊 Min Conf: ${stats.confMin ?? "—"}  |  Max Conf: ${stats.confMax ?? "—"}`;
   }
-  function renderTopCoinAnalysis(trades){
-    const container = el("topCoinAnalysis");
+
+  function renderDataDrivenAdvice(trades){
+    const container = el("topAdvice");
     if(!container) return;
-    const data = calculateTopCoinAverages(trades);
-    if(!data){ container.innerHTML = "<p>Geen top coin data beschikbaar (geen trades met score≥70 / grade A/B)</p>"; return; }
-    const advice = getTopCoinAdvice(data.avgRR, data.avgConf);
-    let html = `<p>Aantal top trades: <b>${data.count}</b></p>
-                <table class="shortfall-table"><thead><tr><th>Metric</th><th>Gemiddelde</th></tr></thead><tbody>
-                <tr><td>RR</td><td>${data.avgRR ? data.avgRR.toFixed(2) : "—"}</td></tr>
-                <tr><td>Confluence</td><td>${data.avgConf ? data.avgConf.toFixed(1) : "—"}</td></tr>
-                </tbody></table>
-                <div class="shortfall-note">${advice.join("<br>")}</div>`;
-    container.innerHTML = html;
+    const stats = calculateTopCoinStats(trades);
+    const advice = getDataDrivenAdvice(stats);
+    container.innerHTML = `<pre style="margin:0; white-space:pre-wrap;">${escapeHtml(advice)}</pre>`;
+    // Optioneel: toon ook de ruwe statistieken in een apart blok
+    const statsContainer = el("topCoinStats");
+    if(statsContainer){
+      if(stats.count === 0){
+        statsContainer.innerHTML = "<p>Geen top trades gevonden</p>";
+      } else {
+        statsContainer.innerHTML = `<table class="shortfall-table"><thead><tr><th>Metric</th><th>Gemiddelde</th><th>Min</th><th>Max</th></tr></thead><tbody>
+          <tr><td>RR</td><td>${stats.rrAvg?.toFixed(2) ?? "—"}</td><td>${stats.rrMin?.toFixed(2) ?? "—"}</td><td>${stats.rrMax?.toFixed(2) ?? "—"}</td></tr>
+          <tr><td>Confluence</td><td>${stats.confAvg?.toFixed(1) ?? "—"}</td><td>${stats.confMin ?? "—"}</td><td>${stats.confMax ?? "—"}</td></tr>
+        </tbody></table><p>Aantal top trades: ${stats.count}</p>`;
+      }
+    }
   }
 
   // ================= PLACEHOLDERS =================
@@ -413,7 +449,7 @@
     const expDiv = el("expectancySection"); if(expDiv) expDiv.innerHTML = "<p>🔄 Laden...</p>";
     const shortDiv = el("shortfallSection"); if(shortDiv) shortDiv.innerHTML = "<p>🔄 Laden...</p>";
     const bottleDiv = el("rejectOverviewTable"); if(bottleDiv) bottleDiv.innerHTML = "<p>🔄 Laden...</p>";
-    const topDiv = el("topCoinAnalysis"); if(topDiv) topDiv.innerHTML = "<p>🔄 Laden...</p>";
+    const adviceDiv = el("topAdvice"); if(adviceDiv) adviceDiv.innerHTML = "🔄 Laden...";
     try{
       const res = await fetch(`/api/public-latest?_=${Date.now()}`);
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -425,7 +461,7 @@
       renderExpectancyTable(tradesForAnalysis);
       renderShortfallTable(trades);
       renderRejectOverviewWithAdvice(trades);
-      renderTopCoinAnalysis(trades);
+      renderDataDrivenAdvice(trades);   // nieuwe data-driven advies
       renderPlaceholders(trades);
       const entries = trades.filter(t => String(t.action).toUpperCase() === "ENTRY").length;
       const rejected = trades.filter(t => String(t.action).toUpperCase() === "WAIT").length;
@@ -441,7 +477,7 @@
       if(expDiv) expDiv.innerHTML = "<p>⚠️ Fout bij laden expectancy</p>";
       if(shortDiv) shortDiv.innerHTML = "<p>⚠️ Fout bij laden shortfall</p>";
       if(bottleDiv) bottleDiv.innerHTML = "<p>⚠️ Fout bij laden bottleneck</p>";
-      if(topDiv) topDiv.innerHTML = "<p>⚠️ Fout bij laden top analyse</p>";
+      if(adviceDiv) adviceDiv.innerHTML = "<p>⚠️ Fout bij laden advies</p>";
       if(statusDiv) statusDiv.innerText = "❌ Fout bij laden";
     }
   }
