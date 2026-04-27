@@ -35,9 +35,7 @@ function escapeHtml(value){
 }
 
 function fmtText(value, fallback = "—"){
-  if(value === undefined || value === null || value === ""){
-    return fallback;
-  }
+  if(value === undefined || value === null || value === "") return fallback;
   return escapeHtml(String(value));
 }
 
@@ -284,7 +282,7 @@ function tableHtml(columns, rows, emptyText, rowClassFn = null){
     const rowClass = rowClassFn ? rowClassFn(row) : "";
     return `<tr class="${escapeHtml(rowClass)}">${columns.map(col => `<td>${col.render ? col.render(row) : fmtText(row[col.key])}</td>`).join("")}</tr>`;
   }).join("");
-  return `<div class="tableWrap"><table class="signalTable">${head}<tbody>${body}</tbody></table></div>`;
+  return `<div class="tableWrap"><table class="signalTable">${head}<tbody>${body}</tbody></tr></div>`;
 }
 
 // ========== BESTAANDE RENDER FUNCTIES ==========
@@ -406,8 +404,6 @@ function renderStatus(data, stats, liveEntries, liveWaitRows, liveNonWaitTrades,
 }
 
 // ========== LEVEL 2 FUNCTIES ==========
-
-// 1. Filter combinaties (top coins)
 function buildFilterCombinations(rows){
   const filtered = rows.filter(isTopCandidate);
   const map = {};
@@ -425,17 +421,16 @@ function renderFilterCombos(rows){
     { label: "Aantal (TOP coins)", render: r => fmtInt(r.count) }
   ];
   const html = tableHtml(columns, data, "Geen top‑candidates afgekeurd sinds reset.");
-  // Verwijder oude sectie als die bestaat
-  const existing = document.getElementById("filterCombosSection");
-  if(existing) existing.remove();
-  const container = document.createElement("div");
-  container.id = "filterCombosSection";
-  container.className = "trade-section";
+  let container = document.getElementById("filterCombosSection");
+  if(!container){
+    container = document.createElement("div");
+    container.id = "filterCombosSection";
+    container.className = "trade-section";
+    document.querySelector(".pageShell").appendChild(container);
+  }
   container.innerHTML = `<h2>🔗 FILTER COMBINATIES (TOP COINS)</h2>${html}`;
-  document.querySelector(".pageShell").appendChild(container);
 }
 
-// 2. Near miss analyse
 function buildNearMiss(rows){
   const filtered = rows.filter(isTopCandidate);
   return filtered
@@ -459,16 +454,16 @@ function renderNearMiss(rows){
     { label: "Confluence", render: r => fmtInt(r.confluence) }
   ];
   const html = tableHtml(columns, data, "Geen near misses sinds reset.");
-  const existing = document.getElementById("nearMissSection");
-  if(existing) existing.remove();
-  const container = document.createElement("div");
-  container.id = "nearMissSection";
-  container.className = "trade-section";
+  let container = document.getElementById("nearMissSection");
+  if(!container){
+    container = document.createElement("div");
+    container.id = "nearMissSection";
+    container.className = "trade-section";
+    document.querySelector(".pageShell").appendChild(container);
+  }
   container.innerHTML = `<h2>🔥 NEAR MISS (BIJNA TRADES)</h2>${html}`;
-  document.querySelector(".pageShell").appendChild(container);
 }
 
-// 3. Auto insights
 function generateInsights(rows){
   const filtered = rows.filter(isTopCandidate);
   let rrMisses = [], confMisses = [];
@@ -500,13 +495,113 @@ function generateInsights(rows){
 
 function renderInsights(rows){
   const insights = generateInsights(rows);
-  const existing = document.getElementById("insightsSection");
-  if(existing) existing.remove();
-  const container = document.createElement("div");
-  container.id = "insightsSection";
-  container.className = "trade-section";
+  let container = document.getElementById("insightsSection");
+  if(!container){
+    container = document.createElement("div");
+    container.id = "insightsSection";
+    container.className = "trade-section";
+    document.querySelector(".pageShell").appendChild(container);
+  }
   container.innerHTML = `<h2>🧠 SYSTEEM INSIGHTS</h2><ul>${insights.map(i => `<li>${i}</li>`).join("")}</ul>`;
-  document.querySelector(".pageShell").appendChild(container);
+}
+
+// ========== LEVEL 10: PURE DATA ENGINE ==========
+function getCleanTrades(trades){
+  return trades.filter(t => {
+    const isClosed = t.result === "WIN" || t.result === "LOSS";
+    const isStrong = Number(t.score || 0) >= 70 || Number(t.confluence || 0) >= 70;
+    return isClosed && isStrong;
+  });
+}
+
+function isReliable(sampleSize){
+  return sampleSize >= 30;
+}
+
+function buildRSIInsights(trades){
+  const clean = getCleanTrades(trades);
+  const map = {};
+  for(const t of clean){
+    const zone = t.rsiZone || "UNKNOWN";
+    if(!map[zone]) map[zone] = { win: 0, loss: 0 };
+    if(t.result === "WIN") map[zone].win++;
+    else map[zone].loss++;
+  }
+  const result = [];
+  for(const zone in map){
+    const total = map[zone].win + map[zone].loss;
+    if(!isReliable(total)) continue;
+    const wr = (map[zone].win / total) * 100;
+    result.push({
+      zone,
+      trades: total,
+      winrate: Number(wr.toFixed(1))
+    });
+  }
+  return result.sort((a,b) => b.winrate - a.winrate);
+}
+
+function buildRRInsights(trades){
+  const clean = getCleanTrades(trades);
+  const buckets = {
+    LOW: { win: 0, loss: 0 },
+    MID: { win: 0, loss: 0 },
+    HIGH: { win: 0, loss: 0 }
+  };
+  for(const t of clean){
+    const rr = Number(t.rr || 0);
+    const key = rr < 1.2 ? "LOW" : rr < 1.5 ? "MID" : "HIGH";
+    if(t.result === "WIN") buckets[key].win++;
+    else buckets[key].loss++;
+  }
+  const out = [];
+  for(const k of ["LOW", "MID", "HIGH"]){
+    const total = buckets[k].win + buckets[k].loss;
+    if(!isReliable(total)) continue;
+    const wr = (buckets[k].win / total) * 100;
+    out.push({
+      bucket: k === "LOW" ? "1.0–1.2" : (k === "MID" ? "1.2–1.5" : "1.5+"),
+      trades: total,
+      winrate: Number(wr.toFixed(1))
+    });
+  }
+  return out.sort((a,b) => b.winrate - a.winrate);
+}
+
+function generateRealInsights(trades){
+  const insights = [];
+  const rsiData = buildRSIInsights(trades);
+  const rrData = buildRRInsights(trades);
+
+  for(const z of rsiData){
+    if(z.winrate < 50){
+      insights.push(`RSI ${z.zone} verliest geld (${z.winrate}% winrate over ${z.trades} trades)`);
+    } else if(z.winrate > 60){
+      insights.push(`RSI ${z.zone} sterke zone (${z.winrate}% winrate over ${z.trades} trades)`);
+    }
+  }
+
+  if(rrData.length){
+    const bestRR = rrData[0];
+    insights.push(`Beste RR range = ${bestRR.bucket} (${bestRR.winrate}% winrate over ${bestRR.trades} trades)`);
+  }
+
+  if(insights.length === 0){
+    insights.push("Onvoldoende betrouwbare data (minimaal 30 trades per categorie vereist).");
+  }
+  return insights;
+}
+
+function renderRealInsights(trades){
+  const insights = generateRealInsights(trades);
+  let container = document.getElementById("dataInsightsSection");
+  if(!container){
+    container = document.createElement("div");
+    container.id = "dataInsightsSection";
+    container.className = "trade-section";
+    document.querySelector(".pageShell").appendChild(container);
+  }
+  container.innerHTML = `<h2>🧠 DATA INSIGHTS (REAL ONLY)</h2><ul>${insights.map(i => `<li>${i}</li>`).join("")}</ul>`;
 }
 
 // ========== RESET & LOAD ==========
@@ -558,10 +653,19 @@ async function load(){
     renderRejectedTrades(rejectedToShow);
     renderTradeResults(tradeResultsToShow);
 
-    // LEVEL 2 toevoegingen
+    // LEVEL 2
     renderFilterCombos(rejectedToShow);
     renderNearMiss(rejectedToShow);
     renderInsights(rejectedToShow);
+
+    // LEVEL 10: Pure Data Engine (vervangt oude Level 3)
+    renderRealInsights(tradeResultsToShow);
+
+    // Verwijder oude Level 3 secties als die nog bestaan (voorkom dubbele)
+    ["rsiPerformanceSection","rrPerformanceSection","autoTuningSection"].forEach(id => {
+      const sec = document.getElementById(id);
+      if(sec) sec.remove();
+    });
 
   }catch(e){
     console.error(e);
@@ -573,10 +677,10 @@ async function load(){
     if(el("rejectOverviewTable")) el("rejectOverviewTable").innerHTML = fail;
     if(el("rejectedTradesTable")) el("rejectedTradesTable").innerHTML = fail;
     if(el("tradeResultsTable")) el("tradeResultsTable").innerHTML = fail;
-    // Verwijder level 2 secties bij fout
-    document.getElementById("filterCombosSection")?.remove();
-    document.getElementById("nearMissSection")?.remove();
-    document.getElementById("insightsSection")?.remove();
+    ["filterCombosSection","nearMissSection","insightsSection","dataInsightsSection"].forEach(id => {
+      const sec = document.getElementById(id);
+      if(sec) sec.remove();
+    });
   }
 }
 
