@@ -82,8 +82,20 @@ function renderExpectancyTable(trades){
     container.innerHTML = "<h2>EXPECTANCY</h2><p>Nog niet genoeg gesloten trades (min. 10 per setup)</p>";
     return;
   }
-  container.innerHTML = `<h2>📊 EXPECTANCY</h2>` +
-    data.map(r => `${r.setup} | WR:${r.winrate}% | EXP:${r.expectancy}`).join("<br>");
+  let html = `<h2>📊 EXPECTANCY</h2>
+              <table class="shortfall-table" style="width:100%">
+                <thead><tr><th>Setup</th><th>Aantal trades</th><th>Winrate</th><th>Expectancy</th></tr></thead>
+                <tbody>`;
+  for(const r of data){
+    html += `<tr>
+                <td>${escapeHtml(r.setup)}</td>
+                <td>${r.trades}</td>
+                <td>${r.winrate}%</td>
+                <td>${r.expectancy}</td>
+              </tr>`;
+  }
+  html += `</tbody></table>`;
+  container.innerHTML = html;
 }
 
 // ================= GEMIDDELD TEKORT PER FILTER (met fallback) =================
@@ -147,10 +159,10 @@ function renderShortfallTable(trades){
     const avgFormatted = item.avgShortfall.toFixed(2);
     const colorClass = item.avgShortfall < 0 ? "negative" : "positive";
     html += `<tr>
-               <td>${escapeHtml(item.reason)}</td>
-               <td>${item.count}</td>
-               <td class="${colorClass}">${avgFormatted}</td>
-             </tr>`;
+                <td>${escapeHtml(item.reason)}</td>
+                <td>${item.count}</td>
+                <td class="${colorClass}">${avgFormatted}</td>
+              </tr>`;
   }
   html += `</tbody></table>
            <div class="shortfall-note">
@@ -160,22 +172,91 @@ function renderShortfallTable(trades){
   container.innerHTML = html;
 }
 
+// ================= BOTTLENECK + ADVIES (oude functionaliteit hersteld) =================
+function getAdvice(reason, avg){
+  reason = String(reason || "").toUpperCase();
+  if(reason === "LOW_RR"){
+    if(avg > -0.1) return "⚠️ RR te streng → verlaag licht (bijv 1.5 → 1.4)";
+    if(avg < -0.2) return "✅ RR goed → slechte trades worden gefilterd";
+    return "🔍 RR net op grens → monitor";
+  }
+  if(reason === "LOW_CONFLUENCE"){
+    if(avg > -5) return "⚠️ Confluence mogelijk te streng → -2 / -3 testen";
+    if(avg < -10) return "✅ Confluence filter werkt goed";
+    return "🔍 Confluence grenswaarde ok";
+  }
+  if(reason === "NO_FLOW") return "⚠️ Flow detectie checken → mogelijk te agressief";
+  if(reason === "LOW_VOL") return "⚠️ Volatility filter mogelijk te streng";
+  return "Controleer deze filter handmatig";
+}
+
+function renderRejectOverviewWithAdvice(trades){
+  const map = {};
+  for(const r of trades){
+    const isTop = Number(r.score || 0) >= 70 || Number(r.confluence || 0) >= 70 || r.grade === "A" || r.grade === "B";
+    if(!isTop) continue;
+    const reason = r.reason || "UNKNOWN";
+    if(!map[reason]) map[reason] = { count:0, totalScore:0, samples:0 };
+    map[reason].count++;
+    let score = toNumber(r.reasonScore);
+    if(score === null) score = getFallbackReasonScore(r);
+    if(score !== null){
+      map[reason].totalScore += score;
+      map[reason].samples++;
+    }
+  }
+  const data = Object.entries(map).map(([reason, d])=>{
+    const avg = d.samples ? d.totalScore / d.samples : null;
+    return { reason, count: d.count, avg, advice: getAdvice(reason, avg) };
+  }).sort((a,b)=>b.count - a.count);
+  
+  const container = el("rejectOverviewTable");
+  if(!container) return;
+  if(!data.length){
+    container.innerHTML = "<p>Geen bottleneck data (geen afgekeurde top-candidates)</p>";
+    return;
+  }
+  let html = `<table class="shortfall-table">
+                <thead><tr><th>Filter</th><th>Aantal</th><th>Gem. tekort</th><th>Advies</th></tr></thead>
+                <tbody>`;
+  for(const d of data){
+    html += `<tr>
+              <td>${escapeHtml(d.reason)}</td>
+              <td>${d.count}</td>
+              <td>${d.avg !== null ? fmtSign(d.avg) : "—"}</td>
+              <td>${escapeHtml(d.advice)}</td>
+            </tr>`;
+  }
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+// ================= PLACEHOLDERS VOOR OVERIGE TABELLEN =================
+function renderEntries(trades){ const c = el("entriesTable"); if(c) c.innerHTML = "<p>🔧 Entry signalen</p>"; }
+function renderFunnel(trades){ const c = el("funnelTable"); if(c) c.innerHTML = "<p>🔧 Scanner input</p>"; }
+function renderRejected(trades){ const c = el("rejectedTradesTable"); if(c) c.innerHTML = "<p>🔧 Afgekeurde candidates</p>"; }
+function renderTradeResults(trades){ const c = el("tradeResultsTable"); if(c) c.innerHTML = "<p>🔧 Trade resultaten</p>"; }
+
 // ================= LOAD (CRASH-PROOF) =================
 async function load(){
-  // Toon loading status in beide secties (als ze bestaan)
+  // Toon loading in alle secties
+  const statusDiv = el("statusLine");
+  if(statusDiv) statusDiv.innerText = "🔄 Data laden...";
+  
   const expDiv = el("expectancySection");
   if(expDiv) expDiv.innerHTML = "<p>🔄 Laden...</p>";
   const shortDiv = el("shortfallSection");
   if(shortDiv) shortDiv.innerHTML = "<p>🔄 Laden...</p>";
+  const bottleDiv = el("rejectOverviewTable");
+  if(bottleDiv) bottleDiv.innerHTML = "<p>🔄 Laden...</p>";
 
   try{
     const res = await fetch(`/api/public-latest?_=${Date.now()}`);
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-
     const trades = safeArray(data.trades);
 
-    // Simuleer gesloten trades als die er nog niet zijn
+    // Simuleer gesloten trades indien nodig
     let tradesForAnalysis = trades;
     const hasRealClosed = trades.some(t => t.result === "WIN" || t.result === "LOSS");
     if(!hasRealClosed){
@@ -183,17 +264,47 @@ async function load(){
     }
 
     renderExpectancyTable(tradesForAnalysis);
-    renderShortfallTable(tradesForAnalysis);
+    renderShortfallTable(trades);      // shortfall over alle afgekeurde trades
+    renderRejectOverviewWithAdvice(trades); // bottleneck + advies over top-candidates
+    renderEntries(trades);
+    renderFunnel(trades);
+    renderRejected(trades);
+    renderTradeResults(trades);
 
+    // Metrics tellers
+    const entries = trades.filter(t => String(t.action).toUpperCase() === "ENTRY").length;
+    const rejected = trades.filter(t => String(t.action).toUpperCase() === "WAIT").length;
+    const other = trades.length - entries - rejected;
+    const funnel = trades.filter(t => t.fromFunnel === true).length;
+    if(el("entriesCount")) el("entriesCount").innerText = entries;
+    if(el("rejectCount")) el("rejectCount").innerText = rejected;
+    if(el("tradeCount")) el("tradeCount").innerText = other;
+    if(el("funnelCount")) el("funnelCount").innerText = funnel;
+
+    if(statusDiv) statusDiv.innerText = `✅ Laatste update: ${new Date().toLocaleTimeString("nl-NL")}`;
   }catch(e){
-    console.error("❌ Fout bij laden van data:", e);
-    const expDiv = el("expectancySection");
-    if(expDiv) expDiv.innerHTML = "<p>⚠️ Fout bij laden van trades</p>";
-    const shortDiv = el("shortfallSection");
-    if(shortDiv) shortDiv.innerHTML = "<p>⚠️ Fout bij laden van filters</p>";
+    console.error("❌ Fout bij laden:", e);
+    if(expDiv) expDiv.innerHTML = "<p>⚠️ Fout bij laden van expectancy</p>";
+    if(shortDiv) shortDiv.innerHTML = "<p>⚠️ Fout bij laden van shortfall</p>";
+    if(bottleDiv) bottleDiv.innerHTML = "<p>⚠️ Fout bij laden van bottleneck</p>";
+    if(statusDiv) statusDiv.innerText = "❌ Fout bij laden";
   }
 }
 
-// Start polling (elke 10 sec) en direct laden
+// ================= BUTTON ACTIES =================
+function resetStats(){
+  console.log("🔁 Reset teller (nog niet geïmplementeerd in backend)");
+  alert("Reset functionaliteit moet nog gekoppeld worden aan de backend.");
+}
+
+// Event listeners bij DOM ready
+document.addEventListener("DOMContentLoaded", () => {
+  const refreshBtn = document.getElementById("refreshBtn");
+  if(refreshBtn) refreshBtn.addEventListener("click", load);
+  const resetBtn = document.getElementById("resetStatsBtn");
+  if(resetBtn) resetBtn.addEventListener("click", resetStats);
+  load();
+});
+
+// Auto-polling elke 10 seconden
 setInterval(load, 10000);
-load();
