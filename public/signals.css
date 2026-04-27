@@ -1,26 +1,126 @@
 :root {
-  --bg: #070e1b; --panel: #111c33; --border: #1e2d4a; 
-  --text: #f8fafc; --muted: #94a3b8; 
-  --green: #22c55e; --add: #16a34a; --hold: #3b82f6; --exit: #ef4444; --amber: #f59e0b;
+  --bg: #070e1b; 
+  --panel: #111c33; 
+  --border: #1e2d4a; 
+  --text: #f8fafc; 
+  --muted: #94a3b8; 
+  --green: #22c55e; 
+  --add: #16a34a; 
+  --hold: #3b82f6; 
+  --exit: #ef4444; 
+  --amber: #f59e0b;
 }
-* { box-sizing: border-box; font-family: -apple-system, sans-serif; }
-body { background: var(--bg); color: var(--text); margin: 0; padding: 20px 16px; }
 
-.header h1 { color: var(--amber); margin: 0 0 4px; font-size: 28px; }
-#statusLine { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+* { 
+  box-sizing: border-box; 
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+}
 
-.nav { display: flex; gap: 8px; margin-bottom: 24px; }
-.btn { flex: 1; text-align: center; padding: 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; }
-.btn.active.yellow { background: var(--amber); color: #000; border-color: var(--amber); }
+body { 
+  background: var(--bg); 
+  color: var(--text); 
+  margin: 0; 
+  padding: 20px 16px; 
+}
 
-h2 { font-size: 12px; letter-spacing: 2px; color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 24px; }
+.header h1 { 
+  color: var(--amber); 
+  margin: 0 0 4px; 
+  font-size: 28px; 
+}
 
-.tradeRow { display: flex; flex-direction: column; gap: 12px; background: var(--panel); padding: 16px; border-radius: 16px; border: 1px solid var(--border); margin-bottom: 12px; }
-.t-head { display: flex; justify-content: space-between; align-items: center; }
-.t-sym { font-size: 20px; font-weight: 800; }
-.t-action { font-size: 18px; font-weight: bold; }
-.t-details { display: flex; gap: 8px; font-size: 12px; color: var(--muted); }
-.chip { background: rgba(255,255,255,0.05); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); }
+#statusLine { 
+  color: var(--muted); 
+  font-size: 14px; 
+  margin-bottom: 16px; 
+}
+
+.nav { 
+  display: flex; 
+  flex-wrap: wrap; /* FIX: Voorkomt dat knoppen verdwijnen of breken op smalle telefoons */
+  gap: 8px; 
+  margin-bottom: 24px; 
+}
+
+.btn { 
+  flex: 1; 
+  min-width: 70px; /* FIX: Zorgt dat een knop niet tot onleesbaar klein in elkaar drukt */
+  text-align: center; 
+  padding: 10px; 
+  border-radius: 12px; 
+  background: var(--panel); 
+  border: 1px solid var(--border); 
+  color: var(--text); 
+  text-decoration: none; 
+  font-size: 14px; 
+  font-weight: 600; 
+  transition: opacity 0.2s ease;
+}
+
+.btn:hover {
+  opacity: 0.8;
+}
+
+.btn.active.yellow { 
+  background: var(--amber); 
+  color: #000; 
+  border-color: var(--amber); 
+}
+
+h2 { 
+  font-size: 12px; 
+  text-transform: uppercase; /* FIX: Letter-spacing ziet er veel strakker uit als de tekst volledig in hoofdletters is */
+  letter-spacing: 2px; 
+  color: var(--muted); 
+  border-bottom: 1px solid var(--border); 
+  padding-bottom: 8px; 
+  margin-top: 24px; 
+  margin-bottom: 16px; /* FIX: Extra ademruimte tussen de titel en de eerste trade-kaart */
+}
+
+.tradeRow { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 12px; 
+  background: var(--panel); 
+  padding: 16px; 
+  border-radius: 16px; 
+  border: 1px solid var(--border); 
+  margin-bottom: 12px; 
+  overflow: hidden; /* FIX: Cruciaal! Dit zorgt ervoor dat je border-left mooi de border-radius volgt in de hoekjes */
+}
+
+.t-head { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+}
+
+.t-sym { 
+  font-size: 20px; 
+  font-weight: 800; 
+}
+
+.t-action { 
+  font-size: 18px; 
+  font-weight: bold; 
+}
+
+.t-details { 
+  display: flex; 
+  flex-wrap: wrap; /* FIX: Voorkomt dat chips uit je kaart overlopen als er te veel data is */
+  gap: 8px; 
+  font-size: 12px; 
+  color: var(--muted); 
+}
+
+.chip { 
+  background: rgba(255,255,255,0.05); 
+  padding: 6px 10px; 
+  border-radius: 8px; 
+  border: 1px solid var(--border); 
+  white-space: nowrap; /* FIX: Houdt de tekst van een chip netjes op 1 regel */
+}
 
 /* Kleurcodes voor de trades via border-left */
 .trade-entry { border-left: 6px solid var(--green); }
