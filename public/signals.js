@@ -58,7 +58,7 @@ function calculateExpectancy(trades){
   for(const k in setups){
     const s=setups[k];
     const total=s.win+s.loss;
-    if(total<10) continue;
+    if(total<10) continue;  // minimaal 10 trades per setup
     const wr=s.win/total;
     const expectancy=(wr*1)-(1-wr);
     out.push({
@@ -79,7 +79,7 @@ function renderExpectancyTable(trades){
   }
   const data = calculateExpectancy(trades);
   if(!data.length){
-    container.innerHTML = "<h2>EXPECTANCY</h2><p>Nog niet genoeg gesloten trades (min. 10 per setup)</p>";
+    container.innerHTML = "<h2>📊 EXPECTANCY</h2><p>Nog niet genoeg gesloten trades (min. 10 per setup)</p>";
     return;
   }
   let html = `<h2>📊 EXPECTANCY</h2>
@@ -94,7 +94,7 @@ function renderExpectancyTable(trades){
                 <td>${r.expectancy}</td>
               </tr>`;
   }
-  html += `</tbody></table>`;
+  html += `</tbody></tr>`;
   container.innerHTML = html;
 }
 
@@ -148,7 +148,7 @@ function renderShortfallTable(trades){
   }
   const data = calculateAverageShortfall(trades);
   if(!data.length){
-    container.innerHTML = "<h2>📉 GEMIDDELD TEKORT PER FILTER</h2><p>Geen filterdata beschikbaar</p>";
+    container.innerHTML = "<h2>📉 GEMIDDELD TEKORT PER FILTER</h2><p>Geen filterdata beschikbaar (geen WAIT trades met reason)</p>";
     return;
   }
   let html = `<h2>📉 GEMIDDELD TEKORT PER FILTER</h2>
@@ -164,7 +164,7 @@ function renderShortfallTable(trades){
                 <td class="${colorClass}">${avgFormatted}</td>
               </tr>`;
   }
-  html += `</tbody></table>
+  html += `</tbody>｜DSML｜
            <div class="shortfall-note">
              💡 Negatief tekort = onder target, positief = boven target.<br>
              Voor LOW_RR is target RR 1.5, voor LOW_CONFLUENCE target 70.
@@ -191,6 +191,12 @@ function getAdvice(reason, avg){
 }
 
 function renderRejectOverviewWithAdvice(trades){
+  const container = el("rejectOverviewTable");
+  if(!container){
+    console.warn("⚠️ Element #rejectOverviewTable ontbreekt in HTML");
+    return;
+  }
+  
   const map = {};
   for(const r of trades){
     const isTop = Number(r.score || 0) >= 70 || Number(r.confluence || 0) >= 70 || r.grade === "A" || r.grade === "B";
@@ -210,10 +216,8 @@ function renderRejectOverviewWithAdvice(trades){
     return { reason, count: d.count, avg, advice: getAdvice(reason, avg) };
   }).sort((a,b)=>b.count - a.count);
   
-  const container = el("rejectOverviewTable");
-  if(!container) return;
   if(!data.length){
-    container.innerHTML = "<p>Geen bottleneck data (geen afgekeurde top-candidates)</p>";
+    container.innerHTML = "<p>Geen bottleneck data (geen afgekeurde top-candidates met reason)</p>";
     return;
   }
   let html = `<table class="shortfall-table">
@@ -232,39 +236,42 @@ function renderRejectOverviewWithAdvice(trades){
 }
 
 // ================= PLACEHOLDERS VOOR OVERIGE TABELLEN =================
-function renderEntries(trades){ const c = el("entriesTable"); if(c) c.innerHTML = "<p>🔧 Entry signalen</p>"; }
-function renderFunnel(trades){ const c = el("funnelTable"); if(c) c.innerHTML = "<p>🔧 Scanner input</p>"; }
-function renderRejected(trades){ const c = el("rejectedTradesTable"); if(c) c.innerHTML = "<p>🔧 Afgekeurde candidates</p>"; }
-function renderTradeResults(trades){ const c = el("tradeResultsTable"); if(c) c.innerHTML = "<p>🔧 Trade resultaten</p>"; }
+function renderEntries(trades){ const c = el("entriesTable"); if(c) c.innerHTML = "<p>🔧 Entry signalen worden hier getoond</p>"; }
+function renderFunnel(trades){ const c = el("funnelTable"); if(c) c.innerHTML = "<p>🔧 Scanner input wordt hier getoond</p>"; }
+function renderRejected(trades){ const c = el("rejectedTradesTable"); if(c) c.innerHTML = "<p>🔧 Afgekeurde candidates worden hier getoond</p>"; }
+function renderTradeResults(trades){ const c = el("tradeResultsTable"); if(c) c.innerHTML = "<p>🔧 Trade resultaten worden hier getoond</p>"; }
 
 // ================= LOAD (CRASH-PROOF) =================
 async function load(){
-  // Toon loading in alle secties
   const statusDiv = el("statusLine");
   if(statusDiv) statusDiv.innerText = "🔄 Data laden...";
   
   const expDiv = el("expectancySection");
-  if(expDiv) expDiv.innerHTML = "<p>🔄 Laden...</p>";
+  if(expDiv) expDiv.innerHTML = "<p>🔄 Expectancy laden...</p>";
   const shortDiv = el("shortfallSection");
-  if(shortDiv) shortDiv.innerHTML = "<p>🔄 Laden...</p>";
+  if(shortDiv) shortDiv.innerHTML = "<p>🔄 Shortfall laden...</p>";
   const bottleDiv = el("rejectOverviewTable");
-  if(bottleDiv) bottleDiv.innerHTML = "<p>🔄 Laden...</p>";
+  if(bottleDiv) bottleDiv.innerHTML = "<p>🔄 Bottleneck laden...</p>";
 
   try{
     const res = await fetch(`/api/public-latest?_=${Date.now()}`);
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const trades = safeArray(data.trades);
+    
+    console.log("DEBUG: aantal trades geladen", trades.length);
+    if(trades.length > 0) console.log("Voorbeeld trade:", trades[0]);
 
     // Simuleer gesloten trades indien nodig
     let tradesForAnalysis = trades;
     const hasRealClosed = trades.some(t => t.result === "WIN" || t.result === "LOSS");
     if(!hasRealClosed){
       tradesForAnalysis = buildSimulatedClosedTrades(trades);
+      console.log("⚠️ Gesimuleerde closed trades gegenereerd");
     }
 
     renderExpectancyTable(tradesForAnalysis);
-    renderShortfallTable(trades);      // shortfall over alle afgekeurde trades
+    renderShortfallTable(trades);      // shortfall over alle trades (ook WAIT)
     renderRejectOverviewWithAdvice(trades); // bottleneck + advies over top-candidates
     renderEntries(trades);
     renderFunnel(trades);
@@ -297,7 +304,7 @@ function resetStats(){
   alert("Reset functionaliteit moet nog gekoppeld worden aan de backend.");
 }
 
-// Event listeners bij DOM ready
+// Start bij DOM ready
 document.addEventListener("DOMContentLoaded", () => {
   const refreshBtn = document.getElementById("refreshBtn");
   if(refreshBtn) refreshBtn.addEventListener("click", load);
@@ -306,5 +313,5 @@ document.addEventListener("DOMContentLoaded", () => {
   load();
 });
 
-// Auto-polling elke 10 seconden
+// Auto-polling
 setInterval(load, 10000);
