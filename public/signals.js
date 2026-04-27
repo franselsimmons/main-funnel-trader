@@ -39,15 +39,10 @@ function fmtText(value, fallback = "—"){
   return escapeHtml(String(value));
 }
 
-function fmtNum(value){
+function fmtNum(value, decimals = 2){
   const n = toNumber(value);
   if(n === null) return "—";
-  const abs = Math.abs(n);
-  if(abs >= 1000) return n.toFixed(2);
-  if(abs >= 1) return n.toFixed(4);
-  if(abs >= 0.01) return n.toFixed(5);
-  if(abs === 0) return "0";
-  return n.toFixed(8);
+  return n.toFixed(decimals);
 }
 
 function fmtInt(value){
@@ -270,7 +265,7 @@ function renderRejectOverviewFromRows(rejectedRows){
   ];
   const tableHtmlContent = (result.length === 0)
     ? `<div class="emptyState">Geen afgekeurde top‑candidates sinds reset.</div>`
-    : `<div class="tableWrap"><table class="signalTable"><thead><tr>${columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join("")}</tr></thead><tbody>${result.map(r => `<tr class="row-wait">${columns.map(col => `<td>${col.render(r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    : `<div class="tableWrap"><table class="signalTable"><thead><tr>${columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join("")}</tr></thead><tbody>${result.map(r => `<tr class="row-wait">${columns.map(col => `<td>${col.render(r)}</td>`).join("")}<tr>`).join("")}</tbody></table></div>`;
   el("rejectOverviewTable").innerHTML = tableHtmlContent;
 }
 
@@ -282,7 +277,7 @@ function tableHtml(columns, rows, emptyText, rowClassFn = null){
     const rowClass = rowClassFn ? rowClassFn(row) : "";
     return `<tr class="${escapeHtml(rowClass)}">${columns.map(col => `<td>${col.render ? col.render(row) : fmtText(row[col.key])}</td>`).join("")}</tr>`;
   }).join("");
-  return `<div class="tableWrap"><table class="signalTable">${head}<tbody>${body}</tbody></tr></div>`;
+  return `<div class="tableWrap"><table class="signalTable">${head}<tbody>${body}</tbody></table></div>`;
 }
 
 // ========== BESTAANDE RENDER FUNCTIES ==========
@@ -505,7 +500,7 @@ function renderInsights(rows){
   container.innerHTML = `<h2>🧠 SYSTEEM INSIGHTS</h2><ul>${insights.map(i => `<li>${i}</li>`).join("")}</ul>`;
 }
 
-// ========== LEVEL 10: PURE DATA ENGINE ==========
+// ========== LEVEL 10: PURE DATA ENGINE (RSI & RR & INSIGHTS) ==========
 function getCleanTrades(trades){
   return trades.filter(t => {
     const isClosed = t.result === "WIN" || t.result === "LOSS";
@@ -604,6 +599,100 @@ function renderRealInsights(trades){
   container.innerHTML = `<h2>🧠 DATA INSIGHTS (REAL ONLY)</h2><ul>${insights.map(i => `<li>${i}</li>`).join("")}</ul>`;
 }
 
+// ========== LEVEL 10 – EXPECTANCY PER SETUP (PnL EDGE) ==========
+function getRRBucket(rr){
+  const r = Number(rr || 0);
+  if(r < 1.2) return "LOW";
+  if(r < 1.5) return "MID";
+  return "HIGH";
+}
+
+function calculateExpectancy(trades){
+  const clean = getCleanTrades(trades);
+  const setups = {};
+
+  for(const t of clean){
+    const key = [
+      `RSI:${t.rsiZone || "X"}`,
+      `RR:${getRRBucket(t.rr)}`,
+      `GRADE:${t.grade || "X"}`
+    ].join(" | ");
+
+    if(!setups[key]){
+      setups[key] = { wins: 0, losses: 0, winRR: [], lossRR: [] };
+    }
+
+    if(t.result === "WIN"){
+      setups[key].wins++;
+      setups[key].winRR.push(Number(t.rr || 0));
+    } else {
+      setups[key].losses++;
+      setups[key].lossRR.push(Number(t.rr || 0));
+    }
+  }
+
+  const results = [];
+  for(const key in setups){
+    const s = setups[key];
+    const total = s.wins + s.losses;
+    if(total < 30) continue; // alleen betrouwbare samples
+
+    const winrate = s.wins / total;
+    const avgWin = s.winRR.length ? s.winRR.reduce((a,b)=>a+b,0) / s.winRR.length : 0;
+    const avgLoss = s.lossRR.length ? s.lossRR.reduce((a,b)=>a+b,0) / s.lossRR.length : 0;
+
+    const expectancy = (winrate * avgWin) - ((1 - winrate) * avgLoss);
+
+    results.push({
+      setup: key,
+      trades: total,
+      winrate: Number((winrate * 100).toFixed(1)),
+      expectancy: Number(expectancy.toFixed(4)),
+      avgWin: Number(avgWin.toFixed(2)),
+      avgLoss: Number(avgLoss.toFixed(2))
+    });
+  }
+
+  return results.sort((a,b) => b.expectancy - a.expectancy);
+}
+
+function renderExpectancyTable(trades){
+  const clean = getCleanTrades(trades);
+  const data = calculateExpectancy(clean);
+  if(!data.length){
+    const emptyMsg = `<div class="emptyState">Onvoldoende data (minder dan 30 trades per setup combinatie).</div>`;
+    let container = document.getElementById("expectancySection");
+    if(!container){
+      container = document.createElement("div");
+      container.id = "expectancySection";
+      container.className = "trade-section";
+      document.querySelector(".pageShell").appendChild(container);
+    }
+    container.innerHTML = `<h2>💰 EXPECTANCY (REAL DATA)</h2><p class="sectionSub">Alleen echte trades, alleen sterke setups, alleen ≥30 trades per combinatie.</p>${emptyMsg}`;
+    return;
+  }
+
+  const rows = data.slice(0, 15); // toon top 15 setups
+  const columns = [
+    { label: "Setup", render: r => `<strong>${escapeHtml(r.setup)}</strong>` },
+    { label: "Trades", render: r => fmtInt(r.trades) },
+    { label: "Winrate", render: r => `${r.winrate}%` },
+    { label: "Expectancy", render: r => `<span style="color:${r.expectancy >= 0 ? '#22c55e' : '#ef4444'}">${fmtNum(r.expectancy, 4)}</span>` },
+    { label: "Avg Win (RR)", render: r => fmtNum(r.avgWin, 2) },
+    { label: "Avg Loss (RR)", render: r => fmtNum(r.avgLoss, 2) }
+  ];
+
+  const html = tableHtml(columns, rows, "Geen expectancy data beschikbaar.");
+  let container = document.getElementById("expectancySection");
+  if(!container){
+    container = document.createElement("div");
+    container.id = "expectancySection";
+    container.className = "trade-section";
+    document.querySelector(".pageShell").appendChild(container);
+  }
+  container.innerHTML = `<h2>💰 EXPECTANCY (REAL DATA)</h2><p class="sectionSub">Alleen echte trades, alleen sterke setups, alleen ≥30 trades per combinatie.</p>${html}`;
+}
+
 // ========== RESET & LOAD ==========
 async function resetStats(){
   const ok = window.confirm("Weet je zeker dat je alle opgeslagen tellerstanden en tabellen wilt resetten?");
@@ -658,10 +747,13 @@ async function load(){
     renderNearMiss(rejectedToShow);
     renderInsights(rejectedToShow);
 
-    // LEVEL 10: Pure Data Engine (vervangt oude Level 3)
+    // LEVEL 10 – Pure Data Engine
     renderRealInsights(tradeResultsToShow);
 
-    // Verwijder oude Level 3 secties als die nog bestaan (voorkom dubbele)
+    // LEVEL 10 – Expectancy (PnL edge)
+    renderExpectancyTable(tradeResultsToShow);
+
+    // Verwijder eventuele oude Level 3 secties (voorkom dubbele)
     ["rsiPerformanceSection","rrPerformanceSection","autoTuningSection"].forEach(id => {
       const sec = document.getElementById(id);
       if(sec) sec.remove();
@@ -677,7 +769,7 @@ async function load(){
     if(el("rejectOverviewTable")) el("rejectOverviewTable").innerHTML = fail;
     if(el("rejectedTradesTable")) el("rejectedTradesTable").innerHTML = fail;
     if(el("tradeResultsTable")) el("tradeResultsTable").innerHTML = fail;
-    ["filterCombosSection","nearMissSection","insightsSection","dataInsightsSection"].forEach(id => {
+    ["filterCombosSection","nearMissSection","insightsSection","dataInsightsSection","expectancySection"].forEach(id => {
       const sec = document.getElementById(id);
       if(sec) sec.remove();
     });
