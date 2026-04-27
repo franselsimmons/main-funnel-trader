@@ -150,7 +150,7 @@
       line-height: 1.5;
     }
 
-    /* ===== TABELLEN FIX (Hiermee vallen ze niet meer buiten beeld) ===== */
+    /* ===== TABELLEN FIX ===== */
     .tableWrap {
       width: 100%;
       overflow-x: auto;
@@ -162,7 +162,7 @@
     .shortfall-table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 550px; /* Zorgt dat de kolommen niet te smal worden */
+      min-width: 600px; 
     }
     
     .shortfall-table th, .shortfall-table td {
@@ -204,7 +204,7 @@
       padding: 16px;
       font-size: 14.5px;
       white-space: pre-wrap;
-      word-wrap: break-word; /* Zorgt dat lange tekst niet uit de box breekt */
+      word-wrap: break-word;
       overflow-x: auto;
       font-family: monospace;
       line-height: 1.6;
@@ -217,7 +217,7 @@
       font-size: 14px;
     }
 
-    /* ===== RESPONSIVE (Mobiel) ===== */
+    /* ===== RESPONSIVE ===== */
     @media (max-width: 1100px) {
       .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
     }
@@ -262,6 +262,12 @@
   </div>
 
   <div class="trade-section">
+    <h2>🚫 BOTTLENECK (TOP COINS + ADVIES)</h2>
+    <p class="sectionSub">Alleen top‑candidates – welk filter blokkeert je beste setups? Berekend op % impact en ernst.</p>
+    <div id="rejectOverviewTable"></div>
+  </div>
+
+  <div class="trade-section">
     <h2>🔥 TOP COIN STATISTIEKEN</h2>
     <p class="sectionSub">Gemiddelden, min/max van jouw beste trades.</p>
     <div id="topCoinStats"></div>
@@ -277,12 +283,6 @@
     <h2>📉 GEMIDDELD TEKORT PER FILTER</h2>
     <p class="sectionSub">Hoe ver zit de afgekeurde candidate onder de target? Negatief = te streng, positief = te mild.</p>
     <div id="shortfallSection"></div>
-  </div>
-
-  <div class="trade-section">
-    <h2>🚫 BOTTLENECK (TOP COINS + ADVIES)</h2>
-    <p class="sectionSub">Alleen top‑candidates – welk filter blokkeert je beste setups? Met advies.</p>
-    <div id="rejectOverviewTable"></div>
   </div>
 
   <div class="trade-section"><h2>ENTRY SIGNALEN</h2><div id="entriesTable"></div></div>
@@ -385,47 +385,149 @@
     container.innerHTML = html;
   }
 
-  // ================= BOTTLENECK + OUD ADVIES =================
-  function getAdvice(reason, avg){
+  // ================= NIEUW: SLIM ADVIES (ECHT DATA-DRIVEN) =================
+  function getSmartAdvice(reason, avg, impact){
     reason = String(reason || "").toUpperCase();
+
     if(reason === "LOW_RR"){
-      if(avg > -0.1) return "⚠️ RR te streng → verlaag licht (bijv 1.5 → 1.4)";
-      if(avg < -0.2) return "✅ RR goed → slechte trades worden gefilterd";
-      return "🔍 RR net op grens → monitor";
+      if(impact > 30) return "🔥 Grootste bottleneck → RR te streng → verlaag (bijv 1.5 → 1.3)";
+      if(avg > -0.1) return "⚠️ RR te streng → kleine verlaging";
+      if(avg < -0.3) return "✅ RR filter goed";
+      return "🔍 RR borderline";
     }
+
     if(reason === "LOW_CONFLUENCE"){
-      if(avg > -5) return "⚠️ Confluence mogelijk te streng → -2 / -3 testen";
-      if(avg < -10) return "✅ Confluence filter werkt goed";
-      return "🔍 Confluence grenswaarde ok";
+      if(impact > 30) return "🔥 Confluence blokkeert meeste trades → verlaag 3-5 punten";
+      if(avg > -3) return "⚠️ Confluence te streng";
+      if(avg < -10) return "✅ Sterke filtering";
+      return "🔍 Confluence ok";
     }
-    if(reason === "NO_FLOW") return "⚠️ Flow detectie checken → mogelijk te agressief";
-    if(reason === "LOW_VOL") return "⚠️ Volatility filter mogelijk te streng";
-    return "Controleer deze filter handmatig";
+
+    if(reason === "NO_FLOW"){
+      return impact > 20
+        ? "🔥 Flow filter blokkeert veel → minder streng maken"
+        : "Flow ok";
+    }
+
+    if(reason === "LOW_VOL"){
+      return impact > 20
+        ? "🔥 Volatility te streng → meer trades toelaten"
+        : "Volatility ok";
+    }
+
+    if(reason.includes("RSI")){
+      return "🔥 RSI filter waarschijnlijk te streng → versoepelen";
+    }
+
+    if(reason.includes("OB")){
+      return "📊 Orderbook alignment te streng";
+    }
+
+    return "Analyse nodig";
   }
   
+  // ================= NIEUW: BOTTLENECK SCORE =================
   function renderRejectOverviewWithAdvice(trades){
     const container = el("rejectOverviewTable");
     if(!container) return;
+
+    const topTrades = trades.filter(t =>
+      Number(t.score || 0) >= 70 ||
+      Number(t.confluence || 0) >= 70 ||
+      t.grade === "A" || t.grade === "B"
+    );
+
+    const totalTop = topTrades.length;
     const map = {};
-    for(const r of trades){
-      const isTop = Number(r.score || 0) >= 70 || Number(r.confluence || 0) >= 70 || r.grade === "A" || r.grade === "B";
-      if(!isTop) continue;
-      const reason = r.reason || "UNKNOWN";
-      if(!map[reason]) map[reason] = { count:0, totalScore:0, samples:0 };
+
+    for(const t of topTrades){
+      if(String(t.action).toUpperCase() !== "WAIT") continue;
+
+      const reason = t.reason || "UNKNOWN";
+
+      if(!map[reason]){
+        map[reason] = {
+          count: 0,
+          totalScore: 0,
+          samples: 0
+        };
+      }
+
       map[reason].count++;
-      let score = toNumber(r.reasonScore);
-      if(score === null) score = getFallbackReasonScore(r);
-      if(score !== null){ map[reason].totalScore += score; map[reason].samples++; }
+
+      let score = toNumber(t.reasonScore);
+      if(score === null) score = getFallbackReasonScore(t);
+
+      if(score !== null){
+        map[reason].totalScore += score;
+        map[reason].samples++;
+      }
     }
-    const data = Object.entries(map).map(([reason, d])=>({ reason, count:d.count, avg:d.samples ? d.totalScore/d.samples : null, advice:getAdvice(reason, d.samples ? d.totalScore/d.samples : null) })).sort((a,b)=>b.count - a.count);
-    if(!data.length){ container.innerHTML = "<p class='emptyState'>Geen bottleneck data (geen afgekeurde top-candidates met reason)</p>"; return; }
-    let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Filter</th><th>Aantal</th><th>Gem. tekort</th><th>Advies</th></tr></thead><tbody>`;
-    for(const d of data) html += `<tr><td>${escapeHtml(d.reason)}</td><td>${d.count}</td><td>${d.avg !== null ? fmtSign(d.avg) : "—"}</td><td>${escapeHtml(d.advice)}</td></tr>`;
+
+    const data = Object.entries(map).map(([reason, d]) => {
+      const avg = d.samples ? d.totalScore / d.samples : null;
+
+      const impactPct = totalTop > 0
+        ? (d.count / totalTop) * 100
+        : 0;
+
+      // 🔥 BOTTLENECK SCORE
+      const severity = avg !== null ? Math.abs(avg) : 1;
+      const bottleneckScore = d.count * severity;
+      
+      // BONUS: Prioriteit
+      const priority =
+        impactPct > 30 ? "🔥 HIGH" :
+        impactPct > 15 ? "⚠️ MEDIUM" :
+        "LOW";
+
+      return {
+        reason,
+        count: d.count,
+        avg,
+        impactPct,
+        bottleneckScore,
+        priority,
+        advice: getSmartAdvice(reason, avg, impactPct)
+      };
+    })
+    .sort((a,b) => b.bottleneckScore - a.bottleneckScore);
+
+    if(!data.length){
+      container.innerHTML = "<p class='emptyState'>Geen bottleneck data</p>";
+      return;
+    }
+
+    let html = `<div class="tableWrap">
+      <table class="shortfall-table">
+        <thead>
+          <tr>
+            <th>Filter</th>
+            <th>Prioriteit</th>
+            <th>Aantal</th>
+            <th>% impact</th>
+            <th>Gem. tekort</th>
+            <th>Advies</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+    for(const d of data){
+      html += `<tr>
+        <td><strong>${escapeHtml(d.reason)}</strong></td>
+        <td>${d.priority}</td>
+        <td>${d.count}</td>
+        <td>${d.impactPct.toFixed(1)}%</td>
+        <td>${d.avg !== null ? fmtSign(d.avg) : "—"}</td>
+        <td>${escapeHtml(d.advice)}</td>
+      </tr>`;
+    }
+
     html += `</tbody></table></div>`;
     container.innerHTML = html;
   }
 
-  // ================= DATA-DRIVEN ADVIES =================
+  // ================= DATA-DRIVEN ADVIES (RR & CONFLUENCE) =================
   function calculateTopCoinStats(trades){
     const top = trades.filter(t =>
       Number(t.score || 0) >= 70 ||
