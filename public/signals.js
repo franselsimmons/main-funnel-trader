@@ -71,6 +71,14 @@ function fmtBool(value){
   return value ? "ja" : "nee";
 }
 
+function fmtSign(value){
+  const n = toNumber(value);
+  if(n === null) return "—";
+  if(n > 0) return `+${n.toFixed(2)}`;
+  if(n < 0) return `${n.toFixed(2)}`;
+  return "0";
+}
+
 function fmtDate(ts){
   const n = Number(ts);
 
@@ -268,29 +276,85 @@ function buildCounterMapFromRows(rows, field){
   return out;
 }
 
-function buildRejectOverviewFromCounts(reasonCounts){
-  const rows = [];
+// ========== NIEUW: filter voor top candidates ==========
+function isTopCandidate(r){
+  return (
+    Number(r.score || 0) >= 70 ||
+    Number(r.confluence || 0) >= 70 ||
+    r.grade === "A" ||
+    r.grade === "B"
+  );
+}
 
-  const total = Object.values(reasonCounts || {}).reduce((sum, value) => {
-    const n = Number(value || 0);
-    return sum + (Number.isFinite(n) ? n : 0);
-  }, 0);
+// ========== NIEUW: renderRejectOverviewFromRows ==========
+function renderRejectOverviewFromRows(rejectedRows){
+  // Alleen top candidates
+  const filtered = rejectedRows.filter(isTopCandidate);
 
-  for(const [reason, count] of Object.entries(reasonCounts || {})){
-    const n = Number(count || 0);
+  const map = {};
 
-    if(!Number.isFinite(n) || n <= 0) continue;
+  for(const r of filtered){
+    const reason = r.reason || "UNKNOWN";
+    if(!map[reason]){
+      map[reason] = {
+        count: 0,
+        totalScore: 0,
+        samples: 0
+      };
+    }
 
-    rows.push({
-      reason,
-      count: n,
-      label: reasonLabel(reason),
-      advice: reasonAdvice(reason),
-      pct: total > 0 ? Number(((n / total) * 100).toFixed(1)) : 0
-    });
+    map[reason].count++;
+
+    // reasonScore is stored in the row (if it came from buildWait)
+    const reasonScore = toNumber(r.reasonScore);
+    if(reasonScore !== null && Number.isFinite(reasonScore)){
+      map[reason].totalScore += reasonScore;
+      map[reason].samples++;
+    }
   }
 
-  return rows.sort((a, b) => b.count - a.count);
+  const result = Object.entries(map).map(([reason, data]) => {
+    const avgScore = data.samples > 0 ? data.totalScore / data.samples : null;
+    return {
+      reason,
+      label: reasonLabel(reason),
+      count: data.count,
+      avgScore: avgScore !== null ? Number(avgScore.toFixed(2)) : null,
+      advice: reasonAdvice(reason)
+    };
+  });
+
+  result.sort((a,b) => b.count - a.count);
+
+  const columns = [
+    { label: "Filter", render: r => `<strong>${escapeHtml(r.label)}</strong>` },
+    { label: "Aantal (TOP coins)", render: r => fmtInt(r.count) },
+    { label: "Gem. tekort", render: r => r.avgScore !== null ? fmtSign(r.avgScore) : "—" },
+    { label: "Interpretatie", render: r => escapeHtml(r.advice) }
+  ];
+
+  const tableHtmlContent = (result.length === 0)
+    ? `<div class="emptyState">Geen afgekeurde top‑candidates sinds reset.</div>`
+    : `
+      <div class="tableWrap">
+        <table class="signalTable">
+          <thead>
+            <tr>
+              ${columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${result.map(r => `
+              <tr class="row-wait">
+                ${columns.map(col => `<td>${col.render(r)}</td>`).join("")}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+  el("rejectOverviewTable").innerHTML = tableHtmlContent;
 }
 
 function tableHtml(columns, rows, emptyText, rowClassFn = null){
@@ -383,25 +447,6 @@ function renderFunnel(funnelRows){
     funnelRows,
     "Geen scanner/funnel data beschikbaar.",
     r => `row-stage-${String(r.stage || "").toLowerCase()}`
-  );
-}
-
-function renderRejectOverview(reasonCounts){
-  const rows = buildRejectOverviewFromCounts(reasonCounts);
-
-  const columns = [
-    { label: "Filter / Reason", render: r => `<strong>${fmtText(r.label)}</strong>` },
-    { label: "Code", render: r => fmtText(r.reason) },
-    { label: "Aantal", render: r => fmtInt(r.count) },
-    { label: "Aandeel", render: r => fmtPct(r.pct) },
-    { label: "Interpretatie", render: r => fmtText(r.advice) }
-  ];
-
-  el("rejectOverviewTable").innerHTML = tableHtml(
-    columns,
-    rows,
-    "Nog geen afgekeurde trade-candidates beschikbaar.",
-    () => "row-wait"
   );
 }
 
@@ -594,10 +639,8 @@ async function load(){
     const rejectedToShow = storedRejected.length ? storedRejected : liveWaitRows;
     const tradeResultsToShow = storedTrades.length ? storedTrades : liveNonWaitTrades;
 
-    const rejectReasonCountsToShow =
-      Object.keys(stats.rejectReasonCounts || {}).length
-        ? stats.rejectReasonCounts
-        : buildCounterMapFromRows(rejectedToShow, "reason");
+    // NIEUW: gebruik renderRejectOverviewFromRows ipv de oude versie
+    renderRejectOverviewFromRows(rejectedToShow);
 
     renderStatus(
       data,
@@ -610,7 +653,6 @@ async function load(){
 
     renderEntries(entriesToShow);
     renderFunnel(latestFunnelRows);
-    renderRejectOverview(rejectReasonCountsToShow);
     renderRejectedTrades(rejectedToShow);
     renderTradeResults(tradeResultsToShow);
 
