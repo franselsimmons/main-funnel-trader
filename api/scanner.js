@@ -187,13 +187,17 @@ function displayDirectionAllowed(c, side){
 }
 
 
-// ================= FLOW =================
+// ================= FLOW (aangepast) =================
 function detectFlow(c){
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
 
-  if(ch1 > 0.55 && ch24 > 2.2) return "TREND";
-  if(ch1 > 0.18 || ch24 > 0.9) return "BUILDING";
+  // WAS: ch1 > 0.55 && ch24 > 2.2
+  if(ch1 > 0.50 && ch24 > 2.0) return "TREND";
+
+  // WAS: ch1 > 0.18 || ch24 > 0.9
+  if(ch1 > 0.15 || ch24 > 0.8) return "BUILDING";
+
   if(ch24 > 0.6) return "EARLY";
 
   return "NEUTRAL";
@@ -229,7 +233,7 @@ function calculateFreshness(c, side){
 }
 
 
-// ================= DIRECTIONAL SCORE =================
+// ================= DIRECTIONAL SCORE (aangepast) =================
 function calculateScore(c, regime, side){
   let score = 0;
 
@@ -243,12 +247,16 @@ function calculateScore(c, regime, side){
   if(ch24 > 10) score += 22;
   else if(ch24 > 6) score += 16;
   else if(ch24 > 3) score += 10;
+  // WAS: else if(ch24 > 3) score += 10;  nu verlaagd naar >2.5
+  else if(ch24 > 2.5) score += 10;
   else if(ch24 > 1) score += 5;
   else if(ch24 > 0.25) score += 2;
 
   if(ch1 > 2) score += 32;
   else if(ch1 > 1.1) score += 24;
   else if(ch1 > 0.55) score += 15;
+  // WAS: else if(ch1 > 0.55) score += 15;  nu verlaagd naar >0.45
+  else if(ch1 > 0.45) score += 15;
   else if(ch1 > 0.2) score += 7;
   else if(ch1 > 0.03) score += 3;
 
@@ -294,7 +302,7 @@ function mergeStage(prevStage, filterStage){
 }
 
 
-// ================= BITGET SYMBOL NORMALIZERS (aangepast) =================
+// ================= BITGET SYMBOL NORMALIZERS =================
 function normalizeBitgetContractSymbol(symbolKey){
   return String(symbolKey || "")
     .toUpperCase()
@@ -478,7 +486,7 @@ function sortFunnel(funnel){
 }
 
 
-// ================= UI FALLBACK FILL (aangepast) =================
+// ================= UI FALLBACK FILL =================
 function fillUiFallback({
   rawCoins,
   regime,
@@ -734,12 +742,11 @@ export async function buildScanPayload(options = {}){
 
     activeSymbols.push(base.symbol);
 
-    if(base.vm < 0.02) continue;
+    // 🔥 VM drempel verlaagd van 0.02 naar 0.018
+    if(base.vm < 0.018) continue;
 
-    if(
-      Math.abs(base.change24) < 0.2 &&
-      Math.abs(base.change1h) < 0.02
-    ){
+    // 🔥 Harde filter (change24 / change1h) losser gemaakt
+    if(Math.abs(base.change24) < 0.15 && Math.abs(base.change1h) < 0.015){
       continue;
     }
 
