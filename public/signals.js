@@ -94,7 +94,7 @@ function renderExpectancyTable(trades){
                 <td>${r.expectancy}</td>
               </tr>`;
   }
-  html += `</tbody></tr>`;
+  html += `</tbody></table>`;
   container.innerHTML = html;
 }
 
@@ -164,7 +164,7 @@ function renderShortfallTable(trades){
                 <td class="${colorClass}">${avgFormatted}</td>
               </tr>`;
   }
-  html += `</tbody>｜DSML｜
+  html += `</tbody></table>
            <div class="shortfall-note">
              💡 Negatief tekort = onder target, positief = boven target.<br>
              Voor LOW_RR is target RR 1.5, voor LOW_CONFLUENCE target 70.
@@ -172,7 +172,7 @@ function renderShortfallTable(trades){
   container.innerHTML = html;
 }
 
-// ================= BOTTLENECK + ADVIES (oude functionaliteit hersteld) =================
+// ================= BOTTLENECK + ADVIES (oude functionaliteit) =================
 function getAdvice(reason, avg){
   reason = String(reason || "").toUpperCase();
   if(reason === "LOW_RR"){
@@ -229,9 +229,94 @@ function renderRejectOverviewWithAdvice(trades){
               <td>${d.count}</td>
               <td>${d.avg !== null ? fmtSign(d.avg) : "—"}</td>
               <td>${escapeHtml(d.advice)}</td>
-            </tr>`;
+            </td>`;
   }
   html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+// ================= NIEUW: TOP COIN ANALYSE (BESTE TRADES) =================
+function calculateTopCoinAverages(trades){
+  const top = trades.filter(t =>
+    Number(t.score || 0) >= 70 ||
+    Number(t.confluence || 0) >= 70 ||
+    t.grade === "A" || t.grade === "B"
+  );
+
+  if(!top.length) return null;
+
+  let rrSum = 0, rrCount = 0;
+  let confSum = 0, confCount = 0;
+
+  for(const t of top){
+    const rr = toNumber(t.rr);
+    const conf = toNumber(t.confluence);
+
+    if(rr !== null){
+      rrSum += rr;
+      rrCount++;
+    }
+    if(conf !== null){
+      confSum += conf;
+      confCount++;
+    }
+  }
+
+  return {
+    avgRR: rrCount ? rrSum / rrCount : null,
+    avgConf: confCount ? confSum / confCount : null,
+    count: top.length
+  };
+}
+
+function getTopCoinAdvice(avgRR, avgConf){
+  let advice = [];
+  if(avgRR !== null){
+    if(avgRR < 1.3){
+      advice.push("⚠️ RR te laag → mik op 1.3 – 1.6");
+    } else if(avgRR > 1.8){
+      advice.push("⚠️ RR te hoog → mogelijk te streng (1.4 – 1.6 beter)");
+    } else {
+      advice.push("✅ RR zit goed (1.3 – 1.7 zone)");
+    }
+  }
+  if(avgConf !== null){
+    if(avgConf < 65){
+      advice.push("⚠️ Confluence te laag → kwaliteit omhoog");
+    } else if(avgConf > 80){
+      advice.push("⚠️ Confluence te streng → mogelijk kansen missen");
+    } else {
+      advice.push("✅ Confluence zit goed (65 – 75)");
+    }
+  }
+  return advice;
+}
+
+function renderTopCoinAnalysis(trades){
+  const container = el("topCoinAnalysis");
+  if(!container){
+    console.warn("⚠️ Element #topCoinAnalysis ontbreekt in HTML");
+    return;
+  }
+
+  const data = calculateTopCoinAverages(trades);
+  if(!data){
+    container.innerHTML = "<p>Geen top coin data beschikbaar (geen trades met score≥70 / grade A/B)</p>";
+    return;
+  }
+
+  const advice = getTopCoinAdvice(data.avgRR, data.avgConf);
+
+  let html = `<h2>🔥 TOP COIN ANALYSE</h2>
+              <p>Aantal top trades: <b>${data.count}</b></p>
+              <table class="shortfall-table">
+                <thead><tr><th>Metric</th><th>Gemiddelde</th></tr></thead>
+                <tbody>
+                  <tr><td>RR</td><td>${data.avgRR ? data.avgRR.toFixed(2) : "—"}</td></tr>
+                  <tr><td>Confluence</td><td>${data.avgConf ? data.avgConf.toFixed(1) : "—"}</td></tr>
+                </tbody>
+              </table>
+              <div class="shortfall-note">${advice.join("<br>")}</div>`;
   container.innerHTML = html;
 }
 
@@ -252,6 +337,8 @@ async function load(){
   if(shortDiv) shortDiv.innerHTML = "<p>🔄 Shortfall laden...</p>";
   const bottleDiv = el("rejectOverviewTable");
   if(bottleDiv) bottleDiv.innerHTML = "<p>🔄 Bottleneck laden...</p>";
+  const topDiv = el("topCoinAnalysis");
+  if(topDiv) topDiv.innerHTML = "<p>🔄 Top coin analyse laden...</p>";
 
   try{
     const res = await fetch(`/api/public-latest?_=${Date.now()}`);
@@ -271,8 +358,9 @@ async function load(){
     }
 
     renderExpectancyTable(tradesForAnalysis);
-    renderShortfallTable(trades);      // shortfall over alle trades (ook WAIT)
-    renderRejectOverviewWithAdvice(trades); // bottleneck + advies over top-candidates
+    renderShortfallTable(trades);                // alle trades (ook WAIT)
+    renderRejectOverviewWithAdvice(trades);     // bottleneck + advies over top-candidates
+    renderTopCoinAnalysis(trades);              // NIEUW: gemiddelde van beste trades
     renderEntries(trades);
     renderFunnel(trades);
     renderRejected(trades);
@@ -294,6 +382,7 @@ async function load(){
     if(expDiv) expDiv.innerHTML = "<p>⚠️ Fout bij laden van expectancy</p>";
     if(shortDiv) shortDiv.innerHTML = "<p>⚠️ Fout bij laden van shortfall</p>";
     if(bottleDiv) bottleDiv.innerHTML = "<p>⚠️ Fout bij laden van bottleneck</p>";
+    if(topDiv) topDiv.innerHTML = "<p>⚠️ Fout bij laden van top coin analyse</p>";
     if(statusDiv) statusDiv.innerText = "❌ Fout bij laden";
   }
 }
