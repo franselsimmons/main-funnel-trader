@@ -89,13 +89,109 @@ function renderExpectancyTable(trades){
   const data=calculateExpectancy(trades);
 
   if(!data.length){
-    el("expectancySection").innerHTML="Geen data";
+    el("expectancySection").innerHTML="<h2>EXPECTANCY</h2><p>Geen data</p>";
     return;
   }
 
   el("expectancySection").innerHTML=
     `<h2>EXPECTANCY</h2>`+
     data.map(r=>`${r.setup} | WR:${r.winrate}% | EXP:${r.expectancy}`).join("<br>");
+}
+
+// ================= GEMIDDELD TEKORT PER FILTER =================
+function getFallbackReasonScore(trade){
+  const reason = String(trade.reason || "").toUpperCase();
+  
+  if(reason === "LOW_RR"){
+    const rr = toNumber(trade.rr);
+    if(rr === null) return null;
+    return rr - 1.5;           // target RR = 1.5
+  }
+  
+  if(reason === "LOW_CONFLUENCE"){
+    const c = toNumber(trade.confluence);
+    if(c === null) return null;
+    return c - 70;             // target confluence = 70
+  }
+  
+  return null;
+}
+
+function calculateAverageShortfall(trades){
+  // Groepeer per reason, verzamel reasonScore (real of fallback)
+  const groups = {};
+  
+  for(const t of trades){
+    const reason = t.reason;
+    if(!reason) continue;
+    
+    // Bepaal effectieve reasonScore
+    let reasonScore = toNumber(t.reasonScore);
+    if(reasonScore === null){
+      reasonScore = getFallbackReasonScore(t);
+    }
+    if(reasonScore === null) continue;
+    
+    if(!groups[reason]){
+      groups[reason] = { totalScore: 0, count: 0 };
+    }
+    groups[reason].totalScore += reasonScore;
+    groups[reason].count++;
+  }
+  
+  const results = [];
+  for(const [reason, data] of Object.entries(groups)){
+    const avgShortfall = data.totalScore / data.count;
+    results.push({
+      reason: reason,
+      count: data.count,
+      avgShortfall: avgShortfall
+    });
+  }
+  
+  // Sorteer op gemiddeld tekort (meest negatief eerst = grootste probleem)
+  results.sort((a,b) => a.avgShortfall - b.avgShortfall);
+  return results;
+}
+
+function renderShortfallTable(trades){
+  const data = calculateAverageShortfall(trades);
+  const container = el("shortfallSection");
+  
+  if(!container){
+    console.warn("Element '#shortfallSection' ontbreekt in de HTML");
+    return;
+  }
+  
+  if(!data.length){
+    container.innerHTML = "<h2>GEMIDDELD TEKORT PER FILTER</h2><p>Geen filterdata beschikbaar</p>";
+    return;
+  }
+  
+  let html = `<h2>📉 GEMIDDELD TEKORT PER FILTER</h2>
+              <table class="shortfall-table">
+                <thead>
+                  <tr><th>Filter</th><th>Aantal</th><th>Gem. tekort</th></tr>
+                </thead>
+                <tbody>`;
+  
+  for(const item of data){
+    const avgFormatted = item.avgShortfall.toFixed(2);
+    const colorClass = item.avgShortfall < 0 ? "negative" : "positive";
+    html += `<tr>
+              <td>${escapeHtml(item.reason)}</td>
+              <td>${item.count}</td>
+              <td class="${colorClass}">${avgFormatted}</td>
+             </tr>`;
+  }
+  
+  html += `</tbody></table>
+           <div class="shortfall-note">
+             💡 Negatief tekort = onder target, positief = boven target.<br>
+             Voor LOW_RR is target RR 1.5, voor LOW_CONFLUENCE target 70.
+           </div>`;
+  
+  container.innerHTML = html;
 }
 
 // ================= LOAD =================
@@ -106,7 +202,7 @@ async function load(){
 
     const trades = safeArray(data.trades);
 
-    // ================= LEVEL 10 PATCH =================
+    // ================= SIMULATIE VOOR GESLOTEN TRADES =================
     let tradesForAnalysis = trades;
 
     const hasRealClosed = trades.some(t =>
@@ -117,12 +213,19 @@ async function load(){
       tradesForAnalysis = buildSimulatedClosedTrades(trades);
     }
 
+    // ================= RENDER TABELLEN =================
     renderExpectancyTable(tradesForAnalysis);
+    renderShortfallTable(tradesForAnalysis);
 
   }catch(e){
     console.error(e);
+    const shortfallContainer = el("shortfallSection");
+    if(shortfallContainer) shortfallContainer.innerHTML = "<p>Fout bij laden data</p>";
+    const expectancyContainer = el("expectancySection");
+    if(expectancyContainer) expectancyContainer.innerHTML = "<p>Fout bij laden data</p>";
   }
 }
 
-setInterval(load,10000);
+// Start polling en direct laden
+setInterval(load, 10000);
 load();
