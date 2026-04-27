@@ -76,7 +76,6 @@
       color: var(--muted, #94a3b8);
     }
 
-    /* AANGEPAST: max-height en overflow-y toegevoegd voor scrollbare tabellen */
     .tableWrap {
       overflow-x: auto;
       overflow-y: auto;
@@ -95,7 +94,7 @@
     .signalTable thead th {
       position: sticky;
       top: 0;
-      z-index: 10; /* Zorgt dat de header boven de rijen blijft tijdens scrollen */
+      z-index: 10;
       background: rgba(15, 23, 42, 0.95);
       color: var(--muted, #94a3b8);
       text-align: left;
@@ -243,7 +242,7 @@
 
     <div class="trade-section">
       <h2>AFKEUR OVERZICHT PER FILTER</h2>
-      <p class="sectionSub">Hier zie je op welke filter de doorgestuurde candidates het vaakst stuklopen. Dit telt door totdat je reset.</p>
+      <p class="sectionSub">Alleen top‑candidates (score≥70, confluence≥70, grade A/B) – hier zie je het gemiddelde tekort per filter. Dit telt door tot je reset.</p>
       <div id="rejectOverviewTable"></div>
     </div>
 
