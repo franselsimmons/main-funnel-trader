@@ -5,7 +5,6 @@ const MAX_STORED_ENTRY_ROWS = 250;
 const MAX_STORED_REJECT_ROWS = 500;
 const MAX_STORED_TRADE_ROWS = 500;
 
-
 // ================= GENERIC HELPERS =================
 function safeArray(value){
   return Array.isArray(value) ? value : [];
@@ -27,32 +26,19 @@ function normalizeNotify(value){
 }
 
 function normalizeStore(value, fallback = true){
-  if(value === undefined || value === null){
-    return fallback;
-  }
-
+  if(value === undefined || value === null) return fallback;
   const v = String(value || "").toLowerCase();
-
-  if(v === "false" || v === "0" || v === "no"){
-    return false;
-  }
-
-  if(v === "true" || v === "1" || v === "yes"){
-    return true;
-  }
-
+  if(v === "false" || v === "0" || v === "no") return false;
+  if(v === "true" || v === "1" || v === "yes") return true;
   return fallback;
 }
 
-// ================= ADAPTIVE SMART SELECTOR =================
+// ================= ADAPTIVE SMART SELECTOR (met debug) =================
 function getTradeFunnelCandidates(latest){
-
   const bullEntry = safeArray(latest?.funnel?.bull?.entry);
   const bearEntry = safeArray(latest?.funnel?.bear?.entry);
-
   const bullAlmost = safeArray(latest?.funnel?.bull?.almost);
   const bearAlmost = safeArray(latest?.funnel?.bear?.almost);
-
   const bullBuildup = safeArray(latest?.funnel?.bull?.buildup);
   const bearBuildup = safeArray(latest?.funnel?.bear?.buildup);
 
@@ -87,102 +73,87 @@ function getTradeFunnelCandidates(latest){
     });
   }
 
-  // ================= MARKT LEZEN =================
+  // ================= DEBUG LOGGING =================
+  console.log("FUNNEL DEBUG raw length:", raw.length);
+  console.log("FUNNEL DEBUG clean length:", clean.length);
+  if(clean.length > 0){
+    console.log("Eerste clean coin:", {
+      symbol: clean[0].symbol,
+      stage: clean[0].stage,
+      score: clean[0].score,
+      vm: clean[0].vm,
+      ch1: clean[0].ch1
+    });
+  }
+
+  // ================= TEMP: CATCH‑ALL FALLBACK (forceer output) =================
+  // Option 1: negeer uiOnly tijdelijk
+  const withoutUiOnly = clean.filter(c => !c.uiOnly);
+  if(withoutUiOnly.length >= 3) {
+    console.log("🔧 USING NON-UI-ONLY candidates:", withoutUiOnly.length);
+    return withoutUiOnly.slice(0, 12);
+  }
+  // Option 2: gewoon eerste 12 (ook uiOnly)
+  if(clean.length > 0) {
+    console.log("🔧 FALLBACK: taking first 12 clean coins");
+    return clean.slice(0, 12);
+  }
+
+  // ================= ORIGINELE BUCKET LOGIC (tijdelijk uitgezet) =================
+  /*
   const regime = String(latest?.regime || "NORMAL").toUpperCase();
   const btcState = String(latest?.btc?.state || "NEUTRAL").toUpperCase();
 
-  let trendWeight = 4;
-  let pullbackWeight = 4;
-  let volWeight = 4;
-
+  let trendWeight = 4, pullbackWeight = 4, volWeight = 4;
   if(regime === "HIGH_VOL"){
-    trendWeight = 2;
-    pullbackWeight = 4;
-    volWeight = 6;
-  }
-  else if(regime === "LOW_VOL"){
-    trendWeight = 5;
-    pullbackWeight = 5;
-    volWeight = 2;
-  }
-  else if(btcState === "BULLISH" || btcState === "BEARISH"){
-    trendWeight = 6;
-    pullbackWeight = 3;
-    volWeight = 3;
+    trendWeight = 2; pullbackWeight = 4; volWeight = 6;
+  } else if(regime === "LOW_VOL"){
+    trendWeight = 5; pullbackWeight = 5; volWeight = 2;
+  } else if(btcState === "BULLISH" || btcState === "BEARISH"){
+    trendWeight = 6; pullbackWeight = 3; volWeight = 3;
   }
 
-  // ================= BUCKETS =================
-  const trend = [];
-  const pullback = [];
-  const volatility = [];
-
+  const trend = [], pullback = [], volatility = [];
   for(const c of clean){
-    // 🔥 TREND: entry + hoge score
-    if(c.stage === "entry" && c.score >= 65){
-      trend.push(c);
-      continue;
-    }
-
-    // 🎯 PULLBACK: almost + goede score
-    if(c.stage === "almost" && c.score >= 50){
-      pullback.push(c);
-      continue;
-    }
-
-    // ⚡ VOLATILITY: hoge vm of snelle 1h move
-    if(c.vm > 0.12 || c.ch1 > 1.2){
-      volatility.push(c);
-      continue;
-    }
+    if(c.stage === "entry" && c.score >= 65) trend.push(c);
+    else if(c.stage === "almost" && c.score >= 50) pullback.push(c);
+    else if(c.vm > 0.12 || c.ch1 > 1.2) volatility.push(c);
   }
-
-  const sortByScore = arr =>
-    arr.sort((a, b) => Number(b.score) - Number(a.score));
-
+  const sortByScore = arr => arr.sort((a,b) => b.score - a.score);
   sortByScore(trend);
   sortByScore(pullback);
   sortByScore(volatility);
 
-  // ================= SELECTIE PER BUCKET =================
   const selected = [
     ...trend.slice(0, trendWeight),
     ...pullback.slice(0, pullbackWeight),
     ...volatility.slice(0, volWeight)
   ];
 
-  // ================= FALLBACK (als te weinig) =================
   if(selected.length < 8){
-    const fallback = clean
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 12);
-
+    const fallback = clean.sort((a,b) => b.score - a.score).slice(0,12);
     const fallbackMap = new Map();
     for(const coin of fallback){
       const key = `${coin.symbol}_${coin.side}`;
       if(!fallbackMap.has(key)) fallbackMap.set(key, coin);
     }
-    return Array.from(fallbackMap.values()).slice(0, 12);
+    return Array.from(fallbackMap.values()).slice(0,12);
   }
 
-  // ================= DEDUPE =================
   const map = new Map();
   for(const coin of selected){
     const key = `${coin.symbol}_${coin.side}`;
-    if(!map.has(key)){
-      map.set(key, coin);
-    }
+    if(!map.has(key)) map.set(key, coin);
   }
-
-  return Array.from(map.values()).slice(0, 12);
+  return Array.from(map.values()).slice(0,12);
+  */
+  return [];
 }
-
 
 // ================= CORE =================
 export async function runTradeFunnel(options = {}){
   const notify = options.notify !== false;
   const store = options.store !== false;
-  const resetStats = options.resetStats === true;
-
   const latest = await getLatestScan();
 
   if(!latest?.ok){
@@ -192,12 +163,8 @@ export async function runTradeFunnel(options = {}){
   const candidates = getTradeFunnelCandidates(latest);
   const now = Date.now();
 
-  // 🔥 processTrades retourneert { actions: [...], candidatesCount: x }
   const result = candidates.length
-    ? await processTrades(candidates, {
-        notify,
-        log: true
-      })
+    ? await processTrades(candidates, { notify, log: true })
     : { actions: [], candidatesCount: 0 };
 
   // Zet de actions om naar een array voor de frontend
@@ -210,13 +177,10 @@ export async function runTradeFunnel(options = {}){
   const updated = {
     ...latest,
     ok: true,
-
-    trades,                         // ✅ array van trade actions
-    tradeSystemResult: result,      // optioneel voor debugging
-
+    trades,
+    tradeSystemResult: result,
     tradeFunnelInputCount: candidates.length,
     tradeFunnelInputSymbols: candidates.map(c => `${c.symbol}_${c.side}`),
-
     tradeFunnelUpdatedAt: now,
     updatedAt: now
   };
@@ -228,26 +192,15 @@ export async function runTradeFunnel(options = {}){
   return updated;
 }
 
-
 // ================= HANDLER =================
 export default async function handler(req, res){
   try{
     const notify = normalizeNotify(req?.query?.notify);
     const store = normalizeStore(req?.query?.store, true);
-
-    const data = await runTradeFunnel({
-      notify,
-      store
-    });
-
+    const data = await runTradeFunnel({ notify, store });
     return res.status(200).json(data);
-
   }catch(e){
     console.error("TRADE-FUNNEL ERROR:", e);
-
-    return res.status(500).json({
-      ok: false,
-      error: e.message
-    });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }
