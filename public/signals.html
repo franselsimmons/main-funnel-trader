@@ -576,4 +576,65 @@ Confluence target: ${confLow} – ${confHigh}
         <td>${t.confluence ?? "—"}</td>
         <td>${t.sniperScore ?? "—"}</td>
         <td>${escapeHtml(t.reason || "")}</td>
-        <td>${t.ts ? new
+        <td>${t.ts ? new Date(t.ts).toLocaleTimeString("nl-NL") : "—"}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    container.innerHTML = html;
+  }
+  
+  // ================= MAIN LOAD =================
+  async function load(){
+    const statusDiv = el("statusLine");
+    if(statusDiv) statusDiv.innerText = "🔄 Data laden...";
+    try{
+      const res = await fetch(`/api/public-latest?_=${Date.now()}`);
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const trades = safeArray(data.trades);
+      
+      // Markt context en bottleneck data
+      const market = updateMarketContext(data);
+      const bottleneckData = renderRejectOverviewWithAdvice(trades);
+      if(el("marketExplanation")) el("marketExplanation").innerText = explainMarket(market, bottleneckData);
+      
+      renderDataDrivenAdvice(trades);
+      renderShortfallTable(trades);
+      
+      // Expectancy alleen met echte closed trades
+      const hasRealClosed = trades.some(t => t.result === "WIN" || t.result === "LOSS");
+      if(hasRealClosed){
+        renderExpectancyTable(trades);
+      } else {
+        if(el("expectancySection")) el("expectancySection").innerHTML = "<p class='emptyState'>Nog geen echte gesloten trades (WIN/LOSS)</p>";
+      }
+      
+      // Toon de verschillende acties
+      renderActionTable("entriesTable", trades, "ENTRY");
+      renderActionTable("holdTable", trades, "HOLD");
+      renderActionTable("waitTable", trades, "WAIT");
+      renderActionTable("exitTable", trades, "EXIT");
+      
+      if(statusDiv) statusDiv.innerText = `✅ Laatste update: ${new Date().toLocaleTimeString("nl-NL")}`;
+    }catch(e){
+      console.error(e);
+      if(el("statusLine")) el("statusLine").innerText = "❌ Fout bij laden";
+      if(el("expectancySection")) el("expectancySection").innerHTML = "<p class='emptyState'>Fout bij laden</p>";
+      if(el("shortfallSection")) el("shortfallSection").innerHTML = "<p class='emptyState'>Fout bij laden</p>";
+      if(el("rejectOverviewTable")) el("rejectOverviewTable").innerHTML = "<p class='emptyState'>Fout bij laden</p>";
+    }
+  }
+  
+  function resetStats(){ alert("Reset functionaliteit nog te koppelen aan backend."); }
+  
+  document.addEventListener("DOMContentLoaded", () => {
+    const refreshBtn = document.getElementById("refreshBtn");
+    if(refreshBtn) refreshBtn.addEventListener("click", load);
+    const resetBtn = document.getElementById("resetStatsBtn");
+    if(resetBtn) resetBtn.addEventListener("click", resetStats);
+    load();
+  });
+  setInterval(load, 15000);
+</script>
+</body>
+</html>
