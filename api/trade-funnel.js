@@ -192,24 +192,9 @@ export async function runTradeFunnel(options = {}){
   const candidates = getTradeFunnelCandidates(latest);
   const now = Date.now();
 
-  // 🔥 CORRECTE AANROEP: bouw scan-object zoals tradeSystem verwacht
-  const scanForTradeSystem = {
-    funnel: {
-      bull: {
-        entry: candidates.filter(c => c.side === "bull"),
-        almost: []
-      },
-      bear: {
-        entry: candidates.filter(c => c.side === "bear"),
-        almost: []
-      }
-    },
-    btc: latest?.btc || null,
-    regime: latest?.regime || null
-  };
-
+  // 🔥 DIRECTE CANDIDATES (geen fake funnel meer)
   const trades = candidates.length
-    ? await processTrades(scanForTradeSystem, {
+    ? await processTrades(candidates, {
         notify,
         log: true
       })
