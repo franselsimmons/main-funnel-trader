@@ -87,66 +87,18 @@ function getTradeFunnelCandidates(latest){
   }
 
   // ================= CATCH‑ALL FALLBACK (forceer output) =================
-  // 1. Zonder uiOnly
+  // 1. Zonder uiOnly – stuur nu 40 coins i.p.v. 12
   const withoutUiOnly = clean.filter(c => !c.uiOnly);
   if(withoutUiOnly.length >= 3) {
     console.log("🔧 USING NON-UI-ONLY candidates:", withoutUiOnly.length);
-    return withoutUiOnly.slice(0, 12);
+    return withoutUiOnly.slice(0, 40);   // 🔥 VERHOOGD naar 40
   }
-  // 2. Gewoon eerste 12 (ook uiOnly)
+  // 2. Gewoon eerste 40 (ook uiOnly)
   if(clean.length > 0) {
-    console.log("🔧 FALLBACK: taking first 12 clean coins");
-    return clean.slice(0, 12);
+    console.log("🔧 FALLBACK: taking first 40 clean coins");
+    return clean.slice(0, 40);            // 🔥 VERHOOGD naar 40
   }
 
-  // ================= ORIGINELE BUCKET LOGIC (tijdelijk uitgezet) =================
-  /*
-  const regime = String(latest?.regime || "NORMAL").toUpperCase();
-  const btcState = String(latest?.btc?.state || "NEUTRAL").toUpperCase();
-
-  let trendWeight = 4, pullbackWeight = 4, volWeight = 4;
-  if(regime === "HIGH_VOL"){
-    trendWeight = 2; pullbackWeight = 4; volWeight = 6;
-  } else if(regime === "LOW_VOL"){
-    trendWeight = 5; pullbackWeight = 5; volWeight = 2;
-  } else if(btcState === "BULLISH" || btcState === "BEARISH"){
-    trendWeight = 6; pullbackWeight = 3; volWeight = 3;
-  }
-
-  const trend = [], pullback = [], volatility = [];
-  for(const c of clean){
-    if(c.stage === "entry" && c.score >= 65) trend.push(c);
-    else if(c.stage === "almost" && c.score >= 50) pullback.push(c);
-    else if(c.vm > 0.12 || c.ch1 > 1.2) volatility.push(c);
-  }
-  const sortByScore = arr => arr.sort((a,b) => b.score - a.score);
-  sortByScore(trend);
-  sortByScore(pullback);
-  sortByScore(volatility);
-
-  const selected = [
-    ...trend.slice(0, trendWeight),
-    ...pullback.slice(0, pullbackWeight),
-    ...volatility.slice(0, volWeight)
-  ];
-
-  if(selected.length < 8){
-    const fallback = clean.sort((a,b) => b.score - a.score).slice(0,12);
-    const fallbackMap = new Map();
-    for(const coin of fallback){
-      const key = `${coin.symbol}_${coin.side}`;
-      if(!fallbackMap.has(key)) fallbackMap.set(key, coin);
-    }
-    return Array.from(fallbackMap.values()).slice(0,12);
-  }
-
-  const map = new Map();
-  for(const coin of selected){
-    const key = `${coin.symbol}_${coin.side}`;
-    if(!map.has(key)) map.set(key, coin);
-  }
-  return Array.from(map.values()).slice(0,12);
-  */
   return [];
 }
 
