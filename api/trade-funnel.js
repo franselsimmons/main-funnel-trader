@@ -192,17 +192,27 @@ export async function runTradeFunnel(options = {}){
   const candidates = getTradeFunnelCandidates(latest);
   const now = Date.now();
 
+  // 🔥 CORRECTE AANROEP: bouw scan-object zoals tradeSystem verwacht
+  const scanForTradeSystem = {
+    funnel: {
+      bull: {
+        entry: candidates.filter(c => c.side === "bull"),
+        almost: []
+      },
+      bear: {
+        entry: candidates.filter(c => c.side === "bear"),
+        almost: []
+      }
+    },
+    btc: latest?.btc || null,
+    regime: latest?.regime || null
+  };
+
   const trades = candidates.length
-    ? await processTrades(
-        candidates,
-        latest?.btc || null,
-        "auto",
-        latest?.regime || null,
-        {
-          notify,
-          log: true
-        }
-      )
+    ? await processTrades(scanForTradeSystem, {
+        notify,
+        log: true
+      })
     : [];
 
   const updated = {
