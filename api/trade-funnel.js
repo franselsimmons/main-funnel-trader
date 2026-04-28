@@ -44,7 +44,7 @@ function normalizeStore(value, fallback = true){
   return fallback;
 }
 
-// ================= SMART SELECTOR (BUCKETS) =================
+// ================= ADAPTIVE SMART SELECTOR =================
 function getTradeFunnelCandidates(latest){
 
   const bullEntry = safeArray(latest?.funnel?.bull?.entry);
@@ -82,8 +82,33 @@ function getTradeFunnelCandidates(latest){
       symbol,
       side,
       vm: Number(coin.vm || 0),
-      score: Number(coin.moveScore || 0)
+      score: Number(coin.moveScore || 0),
+      ch1: Math.abs(Number(coin.change1h || 0))
     });
+  }
+
+  // ================= MARKT LEZEN =================
+  const regime = String(latest?.regime || "NORMAL").toUpperCase();
+  const btcState = String(latest?.btc?.state || "NEUTRAL").toUpperCase();
+
+  let trendWeight = 4;
+  let pullbackWeight = 4;
+  let volWeight = 4;
+
+  if(regime === "HIGH_VOL"){
+    trendWeight = 2;
+    pullbackWeight = 4;
+    volWeight = 6;
+  }
+  else if(regime === "LOW_VOL"){
+    trendWeight = 5;
+    pullbackWeight = 5;
+    volWeight = 2;
+  }
+  else if(btcState === "BULLISH" || btcState === "BEARISH"){
+    trendWeight = 6;
+    pullbackWeight = 3;
+    volWeight = 3;
   }
 
   // ================= BUCKETS =================
@@ -92,20 +117,20 @@ function getTradeFunnelCandidates(latest){
   const volatility = [];
 
   for(const c of clean){
-    // 🔥 TREND = entry stage + hoge score
-    if(c.stage === "entry" && c.score >= 70){
+    // 🔥 TREND: entry + hoge score
+    if(c.stage === "entry" && c.score >= 65){
       trend.push(c);
       continue;
     }
 
-    // 🎯 PULLBACK = almost stage + goede score
-    if(c.stage === "almost" && c.score >= 55){
+    // 🎯 PULLBACK: almost + goede score
+    if(c.stage === "almost" && c.score >= 50){
       pullback.push(c);
       continue;
     }
 
-    // ⚡ VOLATILITY = volume/mcap spike of snelle move
-    if(c.vm > 0.12 || Math.abs(c.change1h) > 1.2){
+    // ⚡ VOLATILITY: hoge vm of snelle 1h move
+    if(c.vm > 0.12 || c.ch1 > 1.2){
       volatility.push(c);
       continue;
     }
@@ -118,20 +143,19 @@ function getTradeFunnelCandidates(latest){
   sortByScore(pullback);
   sortByScore(volatility);
 
-  // ================= LIMIET PER BUCKET (max 4 per soort) =================
+  // ================= SELECTIE PER BUCKET =================
   const selected = [
-    ...trend.slice(0, 4),
-    ...pullback.slice(0, 4),
-    ...volatility.slice(0, 4)
+    ...trend.slice(0, trendWeight),
+    ...pullback.slice(0, pullbackWeight),
+    ...volatility.slice(0, volWeight)
   ];
 
-  // ================= FALLBACK (als er te weinig geselecteerd zijn) =================
+  // ================= FALLBACK (als te weinig) =================
   if(selected.length < 8){
     const fallback = clean
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
 
-    // dedupe fallback
     const fallbackMap = new Map();
     for(const coin of fallback){
       const key = `${coin.symbol}_${coin.side}`;
@@ -140,7 +164,7 @@ function getTradeFunnelCandidates(latest){
     return Array.from(fallbackMap.values()).slice(0, 12);
   }
 
-  // ================= DEDUPE (voorkom dubbele symbol_side) =================
+  // ================= DEDUPE =================
   const map = new Map();
   for(const coin of selected){
     const key = `${coin.symbol}_${coin.side}`;
@@ -149,7 +173,6 @@ function getTradeFunnelCandidates(latest){
     }
   }
 
-  // max 12 coins terug (tradeSystem bepaalt uiteindelijk max 8)
   return Array.from(map.values()).slice(0, 12);
 }
 
