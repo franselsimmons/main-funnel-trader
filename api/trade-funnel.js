@@ -192,19 +192,27 @@ export async function runTradeFunnel(options = {}){
   const candidates = getTradeFunnelCandidates(latest);
   const now = Date.now();
 
-  // 🔥 DIRECTE CANDIDATES (geen fake funnel meer)
-  const trades = candidates.length
+  // 🔥 processTrades retourneert { actions: [...], candidatesCount: x }
+  const result = candidates.length
     ? await processTrades(candidates, {
         notify,
         log: true
       })
-    : [];
+    : { actions: [], candidatesCount: 0 };
+
+  // Zet de actions om naar een array voor de frontend
+  const trades = Array.isArray(result)
+    ? result
+    : Array.isArray(result?.actions)
+      ? result.actions
+      : [];
 
   const updated = {
     ...latest,
     ok: true,
 
-    trades,
+    trades,                         // ✅ array van trade actions
+    tradeSystemResult: result,      // optioneel voor debugging
 
     tradeFunnelInputCount: candidates.length,
     tradeFunnelInputSymbols: candidates.map(c => `${c.symbol}_${c.side}`),
