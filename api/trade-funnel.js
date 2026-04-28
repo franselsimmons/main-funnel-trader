@@ -33,7 +33,7 @@ function normalizeStore(value, fallback = true){
   return fallback;
 }
 
-// ================= ADAPTIVE SMART SELECTOR (met debug) =================
+// ================= ADAPTIVE SMART SELECTOR (met debug + catch‑all) =================
 function getTradeFunnelCandidates(latest){
   const bullEntry = safeArray(latest?.funnel?.bull?.entry);
   const bearEntry = safeArray(latest?.funnel?.bear?.entry);
@@ -86,14 +86,14 @@ function getTradeFunnelCandidates(latest){
     });
   }
 
-  // ================= TEMP: CATCH‑ALL FALLBACK (forceer output) =================
-  // Option 1: negeer uiOnly tijdelijk
+  // ================= CATCH‑ALL FALLBACK (forceer output) =================
+  // 1. Zonder uiOnly
   const withoutUiOnly = clean.filter(c => !c.uiOnly);
   if(withoutUiOnly.length >= 3) {
     console.log("🔧 USING NON-UI-ONLY candidates:", withoutUiOnly.length);
     return withoutUiOnly.slice(0, 12);
   }
-  // Option 2: gewoon eerste 12 (ook uiOnly)
+  // 2. Gewoon eerste 12 (ook uiOnly)
   if(clean.length > 0) {
     console.log("🔧 FALLBACK: taking first 12 clean coins");
     return clean.slice(0, 12);
