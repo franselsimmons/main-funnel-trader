@@ -44,7 +44,7 @@ function normalizeStore(value, fallback = true){
   return fallback;
 }
 
-// ================= 🔥 FIXED TRADE INPUT =================
+// ================= SMART SELECTOR (BUCKETS) =================
 function getTradeFunnelCandidates(latest){
 
   const bullEntry = safeArray(latest?.funnel?.bull?.entry);
@@ -53,15 +53,19 @@ function getTradeFunnelCandidates(latest){
   const bullAlmost = safeArray(latest?.funnel?.bull?.almost);
   const bearAlmost = safeArray(latest?.funnel?.bear?.almost);
 
-  // 🔥 combineer meerdere stages
+  const bullBuildup = safeArray(latest?.funnel?.bull?.buildup);
+  const bearBuildup = safeArray(latest?.funnel?.bear?.buildup);
+
   const raw = [
     ...bullEntry,
     ...bearEntry,
     ...bullAlmost,
-    ...bearAlmost
+    ...bearAlmost,
+    ...bullBuildup,
+    ...bearBuildup
   ];
 
-  const map = new Map();
+  const clean = [];
 
   for(const coin of raw){
     if(!coin) continue;
@@ -73,46 +77,80 @@ function getTradeFunnelCandidates(latest){
     if(!symbol) continue;
     if(side !== "bull" && side !== "bear") continue;
 
-    const bitgetSymbol = String(
-      coin.bitgetSymbol ||
-      coin.rawBitgetSymbol ||
-      `${symbol}USDT`
-    ).toUpperCase();
+    clean.push({
+      ...coin,
+      symbol,
+      side,
+      vm: Number(coin.vm || 0),
+      score: Number(coin.moveScore || 0)
+    });
+  }
 
-    const productType = String(
-      coin.productType || "USDT-FUTURES"
-    ).toUpperCase();
+  // ================= BUCKETS =================
+  const trend = [];
+  const pullback = [];
+  const volatility = [];
 
-    const key = `${symbol}_${side}`;
+  for(const c of clean){
+    // 🔥 TREND = entry stage + hoge score
+    if(c.stage === "entry" && c.score >= 70){
+      trend.push(c);
+      continue;
+    }
 
-    // 🔥 priority systeem
-    const priority =
-      coin.stage === "entry" ? 3 :
-      coin.stage === "almost" ? 2 :
-      coin.stage === "buildup" ? 1 : 0;
+    // 🎯 PULLBACK = almost stage + goede score
+    if(c.stage === "almost" && c.score >= 55){
+      pullback.push(c);
+      continue;
+    }
 
-    const prev = map.get(key);
-
-    if(!prev || priority > prev.priority){
-      map.set(key, {
-        ...coin,
-        symbol,
-        side,
-        stage: coin.stage,
-        priority,
-        bitgetSymbol,
-        productType,
-        rawBitgetSymbol: String(
-          coin.rawBitgetSymbol || bitgetSymbol
-        ).toUpperCase()
-      });
+    // ⚡ VOLATILITY = volume/mcap spike of snelle move
+    if(c.vm > 0.12 || Math.abs(c.change1h) > 1.2){
+      volatility.push(c);
+      continue;
     }
   }
 
-  // 🔥 beste coins eerst + limit
-  return Array.from(map.values())
-    .sort((a, b) => Number(b.moveScore || 0) - Number(a.moveScore || 0))
-    .slice(0, 12); // 👈 MAX COINS NAAR TRADESYSTEM
+  const sortByScore = arr =>
+    arr.sort((a, b) => Number(b.score) - Number(a.score));
+
+  sortByScore(trend);
+  sortByScore(pullback);
+  sortByScore(volatility);
+
+  // ================= LIMIET PER BUCKET (max 4 per soort) =================
+  const selected = [
+    ...trend.slice(0, 4),
+    ...pullback.slice(0, 4),
+    ...volatility.slice(0, 4)
+  ];
+
+  // ================= FALLBACK (als er te weinig geselecteerd zijn) =================
+  if(selected.length < 8){
+    const fallback = clean
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+
+    // dedupe fallback
+    const fallbackMap = new Map();
+    for(const coin of fallback){
+      const key = `${coin.symbol}_${coin.side}`;
+      if(!fallbackMap.has(key)) fallbackMap.set(key, coin);
+    }
+    return Array.from(fallbackMap.values()).slice(0, 12);
+  }
+
+  // ================= DEDUPE (voorkom dubbele symbol_side) =================
+  const map = new Map();
+  for(const coin of selected){
+    const key = `${coin.symbol}_${coin.side}`;
+    if(!map.has(key)){
+      map.set(key, coin);
+    }
+  }
+
+  // max 12 coins terug (tradeSystem bepaalt uiteindelijk max 8)
+  return Array.from(map.values()).slice(0, 12);
 }
 
 
