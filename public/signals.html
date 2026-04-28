@@ -155,7 +155,7 @@
       line-height: 1.5;
     }
 
-    /* ===== TABELLEN FIX ===== */
+    /* ===== TABELLEN ===== */
     .tableWrap {
       width: 100%;
       overflow-x: auto;
@@ -222,7 +222,7 @@
       font-size: 14px;
     }
     
-    /* ===== VISUELE HIGHLIGHTS VOOR TRADES ===== */
+    /* ===== VISUELE HIGHLIGHTS VOOR TRADES (optioneel) ===== */
     .entryRow {
       border-left: 4px solid #22c55e;
       background: rgba(34,197,94,0.05);
@@ -266,7 +266,7 @@
     </div>
   </div>
 
-  <!-- NIEUW: MARKT CONTEXT METRICS -->
+  <!-- MARKT CONTEXT METRICS -->
   <div class="metrics">
     <div class="metric">
       <div class="metricLabel">BTC Trend</div>
@@ -277,55 +277,61 @@
       <div id="regime" class="metricValue">—</div>
     </div>
     <div class="metric">
-      <div class="metricLabel">Bull Funnel</div>
-      <div id="bullCount" class="metricValue">0</div>
+      <div class="metricLabel">Funnel Input</div>
+      <div id="funnelCount" class="metricValue">0</div>
     </div>
     <div class="metric">
-      <div class="metricLabel">Bear Funnel</div>
-      <div id="bearCount" class="metricValue">0</div>
+      <div class="metricLabel">Actieve WAIT</div>
+      <div id="waitCount" class="metricValue">0</div>
     </div>
   </div>
 
-  <!-- NIEUW: MARKET DECISION ENGINE -->
+  <!-- MARKET DECISION ENGINE (WHY NO TRADES) -->
   <div class="trade-section">
-    <h2>🧠 MARKET DECISION ENGINE</h2>
+    <h2>🧠 WHY NO TRADES? (MARKET DECISION ENGINE)</h2>
     <div id="marketExplanation" class="advice-box">Laden...</div>
   </div>
 
+  <!-- DATA-DRIVEN ADVIES -->
   <div class="trade-section">
-    <h2>🎯 DATA-DRIVEN ADVIES</h2>
-    <p class="sectionSub">Optimale RR‑ en Confluence‑targets op basis van jouw eigen top trades (score≥70 / grade A/B).</p>
+    <h2>🎯 OPTIMALE SETTINGS (op basis van eigen trades)</h2>
+    <p class="sectionSub">RR en Confluence targets uit jouw beste setups (score≥70 / grade A/B).</p>
     <div id="topAdvice" class="advice-box">🔄 Laden...</div>
   </div>
 
+  <!-- BOTTLENECK OVERZICHT -->
   <div class="trade-section">
-    <h2>🚫 BOTTLENECK (TOP COINS + ADVIES)</h2>
-    <p class="sectionSub">Alleen top‑candidates – welk filter blokkeert je beste setups? Berekend op % impact en ernst.</p>
+    <h2>🚫 BOTTLENECK (top candidates die WAIT kregen)</h2>
+    <p class="sectionSub">Welke filters blokkeren je beste kansen? Impact en advies.</p>
     <div id="rejectOverviewTable"></div>
   </div>
 
+  <!-- TOP COIN STATISTIEKEN -->
   <div class="trade-section">
     <h2>🔥 TOP COIN STATISTIEKEN</h2>
     <p class="sectionSub">Gemiddelden, min/max van jouw beste trades.</p>
     <div id="topCoinStats"></div>
   </div>
 
+  <!-- EXPECTANCY PER SETUP (alleen echte closed trades) -->
   <div class="trade-section">
-    <h2>📈 EXPECTANCY PER SETUP</h2>
-    <p class="sectionSub">Alleen setups met ≥10 gesloten trades (WIN/LOSS). Expectancy >0 = edge.</p>
+    <h2>📈 EXPECTANCY PER SETUP (closed trades)</h2>
+    <p class="sectionSub">Alleen echte WIN/LOSS trades (≥10 per setup).</p>
     <div id="expectancySection"></div>
   </div>
 
+  <!-- GEMIDDELD TEKORT PER FILTER -->
   <div class="trade-section">
     <h2>📉 GEMIDDELD TEKORT PER FILTER</h2>
-    <p class="sectionSub">Hoe ver zit de afgekeurde candidate onder de target? Negatief = te streng, positief = te mild.</p>
+    <p class="sectionSub">Hoe ver ligt afgekeurde candidate onder target? Negatief = streng.</p>
     <div id="shortfallSection"></div>
   </div>
 
-  <div class="trade-section"><h2>ENTRY SIGNALEN</h2><div id="entriesTable"></div></div>
-  <div class="trade-section"><h2>SCANNER / FUNNEL INPUT</h2><div id="funnelTable"></div></div>
-  <div class="trade-section"><h2>AFGEKEURDE TRADE CANDIDATES</h2><div id="rejectedTradesTable"></div></div>
-  <div class="trade-section"><h2>TRADE RESULTATEN</h2><div id="tradeResultsTable"></div></div>
+  <!-- TABELLEN (worden later gevuld met echte data) -->
+  <div class="trade-section"><h2>✅ ENTRY SIGNALEN</h2><div id="entriesTable"></div></div>
+  <div class="trade-section"><h2>🔄 HOLD POSITIES</h2><div id="holdTable"></div></div>
+  <div class="trade-section"><h2>📊 WAIT CANDIDATES (nog in analyse)</h2><div id="waitTable"></div></div>
+  <div class="trade-section"><h2>❌ EXIT SIGNALEN</h2><div id="exitTable"></div></div>
 </div>
 
 <script>
@@ -336,132 +342,41 @@
   function escapeHtml(value){ return String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
   function fmtSign(v){ const n=toNumber(v); if(n===null)return"—"; if(n>0)return`+${n.toFixed(2)}`; if(n<0)return`${n.toFixed(2)}`; return"0"; }
 
-  // ================= MARKT CONTEXT UI =================
+  // ================= MARKT CONTEXT & UI =================
   function updateMarketContext(data){
-    const btcTrend = data?.btc?.state || "NEUTRAL";
-    const regime = data?.regime || "NORMAL";
-    const bullCount = data?.bullCount ?? (data?.funnel?.bull ? Object.values(data.funnel.bull).reduce((a,b)=>a+b.length,0) : 0);
-    const bearCount = data?.bearCount ?? (data?.funnel?.bear ? Object.values(data.funnel.bear).reduce((a,b)=>a+b.length,0) : 0);
-    
+    const btcTrend = data?.btc?.state || "UNKNOWN";
+    const regime = data?.regime || "UNKNOWN";
+    const funnelInput = data?.tradeFunnelInputCount ?? 0;
+    const waitCount = (safeArray(data?.trades).filter(t => t.action === "WAIT")).length;
     if(el("btcTrend")) el("btcTrend").innerText = btcTrend;
     if(el("regime")) el("regime").innerText = regime;
-    if(el("bullCount")) el("bullCount").innerText = bullCount;
-    if(el("bearCount")) el("bearCount").innerText = bearCount;
+    if(el("funnelCount")) el("funnelCount").innerText = funnelInput;
+    if(el("waitCount")) el("waitCount").innerText = waitCount;
     
-    // Bear-mode styling
     if(btcTrend === "BEARISH") document.body.classList.add("bear-mode");
     else document.body.classList.remove("bear-mode");
     
-    return { btcTrend, regime, bullCount, bearCount };
+    return { btcTrend, regime, funnelInput, waitCount };
   }
   
-  function explainMarket(market){
-    const { btcTrend, regime, bullCount, bearCount } = market;
-    if(btcTrend === "BEARISH" && bullCount > bearCount){
-      return "⚠️ Bearish market met bullish noise → longs geblokkeerd, weinig entries.";
+  function explainMarket(market, bottleneckData){
+    const { btcTrend, regime, funnelInput, waitCount } = market;
+    let reasons = [];
+    if(btcTrend === "BEARISH") reasons.push("🐻 BTC bearish – alleen shorts of geen trades.");
+    if(btcTrend === "BULLISH") reasons.push("🐂 BTC bullish – alleen longs of geen trades.");
+    if(regime === "HIGH_VOL") reasons.push("⚡ Hoge volatiliteit -> bot is strenger (minder entries).");
+    if(regime === "LOW_VOL") reasons.push("⏸ Lage volatiliteit -> weinig duidelijke setups.");
+    if(funnelInput < 5) reasons.push("📉 Weinig coins in trade funnel (<5) – te weinig kansen.");
+    if(waitCount > 10 && !bottleneckData?.length) reasons.push("🔍 Veel WAIT candidates, maar geen duidelijke bottleneck? Check filters.");
+    if(bottleneckData && bottleneckData.length){
+      const top = bottleneckData[0];
+      reasons.push(`🚫 Grootste bottleneck: ${top.reason} (${top.impactPct.toFixed(0)}% van top candidates) → ${top.advice}`);
     }
-    if(btcTrend === "BEARISH" && bearCount < 100){
-      return "⚠️ Te weinig bear setups → wachten op betere shorts.";
-    }
-    if(regime === "MID_VOL"){
-      return "⚠️ Mid volatility → choppy markt → bot wacht op duidelijke setups.";
-    }
-    if(btcTrend === "BULLISH" && bullCount > 150){
-      return "🔥 Bull regime → longs toegestaan → entries verwacht.";
-    }
-    if(btcTrend === "BULLISH" && bullCount < 50){
-      return "⏳ Weinig bull coins in funnel → lage trade kans.";
-    }
-    return "⏳ Geen duidelijke edge → wachten op betere marktcondities.";
-  }
-
-  // ================= SIMULATIE GESLOTEN TRADES (alleen als nodig) =================
-  function buildSimulatedClosedTrades(trades){
-    return trades.filter(t => String(t.action || "").toUpperCase() === "ENTRY").map(t => {
-      const rr = Number(t.rr || 0);
-      const winChance = rr >= 1.5 ? 0.6 : rr >= 1.2 ? 0.55 : 0.48;
-      const isWin = Math.random() < winChance;
-      return { ...t, result: isWin ? "WIN" : "LOSS" };
-    });
-  }
-
-  // ================= EXPECTANCY =================
-  function getCleanTrades(trades){
-    return trades.filter(t => (t.result === "WIN" || t.result === "LOSS") && (Number(t.score||0)>=70 || Number(t.confluence||0)>=70));
+    if(reasons.length === 0) reasons.push("✅ Marktcondities neutraal – bot zou trades moeten genereren.");
+    return reasons.join(" · ");
   }
   
-  function calculateExpectancy(trades){
-    const clean = getCleanTrades(trades);
-    const setups = {};
-    for(const t of clean){
-      const key = `${t.grade}|${t.rsiZone}|RR${Math.round(t.rr)}`;
-      if(!setups[key]) setups[key] = { win:0, loss:0 };
-      if(t.result==="WIN") setups[key].win++; else setups[key].loss++;
-    }
-    const out=[];
-    for(const k in setups){
-      const s=setups[k];
-      const total=s.win+s.loss;
-      if(total<10) continue;
-      const wr=s.win/total;
-      out.push({ setup:k, trades:total, winrate:(wr*100).toFixed(1), expectancy:((wr*1)-(1-wr)).toFixed(3) });
-    }
-    return out.sort((a,b)=>b.expectancy-a.expectancy);
-  }
-  
-  function renderExpectancyTable(trades){
-    const container = el("expectancySection");
-    if(!container) return;
-    const data = calculateExpectancy(trades);
-    if(!data.length){ container.innerHTML = "<p class='emptyState'>Nog niet genoeg gesloten trades (min. 10 per setup)</p>"; return; }
-    let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Setup</th><th>Aantal</th><th>Winrate</th><th>Expectancy</th></tr></thead><tbody>`;
-    for(const r of data) html += `<tr><td>${escapeHtml(r.setup)}</td><td>${r.trades}</td><td>${r.winrate}%</td><td>${r.expectancy}</td></tr>`;
-    html += `</tbody></table></div>`;
-    container.innerHTML = html;
-  }
-
-  // ================= GEMIDDELD TEKORT =================
-  function getFallbackReasonScore(trade){
-    const reason = String(trade.reason || "").toUpperCase();
-    if(reason === "LOW_RR"){ const rr = toNumber(trade.rr); return rr === null ? null : rr - 1.5; }
-    if(reason === "LOW_CONFLUENCE"){ const c = toNumber(trade.confluence); return c === null ? null : c - 70; }
-    return null;
-  }
-  
-  function calculateAverageShortfall(trades){
-    const groups = {};
-    for(const t of trades){
-      const reason = t.reason;
-      if(!reason) continue;
-      let reasonScore = toNumber(t.reasonScore);
-      if(reasonScore === null) reasonScore = getFallbackReasonScore(t);
-      if(reasonScore === null) continue;
-      if(!groups[reason]) groups[reason] = { totalScore:0, count:0 };
-      groups[reason].totalScore += reasonScore;
-      groups[reason].count++;
-    }
-    const results = [];
-    for(const [reason, data] of Object.entries(groups)) results.push({ reason, count:data.count, avgShortfall:data.totalScore/data.count });
-    results.sort((a,b)=>a.avgShortfall - b.avgShortfall);
-    return results;
-  }
-  
-  function renderShortfallTable(trades){
-    const container = el("shortfallSection");
-    if(!container) return;
-    const data = calculateAverageShortfall(trades);
-    if(!data.length){ container.innerHTML = "<p class='emptyState'>Geen filterdata beschikbaar (geen WAIT trades met reason)</p>"; return; }
-    let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Filter</th><th>Aantal</th><th>Gem. tekort</th></tr></thead><tbody>`;
-    for(const item of data){
-      const avg = item.avgShortfall.toFixed(2);
-      const cls = item.avgShortfall < 0 ? "negative" : "positive";
-      html += `<tr><td>${escapeHtml(item.reason)}</td><td>${item.count}</td><td class="${cls}">${avg}</td></tr>`;
-    }
-    html += `</tbody></table></div><div class="shortfall-note">💡 Negatief = onder target (filter streng), positief = boven target (mild). Target LOW_RR = 1.5, LOW_CONFLUENCE = 70.</div>`;
-    container.innerHTML = html;
-  }
-
-  // ================= BOTTLENECK ADVIES (oud, maar nodig) =================
+  // ================= BOTTLENECK & ADVIES =================
   function getAdvice(reason, avg){
     reason = String(reason || "").toUpperCase();
     if(reason === "LOW_RR"){
@@ -479,14 +394,23 @@
     return "Controleer deze filter handmatig";
   }
   
+  function getFallbackReasonScore(trade){
+    const reason = String(trade.reason || "").toUpperCase();
+    if(reason === "LOW_RR"){ const rr = toNumber(trade.rr); return rr === null ? null : rr - 1.5; }
+    if(reason === "LOW_CONFLUENCE"){ const c = toNumber(trade.confluence); return c === null ? null : c - 70; }
+    return null;
+  }
+  
   function renderRejectOverviewWithAdvice(trades){
     const container = el("rejectOverviewTable");
     if(!container) return;
-    const topTrades = trades.filter(t => Number(t.score||0)>=70 || Number(t.confluence||0)>=70 || t.grade==="A" || t.grade==="B");
+    const topTrades = trades.filter(t => 
+      Number(t.score||0)>=70 || Number(t.confluence||0)>=70 || t.grade==="A" || t.grade==="B"
+    );
     const totalTop = topTrades.length;
     const map = {};
     for(const t of topTrades){
-      if(String(t.action).toUpperCase() !== "WAIT") continue;
+      if(t.action !== "WAIT") continue;
       const reason = t.reason || "UNKNOWN";
       if(!map[reason]) map[reason] = { count:0, totalScore:0, samples:0 };
       map[reason].count++;
@@ -504,15 +428,23 @@
       const priority = impactPct > 30 ? "🔥 HIGH" : impactPct > 15 ? "⚠️ MEDIUM" : "LOW";
       return { reason, count:d.count, avg, impactPct, bottleneckScore, priority, advice: getAdvice(reason, avg) };
     }).sort((a,b)=>b.bottleneckScore - a.bottleneckScore);
-    if(!data.length){ container.innerHTML = "<p class='emptyState'>Geen bottleneck data</p>"; return; }
+    if(!data.length){ container.innerHTML = "<p class='emptyState'>Geen bottleneck data (geen WAIT op top candidates)</p>"; return; }
     let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Filter</th><th>Prioriteit</th><th>Aantal</th><th>% impact</th><th>Gem. tekort</th><th>Advies</th></tr></thead><tbody>`;
     for(const d of data){
-      html += `<tr><td><strong>${escapeHtml(d.reason)}</strong></td><td>${d.priority}</td><td>${d.count}</td><td>${d.impactPct.toFixed(1)}%</td><td>${d.avg !== null ? fmtSign(d.avg) : "—"}</td><td>${escapeHtml(d.advice)}</td></tr>`;
+      html += `<tr>
+        <td><strong>${escapeHtml(d.reason)}</strong></td>
+        <td>${d.priority}</td>
+        <td>${d.count}</td>
+        <td>${d.impactPct.toFixed(1)}%</td>
+        <td>${d.avg !== null ? fmtSign(d.avg) : "—"}</td>
+        <td>${escapeHtml(d.advice)}</td>
+      </tr>`;
     }
     html += `</tbody></table></div>`;
     container.innerHTML = html;
+    return data; // voor market explanation
   }
-
+  
   // ================= DATA-DRIVEN ADVIES (op basis van top trades) =================
   function calculateTopCoinStats(trades){
     const top = trades.filter(t => Number(t.score||0)>=70 || Number(t.confluence||0)>=70 || t.grade==="A" || t.grade==="B");
@@ -559,79 +491,89 @@ Confluence target: ${confLow} – ${confHigh}
       }
     }
   }
-
-  // ================= PLACEHOLDERS =================
-  function renderPlaceholders(t){
-    const c1 = el("entriesTable"); if(c1) c1.innerHTML = "<p class='emptyState'>🔧 Entry signalen laden...</p>";
-    const c2 = el("funnelTable"); if(c2) c2.innerHTML = "<p class='emptyState'>🔧 Scanner input laden...</p>";
-    const c3 = el("rejectedTradesTable"); if(c3) c3.innerHTML = "<p class='emptyState'>🔧 Afgekeurde candidates laden...</p>";
-    const c4 = el("tradeResultsTable"); if(c4) c4.innerHTML = "<p class='emptyState'>🔧 Trade resultaten laden...</p>";
-  }
-
-  // ================= MAIN LOAD =================
-  async function load(){
-    const statusDiv = el("statusLine");
-    if(statusDiv) statusDiv.innerText = "🔄 Data laden...";
-    const expDiv = el("expectancySection");
-    if(expDiv) expDiv.innerHTML = "<p class='emptyState'>🔄 Laden...</p>";
-    const shortDiv = el("shortfallSection");
-    if(shortDiv) shortDiv.innerHTML = "<p class='emptyState'>🔄 Laden...</p>";
-    const bottleDiv = el("rejectOverviewTable");
-    if(bottleDiv) bottleDiv.innerHTML = "<p class='emptyState'>🔄 Laden...</p>";
-    const adviceDiv = el("topAdvice");
-    if(adviceDiv) adviceDiv.innerHTML = "🔄 Laden...";
-    
-    try{
-      const res = await fetch(`/api/public-latest?_=${Date.now()}`);
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const trades = safeArray(data.trades);
-      
-      // Update market context and explanation
-      const market = updateMarketContext(data);
-      if(el("marketExplanation")) el("marketExplanation").innerText = explainMarket(market);
-      
-      // Bepaal of we echte gesloten trades hebben
-      const hasRealClosed = trades.some(t => t.result === "WIN" || t.result === "LOSS");
-      const tradesForAnalysis = hasRealClosed ? trades : buildSimulatedClosedTrades(trades);
-      
-      renderExpectancyTable(tradesForAnalysis);
-      renderShortfallTable(trades);
-      renderRejectOverviewWithAdvice(trades);
-      renderDataDrivenAdvice(trades);
-      renderPlaceholders(trades);
-      
-      // Metrics tellers (entry/exit etc)
-      const entries = trades.filter(t => String(t.action).toUpperCase() === "ENTRY").length;
-      const rejected = trades.filter(t => String(t.action).toUpperCase() === "WAIT").length;
-      const other = trades.length - entries - rejected;
-      const funnel = trades.filter(t => t.fromFunnel === true).length;
-      if(el("entriesCount")) el("entriesCount").innerText = entries;
-      if(el("rejectCount")) el("rejectCount").innerText = rejected;
-      if(el("tradeCount")) el("tradeCount").innerText = other;
-      if(el("funnelCount")) el("funnelCount").innerText = funnel;
-      
-      if(statusDiv) statusDiv.innerText = `✅ Laatste update: ${new Date().toLocaleTimeString("nl-NL")}`;
-    }catch(e){
-      console.error(e);
-      if(expDiv) expDiv.innerHTML = "<p class='emptyState'>⚠️ Fout bij laden expectancy</p>";
-      if(shortDiv) shortDiv.innerHTML = "<p class='emptyState'>⚠️ Fout bij laden shortfall</p>";
-      if(bottleDiv) bottleDiv.innerHTML = "<p class='emptyState'>⚠️ Fout bij laden bottleneck</p>";
-      if(adviceDiv) adviceDiv.innerHTML = "⚠️ Fout bij laden advies";
-      if(statusDiv) statusDiv.innerText = "❌ Fout bij laden";
-    }
-  }
-
-  function resetStats(){ alert("Reset functionaliteit koppelen aan backend"); }
   
-  document.addEventListener("DOMContentLoaded", () => {
-    const refreshBtn = document.getElementById("refreshBtn");
-    if(refreshBtn) refreshBtn.addEventListener("click", load);
-    const resetBtn = document.getElementById("resetStatsBtn");
-    if(resetBtn) resetBtn.addEventListener("click", resetStats);
-    load();
-  });
-  setInterval(load, 10000);
-</script>
-</body>
-</html>
+  // ================= EXPECTANCY (alleen echte closed trades) =================
+  function getCleanTrades(trades){
+    return trades.filter(t => (t.result === "WIN" || t.result === "LOSS") && (Number(t.score||0)>=70 || Number(t.confluence||0)>=70));
+  }
+  function calculateExpectancy(trades){
+    const clean = getCleanTrades(trades);
+    const setups = {};
+    for(const t of clean){
+      const key = `${t.grade}|${t.rsiZone}|RR${Math.round(t.rr)}`;
+      if(!setups[key]) setups[key] = { win:0, loss:0 };
+      if(t.result==="WIN") setups[key].win++; else setups[key].loss++;
+    }
+    const out=[];
+    for(const k in setups){
+      const s=setups[k];
+      const total=s.win+s.loss;
+      if(total<10) continue;
+      const wr=s.win/total;
+      out.push({ setup:k, trades:total, winrate:(wr*100).toFixed(1), expectancy:((wr*1)-(1-wr)).toFixed(3) });
+    }
+    return out.sort((a,b)=>b.expectancy-a.expectancy);
+  }
+  function renderExpectancyTable(trades){
+    const container = el("expectancySection");
+    if(!container) return;
+    const data = calculateExpectancy(trades);
+    if(!data.length){ container.innerHTML = "<p class='emptyState'>Nog niet genoeg echte gesloten trades (min. 10 per setup)</p>"; return; }
+    let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Setup</th><th>Aantal</th><th>Winrate</th><th>Expectancy</th></tr></thead><tbody>`;
+    for(const r of data) html += `<tr><td>${escapeHtml(r.setup)}</td><td>${r.trades}</td><td>${r.winrate}%</td><td>${r.expectancy}</td></tr>`;
+    html += `</tbody></table></div>`;
+    container.innerHTML = html;
+  }
+  
+  // ================= GEMIDDELD TEKORT (shortfall) =================
+  function calculateAverageShortfall(trades){
+    const groups = {};
+    for(const t of trades){
+      const reason = t.reason;
+      if(!reason) continue;
+      let reasonScore = toNumber(t.reasonScore);
+      if(reasonScore === null) reasonScore = getFallbackReasonScore(t);
+      if(reasonScore === null) continue;
+      if(!groups[reason]) groups[reason] = { totalScore:0, count:0 };
+      groups[reason].totalScore += reasonScore;
+      groups[reason].count++;
+    }
+    const results = [];
+    for(const [reason, data] of Object.entries(groups)) results.push({ reason, count:data.count, avgShortfall:data.totalScore/data.count });
+    results.sort((a,b)=>a.avgShortfall - b.avgShortfall);
+    return results;
+  }
+  function renderShortfallTable(trades){
+    const container = el("shortfallSection");
+    if(!container) return;
+    const data = calculateAverageShortfall(trades);
+    if(!data.length){ container.innerHTML = "<p class='emptyState'>Geen filterdata beschikbaar (geen WAIT trades met reason)</p>"; return; }
+    let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Filter</th><th>Aantal</th><th>Gem. tekort</th></tr></thead><tbody>`;
+    for(const item of data){
+      const avg = item.avgShortfall.toFixed(2);
+      const cls = item.avgShortfall < 0 ? "negative" : "positive";
+      html += `<tr><td>${escapeHtml(item.reason)}</td><td>${item.count}</td><td class="${cls}">${avg}</td></tr>`;
+    }
+    html += `</tbody></table></div><div class="shortfall-note">💡 Negatief = onder target (filter streng), positief = boven target (mild). Target LOW_RR = 1.5, LOW_CONFLUENCE = 70.</div>`;
+    container.innerHTML = html;
+  }
+  
+  // ================= TABELLEN (ENTRY / HOLD / WAIT / EXIT) =================
+  function renderActionTable(containerId, trades, action){
+    const container = el(containerId);
+    if(!container) return;
+    const filtered = trades.filter(t => t.action === action);
+    if(!filtered.length){
+      container.innerHTML = `<p class='emptyState'>Geen ${action} trades</p>`;
+      return;
+    }
+    let html = `<div class="tableWrap"><table class="shortfall-table"><thead><tr><th>Symbol</th><th>Side</th><th>R/R</th><th>Confluence</th><th>Sniper score</th><th>Reason</th><th>Timestamp</th></table></thead><tbody>`;
+    for(const t of filtered){
+      html += `<tr class="${action === 'ENTRY' ? 'entryRow' : (action === 'WAIT' ? 'waitRow' : (action === 'EXIT' ? 'rejectRow' : ''))}">
+        <td>${escapeHtml(t.symbol)}</td>
+        <td>${t.side === "bull" ? "LONG" : "SHORT"}</td>
+        <td>${t.rr ? t.rr : "—"}</td>
+        <td>${t.confluence ?? "—"}</td>
+        <td>${t.sniperScore ?? "—"}</td>
+        <td>${escapeHtml(t.reason || "")}</td>
+        <td>${t.ts ? new
