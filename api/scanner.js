@@ -563,10 +563,29 @@ export async function buildScanPayload(options = {}) {
   }
 
   const btcRaw = rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") || rawCoins[0];
+  
+  // ========== VERBETERDE BTC STATE ==========
+  const btcChange24 = Number(btcRaw?.price_change_percentage_24h || 0);
+  const btcChange1h = Number(btcRaw?.price_change_percentage_1h_in_currency || 0);
+
+  let btcState = "NEUTRAL";
+
+  if (btcChange24 > 1 && btcChange1h > 0.2) {
+    btcState = "STRONG_BULL";
+  } else if (btcChange24 < -1 && btcChange1h < -0.2) {
+    btcState = "STRONG_BEAR";
+  } else if (btcChange24 > 0) {
+    btcState = "BULLISH";
+  } else if (btcChange24 < 0) {
+    btcState = "BEARISH";
+  }
+
   const btc = {
-    state: Number(btcRaw?.price_change_percentage_24h || 0) >= 0 ? "BULLISH" : "BEARISH",
-    chg24: Number(btcRaw?.price_change_percentage_24h || 0)
+    state: btcState,
+    chg24: btcChange24,
+    chg1h: btcChange1h
   };
+  // ==========================================
 
   const regime = detectRegime(rawCoins) || "NORMAL";
   const market = classifyMarket(rawCoins);
