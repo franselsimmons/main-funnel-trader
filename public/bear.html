@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bear Signals</title>
+  <title>Bear Scanner Funnel</title>
   <link rel="stylesheet" href="main.css">
   <link rel="stylesheet" href="bear.css">
 </head>
@@ -11,9 +11,9 @@
 
   <div class="pageShell">
     <div class="header">
-      <h1>🔴 BEAR FUNNEL</h1>
+      <h1>🔴 BEAR SCANNER FUNNEL</h1>
       <div id="statusLine">Laden...</div>
-      
+
       <div class="nav">
         <a href="index.html" class="btn">Home</a>
         <a href="bull.html" class="btn">Bull</a>
@@ -24,22 +24,26 @@
     </div>
 
     <div class="funnel-section">
-      <h2>ENTRY</h2>
+      <h2>🔥 HOT CANDIDATES</h2>
+      <small class="stageNote">Scanner high-priority. Geen echte trade entry.</small>
       <div id="entry"></div>
     </div>
 
     <div class="funnel-section">
-      <h2>ALMOST</h2>
+      <h2>⚠️ ALMOST</h2>
+      <small class="stageNote">Bijna sterk genoeg voor HOT.</small>
       <div id="almost"></div>
     </div>
 
     <div class="funnel-section">
-      <h2>BUILDUP</h2>
+      <h2>📉 BUILDUP</h2>
+      <small class="stageNote">Vroege opbouwfase.</small>
       <div id="buildup"></div>
     </div>
 
     <div class="funnel-section">
-      <h2>RADAR</h2>
+      <h2>📡 RADAR</h2>
+      <small class="stageNote">Watchlist-only.</small>
       <div id="radar"></div>
     </div>
 
@@ -48,15 +52,20 @@
         <div class="modal-header">
           <div>
             <h2 id="m-title">Coin</h2>
-            <p>Short Analyse</p>
+            <p>Short Scanner Analyse</p>
           </div>
           <button class="close-btn" onclick="closeModal()">✕</button>
         </div>
+
         <div class="modal-grid">
           <div class="m-box"><span>Prijs</span><strong id="m-price">$0</strong></div>
           <div class="m-box"><span>Score</span><strong id="m-score">0</strong></div>
           <div class="m-box"><span>Flow</span><strong id="m-flow">-</strong></div>
           <div class="m-box"><span>24h Chg</span><strong id="m-change">0%</strong></div>
+          <div class="m-box"><span>Scanner Stage</span><strong id="m-stage">-</strong></div>
+          <div class="m-box"><span>Intent</span><strong id="m-intent">-</strong></div>
+          <div class="m-box"><span>TF Score</span><strong id="m-tf">-</strong></div>
+          <div class="m-box"><span>VM</span><strong id="m-vm">-</strong></div>
         </div>
       </div>
     </div>
