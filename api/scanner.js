@@ -172,18 +172,40 @@ function safeStage(stage) {
   return STAGES.includes(stage) ? stage : "radar";
 }
 
-// ================= DISPLAY LOGIC (ADAPTIVE) =================
-function displayDirectionAllowed(c, side, adaptive = {}) {
+// ================= AANPASSING 2: directionele druk =================
+function getDirectionalPressure(c) {
   const ch24 = Number(c.change24 || 0);
   const ch1 = Number(c.change1h || 0);
+  // 1h weegt zwaarder dan 24h, omdat scanner elke paar minuten draait.
+  return (ch1 * 0.70) + (ch24 * 0.30);
+}
+
+// ================= AANPASSING 3: nieuwe displayDirectionAllowed =================
+function displayDirectionAllowed(c, side, adaptive = {}) {
+  const pressure = getDirectionalPressure(c);
   const vm = Number(c.vm || 0);
+  const minPressure = adaptive.scoreBoost > 0 ? 0.025 : 0.05;
 
   if (side === "bull") {
-    return ch24 > 0 || ch1 > 0 || (adaptive.allowNeutralDirection && vm > adaptive.vmMin * 1.8);
+    if (pressure > minPressure) return true;
+
+    return (
+      adaptive.allowNeutralDirection &&
+      vm > adaptive.vmMin * 2.5 &&
+      Number(c.change1h || 0) > 0
+    );
   }
+
   if (side === "bear") {
-    return ch24 < 0 || ch1 < 0 || (adaptive.allowNeutralDirection && vm > adaptive.vmMin * 1.8);
+    if (pressure < -minPressure) return true;
+
+    return (
+      adaptive.allowNeutralDirection &&
+      vm > adaptive.vmMin * 2.5 &&
+      Number(c.change1h || 0) < 0
+    );
   }
+
   return false;
 }
 
@@ -224,7 +246,7 @@ function calculateFreshness(c, side) {
   return Math.max(0, Math.min(freshness, 30));
 }
 
-// ================= DIRECTIONAL SCORE (ADAPTIVE) =================
+// ================= DIRECTIONAL SCORE (AANPASSING 4) =================
 function calculateScore(c, regime, side, adaptive = {}) {
   let score = 0;
   const dir = side === "bear" ? -1 : 1;
@@ -254,6 +276,13 @@ function calculateScore(c, regime, side, adaptive = {}) {
   else if (vm > 0.04) score += 3;
 
   score += freshness;
+
+  // Aanpassing 4: directionele penalty
+  const pressure = getDirectionalPressure(c);
+  const alignedPressure = side === "bear" ? -pressure : pressure;
+
+  if (alignedPressure < 0.03) score -= 10;
+  if (alignedPressure < 0) score -= 20;
 
   if (regime === "LOW_VOL") score -= 8;
   if (regime === "HIGH_VOL") score += 4;
@@ -402,7 +431,7 @@ function sortFunnel(funnel) {
   }
 }
 
-// ================= UI FALLBACK FILL (ADAPTIVE) =================
+// ================= UI FALLBACK FILL (AANPASSING 5, 7) =================
 function fillUiFallback({
   rawCoins,
   regime,
@@ -430,12 +459,18 @@ function fillUiFallback({
     if (side === "bear" && ch24 >= 0 && ch1 >= 0) continue;
 
     const flow = detectFlow(base, adaptive);
+    // Aanpassing 7: fallback alleen TREND of BUILDING
+    if (flow !== "TREND" && flow !== "BUILDING") continue;
+
     const score = calculateScore(base, regime, side, adaptive);
+    
+    // Aanpassing 5: minimum score omhoog
+    const minFallbackScore = adaptive.scoreBoost > 0 ? 18 : 22;
+    if (score < minFallbackScore) continue;
+
     const edge = calculateEdge(base, regime) || 0;
     const freshness = calculateFreshness(base, side);
     const tfMeta = buildCoinTimeframeMeta({ ...base, side, flow, moveScore: score, freshness, edge });
-
-    if (score < 6) continue;
 
     list.push({
       ...base,
@@ -459,17 +494,28 @@ function fillUiFallback({
   }
 
   list.sort((a, b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
+
   let added = 0;
-  let entrySeeded = funnel[side].entry.length > 0;
+
   for (const coin of list) {
     if (added >= max) break;
     if (countSide(funnel, side) >= targetMinimum) break;
+
     let stage = safeStage(coin.stage);
-    if (!entrySeeded) {
-      stage = "entry";
-      entrySeeded = true;
+
+    // Aanpassing 5: fallback mag nooit entry zijn → max almost
+    if (stage === "entry") {
+      stage = "almost";
     }
-    funnel[side][stage].push({ ...coin, stage });
+
+    funnel[side][stage].push({
+      ...coin,
+      stage,
+      stageSource: "ui_fallback",
+      uiOnly: true,
+      scannerQuality: "FALLBACK"
+    });
+
     added++;
   }
 }
@@ -563,10 +609,29 @@ export async function buildScanPayload(options = {}) {
   }
 
   const btcRaw = rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") || rawCoins[0];
+  
+  // ========== AANPASSING 1: verbeterde BTC state ==========
+  const btcChange24 = Number(btcRaw?.price_change_percentage_24h || 0);
+  const btcChange1h = Number(btcRaw?.price_change_percentage_1h_in_currency || 0);
+
+  let btcState = "NEUTRAL";
+
+  if (btcChange24 > 1 && btcChange1h > 0.2) {
+    btcState = "STRONG_BULL";
+  } else if (btcChange24 < -1 && btcChange1h < -0.2) {
+    btcState = "STRONG_BEAR";
+  } else if (btcChange24 > 0.15 || btcChange1h > 0.15) {
+    btcState = "BULLISH";
+  } else if (btcChange24 < -0.15 || btcChange1h < -0.15) {
+    btcState = "BEARISH";
+  }
+
   const btc = {
-    state: Number(btcRaw?.price_change_percentage_24h || 0) >= 0 ? "BULLISH" : "BEARISH",
-    chg24: Number(btcRaw?.price_change_percentage_24h || 0)
+    state: btcState,
+    chg24: btcChange24,
+    chg1h: btcChange1h
   };
+  // ======================================================
 
   const regime = detectRegime(rawCoins) || "NORMAL";
   const market = classifyMarket(rawCoins);
@@ -635,9 +700,11 @@ export async function buildScanPayload(options = {}) {
       const uiStage = realFilterStage || fallbackStage(score, flow, freshness);
       const newStage = safeStage(realFilterStage ? mergeStage(prev.stage, realFilterStage) : uiStage);
 
+      // Aanpassing 6: scannerQuality toevoegen
       coin.stage = newStage;
       coin.stageSource = realFilterStage ? "filter" : "fallback";
       coin.uiOnly = !realFilterStage;
+      coin.scannerQuality = realFilterStage ? "FILTER" : "FALLBACK";
 
       funnel[direction][newStage].push(coin);
 
