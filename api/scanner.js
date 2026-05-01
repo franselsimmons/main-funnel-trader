@@ -402,7 +402,7 @@ function sortFunnel(funnel) {
   }
 }
 
-// ================= UI FALLBACK FILL (ADAPTIVE + FIX 4) =================
+// ================= UI FALLBACK FILL (ADAPTIVE) =================
 function fillUiFallback({
   rawCoins,
   regime,
@@ -429,20 +429,13 @@ function fillUiFallback({
     if (side === "bull" && ch24 <= 0 && ch1 <= 0) continue;
     if (side === "bear" && ch24 >= 0 && ch1 >= 0) continue;
 
-    // FIX 4: momentum filter
-    if (Math.abs(ch1) < 0.15 && Math.abs(ch24) < 1) {
-      continue;
-    }
-
     const flow = detectFlow(base, adaptive);
     const score = calculateScore(base, regime, side, adaptive);
-    
-    // FIX 4: harde score drempel (voorheen 6, nu 20)
-    if (score < 20) continue;
-
     const edge = calculateEdge(base, regime) || 0;
     const freshness = calculateFreshness(base, side);
     const tfMeta = buildCoinTimeframeMeta({ ...base, side, flow, moveScore: score, freshness, edge });
+
+    if (score < 6) continue;
 
     list.push({
       ...base,
@@ -541,7 +534,7 @@ async function handleBitgetUniverseUnavailable(scanSide) {
   throw new Error("bitget_universe_unavailable");
 }
 
-// ================= CORE SCANNER =================
+// ================= CORE =================
 export async function buildScanPayload(options = {}) {
   const scanSide = normalizeScanSide(options.side);
   const notify = options.notify !== false;
@@ -570,27 +563,9 @@ export async function buildScanPayload(options = {}) {
   }
 
   const btcRaw = rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") || rawCoins[0];
-  
-  // Verbeterde BTC state
-  const btcChange24 = Number(btcRaw?.price_change_percentage_24h || 0);
-  const btcChange1h = Number(btcRaw?.price_change_percentage_1h_in_currency || 0);
-
-  let btcState = "NEUTRAL";
-
-  if (btcChange24 > 1 && btcChange1h > 0.2) {
-    btcState = "STRONG_BULL";
-  } else if (btcChange24 < -1 && btcChange1h < -0.2) {
-    btcState = "STRONG_BEAR";
-  } else if (btcChange24 > 0) {
-    btcState = "BULLISH";
-  } else if (btcChange24 < 0) {
-    btcState = "BEARISH";
-  }
-
   const btc = {
-    state: btcState,
-    chg24: btcChange24,
-    chg1h: btcChange1h
+    state: Number(btcRaw?.price_change_percentage_24h || 0) >= 0 ? "BULLISH" : "BEARISH",
+    chg24: Number(btcRaw?.price_change_percentage_24h || 0)
   };
 
   const regime = detectRegime(rawCoins) || "NORMAL";
@@ -623,17 +598,8 @@ export async function buildScanPayload(options = {}) {
     for (const direction of sidesToScan) {
       if (!displayDirectionAllowed(base, direction, adaptive)) continue;
 
-      // FIX 4: extra momentum filter in main loop
-      if (Math.abs(base.change1h) < 0.15 && Math.abs(base.change24) < 1) {
-        continue;
-      }
-
       const flow = detectFlow(base, adaptive);
       const score = calculateScore(base, regime, direction, adaptive);
-      
-      // FIX 4: harde score drempel (score < 20 → overslaan)
-      if (score < 20) continue;
-
       const edge = calculateEdge(base, regime) || 0;
       const freshness = calculateFreshness(base, direction);
       const tfMeta = buildCoinTimeframeMeta({
