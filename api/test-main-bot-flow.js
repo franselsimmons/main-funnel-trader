@@ -22,7 +22,6 @@ function buildTestSignal(type) {
     confluence: 88,
     leverage: 10,
     riskPct: 2,
-    dryRun: true,
   };
 
   if (normalizedType === "GOD") {
@@ -56,7 +55,9 @@ export default async function handler(req, res) {
     const type = String(req.query.type || "A").toUpperCase();
     const signal = buildTestSignal(type);
 
-    const result = await sendMainBotEntry(signal);
+    const result = await sendMainBotEntry(signal, {
+      forceDryRun: true,
+    });
 
     return res.status(200).json({
       ok: true,
