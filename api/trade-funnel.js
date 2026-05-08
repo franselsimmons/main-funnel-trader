@@ -1,9 +1,8 @@
 import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 import { processTrades } from "../lib/tradeSystem.js";
 
-const MAX_STORED_ENTRY_ROWS = 250;
-const MAX_STORED_REJECT_ROWS = 500;
-const MAX_STORED_TRADE_ROWS = 500;
+const MAX_RESPONSE_TRADES = 250;
+const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
 
 // ================= GENERIC HELPERS =================
 function safeArray(value) {
@@ -15,24 +14,31 @@ function safeNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function normalizeNotify(value) {
-  const v = String(value || "").toLowerCase();
-  return v === "true" || v === "1" || v === "yes";
-}
+function normalizeBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
 
-function normalizeStore(value, fallback = true) {
-  if (value === undefined || value === null) return fallback;
+  const v = String(value).trim().toLowerCase();
 
-  const v = String(value || "").toLowerCase();
-
-  if (v === "false" || v === "0" || v === "no") return false;
-  if (v === "true" || v === "1" || v === "yes") return true;
+  if (["true", "1", "yes", "y"].includes(v)) return true;
+  if (["false", "0", "no", "n"].includes(v)) return false;
 
   return fallback;
 }
 
+function normalizeNotify(value, fallback = true) {
+  return normalizeBoolean(value, fallback);
+}
+
+function normalizeStore(value, fallback = true) {
+  return normalizeBoolean(value, fallback);
+}
+
+function normalizeFullResponse(value, fallback = false) {
+  return normalizeBoolean(value, fallback);
+}
+
 function incrementCounter(map, key) {
-  map[key] = (map[key] || 0) + 1;
+  map[key] = Number(map[key] || 0) + 1;
 }
 
 function stageRank(stage) {
@@ -75,29 +81,16 @@ function passesTradeFunnelGate(coin) {
   const tfScore = safeNumber(coin.tfScore, 0);
   const tfStrength = safeNumber(coin.tfStrength, Math.abs(tfScore));
 
-  if (!symbol) {
-    return { ok: false, reason: "NO_SYMBOL" };
-  }
+  if (!symbol) return { ok: false, reason: "NO_SYMBOL" };
+  if (side !== "bull" && side !== "bear") return { ok: false, reason: "BAD_SIDE" };
+  if (Boolean(coin.uiOnly)) return { ok: false, reason: "UI_ONLY" };
 
-  if (side !== "bull" && side !== "bear") {
-    return { ok: false, reason: "BAD_SIDE" };
-  }
-
-  if (Boolean(coin.uiOnly)) {
-    return { ok: false, reason: "UI_ONLY" };
-  }
-
-  // Scanner-entry = hot table, geen echte trade-entry.
-  // TradeSystem krijgt alleen entry/almost.
   if (stage !== "entry" && stage !== "almost") {
     return { ok: false, reason: "BAD_STAGE" };
   }
 
-  if (flow === "NEUTRAL") {
-    return { ok: false, reason: "FLOW_NEUTRAL" };
-  }
+  if (flow === "NEUTRAL") return { ok: false, reason: "FLOW_NEUTRAL" };
 
-  // Entry mag iets lager dan almost, want entry komt al uit de sterkste scanner-bucket.
   if (stage === "entry" && score < 62) {
     return { ok: false, reason: "ENTRY_SCORE_TOO_LOW" };
   }
@@ -106,18 +99,12 @@ function passesTradeFunnelGate(coin) {
     return { ok: false, reason: "ALMOST_SCORE_TOO_LOW" };
   }
 
-  // BUILDING is minder sterk dan TREND.
   if (flow === "BUILDING" && score < 70) {
     return { ok: false, reason: "BUILDING_SCORE_TOO_LOW" };
   }
 
-  if (vm < 0.055) {
-    return { ok: false, reason: "VM_TOO_LOW" };
-  }
-
-  if (tfStrength < 1) {
-    return { ok: false, reason: "TF_TOO_WEAK" };
-  }
+  if (vm < 0.055) return { ok: false, reason: "VM_TOO_LOW" };
+  if (tfStrength < 1) return { ok: false, reason: "TF_TOO_WEAK" };
 
   if (flow === "BUILDING" && tfStrength < 1.4) {
     return { ok: false, reason: "BUILDING_TF_TOO_WEAK" };
@@ -132,7 +119,7 @@ function getTradeFunnelCandidates(latest) {
     ...safeArray(latest?.funnel?.bull?.entry),
     ...safeArray(latest?.funnel?.bear?.entry),
     ...safeArray(latest?.funnel?.bull?.almost),
-    ...safeArray(latest?.funnel?.bear?.almost)
+    ...safeArray(latest?.funnel?.bear?.almost),
   ];
 
   const accepted = new Map();
@@ -178,8 +165,8 @@ function getTradeFunnelCandidates(latest) {
         moveScore: score,
         vm,
         tfScore,
-        tfStrength
-      })
+        tfStrength,
+      }),
     };
 
     const key = `${symbol}_${side}`;
@@ -216,6 +203,66 @@ function getTradeFunnelCandidates(latest) {
   return result;
 }
 
+// ================= RESPONSE COMPACTION =================
+function compactAction(action) {
+  if (!action || typeof action !== "object") return action;
+
+  return {
+    symbol: action.symbol,
+    side: action.side,
+    action: action.action,
+    reason: action.reason,
+    setupClass: action.setupClass,
+    grade: action.grade,
+    entry: action.entry,
+    sl: action.sl,
+    tp: action.tp,
+    rr: action.rr,
+    baseRR: action.baseRR,
+    confluence: action.confluence,
+    sniperScore: action.sniperScore,
+    rsi: action.rsi,
+    rsiHTF: action.rsiHTF,
+    rsiZone: action.rsiZone,
+    flow: action.flow,
+    obBias: action.obBias,
+    spreadPct: action.spreadPct,
+    depthMinUsd1p: action.depthMinUsd1p,
+    btcState: action.btcState,
+    regime: action.regime,
+    strategyVersion: action.strategyVersion,
+    ts: action.ts,
+  };
+}
+
+function compactResponse(data) {
+  const actions = Array.isArray(data?.tradeSystemResult?.actions)
+    ? data.tradeSystemResult.actions
+    : safeArray(data?.trades);
+
+  return {
+    ok: Boolean(data?.ok),
+    updatedAt: data?.updatedAt || Date.now(),
+    tradeFunnelUpdatedAt: data?.tradeFunnelUpdatedAt || null,
+
+    btc: data?.btc || null,
+    regime: data?.regime || null,
+    market: data?.market || null,
+
+    tradeFunnelInputCount: safeNumber(data?.tradeFunnelInputCount, 0),
+    tradeFunnelInputSymbols: safeArray(data?.tradeFunnelInputSymbols).slice(0, 250),
+
+    trades: actions.slice(0, MAX_RESPONSE_TRADES).map(compactAction),
+
+    tradeSystemResult: {
+      candidatesCount: safeNumber(data?.tradeSystemResult?.candidatesCount, 0),
+      strategyVersion: data?.tradeSystemResult?.strategyVersion || null,
+      durableEnabled: Boolean(data?.tradeSystemResult?.durableEnabled),
+      actions: actions.slice(0, MAX_RESPONSE_TRADES).map(compactAction),
+    },
+  };
+}
+
 // ================= CORE =================
 export async function runTradeFunnel(options = {}) {
   const notify = options.notify !== false;
@@ -236,7 +283,7 @@ export async function runTradeFunnel(options = {}) {
         log: true,
         btc: latest.btc,
         regime: latest.regime,
-        market: latest.market
+        market: latest.market,
       })
     : { actions: [], candidatesCount: 0 };
 
@@ -252,9 +299,11 @@ export async function runTradeFunnel(options = {}) {
     trades,
     tradeSystemResult: result,
     tradeFunnelInputCount: candidates.length,
-    tradeFunnelInputSymbols: candidates.map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`),
+    tradeFunnelInputSymbols: candidates.map(c =>
+      `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`
+    ),
     tradeFunnelUpdatedAt: now,
-    updatedAt: now
+    updatedAt: now,
   };
 
   if (store) {
@@ -266,15 +315,38 @@ export async function runTradeFunnel(options = {}) {
 
 // ================= HANDLER =================
 export default async function handler(req, res) {
-  try {
-    const notify = normalizeNotify(req?.query?.notify);
-    const store = normalizeStore(req?.query?.store, true);
+  const notify = normalizeNotify(req?.query?.notify, true);
+  const store = normalizeStore(req?.query?.store, true);
+  const full = normalizeFullResponse(req?.query?.full, false);
 
+  try {
     const data = await runTradeFunnel({ notify, store });
 
-    return res.status(200).json(data);
+    return res.status(200).json(full ? data : compactResponse(data));
   } catch (e) {
+    const message = e?.message || "unknown_error";
+
+    if (message === LOCK_BUSY_ERROR) {
+      return res.status(200).json({
+        ok: true,
+        skipped: true,
+        busy: true,
+        reason: LOCK_BUSY_ERROR,
+        note: "Another trade-funnel run is still active. This tick was skipped.",
+        notify,
+        store,
+        ts: Date.now(),
+      });
+    }
+
     console.error("TRADE-FUNNEL ERROR:", e);
-    return res.status(500).json({ ok: false, error: e.message });
+
+    return res.status(500).json({
+      ok: false,
+      error: message,
+      notify,
+      store,
+      ts: Date.now(),
+    });
   }
 }
