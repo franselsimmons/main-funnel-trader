@@ -15,50 +15,35 @@ function safeNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-// FIX: default moet TRUE zijn.
-// /api/trade-funnel = notify aan
-// /api/trade-funnel?notify=false = notify uit
-function normalizeNotify(value, fallback = true) {
-  if (value === undefined || value === null || value === "") return fallback;
-
-  const v = String(value).trim().toLowerCase();
-
-  if (["true", "1", "yes", "y"].includes(v)) return true;
-  if (["false", "0", "no", "n"].includes(v)) return false;
-
-  return fallback;
+function normalizeNotify(value) {
+  const v = String(value || "").toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
 }
 
 function normalizeStore(value, fallback = true) {
-  if (value === undefined || value === null || value === "") return fallback;
+  if (value === undefined || value === null) return fallback;
 
-  const v = String(value).trim().toLowerCase();
+  const v = String(value || "").toLowerCase();
 
-  if (["false", "0", "no", "n"].includes(v)) return false;
-  if (["true", "1", "yes", "y"].includes(v)) return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+  if (v === "true" || v === "1" || v === "yes") return true;
 
   return fallback;
 }
 
 function incrementCounter(map, key) {
-  map[key] = Number(map[key] || 0) + 1;
+  map[key] = (map[key] || 0) + 1;
 }
 
 function stageRank(stage) {
-  const s = String(stage || "").toLowerCase();
-
-  if (s === "entry") return 2;
-  if (s === "almost") return 1;
-
+  if (stage === "entry") return 2;
+  if (stage === "almost") return 1;
   return 0;
 }
 
 function flowRank(flow) {
-  const f = String(flow || "").toUpperCase();
-
-  if (f === "TREND") return 2;
-  if (f === "BUILDING") return 1;
-
+  if (flow === "TREND") return 2;
+  if (flow === "BUILDING") return 1;
   return 0;
 }
 
@@ -78,71 +63,17 @@ function candidateQualityScore(c) {
   );
 }
 
-function trimArray(rows, max) {
-  if (!Array.isArray(rows)) return [];
-  if (rows.length <= max) return rows;
-  return rows.slice(-max);
-}
-
-function buildActionSummary(actions) {
-  const rows = safeArray(actions);
-
-  const actionCounts = {};
-  const waitReasonCounts = {};
-  const entryRows = [];
-
-  for (const row of rows) {
-    const action = String(row?.action || "UNKNOWN").toUpperCase();
-    const reason = String(row?.reason || "UNKNOWN").toUpperCase();
-
-    incrementCounter(actionCounts, action);
-
-    if (action === "WAIT") {
-      incrementCounter(waitReasonCounts, reason);
-    }
-
-    if (action === "ENTRY") {
-      entryRows.push({
-        symbol: row.symbol,
-        side: row.side,
-        setupClass: row.setupClass,
-        reason: row.reason,
-        score: row.score,
-        confluence: row.confluence,
-        sniperScore: row.sniperScore,
-        rr: row.rr,
-        entry: row.entry,
-        sl: row.sl,
-        tp: row.tp,
-      });
-    }
-  }
-
-  const topWaitReasons = Object.entries(waitReasonCounts)
-    .map(([reason, count]) => ({ reason, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 15);
-
-  return {
-    totalActions: rows.length,
-    actionCounts,
-    entries: entryRows.length,
-    entryRows,
-    topWaitReasons,
-  };
-}
-
 // ================= TRADE-FUNNEL GATE =================
 function passesTradeFunnelGate(coin) {
-  const symbol = String(coin?.symbol || "").toUpperCase().trim();
-  const side = String(coin?.side || "").toLowerCase().trim();
-  const stage = String(coin?.stage || "").toLowerCase();
-  const flow = String(coin?.flow || "NEUTRAL").toUpperCase();
+  const symbol = String(coin.symbol || "").toUpperCase().trim();
+  const side = String(coin.side || "").toLowerCase().trim();
+  const stage = String(coin.stage || "").toLowerCase();
+  const flow = String(coin.flow || "NEUTRAL").toUpperCase();
 
-  const score = safeNumber(coin?.moveScore, 0);
-  const vm = safeNumber(coin?.vm, 0);
-  const tfScore = safeNumber(coin?.tfScore, 0);
-  const tfStrength = safeNumber(coin?.tfStrength, Math.abs(tfScore));
+  const score = safeNumber(coin.moveScore, 0);
+  const vm = safeNumber(coin.vm, 0);
+  const tfScore = safeNumber(coin.tfScore, 0);
+  const tfStrength = safeNumber(coin.tfStrength, Math.abs(tfScore));
 
   if (!symbol) {
     return { ok: false, reason: "NO_SYMBOL" };
@@ -156,6 +87,8 @@ function passesTradeFunnelGate(coin) {
     return { ok: false, reason: "UI_ONLY" };
   }
 
+  // Scanner-entry = hot table, geen echte trade-entry.
+  // TradeSystem krijgt alleen entry/almost.
   if (stage !== "entry" && stage !== "almost") {
     return { ok: false, reason: "BAD_STAGE" };
   }
@@ -164,6 +97,7 @@ function passesTradeFunnelGate(coin) {
     return { ok: false, reason: "FLOW_NEUTRAL" };
   }
 
+  // Entry mag iets lager dan almost, want entry komt al uit de sterkste scanner-bucket.
   if (stage === "entry" && score < 62) {
     return { ok: false, reason: "ENTRY_SCORE_TOO_LOW" };
   }
@@ -172,6 +106,7 @@ function passesTradeFunnelGate(coin) {
     return { ok: false, reason: "ALMOST_SCORE_TOO_LOW" };
   }
 
+  // BUILDING is minder sterk dan TREND.
   if (flow === "BUILDING" && score < 70) {
     return { ok: false, reason: "BUILDING_SCORE_TOO_LOW" };
   }
@@ -197,7 +132,7 @@ function getTradeFunnelCandidates(latest) {
     ...safeArray(latest?.funnel?.bull?.entry),
     ...safeArray(latest?.funnel?.bear?.entry),
     ...safeArray(latest?.funnel?.bull?.almost),
-    ...safeArray(latest?.funnel?.bear?.almost),
+    ...safeArray(latest?.funnel?.bear?.almost)
   ];
 
   const accepted = new Map();
@@ -225,20 +160,15 @@ function getTradeFunnelCandidates(latest) {
 
     const normalized = {
       ...coin,
-
       symbol,
       side,
       stage,
       scannerStage: stage,
       flow,
-
       moveScore: score,
       vm,
       tfScore,
       tfStrength,
-
-      uiOnly: false,
-
       tradeFunnelQuality: candidateQualityScore({
         ...coin,
         symbol,
@@ -248,8 +178,8 @@ function getTradeFunnelCandidates(latest) {
         moveScore: score,
         vm,
         tfScore,
-        tfStrength,
-      }),
+        tfStrength
+      })
     };
 
     const key = `${symbol}_${side}`;
@@ -283,11 +213,7 @@ function getTradeFunnelCandidates(latest) {
     result.map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`).join(", ")
   );
 
-  return {
-    candidates: result,
-    rawCount: buckets.length,
-    rejected: rejectCounts,
-  };
+  return result;
 }
 
 // ================= CORE =================
@@ -301,29 +227,18 @@ export async function runTradeFunnel(options = {}) {
     throw new Error("no_latest_scan_available");
   }
 
-  const {
-    candidates,
-    rawCount,
-    rejected,
-  } = getTradeFunnelCandidates(latest);
-
+  const candidates = getTradeFunnelCandidates(latest);
   const now = Date.now();
 
   const result = candidates.length
     ? await processTrades(candidates, {
         notify,
         log: true,
-        analyze: false,
-        certaintyMode: "aggressive",
         btc: latest.btc,
         regime: latest.regime,
-        market: latest.market,
+        market: latest.market
       })
-    : {
-        actions: [],
-        candidatesCount: 0,
-        strategyVersion: "NO_CANDIDATES",
-      };
+    : { actions: [], candidatesCount: 0 };
 
   const trades = Array.isArray(result)
     ? result
@@ -331,41 +246,15 @@ export async function runTradeFunnel(options = {}) {
       ? result.actions
       : [];
 
-  const summary = buildActionSummary(trades);
-
-  console.log("TRADE_FUNNEL_RESULT_SUMMARY", JSON.stringify({
-    notify,
-    store,
-    rawCount,
-    accepted: candidates.length,
-    rejected,
-    candidatesCount: result?.candidatesCount ?? candidates.length,
-    ...summary,
-  }));
-
   const updated = {
     ...latest,
-
     ok: true,
-
-    trades: trimArray(trades, MAX_STORED_TRADE_ROWS),
-    tradeSystemResult: {
-      ...result,
-      actions: trimArray(trades, MAX_STORED_TRADE_ROWS),
-    },
-
+    trades,
+    tradeSystemResult: result,
     tradeFunnelInputCount: candidates.length,
-    tradeFunnelRawCount: rawCount,
-    tradeFunnelRejected: rejected,
-
-    tradeFunnelInputSymbols: candidates
-      .slice(0, MAX_STORED_ENTRY_ROWS)
-      .map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`),
-
-    tradeFunnelActionSummary: summary,
-
+    tradeFunnelInputSymbols: candidates.map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`),
     tradeFunnelUpdatedAt: now,
-    updatedAt: now,
+    updatedAt: now
   };
 
   if (store) {
@@ -378,33 +267,14 @@ export async function runTradeFunnel(options = {}) {
 // ================= HANDLER =================
 export default async function handler(req, res) {
   try {
-    // FIX: standaard TRUE.
-    // Gewoon /api/trade-funnel draaien = Discord aan.
-    // Alleen /api/trade-funnel?notify=false zet Discord uit.
-    const notify = normalizeNotify(req?.query?.notify, true);
+    const notify = normalizeNotify(req?.query?.notify);
     const store = normalizeStore(req?.query?.store, true);
 
-    console.log("TRADE_FUNNEL_HANDLER_START", JSON.stringify({
-      notify,
-      store,
-      query: req?.query || {},
-    }));
-
-    const data = await runTradeFunnel({
-      notify,
-      store,
-    });
+    const data = await runTradeFunnel({ notify, store });
 
     return res.status(200).json(data);
   } catch (e) {
-    console.error("TRADE-FUNNEL ERROR:", {
-      message: e.message,
-      stack: e.stack,
-    });
-
-    return res.status(500).json({
-      ok: false,
-      error: e.message,
-    });
+    console.error("TRADE-FUNNEL ERROR:", e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }
