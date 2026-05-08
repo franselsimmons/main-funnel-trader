@@ -69,51 +69,74 @@ function candidateQualityScore(c) {
   );
 }
 
-// ================= TRADE-FUNNEL GATE =================
+// ================= NORMALISATIE HELPERS VOOR API-GATE =================
+function normalizeSide(value) {
+  const s = String(value || "").toLowerCase().trim();
+
+  if (["bull", "long", "buy"].includes(s)) return "bull";
+  if (["bear", "short", "sell"].includes(s)) return "bear";
+
+  return "";
+}
+
+function normalizeStage(value) {
+  const s = String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^scanner[-_]/, "");
+
+  if (s === "entry") return "entry";
+  if (s === "almost") return "almost";
+
+  return "";
+}
+
+function normalizeFlow(value) {
+  const f = String(value || "NEUTRAL").toUpperCase().trim();
+
+  if (["TREND", "BREAKOUT", "RUNNING"].includes(f)) return "TREND";
+  if (["BUILDING", "BUILDUP"].includes(f)) return "BUILDING";
+
+  return "NEUTRAL";
+}
+
+function getCandidateScore(coin) {
+  return safeNumber(
+    coin.moveScore ??
+      coin.score ??
+      coin.tradeScore ??
+      coin.sniperScore,
+    0
+  );
+}
+
+// ================= TRADE-FUNNEL GATE (AANGEPAST) =================
+const TRADE_FUNNEL_MIN_SCORE = 45;
+const TRADE_FUNNEL_ALMOST_MIN_SCORE = 45;
+
 function passesTradeFunnelGate(coin) {
   const symbol = String(coin.symbol || "").toUpperCase().trim();
-  const side = String(coin.side || "").toLowerCase().trim();
-  const stage = String(coin.stage || "").toLowerCase();
-  const flow = String(coin.flow || "NEUTRAL").toUpperCase();
-
-  const score = safeNumber(coin.moveScore, 0);
-  const vm = safeNumber(coin.vm, 0);
-  const tfScore = safeNumber(coin.tfScore, 0);
-  const tfStrength = safeNumber(coin.tfStrength, Math.abs(tfScore));
+  const side = normalizeSide(coin.side);
+  const stage = normalizeStage(coin.stage);
+  const score = getCandidateScore(coin);
 
   if (!symbol) return { ok: false, reason: "NO_SYMBOL" };
-  if (side !== "bull" && side !== "bear") return { ok: false, reason: "BAD_SIDE" };
+  if (!side) return { ok: false, reason: "BAD_SIDE" };
   if (Boolean(coin.uiOnly)) return { ok: false, reason: "UI_ONLY" };
+  if (!stage) return { ok: false, reason: "BAD_STAGE" };
 
-  if (stage !== "entry" && stage !== "almost") {
-    return { ok: false, reason: "BAD_STAGE" };
-  }
-
-  if (flow === "NEUTRAL") return { ok: false, reason: "FLOW_NEUTRAL" };
-
-  if (stage === "entry" && score < 62) {
+  if (stage === "entry" && score < TRADE_FUNNEL_MIN_SCORE) {
     return { ok: false, reason: "ENTRY_SCORE_TOO_LOW" };
   }
 
-  if (stage === "almost" && score < 68) {
+  if (stage === "almost" && score < TRADE_FUNNEL_ALMOST_MIN_SCORE) {
     return { ok: false, reason: "ALMOST_SCORE_TOO_LOW" };
-  }
-
-  if (flow === "BUILDING" && score < 70) {
-    return { ok: false, reason: "BUILDING_SCORE_TOO_LOW" };
-  }
-
-  if (vm < 0.055) return { ok: false, reason: "VM_TOO_LOW" };
-  if (tfStrength < 1) return { ok: false, reason: "TF_TOO_WEAK" };
-
-  if (flow === "BUILDING" && tfStrength < 1.4) {
-    return { ok: false, reason: "BUILDING_TF_TOO_WEAK" };
   }
 
   return { ok: true, reason: "OK" };
 }
 
-// ================= CANDIDATE SELECTOR =================
+// ================= CANDIDATE SELECTOR (AANGEPAST) =================
 function getTradeFunnelCandidates(latest) {
   const buckets = [
     ...safeArray(latest?.funnel?.bull?.entry),
@@ -136,14 +159,10 @@ function getTradeFunnelCandidates(latest) {
     }
 
     const symbol = String(coin.symbol || "").toUpperCase().trim();
-    const side = String(coin.side || "").toLowerCase().trim();
-    const stage = String(coin.stage || "radar").toLowerCase();
-    const flow = String(coin.flow || "NEUTRAL").toUpperCase();
-
-    const score = safeNumber(coin.moveScore, 0);
-    const vm = safeNumber(coin.vm, 0);
-    const tfScore = safeNumber(coin.tfScore, 0);
-    const tfStrength = safeNumber(coin.tfStrength, Math.abs(tfScore));
+    const side = normalizeSide(coin.side);
+    const stage = normalizeStage(coin.stage);
+    const flow = normalizeFlow(coin.flow);
+    const score = getCandidateScore(coin);
 
     const normalized = {
       ...coin,
@@ -151,11 +170,21 @@ function getTradeFunnelCandidates(latest) {
       side,
       stage,
       scannerStage: stage,
+      stageSource: coin.stageSource || "tradefunnel_adapter",
       flow,
       moveScore: score,
-      vm,
-      tfScore,
-      tfStrength,
+      vm: safeNumber(
+        coin.vm ??
+        coin.volumeMomentum ??
+        coin.volMomentum,
+        0
+      ),
+      tfScore: safeNumber(coin.tfScore, 0),
+      tfStrength: safeNumber(
+        coin.tfStrength,
+        Math.abs(safeNumber(coin.tfScore, 0))
+      ),
+      uiOnly: false,
       tradeFunnelQuality: candidateQualityScore({
         ...coin,
         symbol,
@@ -163,9 +192,12 @@ function getTradeFunnelCandidates(latest) {
         stage,
         flow,
         moveScore: score,
-        vm,
-        tfScore,
-        tfStrength,
+        vm: safeNumber(coin.vm ?? coin.volumeMomentum ?? coin.volMomentum, 0),
+        tfScore: safeNumber(coin.tfScore, 0),
+        tfStrength: safeNumber(
+          coin.tfStrength,
+          Math.abs(safeNumber(coin.tfScore, 0))
+        ),
       }),
     };
 
@@ -200,7 +232,11 @@ function getTradeFunnelCandidates(latest) {
     result.map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`).join(", ")
   );
 
-  return result;
+  return {
+    candidates: result,
+    rawCount: buckets.length,
+    rejectCounts,
+  };
 }
 
 // ================= RESPONSE COMPACTION =================
@@ -249,6 +285,8 @@ function compactResponse(data) {
     regime: data?.regime || null,
     market: data?.market || null,
 
+    tradeFunnelRawCount: safeNumber(data?.tradeFunnelRawCount, 0),
+    tradeFunnelRejectCounts: data?.tradeFunnelRejectCounts || {},
     tradeFunnelInputCount: safeNumber(data?.tradeFunnelInputCount, 0),
     tradeFunnelInputSymbols: safeArray(data?.tradeFunnelInputSymbols).slice(0, 250),
 
@@ -274,7 +312,8 @@ export async function runTradeFunnel(options = {}) {
     throw new Error("no_latest_scan_available");
   }
 
-  const candidates = getTradeFunnelCandidates(latest);
+  const tradeFunnel = getTradeFunnelCandidates(latest);
+  const candidates = tradeFunnel.candidates;
   const now = Date.now();
 
   const result = candidates.length
@@ -298,7 +337,9 @@ export async function runTradeFunnel(options = {}) {
     ok: true,
     trades,
     tradeSystemResult: result,
+    tradeFunnelRawCount: tradeFunnel.rawCount,
     tradeFunnelInputCount: candidates.length,
+    tradeFunnelRejectCounts: tradeFunnel.rejectCounts,
     tradeFunnelInputSymbols: candidates.map(c =>
       `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`
     ),
