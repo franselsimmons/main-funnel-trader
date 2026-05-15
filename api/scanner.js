@@ -32,41 +32,42 @@ import { buildTimeframeContext } from "../lib/timeframe.js";
 const STAGES = ["entry", "almost", "buildup", "radar"];
 
 // ================= ADAPTIVE SCANNER CONFIG =================
+// AANGEPAST volgens de analyse (stap 1)
 function getAdaptiveScannerConfig(regime, market) {
   const trend = String(market?.trend || market?.state || "").toUpperCase();
   const r = String(regime || "NORMAL").toUpperCase();
 
   let cfg = {
-    vmMin: 0.012,
-    hardChange24: 0.08,
-    hardChange1h: 0.008,
-    targetMinimum: 18,
+    vmMin: 0.008,
+    hardChange24: 0.20,
+    hardChange1h: 0.03,
+    targetMinimum: 35,
     fallbackMax: 45,
     scoreBoost: 0,
     allowNeutralDirection: true
   };
 
   if (r === "LOW_VOL") {
-    cfg.vmMin = 0.008;
-    cfg.hardChange24 = 0.04;
-    cfg.hardChange1h = 0.004;
-    cfg.targetMinimum = 25;
+    cfg.vmMin = 0.006;
+    cfg.hardChange24 = 0.12;
+    cfg.hardChange1h = 0.02;
+    cfg.targetMinimum = 45;
     cfg.fallbackMax = 60;
-    cfg.scoreBoost = 6;
+    cfg.scoreBoost = 4;
   }
 
   if (r === "HIGH_VOL") {
-    cfg.vmMin = 0.018;
-    cfg.hardChange24 = 0.15;
-    cfg.hardChange1h = 0.015;
-    cfg.targetMinimum = 12;
-    cfg.fallbackMax = 30;
-    cfg.scoreBoost = -3;
+    cfg.vmMin = 0.015;
+    cfg.hardChange24 = 0.45;
+    cfg.hardChange1h = 0.07;
+    cfg.targetMinimum = 25;
+    cfg.fallbackMax = 35;
+    cfg.scoreBoost = -2;
   }
 
   if (trend === "BEARISH" || trend === "BULLISH") {
-    cfg.targetMinimum += 4;
-    cfg.fallbackMax += 10;
+    cfg.targetMinimum += 5;
+    cfg.fallbackMax += 8;
   }
 
   return cfg;
@@ -580,6 +581,20 @@ async function handleBitgetUniverseUnavailable(scanSide) {
   throw new Error("bitget_universe_unavailable");
 }
 
+// ================= NIEUWE HELPER: CLASSIFY BTC STATE =================
+function classifyBtcState({ change24, change1h }) {
+  const ch24 = Number(change24 || 0);
+  const ch1 = Number(change1h || 0);
+
+  if (ch24 > 1.50 && ch1 > 0.50) return "STRONG_BULL";
+  if (ch24 < -1.50 && ch1 < -0.50) return "STRONG_BEAR";
+
+  if (ch24 > 0.60 || ch1 > 0.25) return "BULLISH";
+  if (ch24 < -0.60 || ch1 < -0.25) return "BEARISH";
+
+  return "NEUTRAL";
+}
+
 // ================= CORE =================
 export async function buildScanPayload(options = {}) {
   const scanSide = normalizeScanSide(options.side);
@@ -610,21 +625,14 @@ export async function buildScanPayload(options = {}) {
 
   const btcRaw = rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") || rawCoins[0];
   
-  // ========== AANPASSING 1: verbeterde BTC state ==========
+  // ========== AANGEPAST: verbeterde BTC state met classifyBtcState ==========
   const btcChange24 = Number(btcRaw?.price_change_percentage_24h || 0);
   const btcChange1h = Number(btcRaw?.price_change_percentage_1h_in_currency || 0);
 
-  let btcState = "NEUTRAL";
-
-  if (btcChange24 > 1 && btcChange1h > 0.2) {
-    btcState = "STRONG_BULL";
-  } else if (btcChange24 < -1 && btcChange1h < -0.2) {
-    btcState = "STRONG_BEAR";
-  } else if (btcChange24 > 0.15 || btcChange1h > 0.15) {
-    btcState = "BULLISH";
-  } else if (btcChange24 < -0.15 || btcChange1h < -0.15) {
-    btcState = "BEARISH";
-  }
+  const btcState = classifyBtcState({
+    change24: btcChange24,
+    change1h: btcChange1h
+  });
 
   const btc = {
     state: btcState,
