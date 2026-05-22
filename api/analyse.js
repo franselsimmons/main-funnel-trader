@@ -1,30 +1,32 @@
 // ================= api/analyse.js =================
+// GET    /api/analyse          -> report
+// POST   /api/analyse          -> store actions/events + report
+// DELETE /api/analyse          -> reset analyze store
+//
+// Response geeft zowel `summary` top-level als `report.summary`.
+// Daardoor breekt frontend niet meer op report.summary undefined.
 
 import {
-  ingestAnalysisRows,
-  loadAnalysisRows,
-  resetAnalysisRows,
-  getAnalyzeStoreInfo
+  appendAnalyzeEvents,
+  readAllAnalyzeEvents,
+  resetAnalyzeStore,
+  getAnalyzeStoreMeta
 } from "../lib/analyze/analyzeStore.js";
 
 import {
-  buildFamilyAnalysis,
-  buildFamilyDefinitions,
-  TRACKED_FILTERS,
-  ANALYZE_ENGINE_VERSION
+  buildAnalyzeReport,
+  ANALYZE_FAMILY_VERSION
 } from "../lib/analyze/familyEngine.js";
 
-function sendJson(res, status, payload) {
-  res.statusCode = status;
+function setJsonHeaders(res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  res.end(JSON.stringify(payload));
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
-async function parseBody(req) {
+async function readBody(req) {
   if (req.body && typeof req.body === "object") return req.body;
 
   if (typeof req.body === "string") {
@@ -35,221 +37,137 @@ async function parseBody(req) {
     }
   }
 
-  return await new Promise(resolve => {
-    let raw = "";
+  const chunks = [];
 
-    req.on("data", chunk => {
-      raw += chunk;
-    });
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
 
-    req.on("end", () => {
-      if (!raw) return resolve({});
+  if (!chunks.length) return {};
 
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        resolve({});
-      }
-    });
+  const text = Buffer.concat(chunks).toString("utf8");
 
-    req.on("error", () => resolve({}));
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+function extractEvents(body) {
+  if (Array.isArray(body)) return body;
+
+  if (Array.isArray(body?.actions)) return body.actions;
+  if (Array.isArray(body?.events)) return body.events;
+  if (Array.isArray(body?.rows)) return body.rows;
+  if (Array.isArray(body?.trades)) return body.trades;
+
+  if (body?.action || body?.symbol || body?.tradeId) {
+    return [body];
+  }
+
+  return [];
+}
+
+function extractMeta(body) {
+  return {
+    runId: body?.runId || null,
+    btcState: body?.btcState || null,
+    strategyVersion: body?.strategyVersion || null,
+    discoveryMode: Boolean(body?.discoveryMode),
+    filterValues: body?.filterValues || body?.currentFilterValues || null,
+    tradeSystemFilters: body?.tradeSystemFilters || null
+  };
+}
+
+async function buildResponse(req) {
+  const includeLocal = String(req.query?.includeLocal || "true") !== "false";
+  const minClosed = Number(req.query?.minClosed || 10);
+
+  const events = await readAllAnalyzeEvents({
+    includeLocal
   });
-}
 
-function getQuery(req) {
-  const url = new URL(req.url || "/api/analyse", "http://localhost");
-  return Object.fromEntries(url.searchParams.entries());
-}
-
-function adminAllowed(req, query) {
-  const token = process.env.ANALYZE_ADMIN_TOKEN || "";
-  if (!token) return true;
-
-  const bearer = String(req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
-  return bearer === token || query.token === token;
-}
-
-function buildCompatReport({ analysis, rows, store }) {
-  const summary = analysis?.summary || {};
+  const report = buildAnalyzeReport(events, {
+    minClosed
+  });
 
   return {
-    version: analysis?.version || ANALYZE_ENGINE_VERSION,
-    generatedAt: analysis?.generatedAt || Date.now(),
+    ok: true,
+    version: ANALYZE_FAMILY_VERSION,
+    store: getAnalyzeStoreMeta(),
 
-    summary: {
-      actions: summary.actions ?? summary.normalizedRows ?? rows.length ?? 0,
-      trades: summary.trades ?? summary.normalizedRows ?? rows.length ?? 0,
+    summary: report.summary,
+    report,
 
-      open: summary.open ?? 0,
-      closed: summary.closed ?? 0,
-
-      wins: summary.wins ?? 0,
-      losses: summary.losses ?? 0,
-      winrate: summary.winrate ?? "0.0%",
-
-      totalR: summary.totalR ?? 0,
-      avgR: summary.avgR ?? 0,
-
-      totalPnlPct: summary.totalPnlPct ?? 0,
-      avgPnlPct: summary.avgPnlPct ?? 0,
-
-      longFamilies: summary.longFamilies ?? 50,
-      shortFamilies: summary.shortFamilies ?? 50,
-
-      rawRows: summary.rawRows ?? rows.length ?? 0,
-      normalizedRows: summary.normalizedRows ?? 0,
-      observedFamilies: summary.observedFamilies ?? 0,
-      families: summary.families ?? 100
-    },
-
-    longFamilies: analysis?.longFamilies || [],
-    shortFamilies: analysis?.shortFamilies || [],
-    families: analysis?.families || [],
-
-    topLong: analysis?.topLong || [],
-    topShort: analysis?.topShort || [],
-
-    rows: analysis?.rows || [],
-    actions: analysis?.rows || [],
-    trades: analysis?.rows || [],
-
-    trackedFilters: analysis?.trackedFilters || TRACKED_FILTERS,
-    filterValues: analysis?.filterValues || null,
-
-    store
+    rawRows: events.length
   };
 }
 
 export default async function handler(req, res) {
+  setJsonHeaders(res);
+
   if (req.method === "OPTIONS") {
-    return sendJson(res, 200, { ok: true });
+    res.status(204).end();
+    return;
   }
 
-  const query = getQuery(req);
-
   try {
-    if (req.method === "POST") {
-      const body = await parseBody(req);
-      const result = await ingestAnalysisRows(body, body?.meta || {});
+    if (req.method === "DELETE") {
+      const reset = await resetAnalyzeStore();
 
-      return sendJson(res, 200, {
+      res.status(200).json({
         ok: true,
-        ...result,
-        store: getAnalyzeStoreInfo()
+        reset
       });
+      return;
     }
 
-    if (req.method === "DELETE" || query.reset === "1") {
-      if (!adminAllowed(req, query)) {
-        return sendJson(res, 401, {
-          ok: false,
-          error: "UNAUTHORIZED_RESET"
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      const events = extractEvents(body);
+      const meta = extractMeta(body);
+
+      const stored = await appendAnalyzeEvents(events, {
+        ...meta,
+        source: "API_POST"
+      });
+
+      const response = await buildResponse(req);
+
+      res.status(200).json({
+        ...response,
+        stored
+      });
+      return;
+    }
+
+    if (req.method === "GET") {
+      if (String(req.query?.reset || "") === "true") {
+        const reset = await resetAnalyzeStore();
+
+        res.status(200).json({
+          ok: true,
+          reset
         });
+        return;
       }
 
-      const result = await resetAnalysisRows();
+      const response = await buildResponse(req);
 
-      return sendJson(res, 200, {
-        ok: true,
-        reset: true,
-        ...result
-      });
+      res.status(200).json(response);
+      return;
     }
 
-    if (req.method !== "GET") {
-      return sendJson(res, 405, {
-        ok: false,
-        error: "METHOD_NOT_ALLOWED"
-      });
-    }
-
-    const limit = Number(query.limit || process.env.ANALYZE_READ_LIMIT || 50_000);
-    const rows = await loadAnalysisRows({ limit });
-    const store = getAnalyzeStoreInfo();
-
-    if (query.raw === "1") {
-      return sendJson(res, 200, {
-        ok: true,
-        version: ANALYZE_ENGINE_VERSION,
-        store,
-        count: rows.length,
-        rows
-      });
-    }
-
-    if (query.definitions === "1") {
-      const definitions = buildFamilyDefinitions();
-
-      return sendJson(res, 200, {
-        ok: true,
-        version: ANALYZE_ENGINE_VERSION,
-        trackedFilters: TRACKED_FILTERS,
-        families: definitions,
-        report: {
-          version: ANALYZE_ENGINE_VERSION,
-          summary: {
-            families: definitions.length,
-            longFamilies: definitions.filter(f => f.side === "LONG").length,
-            shortFamilies: definitions.filter(f => f.side === "SHORT").length
-          },
-          trackedFilters: TRACKED_FILTERS,
-          families: definitions
-        }
-      });
-    }
-
-    const analysis = buildFamilyAnalysis(rows, {
-      limit,
-      side: query.side || "ALL"
-    });
-
-    const report = buildCompatReport({
-      analysis,
-      rows,
-      store
-    });
-
-    return sendJson(res, 200, {
-      ok: true,
-
-      // nieuwe shape
-      store,
-      ...analysis,
-
-      // compat shape voor oude frontend
-      report
+    res.status(405).json({
+      ok: false,
+      error: "METHOD_NOT_ALLOWED"
     });
   } catch (e) {
-    return sendJson(res, 500, {
+    res.status(500).json({
       ok: false,
       error: e.message,
-      stack: process.env.NODE_ENV === "development" ? e.stack : undefined,
-
-      report: {
-        summary: {
-          actions: 0,
-          trades: 0,
-          open: 0,
-          closed: 0,
-          wins: 0,
-          losses: 0,
-          winrate: "0.0%",
-          totalR: 0,
-          avgR: 0,
-          totalPnlPct: 0,
-          avgPnlPct: 0,
-          longFamilies: 50,
-          shortFamilies: 50
-        },
-        families: [],
-        longFamilies: [],
-        shortFamilies: [],
-        rows: [],
-        actions: [],
-        trades: [],
-        trackedFilters: TRACKED_FILTERS,
-        filterValues: null
-      }
+      stack: process.env.NODE_ENV === "production" ? undefined : e.stack
     });
   }
 }
