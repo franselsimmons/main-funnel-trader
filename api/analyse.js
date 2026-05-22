@@ -1,173 +1,196 @@
-// ================= api/analyse.js =================
-// GET    /api/analyse          -> report
-// POST   /api/analyse          -> store actions/events + report
-// DELETE /api/analyse          -> reset analyze store
-//
-// Response geeft zowel `summary` top-level als `report.summary`.
-// Daardoor breekt frontend niet meer op report.summary undefined.
+// api/analyse.js
 
-import {
-  appendAnalyzeEvents,
-  readAllAnalyzeEvents,
-  resetAnalyzeStore,
-  getAnalyzeStoreMeta
-} from "../lib/analyze/analyzeStore.js";
+import fs from "node:fs/promises";
+import path from "node:path";
 
-import {
-  buildAnalyzeReport,
-  ANALYZE_FAMILY_VERSION
-} from "../lib/analyze/familyEngine.js";
-
-function setJsonHeaders(res) {
+function sendJson(res, statusCode, payload) {
+  res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store, max-age=0");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.end(JSON.stringify(payload, null, 2));
 }
 
-async function readBody(req) {
-  if (req.body && typeof req.body === "object") return req.body;
+function serializeError(error) {
+  if (!error) return { message: "Unknown error" };
 
-  if (typeof req.body === "string") {
-    try {
-      return JSON.parse(req.body);
-    } catch {
-      return {};
-    }
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: process.env.NODE_ENV === "production" ? undefined : error.stack,
+    };
   }
 
-  const chunks = [];
-
-  for await (const chunk of req) {
-    chunks.push(chunk);
+  if (typeof error === "string") {
+    return { message: error };
   }
-
-  if (!chunks.length) return {};
-
-  const text = Buffer.concat(chunks).toString("utf8");
 
   try {
-    return JSON.parse(text);
+    return {
+      message: JSON.stringify(error),
+      raw: error,
+    };
   } catch {
-    return {};
+    return {
+      message: String(error),
+    };
   }
 }
 
-function extractEvents(body) {
-  if (Array.isArray(body)) return body;
+function safeNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-  if (Array.isArray(body?.actions)) return body.actions;
-  if (Array.isArray(body?.events)) return body.events;
-  if (Array.isArray(body?.rows)) return body.rows;
-  if (Array.isArray(body?.trades)) return body.trades;
+async function readJsonFile(filePath) {
+  const raw = await fs.readFile(filePath, "utf8");
+  if (!raw.trim()) return [];
+  return JSON.parse(raw);
+}
 
-  if (body?.action || body?.symbol || body?.tradeId) {
-    return [body];
+function extractTrades(payload) {
+  if (Array.isArray(payload)) return payload;
+
+  if (!payload || typeof payload !== "object") return [];
+
+  const candidates = [
+    payload.trades,
+    payload.items,
+    payload.data,
+    payload.history,
+    payload.closedTrades,
+    payload.openTrades,
+    payload.positions,
+    payload.records,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
   }
 
   return [];
 }
 
-function extractMeta(body) {
+async function loadTrades() {
+  const root = process.cwd();
+
+  const files = [
+    path.join(root, "data", "trades.json"),
+    path.join(root, "data", "trade-history.json"),
+    path.join(root, "data", "trades-history.json"),
+  ];
+
+  const trades = [];
+  const sources = [];
+
+  for (const file of files) {
+    try {
+      const payload = await readJsonFile(file);
+      const extracted = extractTrades(payload);
+
+      if (extracted.length > 0) {
+        trades.push(...extracted);
+        sources.push({
+          file: path.relative(root, file),
+          count: extracted.length,
+        });
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+
+      throw new Error(
+        `Kan data-file niet lezen: ${path.relative(root, file)} -> ${error.message}`
+      );
+    }
+  }
+
   return {
-    runId: body?.runId || null,
-    btcState: body?.btcState || null,
-    strategyVersion: body?.strategyVersion || null,
-    discoveryMode: Boolean(body?.discoveryMode),
-    filterValues: body?.filterValues || body?.currentFilterValues || null,
-    tradeSystemFilters: body?.tradeSystemFilters || null
+    trades,
+    sources,
   };
 }
 
-async function buildResponse(req) {
-  const includeLocal = String(req.query?.includeLocal || "true") !== "false";
-  const minClosed = Number(req.query?.minClosed || 10);
+async function loadEngine() {
+  const engine = await import("../lib/analyze/familyEngine.js");
 
-  const events = await readAllAnalyzeEvents({
-    includeLocal
-  });
+  const buildAnalyzeReport =
+    engine.buildAnalyzeReport ||
+    engine.buildReport ||
+    engine.default?.buildAnalyzeReport ||
+    engine.default?.buildReport;
 
-  const report = buildAnalyzeReport(events, {
-    minClosed
-  });
+  if (typeof buildAnalyzeReport !== "function") {
+    throw new Error(
+      "familyEngine.js export mist: buildAnalyzeReport of buildReport niet gevonden."
+    );
+  }
 
   return {
-    ok: true,
-    version: ANALYZE_FAMILY_VERSION,
-    store: getAnalyzeStoreMeta(),
-
-    summary: report.summary,
-    report,
-
-    rawRows: events.length
+    buildAnalyzeReport,
   };
 }
 
 export default async function handler(req, res) {
-  setJsonHeaders(res);
-
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return;
-  }
+  const startedAt = Date.now();
 
   try {
-    if (req.method === "DELETE") {
-      const reset = await resetAnalyzeStore();
+    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 
-      res.status(200).json({
-        ok: true,
-        reset
-      });
-      return;
-    }
+    const minClosed = Math.max(
+      1,
+      safeNumber(url.searchParams.get("minClosed"), 10)
+    );
 
-    if (req.method === "POST") {
-      const body = await readBody(req);
-      const events = extractEvents(body);
-      const meta = extractMeta(body);
+    const { buildAnalyzeReport } = await loadEngine();
+    const { trades, sources } = await loadTrades();
 
-      const stored = await appendAnalyzeEvents(events, {
-        ...meta,
-        source: "API_POST"
-      });
-
-      const response = await buildResponse(req);
-
-      res.status(200).json({
-        ...response,
-        stored
-      });
-      return;
-    }
-
-    if (req.method === "GET") {
-      if (String(req.query?.reset || "") === "true") {
-        const reset = await resetAnalyzeStore();
-
-        res.status(200).json({
-          ok: true,
-          reset
-        });
-        return;
-      }
-
-      const response = await buildResponse(req);
-
-      res.status(200).json(response);
-      return;
-    }
-
-    res.status(405).json({
-      ok: false,
-      error: "METHOD_NOT_ALLOWED"
+    const report = buildAnalyzeReport(trades, {
+      minClosed,
     });
-  } catch (e) {
-    res.status(500).json({
+
+    return sendJson(res, 200, {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      latencyMs: Date.now() - startedAt,
+      sources,
+      tradesLoaded: trades.length,
+      report,
+    });
+  } catch (error) {
+    return sendJson(res, 500, {
       ok: false,
-      error: e.message,
-      stack: process.env.NODE_ENV === "production" ? undefined : e.stack
+      generatedAt: new Date().toISOString(),
+      latencyMs: Date.now() - startedAt,
+      error: serializeError(error),
+      report: {
+        ok: false,
+        summary: {
+          actions: 0,
+          trades: 0,
+          observed: 0,
+          open: 0,
+          closed: 0,
+          wins: 0,
+          losses: 0,
+          winrate: "0.0%",
+          totalR: 0,
+          avgR: 0,
+          totalPnlPct: 0,
+          avgPnlPct: 0,
+          longFamilies: 0,
+          shortFamilies: 0,
+        },
+        families: {
+          all: [],
+          long: [],
+          short: [],
+        },
+        filterKeys: [],
+        trades: {
+          total: 0,
+          items: [],
+        },
+      },
     });
   }
 }
