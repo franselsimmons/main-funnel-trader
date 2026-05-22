@@ -209,7 +209,10 @@ function getTradeFunnelCandidates(latest) {
   }
 
   const result = Array.from(accepted.values()).sort((a, b) => {
-    const qDiff = safeNumber(b.tradeFunnelQuality, 0) - safeNumber(a.tradeFunnelQuality, 0);
+    const qDiff =
+      safeNumber(b.tradeFunnelQuality, 0) -
+      safeNumber(a.tradeFunnelQuality, 0);
+
     if (qDiff !== 0) return qDiff;
 
     const stageDiff = stageRank(b.stage) - stageRank(a.stage);
@@ -223,7 +226,9 @@ function getTradeFunnelCandidates(latest) {
   console.log("TRADE FUNNEL rejected:", rejectCounts);
   console.log(
     "TRADE FUNNEL symbols:",
-    result.map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`).join(", ")
+    result
+      .map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`)
+      .join(", ")
   );
 
   return {
@@ -233,27 +238,64 @@ function getTradeFunnelCandidates(latest) {
   };
 }
 
+// ================= ANALYZE APPEND =================
+async function appendTradesToAnalyzer(trades, latest, context = {}) {
+  const actions = safeArray(trades);
+
+  if (!actions.length) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "NO_ACTIONS",
+      received: 0,
+      acceptedEntries: 0,
+      acceptedExits: 0,
+    };
+  }
+
+  try {
+    return await appendAnalyzeEvents(actions, {
+      source: "api_trade_funnel",
+      tradeFunnelUpdatedAt: Date.now(),
+      latestUpdatedAt: latest?.updatedAt || null,
+      btc: latest?.btc || null,
+      regime: latest?.regime || null,
+      market: latest?.market || null,
+      ...context,
+    });
+  } catch (e) {
+    console.error("ANALYZE APPEND ERROR:", e);
+
+    return {
+      ok: false,
+      error: e?.message || "analyze_append_failed",
+      received: actions.length,
+    };
+  }
+}
+
 // ================= RESPONSE COMPACTION =================
 function compactAction(action) {
   if (!action || typeof action !== "object") return action;
 
   return {
-    id: action.id,
     tradeId: action.tradeId,
-    positionId: action.positionId,
     symbol: action.symbol,
     side: action.side,
     action: action.action,
-    status: action.status,
     reason: action.reason,
+    exitReason: action.exitReason,
     setupClass: action.setupClass,
     grade: action.grade,
     entry: action.entry,
+    exit: action.exit,
     sl: action.sl,
     tp: action.tp,
     rr: action.rr,
     baseRR: action.baseRR,
-    finalRR: action.finalRR,
+    realizedR: action.realizedR,
+    pnlR: action.pnlR,
+    pnlPct: action.pnlPct,
     confluence: action.confluence,
     sniperScore: action.sniperScore,
     moveScore: action.moveScore,
@@ -261,28 +303,16 @@ function compactAction(action) {
     rsi: action.rsi,
     rsiHTF: action.rsiHTF,
     rsiZone: action.rsiZone,
-    flow: action.flow,
     stage: action.stage,
+    flow: action.flow,
     obBias: action.obBias,
     spreadPct: action.spreadPct,
     depthMinUsd1p: action.depthMinUsd1p,
     btcState: action.btcState,
-    regime: action.regime,
-    tfScore: action.tfScore,
-    tfStrength: action.tfStrength,
     fundingRate: action.fundingRate,
-    pnlPct: action.pnlPct,
-    pnlR: action.pnlR,
-    r: action.r,
-    currentR: action.currentR,
-    realizedR: action.realizedR,
-    exitReason: action.exitReason,
-    exitPrice: action.exitPrice,
+    regime: action.regime,
     strategyVersion: action.strategyVersion,
     ts: action.ts,
-    createdAt: action.createdAt,
-    updatedAt: action.updatedAt,
-    closedAt: action.closedAt,
   };
 }
 
@@ -349,13 +379,17 @@ export async function runTradeFunnel(options = {}) {
       ? result.actions
       : [];
 
-  let analyzeAppendResult = null;
+  const analyzeAppendResult = await appendTradesToAnalyzer(trades, latest, {
+    notify,
+    store,
+  });
 
   const updated = {
     ...latest,
     ok: true,
     trades,
     tradeSystemResult: result,
+    analyzeAppendResult,
     tradeFunnelRawCount: tradeFunnel.rawCount,
     tradeFunnelInputCount: candidates.length,
     tradeFunnelRejectCounts: tradeFunnel.rejectCounts,
@@ -368,24 +402,6 @@ export async function runTradeFunnel(options = {}) {
 
   if (store) {
     await setLatestScan(updated);
-
-    try {
-      analyzeAppendResult = await appendAnalyzeEvents(trades, {
-        source: "api_trade_funnel",
-        ts: now,
-        tradeFunnelUpdatedAt: now,
-        rawCount: tradeFunnel.rawCount,
-        inputCount: candidates.length,
-      });
-
-      updated.analyzeAppendResult = analyzeAppendResult;
-    } catch (e) {
-      console.error("ANALYZE APPEND ERROR:", e);
-      updated.analyzeAppendResult = {
-        ok: false,
-        error: e?.message || "analyze_append_failed",
-      };
-    }
   }
 
   return updated;
