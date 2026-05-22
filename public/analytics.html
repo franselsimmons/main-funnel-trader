@@ -1,96 +1,166 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Analytics Desk</title>
-  <link rel="stylesheet" href="main.css">
-  <style>
-    /* Algemene componenten */
-    .muted { color: var(--muted); }
-
-    /* Header Styling */
-    .header h1 { color: #a78bfa; margin: 0 0 4px; font-size: 28px; }
-    #statusLine { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
-
-    /* Navigatie */
-    .nav { display: flex; gap: 5px; margin-bottom: 24px; }
-    .btn { flex: 1; text-align: center; padding: 10px 4px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-    .btn.active.purple { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
-
-    /* Funnel Titels */
-    .side-title { font-size: 20px; font-weight: 800; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; letter-spacing: 1px; }
-
-    /* Funnel Kaarten */
-    .analysis-card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 18px; margin-bottom: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
-    .a-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .a-title { font-size: 16px; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
-    .a-total { background: rgba(255, 255, 255, 0.08); padding: 6px 12px; border-radius: 12px; font-size: 14px; font-weight: 800; }
-    
-    .a-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-    .a-stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; background: rgba(255, 255, 255, 0.02); padding: 8px 12px; border-radius: 10px; }
-    .a-stat-label { color: var(--muted); }
-    .a-stat-val { font-weight: 800; font-size: 14px; }
-    .a-stat-val.good { color: var(--green); }
-
-    /* Advies Accordeon */
-    .advice-content { display: none; margin-top: 12px; background: rgba(139, 92, 246, 0.1); border-left: 4px solid #8b5cf6; padding: 12px 14px; border-radius: 4px 12px 12px 4px; font-size: 13px; line-height: 1.6; }
-    .advice-content strong { color: #a78bfa; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 4px; }
-    .advice-toggle-btn { background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: #a78bfa; width: 100%; padding: 10px; text-align: center; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 13px; margin-top: 10px; }
-
-    /* Trade System Sectie */
-    .trade-system-card { background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.35); border-radius: 20px; padding: 18px; margin-bottom: 24px; }
-    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-    .metric-box { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px; }
-    .metric-box span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-    .metric-box strong { font-size: 18px; color: #fff; }
-    .system-advice { background: rgba(139, 92, 246, 0.14); border-left: 4px solid #8b5cf6; border-radius: 4px 12px 12px 4px; padding: 12px; margin-bottom: 14px; color: #e2e8f0; line-height: 1.5; font-size: 13px; }
-
-    /* Blokkades (Vervanger voor de oude tabel) */
-    .blockade-list { display: flex; flex-direction: column; gap: 10px; }
-    .blockade-card { background: rgba(0, 0, 0, 0.15); border: 1px solid rgba(139, 92, 246, 0.15); border-radius: 12px; padding: 14px; }
-    .b-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-    .b-name { font-weight: 800; font-size: 13px; color: #e2e8f0; }
-    .b-stats { display: flex; gap: 6px; }
-    .b-badge { background: rgba(139, 92, 246, 0.15); color: #a78bfa; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; border: 1px solid rgba(139, 92, 246, 0.3); }
-    .b-advice { font-size: 12px; color: var(--muted); line-height: 1.5; }
-  </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TradeSystem Analyze</title>
+  <link rel="stylesheet" href="/analytics.css" />
 </head>
 <body>
-
-  <div class="pageShell">
-
-    <div class="header">
-      <h1>📊 ANALYTICS DESK</h1>
-      <div id="statusLine">Laden...</div>
-
-      <div class="nav">
-        <a href="index.html" class="btn">Home</a>
-        <a href="bull.html" class="btn">Bull</a>
-        <a href="bear.html" class="btn">Bear</a>
-        <a href="signals.html" class="btn">Trade</a>
-        <a href="analytics.html" class="btn active purple">Analyse</a>
-      </div>
+  <header class="topbar">
+    <div>
+      <h1>TradeSystem Analyze</h1>
+      <p>50 long families + 50 short families op basis van volledige filter-combinaties.</p>
     </div>
 
-    <div class="trade-section">
-
-      <div id="globalAdvice" style="display:none; background:var(--panel); border:1px solid #8b5cf6; padding:16px; border-radius:16px; margin-bottom:24px; box-shadow:0 5px 20px rgba(139, 92, 246, 0.15);">
-        <div style="font-size:12px; letter-spacing:2px; color:#a78bfa; margin-bottom:8px; font-weight:bold;">🧠 GLOBALE STATUS</div>
-        <div id="globalAdviceContent" style="color:#e2e8f0; font-size:14px; line-height:1.6; font-weight:bold;"></div>
-      </div>
-
-      <div id="tradeSystemAnalysis" class="trade-system-card">
-        <p class="muted">TradeSystem analyse laden...</p>
-      </div>
-
-      <div id="analytics">
-        <p style="color:var(--muted); text-align:center; margin-top:40px;">Data ophalen...</p>
-      </div>
-
+    <div class="topbar-actions">
+      <button id="refreshBtn">Refresh</button>
+      <button id="autoRefreshBtn" data-enabled="false">Auto: OFF</button>
+      <button id="resetBtn" class="danger">Reset</button>
     </div>
-  </div>
+  </header>
 
-  <script src="analytics.js"></script>
+  <main>
+    <section id="statusBox" class="status">Loading...</section>
+
+    <section class="cards" id="summaryCards"></section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="long">Long families</button>
+      <button class="tab" data-tab="short">Short families</button>
+      <button class="tab" data-tab="filters">Filter values</button>
+      <button class="tab" data-tab="trades">Trades</button>
+      <button class="tab" data-tab="actions">Actions</button>
+    </nav>
+
+    <section class="panel active" id="panel-long">
+      <div class="panel-head">
+        <h2>Top 50 Long Families</h2>
+        <input id="longSearch" placeholder="Search long families..." />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Family</th>
+              <th>Obs</th>
+              <th>Entries</th>
+              <th>Closed</th>
+              <th>WR</th>
+              <th>Total R</th>
+              <th>Avg R</th>
+              <th>Total PnL%</th>
+              <th>Direct SL</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="longFamiliesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-short">
+      <div class="panel-head">
+        <h2>Top 50 Short Families</h2>
+        <input id="shortSearch" placeholder="Search short families..." />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Family</th>
+              <th>Obs</th>
+              <th>Entries</th>
+              <th>Closed</th>
+              <th>WR</th>
+              <th>Total R</th>
+              <th>Avg R</th>
+              <th>Total PnL%</th>
+              <th>Direct SL</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="shortFamiliesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-filters">
+      <div class="panel-head">
+        <h2>Captured Filter Values</h2>
+        <input id="filterSearch" placeholder="Search filter..." />
+      </div>
+      <div id="filterHealth" class="filter-health"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Filter</th>
+              <th>Value</th>
+              <th>Captured</th>
+            </tr>
+          </thead>
+          <tbody id="filtersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-trades">
+      <div class="panel-head">
+        <h2>Recent Trades</h2>
+        <input id="tradeSearch" placeholder="Search trades..." />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Setup</th>
+              <th>Entry</th>
+              <th>Exit</th>
+              <th>Exit R</th>
+              <th>PnL%</th>
+              <th>Family</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="tradesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-actions">
+      <div class="panel-head">
+        <h2>Recent Actions</h2>
+        <input id="actionSearch" placeholder="Search actions..." />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Reason</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Setup</th>
+              <th>Score</th>
+              <th>Conf</th>
+              <th>Sniper</th>
+              <th>RR</th>
+              <th>Family</th>
+            </tr>
+          </thead>
+          <tbody id="actionsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/analytics.js"></script>
 </body>
 </html>
