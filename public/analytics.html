@@ -1,106 +1,186 @@
-<!-- ================= public/analyse.html ================= -->
 <!doctype html>
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>TradeSystem Analyse Families</title>
-  <link rel="stylesheet" href="/analyse.css" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>TradeSystem Analyze</title>
+  <link rel="stylesheet" href="/analyze.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <h1>TradeSystem Analyse</h1>
-      <p>50 LONG families + 50 SHORT families. Broad buckets. Closed/open/shadow gescheiden.</p>
-    </div>
+  <main class="app">
+    <header class="hero">
+      <div>
+        <h1>TradeSystem Analyze</h1>
+        <p>50 long families + 50 short families op basis van volledige filter-combinaties.</p>
+      </div>
 
-    <div class="top-actions">
-      <button id="refreshBtn">Refresh</button>
-      <a href="/api/analyse" target="_blank">API</a>
-    </div>
-  </header>
+      <div class="toolbar">
+        <button id="refreshBtn">Refresh</button>
+        <button id="autoBtn">Auto: OFF</button>
+        <button id="resetBtn" class="danger">Reset</button>
+      </div>
+    </header>
 
-  <section class="cards" id="summaryCards"></section>
+    <section id="errorBox" class="error hidden"></section>
 
-  <section class="panel">
-    <div class="controls">
-      <label>
-        Side
-        <select id="sideFilter">
-          <option value="ALL">ALL</option>
-          <option value="LONG">LONG</option>
-          <option value="SHORT">SHORT</option>
-        </select>
-      </label>
+    <section class="cards" id="summaryCards">
+      <div class="card"><span>Actions</span><strong id="sActions">-</strong></div>
+      <div class="card"><span>Trades</span><strong id="sTrades">-</strong></div>
+      <div class="card"><span>Open</span><strong id="sOpen">-</strong></div>
+      <div class="card"><span>Closed</span><strong id="sClosed">-</strong></div>
+      <div class="card"><span>Wins</span><strong id="sWins">-</strong></div>
+      <div class="card"><span>Losses</span><strong id="sLosses">-</strong></div>
+      <div class="card"><span>Winrate</span><strong id="sWinrate">-</strong></div>
+      <div class="card"><span>Total R</span><strong id="sTotalR">-</strong></div>
+      <div class="card"><span>Avg R</span><strong id="sAvgR">-</strong></div>
+      <div class="card"><span>Total PnL%</span><strong id="sTotalPnl">-</strong></div>
+      <div class="card"><span>Long families</span><strong id="sLongFamilies">-</strong></div>
+      <div class="card"><span>Short families</span><strong id="sShortFamilies">-</strong></div>
+    </section>
 
-      <label>
-        Status
-        <select id="statusFilter">
-          <option value="ALL">ALL</option>
-          <option value="EDGE">EDGE ONLY</option>
-          <option value="BAD">BAD ONLY</option>
-          <option value="COLLECTING">COLLECTING</option>
-        </select>
-      </label>
+    <nav class="tabs">
+      <button class="tab active" data-tab="long">Long families</button>
+      <button class="tab" data-tab="short">Short families</button>
+      <button class="tab" data-tab="filters">Filter values</button>
+      <button class="tab" data-tab="trades">Trades</button>
+      <button class="tab" data-tab="actions">Actions</button>
+      <button class="tab" data-tab="raw">Raw</button>
+    </nav>
 
-      <label>
-        Min closed
-        <input id="minClosed" type="number" value="0" min="0" />
-      </label>
+    <section class="panel active" id="tab-long">
+      <div class="panelHead">
+        <h2>Long families</h2>
+        <input id="longSearch" placeholder="Search long families..." />
+      </div>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Complete filter-family</th>
+              <th>Actions</th>
+              <th>Entries</th>
+              <th>Open</th>
+              <th>Closed</th>
+              <th>Wins</th>
+              <th>Losses</th>
+              <th>Winrate</th>
+              <th>Total R</th>
+              <th>Avg R</th>
+              <th>PnL%</th>
+              <th>Direct SL</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="longBody"></tbody>
+        </table>
+      </div>
+    </section>
 
-      <label>
-        Search
-        <input id="searchBox" type="search" placeholder="LONG_4, MID, COUNTER, BAD_EXEC..." />
-      </label>
+    <section class="panel" id="tab-short">
+      <div class="panelHead">
+        <h2>Short families</h2>
+        <input id="shortSearch" placeholder="Search short families..." />
+      </div>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Complete filter-family</th>
+              <th>Actions</th>
+              <th>Entries</th>
+              <th>Open</th>
+              <th>Closed</th>
+              <th>Wins</th>
+              <th>Losses</th>
+              <th>Winrate</th>
+              <th>Total R</th>
+              <th>Avg R</th>
+              <th>PnL%</th>
+              <th>Direct SL</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="shortBody"></tbody>
+        </table>
+      </div>
+    </section>
 
-      <label class="check">
-        <input id="hideEmpty" type="checkbox" />
-        Hide empty
-      </label>
-    </div>
-  </section>
+    <section class="panel" id="tab-filters">
+      <div class="panelHead">
+        <h2>Filter values</h2>
+        <input id="filterSearch" placeholder="Search filter..." />
+      </div>
+      <div id="filtersBox" class="filterGrid"></div>
+    </section>
 
-  <section class="panel">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Family</th>
-            <th>Definition</th>
-            <th>Observed</th>
-            <th>Closed</th>
-            <th>Open</th>
-            <th>Wins</th>
-            <th>Losses</th>
-            <th>Winrate</th>
-            <th>Avg R</th>
-            <th>Total R</th>
-            <th>Avg PnL%</th>
-            <th>Total PnL%</th>
-            <th>Direct SL</th>
-            <th>Near TP</th>
-            <th>Conf.</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="familyRows"></tbody>
-      </table>
-    </div>
-  </section>
+    <section class="panel" id="tab-trades">
+      <div class="panelHead">
+        <h2>Trades</h2>
+        <input id="tradesSearch" placeholder="Search trades..." />
+      </div>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Action</th>
+              <th>Reason</th>
+              <th>Family</th>
+              <th>Setup</th>
+              <th>Stage</th>
+              <th>Flow</th>
+              <th>RSI</th>
+              <th>RR</th>
+              <th>Conf</th>
+              <th>Sniper</th>
+              <th>OB</th>
+              <th>BTC</th>
+              <th>Exit R</th>
+              <th>PnL%</th>
+            </tr>
+          </thead>
+          <tbody id="tradesBody"></tbody>
+        </table>
+      </div>
+    </section>
 
-  <section class="panel">
-    <h2>Tracked filters</h2>
-    <div id="trackedFilters" class="filter-grid"></div>
-  </section>
+    <section class="panel" id="tab-actions">
+      <div class="panelHead">
+        <h2>Actions</h2>
+        <input id="actionsSearch" placeholder="Search actions..." />
+      </div>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Action</th>
+              <th>Reason</th>
+              <th>Setup</th>
+              <th>Family</th>
+              <th>Open</th>
+              <th>Closed</th>
+              <th>Win</th>
+              <th>Loss</th>
+            </tr>
+          </thead>
+          <tbody id="actionsBody"></tbody>
+        </table>
+      </div>
+    </section>
 
-  <dialog id="detailsDialog">
-    <div class="dialog-head">
-      <h2 id="detailsTitle"></h2>
-      <button id="closeDialog">Close</button>
-    </div>
-    <pre id="detailsPre"></pre>
-  </dialog>
+    <section class="panel" id="tab-raw">
+      <div class="panelHead">
+        <h2>Raw report</h2>
+      </div>
+      <pre id="rawBox"></pre>
+    </section>
+  </main>
 
-  <script src="/analyse.js"></script>
+  <script src="/analyze.js"></script>
 </body>
 </html>
