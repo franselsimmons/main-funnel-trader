@@ -1,5 +1,6 @@
 const API_URL = "/api/analyse";
 const REFRESH_MS = 30000;
+const DEFAULT_MIN_CLOSED = 10;
 
 let state = {
   report: null,
@@ -7,10 +8,20 @@ let state = {
   activeTab: "ALL",
   auto: false,
   timer: null,
+  loading: false,
 };
 
 function $(id) {
   return document.getElementById(id);
+}
+
+function firstEl(...ids) {
+  for (const id of ids) {
+    const el = $(id);
+    if (el) return el;
+  }
+
+  return null;
 }
 
 function safeArray(value) {
@@ -27,9 +38,26 @@ function text(value, fallback = "") {
   return String(value);
 }
 
+function escapeHtml(value) {
+  return text(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function fmtNum(value, decimals = 3) {
   const n = safeNumber(value, 0);
-  if (Number.isInteger(n)) return String(n);
+
+  if (decimals === 0) {
+    return String(Math.round(n));
+  }
+
+  if (Number.isInteger(n)) {
+    return String(n);
+  }
+
   return n.toFixed(decimals).replace(/\.?0+$/, "");
 }
 
@@ -39,6 +67,19 @@ function fmtPct(value, decimals = 1) {
   if (raw.includes("%")) return raw;
 
   return `${fmtNum(value, decimals)}%`;
+}
+
+function signedClass(value) {
+  const n = safeNumber(value, 0);
+
+  if (n > 0) return "positive";
+  if (n < 0) return "negative";
+
+  return "";
+}
+
+function statusClass(status) {
+  return `status-${text(status, "EMPTY").toLowerCase()}`;
 }
 
 function errorToText(error) {
@@ -66,8 +107,15 @@ function errorToText(error) {
   return String(error);
 }
 
+function setHidden(el, hidden) {
+  if (!el) return;
+
+  el.hidden = Boolean(hidden);
+  el.classList.toggle("hidden", Boolean(hidden));
+}
+
 function setStatus(message, isError = false) {
-  const status = $("statusText");
+  const status = firstEl("statusLine", "statusText");
   const box = $("errorBox");
 
   if (status) {
@@ -75,12 +123,65 @@ function setStatus(message, isError = false) {
   }
 
   if (box) {
-    box.hidden = !isError;
+    setHidden(box, !isError);
 
     if (isError) {
       box.textContent = `Load error:\n${message}`;
     }
   }
+}
+
+function setBusy(isBusy) {
+  state.loading = Boolean(isBusy);
+
+  const refreshBtn = $("refreshBtn");
+  const resetBtn = $("resetBtn");
+
+  if (refreshBtn) refreshBtn.disabled = state.loading;
+  if (resetBtn) resetBtn.disabled = state.loading;
+
+  if (refreshBtn) {
+    refreshBtn.textContent = state.loading ? "Loading..." : "Refresh";
+  }
+}
+
+function getMinClosedInput() {
+  return firstEl("minClosedInput", "minClosed");
+}
+
+function getMinClosedValue() {
+  const input = getMinClosedInput();
+  const value = safeNumber(input?.value, DEFAULT_MIN_CLOSED);
+
+  return Math.max(0, Math.round(value));
+}
+
+function ensureRuntimeDefaults() {
+  const minClosedInput = getMinClosedInput();
+
+  if (minClosedInput && (minClosedInput.value === "" || minClosedInput.value === "0")) {
+    minClosedInput.value = String(DEFAULT_MIN_CLOSED);
+  }
+
+  const apiLink = $("apiLink");
+  if (apiLink) {
+    apiLink.href = buildApiUrl({ debug: true });
+  }
+}
+
+function buildApiUrl(extra = {}) {
+  const params = new URLSearchParams();
+
+  params.set("minClosed", String(getMinClosedValue()));
+  params.set("includeLatest", "true");
+  params.set("debug", extra.debug === false ? "false" : "true");
+  params.set("t", String(Date.now()));
+
+  if (extra.reset) {
+    params.set("reset", "true");
+  }
+
+  return `${API_URL}?${params.toString()}`;
 }
 
 function normalizePayload(payload) {
@@ -112,6 +213,7 @@ function normalizePayload(payload) {
         short: safeArray(families.short),
         ranked: safeArray(families.ranked || families.all),
       },
+      filterValues: report.filterValues || {},
     },
   };
 }
@@ -139,80 +241,138 @@ async function fetchJson(url) {
   return payload;
 }
 
-function kpi(id, value) {
-  const el = $(id);
-  if (el) el.textContent = value;
+function setText(ids, value) {
+  const list = Array.isArray(ids) ? ids : [ids];
+
+  for (const id of list) {
+    const el = $(id);
+    if (el) el.textContent = value;
+  }
+}
+
+function countStatuses(families) {
+  const counts = {
+    HOT: 0,
+    GOOD: 0,
+    STABLE: 0,
+    BAD: 0,
+    COLLECTING: 0,
+    EMPTY: 0,
+  };
+
+  for (const family of safeArray(families)) {
+    const status = text(family.status, "EMPTY").toUpperCase();
+
+    if (counts[status] === undefined) counts[status] = 0;
+    counts[status] += 1;
+  }
+
+  return counts;
+}
+
+function familyMetaText(families) {
+  const c = countStatuses(families);
+
+  return `HOT ${c.HOT} | GOOD ${c.GOOD} | STABLE ${c.STABLE} | BAD ${c.BAD} | COLLECTING ${c.COLLECTING} | EMPTY ${c.EMPTY}`;
 }
 
 function renderSummary() {
   const summary = state.report?.summary || {};
+  const longFamilies = safeArray(state.report?.families?.long);
+  const shortFamilies = safeArray(state.report?.families?.short);
 
-  kpi("kpiActions", fmtNum(summary.actions || 0, 0));
-  kpi("kpiTrades", fmtNum(summary.trades || summary.observed || 0, 0));
-  kpi("kpiOpen", fmtNum(summary.open || 0, 0));
-  kpi("kpiClosed", fmtNum(summary.closed || 0, 0));
-  kpi("kpiWins", fmtNum(summary.wins || 0, 0));
-  kpi("kpiLosses", fmtNum(summary.losses || 0, 0));
-  kpi("kpiWinrate", summary.winrate || fmtPct(summary.winrateNum || 0));
-  kpi("kpiTotalR", fmtNum(summary.totalR || 0, 3));
-  kpi("kpiAvgR", fmtNum(summary.avgR || 0, 3));
-  kpi("kpiPnl", fmtPct(summary.totalPnlPct || 0, 3));
+  setText(["mActions", "kpiActions"], fmtNum(summary.actions || 0, 0));
+  setText(["mTrades", "kpiTrades"], fmtNum(summary.trades || summary.observed || 0, 0));
+  setText(["mOpen", "kpiOpen"], fmtNum(summary.open || 0, 0));
+  setText(["mClosed", "kpiClosed"], fmtNum(summary.closed || 0, 0));
+  setText(["mWins", "kpiWins"], fmtNum(summary.wins || 0, 0));
+  setText(["mLosses", "kpiLosses"], fmtNum(summary.losses || 0, 0));
+  setText(["mWinrate", "kpiWinrate"], summary.winrate || fmtPct(summary.winrateNum || 0));
+  setText(["mTotalR", "kpiTotalR"], fmtNum(summary.totalR || 0, 3));
+  setText(["mAvgR", "kpiAvgR"], fmtNum(summary.avgR || 0, 3));
+  setText(["mTotalPnl", "kpiPnl"], fmtPct(summary.totalPnlPct || 0, 3));
 
-  kpi("kpiLongFamilies", fmtNum(summary.longFamilies || 50, 0));
-  kpi("kpiShortFamilies", fmtNum(summary.shortFamilies || 50, 0));
+  setText(["mLongFamilies", "kpiLongFamilies"], fmtNum(summary.longFamilies || longFamilies.length || 50, 0));
+  setText(["mShortFamilies", "kpiShortFamilies"], fmtNum(summary.shortFamilies || shortFamilies.length || 50, 0));
 
-  const longMeta = $("longFamiliesMeta");
-  const shortMeta = $("shortFamiliesMeta");
+  setText(["mLongMeta", "longFamiliesMeta"], familyMetaText(longFamilies));
+  setText(["mShortMeta", "shortFamiliesMeta"], familyMetaText(shortFamilies));
+}
 
-  if (longMeta) {
-    const longFamilies = safeArray(state.report?.families?.long);
-    const hot = longFamilies.filter(f => f.status === "HOT").length;
-    const bad = longFamilies.filter(f => f.status === "BAD").length;
-    const collecting = longFamilies.filter(f => f.status === "COLLECTING").length;
-    const empty = longFamilies.filter(f => f.status === "EMPTY").length;
+function renderSourceCards() {
+  const raw = state.raw || {};
+  const sources = raw.sources || {};
+  const latest = sources.latest || {};
+  const store = sources.store || {};
 
-    longMeta.textContent = `HOT ${hot} | BAD ${bad} | COLLECTING ${collecting} | EMPTY ${empty}`;
-  }
+  setText("sourceStored", fmtNum(sources.storedEvents ?? store.count ?? 0, 0));
+  setText("sourceLatest", fmtNum(sources.latestEvents ?? 0, 0));
+  setText("sourceMerged", fmtNum(sources.mergedEvents ?? raw.tradesLoaded ?? 0, 0));
+  setText("sourceLatency", `${fmtNum(raw.latencyMs ?? 0, 0)}ms`);
 
-  if (shortMeta) {
-    const shortFamilies = safeArray(state.report?.families?.short);
-    const hot = shortFamilies.filter(f => f.status === "HOT").length;
-    const bad = shortFamilies.filter(f => f.status === "BAD").length;
-    const collecting = shortFamilies.filter(f => f.status === "COLLECTING").length;
-    const empty = shortFamilies.filter(f => f.status === "EMPTY").length;
+  setText("sourceStoredSub", store.path ? `store: ${store.path}` : "store: n/a");
+  setText("sourceLatestSub", latest.ok ? "latest scan OK" : `latest scan ${latest.error || "missing"}`);
+  setText("sourceMergedSub", `loaded: ${fmtNum(raw.tradesLoaded ?? 0, 0)}`);
+  setText("sourceLatencySub", raw.generatedAt ? new Date(raw.generatedAt).toLocaleString() : "");
+}
 
-    shortMeta.textContent = `HOT ${hot} | BAD ${bad} | COLLECTING ${collecting} | EMPTY ${empty}`;
-  }
+function getBaseFamilies() {
+  const families = state.report?.families || {};
+
+  if (state.activeTab === "LONG") return safeArray(families.long);
+  if (state.activeTab === "SHORT") return safeArray(families.short);
+
+  return safeArray(families.ranked || families.all);
+}
+
+function sortFamilies(rows) {
+  const statusRank = {
+    HOT: 6,
+    GOOD: 5,
+    STABLE: 4,
+    COLLECTING: 3,
+    BAD: 2,
+    EMPTY: 1,
+  };
+
+  return [...safeArray(rows)].sort((a, b) => {
+    const s = (statusRank[b.status] || 0) - (statusRank[a.status] || 0);
+    if (s !== 0) return s;
+
+    const closed = safeNumber(b.closed, 0) - safeNumber(a.closed, 0);
+    if (closed !== 0) return closed;
+
+    const observed = safeNumber(b.observed, 0) - safeNumber(a.observed, 0);
+    if (observed !== 0) return observed;
+
+    const avgR = safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0);
+    if (avgR !== 0) return avgR;
+
+    const side = text(a.side).localeCompare(text(b.side));
+    if (side !== 0) return side;
+
+    return safeNumber(a.index, 0) - safeNumber(b.index, 0);
+  });
 }
 
 function getSelectedFamilies() {
-  const families = state.report?.families || {};
-  const sideSelect = $("sideFilter");
-  const statusSelect = $("statusFilter");
-  const minClosedInput = $("minClosed");
+  const sideSelect = firstEl("sideSelect", "sideFilter");
+  const statusSelect = firstEl("statusSelect", "statusFilter");
   const searchInput = $("searchInput");
-  const hideEmptyInput = $("hideEmpty");
+  const hideEmptyInput = firstEl("hideEmptyInput", "hideEmpty");
 
-  let rows = safeArray(families.ranked || families.all);
+  let rows = getBaseFamilies();
 
   const side = sideSelect?.value || state.activeTab || "ALL";
   const status = statusSelect?.value || "ALL";
-  const minClosed = safeNumber(minClosedInput?.value, 0);
   const query = String(searchInput?.value || "").toUpperCase().trim();
   const hideEmpty = Boolean(hideEmptyInput?.checked);
-
-  if (state.activeTab === "LONG") rows = safeArray(families.long);
-  if (state.activeTab === "SHORT") rows = safeArray(families.short);
 
   if (side === "LONG") rows = rows.filter(row => row.side === "LONG");
   if (side === "SHORT") rows = rows.filter(row => row.side === "SHORT");
 
   if (status !== "ALL") {
     rows = rows.filter(row => row.status === status);
-  }
-
-  if (minClosed > 0) {
-    rows = rows.filter(row => safeNumber(row.closed, 0) >= minClosed || safeNumber(row.observed, 0) > 0);
   }
 
   if (hideEmpty) {
@@ -229,18 +389,23 @@ function getSelectedFamilies() {
         row.qualityBucket,
         row.marketBucket,
         row.timingBucket,
+        row.winrate,
+        row.totalR,
+        row.avgR,
+        row.totalPnlPct,
       ].join(" ").toUpperCase();
 
       return haystack.includes(query);
     });
   }
 
-  return rows;
+  return sortFamilies(rows);
 }
 
 function renderFamilies() {
-  const tbody = $("familiesBody");
+  const tbody = firstEl("familyBody", "familiesBody");
   const count = $("familyCount");
+  const emptyState = $("emptyState");
 
   if (!tbody) return;
 
@@ -250,31 +415,144 @@ function renderFamilies() {
     count.textContent = `${rows.length} families`;
   }
 
+  setHidden(emptyState, rows.length > 0);
+
   if (!rows.length) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="13" class="empty-row">Geen families voor deze filters.</td>
+        <td colspan="14" class="empty-row">Geen families voor deze filters.</td>
       </tr>
     `;
     return;
   }
 
-  tbody.innerHTML = rows.map(row => `
-    <tr class="status-${text(row.status).toLowerCase()}">
-      <td class="mono strong">${row.id}</td>
-      <td>${row.side}</td>
-      <td class="definition">${row.definition}</td>
-      <td>${fmtNum(row.observed, 0)}</td>
-      <td>${fmtNum(row.trades, 0)}</td>
-      <td>${fmtNum(row.open, 0)}</td>
-      <td>${fmtNum(row.closed, 0)}</td>
-      <td>${fmtNum(row.wins, 0)}</td>
-      <td>${fmtNum(row.losses, 0)}</td>
-      <td>${row.winrate || "0%"}</td>
-      <td>${fmtNum(row.totalR, 3)}</td>
-      <td>${fmtPct(row.totalPnlPct, 3)}</td>
-      <td><span class="pill">${row.status}</span></td>
-    </tr>
+  tbody.innerHTML = rows.map(row => {
+    const status = text(row.status, "EMPTY");
+    const side = text(row.side);
+    const sideClass = side.toLowerCase();
+    const totalRClass = signedClass(row.totalR);
+    const avgRClass = signedClass(row.avgR);
+    const pnlClass = signedClass(row.totalPnlPct);
+
+    return `
+      <tr class="${statusClass(status)}">
+        <td>
+          <span class="family-id">${escapeHtml(row.id)}</span>
+        </td>
+        <td>
+          <span class="side-pill ${sideClass}">${escapeHtml(side)}</span>
+        </td>
+        <td class="definition">${escapeHtml(row.definition)}</td>
+        <td class="num">${fmtNum(row.observed, 0)}</td>
+        <td class="num">${fmtNum(row.trades, 0)}</td>
+        <td class="num">${fmtNum(row.closed, 0)}</td>
+        <td class="num">${fmtNum(row.open, 0)}</td>
+        <td class="num">${fmtNum(row.wins, 0)}</td>
+        <td class="num">${fmtNum(row.losses, 0)}</td>
+        <td class="num">${escapeHtml(row.winrate || "0%")}</td>
+        <td class="num ${totalRClass}">${fmtNum(row.totalR, 3)}</td>
+        <td class="num ${avgRClass}">${fmtNum(row.avgR, 3)}</td>
+        <td class="num ${pnlClass}">${fmtPct(row.totalPnlPct, 3)}</td>
+        <td>
+          <span class="status-pill ${statusClass(status)}">${escapeHtml(status)}</span>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function getWinnerFamilies() {
+  const minClosed = Math.max(1, getMinClosedValue());
+  const ranked = safeArray(state.report?.families?.ranked || state.report?.families?.all);
+
+  return ranked
+    .filter(row => ["HOT", "GOOD", "STABLE"].includes(text(row.status)))
+    .filter(row => safeNumber(row.closed, 0) >= minClosed)
+    .filter(row => safeNumber(row.avgR, 0) >= 0)
+    .slice(0, 6);
+}
+
+function renderWinners() {
+  const grid = $("winnerGrid");
+  const count = $("winnerCount");
+
+  if (!grid) return;
+
+  const winners = getWinnerFamilies();
+
+  if (count) {
+    count.textContent = `${winners.length} winners`;
+  }
+
+  if (!winners.length) {
+    grid.innerHTML = `
+      <div class="winner-empty">
+        Nog geen echte winnaar-family. Wacht tot minimaal ${getMinClosedValue()} closed trades per family.
+      </div>
+    `;
+    return;
+  }
+
+  grid.innerHTML = winners.map(row => {
+    const status = text(row.status, "STABLE").toLowerCase();
+
+    return `
+      <article class="winner-card ${status}">
+        <div class="winner-top">
+          <span class="winner-id">${escapeHtml(row.id)}</span>
+          <span class="status-pill ${statusClass(row.status)}">${escapeHtml(row.status)}</span>
+        </div>
+
+        <div class="winner-stats">
+          <div class="winner-stat">
+            <span>Closed</span>
+            <strong>${fmtNum(row.closed, 0)}</strong>
+          </div>
+          <div class="winner-stat">
+            <span>Winrate</span>
+            <strong>${escapeHtml(row.winrate || "0%")}</strong>
+          </div>
+          <div class="winner-stat">
+            <span>Avg R</span>
+            <strong class="${signedClass(row.avgR)}">${fmtNum(row.avgR, 3)}</strong>
+          </div>
+        </div>
+
+        <p class="winner-definition">${escapeHtml(row.definition)}</p>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderFilters() {
+  const body = $("filtersBody");
+  const count = $("filterCount");
+
+  if (!body) return;
+
+  const filterValues = state.report?.filterValues || {};
+  const trackedFields = safeArray(filterValues.trackedFields);
+
+  const quality = Object.values(filterValues.qualityBuckets || {});
+  const market = Object.values(filterValues.marketBuckets || {});
+  const timing = Object.values(filterValues.timingBuckets || {});
+
+  const chips = [
+    ...trackedFields.map(field => ({ group: "FIELD", label: field })),
+    ...quality.map(bucket => ({ group: "QUALITY", label: bucket.key })),
+    ...market.map(bucket => ({ group: "MARKET", label: bucket.key })),
+    ...timing.map(bucket => ({ group: "TIMING", label: bucket.key })),
+  ].filter(chip => chip.label);
+
+  if (count) {
+    count.textContent = `${chips.length} labels`;
+  }
+
+  body.innerHTML = chips.map(chip => `
+    <span class="filter-chip">
+      <b>${escapeHtml(chip.group)}</b>
+      ${escapeHtml(chip.label)}
+    </span>
   `).join("");
 }
 
@@ -293,22 +571,42 @@ function renderApiMeta() {
   ].join(" | ");
 }
 
+function renderDebug() {
+  const debugJson = $("debugJson");
+  if (!debugJson) return;
+
+  debugJson.textContent = JSON.stringify({
+    sources: state.raw?.sources || null,
+    summary: state.report?.summary || null,
+    config: state.report?.config || null,
+  }, null, 2);
+}
+
 function render() {
   if (!state.report) return;
 
   renderSummary();
+  renderSourceCards();
+  renderWinners();
   renderFamilies();
+  renderFilters();
   renderApiMeta();
+  renderDebug();
+
+  const apiLink = $("apiLink");
+  if (apiLink) {
+    apiLink.href = buildApiUrl({ debug: true });
+  }
 }
 
 async function loadAnalytics() {
+  if (state.loading) return;
+
+  setBusy(true);
   setStatus("Laden...", false);
 
-  const minClosed = safeNumber($("minClosed")?.value, 10);
-  const url = `${API_URL}?minClosed=${encodeURIComponent(minClosed)}&debug=true&t=${Date.now()}`;
-
   try {
-    const payload = await fetchJson(url);
+    const payload = await fetchJson(buildApiUrl({ debug: true }));
     const normalized = normalizePayload(payload);
 
     state.raw = normalized.raw;
@@ -325,42 +623,59 @@ async function loadAnalytics() {
 
     setStatus(message, true);
     console.error("ANALYTICS LOAD ERROR:", error);
+  } finally {
+    setBusy(false);
   }
 }
 
 async function resetAnalytics() {
+  const ok = window.confirm("Analyse-store resetten? Dit wist de opgeslagen family-history.");
+
+  if (!ok) return;
+
+  if (state.loading) return;
+
+  setBusy(true);
   setStatus("Reset bezig...", false);
 
   try {
-    const payload = await fetchJson(`${API_URL}?reset=true&debug=true&t=${Date.now()}`);
+    const payload = await fetchJson(buildApiUrl({ reset: true, debug: true }));
 
     if (!payload.ok) {
       throw payload;
     }
 
+    state.raw = null;
+    state.report = null;
+
     await loadAnalytics();
   } catch (error) {
     const message = errorToText(error);
+
     setStatus(message, true);
     console.error("ANALYTICS RESET ERROR:", error);
+  } finally {
+    setBusy(false);
   }
 }
 
-function setTab(tab) {
-  state.activeTab = tab;
-
-  document.querySelectorAll("[data-tab]").forEach(button => {
-    button.classList.toggle("active", button.dataset.tab === tab);
+function syncTabs() {
+  document.querySelectorAll("[data-side], [data-tab]").forEach(button => {
+    const value = button.dataset.side || button.dataset.tab || "ALL";
+    button.classList.toggle("active", value === state.activeTab);
   });
+}
 
-  const sideFilter = $("sideFilter");
+function setTab(tab) {
+  state.activeTab = tab || "ALL";
 
-  if (sideFilter) {
-    if (tab === "LONG") sideFilter.value = "LONG";
-    else if (tab === "SHORT") sideFilter.value = "SHORT";
-    else sideFilter.value = "ALL";
+  const sideSelect = firstEl("sideSelect", "sideFilter");
+
+  if (sideSelect) {
+    sideSelect.value = state.activeTab;
   }
 
+  syncTabs();
   renderFamilies();
 }
 
@@ -380,87 +695,168 @@ function toggleAuto() {
   }
 }
 
+let reloadDebounce = null;
+
+function scheduleReload() {
+  if (reloadDebounce) {
+    clearTimeout(reloadDebounce);
+  }
+
+  reloadDebounce = setTimeout(() => {
+    loadAnalytics();
+  }, 350);
+}
+
 function wireEvents() {
   $("refreshBtn")?.addEventListener("click", loadAnalytics);
   $("resetBtn")?.addEventListener("click", resetAnalytics);
   $("autoBtn")?.addEventListener("click", toggleAuto);
+
   $("apiBtn")?.addEventListener("click", () => {
-    window.open(`${API_URL}?debug=true`, "_blank");
+    window.open(buildApiUrl({ debug: true }), "_blank", "noopener");
   });
 
-  document.querySelectorAll("[data-tab]").forEach(button => {
-    button.addEventListener("click", () => setTab(button.dataset.tab || "ALL"));
+  document.querySelectorAll("[data-side], [data-tab]").forEach(button => {
+    button.addEventListener("click", () => {
+      setTab(button.dataset.side || button.dataset.tab || "ALL");
+    });
   });
 
-  ["sideFilter", "statusFilter", "minClosed", "searchInput", "hideEmpty"].forEach(id => {
-    $(id)?.addEventListener("input", renderFamilies);
-    $(id)?.addEventListener("change", renderFamilies);
+  const sideSelect = firstEl("sideSelect", "sideFilter");
+  const statusSelect = firstEl("statusSelect", "statusFilter");
+  const minClosedInput = getMinClosedInput();
+  const searchInput = $("searchInput");
+  const hideEmptyInput = firstEl("hideEmptyInput", "hideEmpty");
+
+  sideSelect?.addEventListener("change", () => {
+    state.activeTab = sideSelect.value || "ALL";
+    syncTabs();
+    renderFamilies();
+  });
+
+  statusSelect?.addEventListener("change", renderFamilies);
+  searchInput?.addEventListener("input", renderFamilies);
+  hideEmptyInput?.addEventListener("change", renderFamilies);
+
+  minClosedInput?.addEventListener("input", () => {
+    renderFamilies();
+    renderWinners();
+    scheduleReload();
+  });
+
+  minClosedInput?.addEventListener("change", () => {
+    renderFamilies();
+    renderWinners();
+    scheduleReload();
   });
 }
 
 function ensureDom() {
-  if ($("analyticsApp")) return;
+  if ($("familyBody") || $("familiesBody") || $("analyticsApp")) return;
 
   document.body.innerHTML = `
-    <main id="analyticsApp" class="analytics-app">
+    <main id="analyticsApp" class="page">
       <section class="hero">
-        <h1>TradeSystem Analyse</h1>
-        <p>50 LONG families + 50 SHORT families. Broad buckets. Closed/open/shadow gescheiden.</p>
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <p class="eyebrow">TradeSystem Analyzer</p>
+            <h1>TradeSystem Analyse</h1>
+            <p class="hero-text">
+              50 LONG families + 50 SHORT families. Alleen ENTRY/EXIT trades worden geteld.
+              Winrate/PnL komt uit closed trades per frozen family.
+            </p>
+          </div>
 
-        <div class="actions">
-          <button id="refreshBtn">Refresh</button>
-          <button id="autoBtn">Auto: OFF</button>
-          <button id="resetBtn" class="danger">Reset</button>
-          <button id="apiBtn">API</button>
+          <div class="top-actions">
+            <button id="refreshBtn" type="button">Refresh</button>
+            <button id="autoBtn" type="button">Auto: OFF</button>
+            <button id="resetBtn" type="button" class="danger">Reset</button>
+            <a id="apiLink" href="/api/analyse" target="_blank" rel="noopener">API</a>
+          </div>
+
+          <div id="statusLine" class="status-line">Nog niet geladen.</div>
+
+          <div class="hero-status-grid">
+            <article class="status-card">
+              <span>Stored</span>
+              <strong id="sourceStored">0</strong>
+              <small id="sourceStoredSub">store: n/a</small>
+            </article>
+            <article class="status-card">
+              <span>Latest</span>
+              <strong id="sourceLatest">0</strong>
+              <small id="sourceLatestSub">latest scan n/a</small>
+            </article>
+            <article class="status-card">
+              <span>Merged</span>
+              <strong id="sourceMerged">0</strong>
+              <small id="sourceMergedSub">loaded: 0</small>
+            </article>
+            <article class="status-card">
+              <span>Latency</span>
+              <strong id="sourceLatency">0ms</strong>
+              <small id="sourceLatencySub"></small>
+            </article>
+          </div>
         </div>
-
-        <div id="statusText" class="status">Nog niet geladen.</div>
-        <pre id="errorBox" class="error-box" hidden></pre>
       </section>
 
-      <section class="kpi-grid">
-        <article><span>ACTIONS</span><strong id="kpiActions">0</strong></article>
-        <article><span>TRADES</span><strong id="kpiTrades">0</strong></article>
-        <article><span>OPEN</span><strong id="kpiOpen">0</strong></article>
-        <article><span>CLOSED</span><strong id="kpiClosed">0</strong></article>
-        <article><span>WINS</span><strong id="kpiWins">0</strong></article>
-        <article><span>LOSSES</span><strong id="kpiLosses">0</strong></article>
-        <article><span>WINRATE</span><strong id="kpiWinrate">0%</strong></article>
-        <article><span>TOTAL R</span><strong id="kpiTotalR">0</strong></article>
-        <article><span>AVG R</span><strong id="kpiAvgR">0</strong></article>
-        <article><span>TOTAL PNL%</span><strong id="kpiPnl">0%</strong></article>
-        <article>
-          <span>LONG FAMILIES</span>
-          <strong id="kpiLongFamilies">50</strong>
-          <small id="longFamiliesMeta">HOT 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
+      <section id="errorBox" class="error-box hidden"></section>
+
+      <section class="metric-grid" aria-label="Analyse samenvatting">
+        <article class="metric-card"><span class="metric-label">Actions</span><strong id="mActions" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Trades</span><strong id="mTrades" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Open</span><strong id="mOpen" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Closed</span><strong id="mClosed" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Wins</span><strong id="mWins" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Losses</span><strong id="mLosses" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Winrate</span><strong id="mWinrate" class="metric-value">0%</strong></article>
+        <article class="metric-card"><span class="metric-label">Total R</span><strong id="mTotalR" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Avg R</span><strong id="mAvgR" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Total PnL%</span><strong id="mTotalPnl" class="metric-value">0%</strong></article>
+        <article class="metric-card family-card">
+          <span class="metric-label">Long families</span>
+          <strong id="mLongFamilies" class="metric-value">50</strong>
+          <small id="mLongMeta" class="metric-sub">HOT 0 | GOOD 0 | STABLE 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
         </article>
-        <article>
-          <span>SHORT FAMILIES</span>
-          <strong id="kpiShortFamilies">50</strong>
-          <small id="shortFamiliesMeta">HOT 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
+        <article class="metric-card family-card">
+          <span class="metric-label">Short families</span>
+          <strong id="mShortFamilies" class="metric-value">50</strong>
+          <small id="mShortMeta" class="metric-sub">HOT 0 | GOOD 0 | STABLE 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
         </article>
       </section>
 
       <section class="panel">
-        <div class="tabs">
-          <button data-tab="ALL" class="active">All families</button>
-          <button data-tab="LONG">Long families</button>
-          <button data-tab="SHORT">Short families</button>
+        <div class="table-header">
+          <div>
+            <h2>Winner families</h2>
+            <p class="panel-subtitle">Alleen HOT/GOOD/STABLE families met voldoende closed trades en positieve Avg R.</p>
+          </div>
+          <span id="winnerCount">0 winners</span>
+        </div>
+        <div id="winnerGrid" class="winner-grid"></div>
+      </section>
+
+      <section class="panel family-panel">
+        <div class="tab-row" role="tablist" aria-label="Family side tabs">
+          <button type="button" class="tab active" data-side="ALL">All families</button>
+          <button type="button" class="tab" data-side="LONG">Long families</button>
+          <button type="button" class="tab" data-side="SHORT">Short families</button>
         </div>
 
-        <div class="filters">
-          <label>
-            SIDE
-            <select id="sideFilter">
+        <div class="filter-grid">
+          <label class="field">
+            <span>Side</span>
+            <select id="sideSelect">
               <option value="ALL">ALL</option>
               <option value="LONG">LONG</option>
               <option value="SHORT">SHORT</option>
             </select>
           </label>
 
-          <label>
-            STATUS
-            <select id="statusFilter">
+          <label class="field">
+            <span>Status</span>
+            <select id="statusSelect">
               <option value="ALL">ALL</option>
               <option value="HOT">HOT</option>
               <option value="GOOD">GOOD</option>
@@ -471,53 +867,73 @@ function ensureDom() {
             </select>
           </label>
 
-          <label>
-            MIN CLOSED
-            <input id="minClosed" type="number" value="10" min="0" step="1" />
+          <label class="field">
+            <span>Min closed</span>
+            <input id="minClosedInput" type="number" min="0" step="1" value="10" inputmode="numeric" />
           </label>
 
-          <label>
-            SEARCH
-            <input id="searchInput" type="search" placeholder="LONG_4, MID, COUNTER, DEPTH..." />
+          <label class="field search-field">
+            <span>Search</span>
+            <input id="searchInput" type="search" placeholder="LONG_4, MID, COUNTER, DEPTH..." autocomplete="off" />
           </label>
 
-          <label class="check">
-            <input id="hideEmpty" type="checkbox" />
-            Hide empty
+          <label class="check-field">
+            <input id="hideEmptyInput" type="checkbox" />
+            <span>Hide empty</span>
           </label>
         </div>
 
-        <div class="table-head">
-          <strong id="familyCount">0 families</strong>
-          <span id="apiMeta"></span>
+        <div class="table-header">
+          <h2>Families</h2>
+          <span id="familyCount">0 rows</span>
         </div>
 
         <div class="table-wrap">
-          <table>
+          <table class="family-table">
             <thead>
               <tr>
-                <th>ID</th>
+                <th>Family</th>
                 <th>Side</th>
                 <th>Definition</th>
                 <th>Observed</th>
                 <th>Trades</th>
-                <th>Open</th>
                 <th>Closed</th>
+                <th>Open</th>
                 <th>Wins</th>
                 <th>Losses</th>
                 <th>Winrate</th>
                 <th>Total R</th>
-                <th>PnL%</th>
+                <th>Avg R</th>
+                <th>Total PnL%</th>
                 <th>Status</th>
               </tr>
             </thead>
-            <tbody id="familiesBody">
+            <tbody id="familyBody">
               <tr>
-                <td colspan="13" class="empty-row">Nog geen data geladen.</td>
+                <td colspan="14" class="empty-row">Nog geen data geladen.</td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <div id="emptyState" class="empty-state hidden">
+          Geen families voor deze filterselectie.
+        </div>
+      </section>
+
+      <section class="panel filters-panel">
+        <div class="table-header">
+          <h2>Tracked filters</h2>
+          <span id="filterCount">0 labels</span>
+        </div>
+        <div id="filtersBody" class="filter-chip-grid"></div>
+      </section>
+
+      <section class="panel debug-panel">
+        <details>
+          <summary>Debug payload</summary>
+          <pre id="debugJson" class="debug-json"></pre>
+        </details>
       </section>
     </main>
   `;
@@ -525,6 +941,8 @@ function ensureDom() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   ensureDom();
+  ensureRuntimeDefaults();
   wireEvents();
+  syncTabs();
   await loadAnalytics();
 });
