@@ -1,9 +1,9 @@
 import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 import { processTrades } from "../lib/tradeSystem.js";
-import { recordAnalyzeTrade } from "../lib/analyze/analyzeStore.js";
 
 const MAX_RESPONSE_TRADES = 250;
 const MAX_ANALYZE_RECORDS_PER_RUN = 500;
+const MAX_ANALYZE_RECORDS_IN_LATEST_SCAN = 5000;
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
 
 // ================= GENERIC HELPERS =================
@@ -88,7 +88,7 @@ function candidateQualityScore(c) {
   );
 }
 
-// ================= NORMALISATIE HELPERS VOOR API-GATE =================
+// ================= NORMALISATIE HELPERS =================
 function normalizeSide(value) {
   const s = String(value || "").toLowerCase().trim();
 
@@ -201,33 +201,16 @@ function getTradeFunnelCandidates(latest) {
       stageSource: coin.stageSource || "tradefunnel_adapter",
       flow,
       moveScore: score,
-      vm: safeNumber(
-        coin.vm ??
-          coin.volumeMomentum ??
-          coin.volMomentum,
-        0
-      ),
+      vm: safeNumber(coin.vm ?? coin.volumeMomentum ?? coin.volMomentum, 0),
       tfScore: safeNumber(coin.tfScore, 0),
       tfStrength: safeNumber(
         coin.tfStrength,
         Math.abs(safeNumber(coin.tfScore, 0))
       ),
       uiOnly: false,
-      tradeFunnelQuality: candidateQualityScore({
-        ...coin,
-        symbol,
-        side,
-        stage,
-        flow,
-        moveScore: score,
-        vm: safeNumber(coin.vm ?? coin.volumeMomentum ?? coin.volMomentum, 0),
-        tfScore: safeNumber(coin.tfScore, 0),
-        tfStrength: safeNumber(
-          coin.tfStrength,
-          Math.abs(safeNumber(coin.tfScore, 0))
-        ),
-      }),
     };
+
+    normalized.tradeFunnelQuality = candidateQualityScore(normalized);
 
     const key = `${symbol}_${side}`;
     const prev = accepted.get(key);
@@ -258,12 +241,6 @@ function getTradeFunnelCandidates(latest) {
   console.log("TRADE FUNNEL raw:", buckets.length);
   console.log("TRADE FUNNEL accepted:", result.length);
   console.log("TRADE FUNNEL rejected:", rejectCounts);
-  console.log(
-    "TRADE FUNNEL symbols:",
-    result
-      .map((c) => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`)
-      .join(", ")
-  );
 
   return {
     candidates: result,
@@ -272,7 +249,89 @@ function getTradeFunnelCandidates(latest) {
   };
 }
 
-// ================= ANALYZE STORE ADAPTER =================
+// ================= ANALYZE STORE SAFE ADAPTER =================
+async function getAnalyzeWriter() {
+  try {
+    const mod = await import("../lib/analyze/analyzeStore.js");
+
+    const writer =
+      mod.recordAnalyzeTrade ||
+      mod.appendAnalyzeTrade ||
+      mod.appendTrade ||
+      mod.saveAnalyzeTrade ||
+      mod.addAnalyzeTrade ||
+      mod.addTrade ||
+      mod.recordTrade;
+
+    if (typeof writer !== "function") {
+      return {
+        ok: false,
+        writer: null,
+        reason: "NO_COMPATIBLE_ANALYZE_WRITER_EXPORT",
+        exports: Object.keys(mod || {}),
+      };
+    }
+
+    return {
+      ok: true,
+      writer,
+      reason: "OK",
+      exports: Object.keys(mod || {}),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      writer: null,
+      reason: err?.message || "ANALYZE_STORE_IMPORT_FAILED",
+      exports: [],
+    };
+  }
+}
+
+async function recordAnalyzeRecords(records) {
+  const items = safeArray(records);
+  const adapter = await getAnalyzeWriter();
+
+  if (!adapter.ok || !adapter.writer) {
+    return {
+      attempted: items.length,
+      recorded: 0,
+      skipped: true,
+      ok: false,
+      reason: adapter.reason,
+      exports: adapter.exports,
+      errors: [],
+    };
+  }
+
+  let recorded = 0;
+  const errors = [];
+
+  for (const record of items) {
+    try {
+      await adapter.writer(record);
+      recorded += 1;
+    } catch (err) {
+      errors.push({
+        symbol: record?.symbol,
+        side: record?.side,
+        error: err?.message || "record_failed",
+      });
+    }
+  }
+
+  return {
+    attempted: items.length,
+    recorded,
+    skipped: false,
+    ok: errors.length === 0,
+    reason: errors.length ? "PARTIAL_ANALYZE_WRITE_FAILURE" : "OK",
+    exports: adapter.exports,
+    errors,
+  };
+}
+
+// ================= ANALYZE RECORD NORMALIZER =================
 function upper(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -346,13 +405,21 @@ function normalizeAnalyzeStatus(action, fallback = "OPEN") {
   if (action?.closed === true || action?.isClosed === true) return "CLOSED";
   if (action?.closedAt || action?.exitTime || action?.exitPrice) return "CLOSED";
 
-  if (["TP", "SL", "WIN", "LOSS", "CLOSED", "EXIT", "DONE", "FINISHED"].some((key) => raw.includes(key))) {
+  if (
+    ["TP", "SL", "WIN", "LOSS", "CLOSED", "EXIT", "DONE", "FINISHED"].some((key) =>
+      raw.includes(key)
+    )
+  ) {
     return "CLOSED";
   }
 
   if (isNegativeDecision(action)) return "SHADOW";
 
-  if (["OPEN", "ENTRY", "ENTER", "LONG", "SHORT", "BUY", "SELL", "LIVE", "ACTIVE"].some((key) => raw.includes(key))) {
+  if (
+    ["OPEN", "ENTRY", "ENTER", "LONG", "SHORT", "BUY", "SELL", "LIVE", "ACTIVE"].some((key) =>
+      raw.includes(key)
+    )
+  ) {
     return "OPEN";
   }
 
@@ -393,7 +460,9 @@ function analyzeShadowId(candidate, now) {
 
 function normalizeAnalyzeRecordFromAction(action, candidate, latest, result, now) {
   const side = normalizeAnalysisSide(firstValue(action?.side, candidate?.side));
-  const symbol = String(firstValue(action?.symbol, candidate?.symbol, "")).toUpperCase().trim();
+  const symbol = String(firstValue(action?.symbol, candidate?.symbol, ""))
+    .toUpperCase()
+    .trim();
 
   if (!symbol || !side) return null;
 
@@ -438,6 +507,7 @@ function normalizeAnalyzeRecordFromAction(action, candidate, latest, result, now
       candidate?.confluenceScore,
       candidate?.conf
     ),
+
     sniper: firstFinite(
       action?.sniper,
       action?.sniperScore,
@@ -446,12 +516,14 @@ function normalizeAnalyzeRecordFromAction(action, candidate, latest, result, now
       candidate?.sniperScore,
       candidate?.entryScore
     ),
+
     sniperScore: firstFinite(
       action?.sniperScore,
       action?.sniper,
       candidate?.sniperScore,
       candidate?.sniper
     ),
+
     score: firstFinite(
       action?.score,
       action?.candidateScore,
@@ -469,6 +541,7 @@ function normalizeAnalyzeRecordFromAction(action, candidate, latest, result, now
     flow: firstValue(action?.flow, candidate?.flow),
     stage: firstValue(action?.stage, candidate?.stage),
     scannerStage: candidate?.scannerStage,
+
     tfAligned: firstValue(
       action?.tfAligned,
       action?.timeframeAligned,
@@ -528,6 +601,7 @@ function normalizeAnalyzeRecordFromAction(action, candidate, latest, result, now
       action?.resultR,
       action?.finalR
     ),
+
     pnlPct: firstFinite(
       action?.pnlPct,
       action?.pnlPercent,
@@ -543,8 +617,8 @@ function normalizeAnalyzeRecordFromAction(action, candidate, latest, result, now
       action?.timestamp,
       new Date(now).toISOString()
     ),
-    closedAt: firstValue(action?.closedAt, action?.exitTime),
 
+    closedAt: firstValue(action?.closedAt, action?.exitTime),
     rawAction: action,
   };
 }
@@ -559,6 +633,7 @@ function normalizeAnalyzeRecordFromCandidate(candidate, latest, now) {
     id: analyzeShadowId(candidate, now),
     source: "trade-funnel",
     sourceType: "accepted_candidate",
+
     symbol,
     side,
     status: "SHADOW",
@@ -589,6 +664,7 @@ function normalizeAnalyzeRecordFromCandidate(candidate, latest, now) {
 
     spreadPct: firstFinite(candidate?.spreadPct, candidate?.market?.spreadPct),
     spreadBps: firstFinite(candidate?.spreadBps, candidate?.market?.spreadBps),
+
     depthUsd1p: firstFinite(
       candidate?.depthUsd1p,
       candidate?.depthMinUsd1p,
@@ -648,29 +724,24 @@ function buildAnalyzeRecords({ actions, candidates, latest, result, now }) {
   return records.slice(0, MAX_ANALYZE_RECORDS_PER_RUN);
 }
 
-async function recordAnalyzeRecords(records) {
-  let recorded = 0;
-  const errors = [];
+function mergeAnalyzeRecordsIntoLatest(latest, newRecords) {
+  const previous =
+    safeArray(latest?.analyzeRecords).length
+      ? safeArray(latest?.analyzeRecords)
+      : safeArray(latest?.analysisRecords);
 
-  for (const record of safeArray(records)) {
-    try {
-      await recordAnalyzeTrade(record);
-      recorded += 1;
-    } catch (err) {
-      errors.push({
-        symbol: record?.symbol,
-        side: record?.side,
-        error: err?.message || "record_failed",
-      });
-    }
+  const map = new Map();
+
+  for (const record of [...previous, ...safeArray(newRecords)]) {
+    if (!record) continue;
+
+    const id = String(record.id || "");
+    if (!id) continue;
+
+    map.set(id, record);
   }
 
-  return {
-    attempted: safeArray(records).length,
-    recorded,
-    errors,
-    ok: errors.length === 0,
-  };
+  return Array.from(map.values()).slice(-MAX_ANALYZE_RECORDS_IN_LATEST_SCAN);
 }
 
 // ================= RESPONSE COMPACTION =================
@@ -726,6 +797,9 @@ function compactResponse(data) {
 
     analyzeRecordsAttempted: safeNumber(data?.analyzeRecordsAttempted, 0),
     analyzeRecordsStored: safeNumber(data?.analyzeRecordsStored, 0),
+    analyzeStoreSkipped: Boolean(data?.analyzeStoreSkipped),
+    analyzeStoreReason: data?.analyzeStoreReason || null,
+    analyzeStoreExports: safeArray(data?.analyzeStoreExports),
     analyzeRecordErrors: safeArray(data?.analyzeRecordErrors).slice(0, 10),
 
     trades: actions.slice(0, MAX_RESPONSE_TRADES).map(compactAction),
@@ -779,10 +853,12 @@ export async function runTradeFunnel(options = {}) {
   });
 
   const analyzeStoreResult = await recordAnalyzeRecords(analyzeRecords);
+  const mergedAnalyzeRecords = mergeAnalyzeRecordsIntoLatest(latest, analyzeRecords);
 
   const updated = {
     ...latest,
     ok: true,
+
     trades,
     tradeSystemResult: result,
 
@@ -793,8 +869,14 @@ export async function runTradeFunnel(options = {}) {
       `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`
     ),
 
+    analyzeRecords: mergedAnalyzeRecords,
+    analysisRecords: mergedAnalyzeRecords,
+
     analyzeRecordsAttempted: analyzeStoreResult.attempted,
     analyzeRecordsStored: analyzeStoreResult.recorded,
+    analyzeStoreSkipped: Boolean(analyzeStoreResult.skipped),
+    analyzeStoreReason: analyzeStoreResult.reason,
+    analyzeStoreExports: analyzeStoreResult.exports,
     analyzeRecordErrors: analyzeStoreResult.errors,
 
     tradeFunnelUpdatedAt: now,
@@ -839,6 +921,7 @@ export default async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error: message,
+      stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
       notify,
       store,
       ts: Date.now(),
