@@ -1,226 +1,331 @@
-// ================= public/analyse.js =================
+// ================= public/analyze.js =================
+
+const API_URL = "/api/analyse";
 
 let state = {
-  data: null,
-  families: []
+  report: null,
+  auto: false,
+  timer: null
 };
 
-const els = {
-  summaryCards: document.getElementById("summaryCards"),
-  familyRows: document.getElementById("familyRows"),
-  trackedFilters: document.getElementById("trackedFilters"),
-  refreshBtn: document.getElementById("refreshBtn"),
-  sideFilter: document.getElementById("sideFilter"),
-  statusFilter: document.getElementById("statusFilter"),
-  minClosed: document.getElementById("minClosed"),
-  searchBox: document.getElementById("searchBox"),
-  hideEmpty: document.getElementById("hideEmpty"),
-  detailsDialog: document.getElementById("detailsDialog"),
-  detailsTitle: document.getElementById("detailsTitle"),
-  detailsPre: document.getElementById("detailsPre"),
-  closeDialog: document.getElementById("closeDialog")
-};
+const $ = id => document.getElementById(id);
 
-function fmt(value, decimals = 3) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "0";
-  return n.toFixed(decimals).replace(/\.?0+$/, "");
+function setText(id, value) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = value ?? "-";
 }
 
-function clsNumber(value) {
-  const n = Number(value);
-  if (n > 0) return "good";
-  if (n < 0) return "bad";
+function showError(message) {
+  const box = $("errorBox");
+  if (!box) return;
+
+  if (!message) {
+    box.classList.add("hidden");
+    box.textContent = "";
+    return;
+  }
+
+  box.classList.remove("hidden");
+  box.textContent = message;
+}
+
+function safeReport(data) {
+  const report = data?.report || data || {};
+  const summary = report?.summary || data?.summary || {};
+
+  return {
+    ...report,
+    summary,
+    longFamilies: report?.longFamilies || data?.longFamilies || [],
+    shortFamilies: report?.shortFamilies || data?.shortFamilies || [],
+    families: report?.families || data?.families || [],
+    rows: report?.rows || report?.trades || report?.actions || data?.rows || [],
+    trackedFilters: report?.trackedFilters || data?.trackedFilters || [],
+    filterValues: report?.filterValues || data?.filterValues || null
+  };
+}
+
+function val(value, fallback = "-") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return value;
+}
+
+function numClass(value) {
+  const n = Number(value || 0);
+  if (n > 0) return "positive";
+  if (n < 0) return "negative";
   return "";
 }
 
-function definitionText(f) {
-  const d = f.definition || {};
+function renderSummary(report) {
+  const s = report?.summary || {};
 
-  return [
-    f.scenarioKey,
-    f.qualityKey,
-    `SETUP=${(d.setupClasses || []).join("/")}`,
-    `STAGE=${(d.stages || []).join("/")}`,
-    `FLOW=${(d.flows || []).join("/")}`,
-    `RSI=${(d.rsiZones || []).join("/")}`,
-    `RR=${rangeText(d.rrRange)}`,
-    `CONF=${rangeText(d.confluenceRange)}`,
-    `SNIPER=${rangeText(d.sniperRange)}`,
-    `OB=${(d.obRelations || []).join("/")}`,
-    `SPREAD_BPS=${rangeText(d.spreadBpsRange)}`,
-    `DEPTH=${rangeText(d.depthUsdRange)}`,
-    `BTC=${(d.btcRelations || []).join("/")}`,
-    `TF=${(d.tfStrengthBuckets || []).join("/")}`,
-    `FUNDING=${(d.fundingBuckets || []).join("/")}`
-  ].join(" | ");
+  setText("sActions", val(s.actions));
+  setText("sTrades", val(s.trades));
+  setText("sOpen", val(s.open));
+  setText("sClosed", val(s.closed));
+  setText("sWins", val(s.wins));
+  setText("sLosses", val(s.losses));
+  setText("sWinrate", val(s.winrate));
+  setText("sTotalR", val(s.totalR));
+  setText("sAvgR", val(s.avgR));
+  setText("sTotalPnl", val(s.totalPnlPct));
+  setText("sLongFamilies", val(s.longFamilies));
+  setText("sShortFamilies", val(s.shortFamilies));
 }
 
-function rangeText(range) {
-  if (!Array.isArray(range)) return "ANY";
-  return `${range[0]}-${range[1]}`;
+function familyRow(f) {
+  return `
+    <tr>
+      <td><strong>${f.id}</strong></td>
+      <td class="combo">${f.label || "-"}</td>
+      <td>${f.actions ?? 0}</td>
+      <td>${f.entries ?? 0}</td>
+      <td>${f.open ?? 0}</td>
+      <td>${f.closed ?? 0}</td>
+      <td>${f.wins ?? 0}</td>
+      <td>${f.losses ?? 0}</td>
+      <td>${f.winrate || "0.0%"}</td>
+      <td class="${numClass(f.totalR)}">${f.totalR ?? 0}</td>
+      <td class="${numClass(f.avgR)}">${f.avgR ?? 0}</td>
+      <td class="${numClass(f.totalPnlPct)}">${f.totalPnlPct ?? 0}</td>
+      <td>${f.directSLPct || "0.0%"}</td>
+      <td><span class="badge">${f.status || "empty"}</span></td>
+    </tr>
+  `;
 }
 
-function renderCards(summary = {}, store = {}) {
-  const cards = [
-    ["Rows", summary.rawRows],
-    ["Observed", summary.observed],
-    ["Open", summary.open],
-    ["Closed", summary.closed],
-    ["Winrate", summary.winrate],
-    ["Total R", fmt(summary.totalR)],
-    ["Total PnL%", fmt(summary.totalPnlPct)],
-    ["Storage", store.storageMode || "unknown"]
-  ];
+function renderFamilies(report) {
+  const longRows = report.longFamilies || [];
+  const shortRows = report.shortFamilies || [];
 
-  els.summaryCards.innerHTML = cards
-    .map(([label, value]) => `
-      <div class="card">
-        <div class="label">${label}</div>
-        <div class="value">${value ?? 0}</div>
+  $("longBody").innerHTML = longRows.map(familyRow).join("");
+  $("shortBody").innerHTML = shortRows.map(familyRow).join("");
+}
+
+function stringifyValue(value) {
+  if (value === undefined) return "—";
+  if (value === null) return "null";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function renderFilters(report) {
+  const tracked = report.trackedFilters || [];
+  const values = report.filterValues || {};
+  const query = String($("filterSearch")?.value || "").toLowerCase();
+
+  const html = tracked.map(group => {
+    const items = (group.keys || [])
+      .filter(key => {
+        const haystack = `${group.category} ${key} ${stringifyValue(values?.[key])}`.toLowerCase();
+        return !query || haystack.includes(query);
+      })
+      .map(key => `
+        <div class="filterItem">
+          <code>${key}</code>
+          <span>${stringifyValue(values?.[key])}</span>
+        </div>
+      `)
+      .join("");
+
+    if (!items) return "";
+
+    return `
+      <div class="filterGroup">
+        <h3>${group.category}</h3>
+        ${items}
       </div>
+    `;
+  }).join("");
+
+  $("filtersBox").innerHTML = html || `<div class="filterGroup">Geen filterwaarden ontvangen. Controleer of tradeSystem via analysisNotifier naar /api/analyse post.</div>`;
+}
+
+function rowMatches(row, query) {
+  if (!query) return true;
+  return JSON.stringify(row).toLowerCase().includes(query.toLowerCase());
+}
+
+function renderTrades(report) {
+  const rows = report.rows || [];
+  const query = $("tradesSearch")?.value || "";
+
+  $("tradesBody").innerHTML = rows
+    .filter(row => rowMatches(row, query))
+    .slice(0, 500)
+    .map(row => `
+      <tr>
+        <td><strong>${row.symbol || "-"}</strong></td>
+        <td>${row.side || "-"}</td>
+        <td>${row.action || "-"}</td>
+        <td>${row.reason || "-"}</td>
+        <td>${row.familyId || "-"}</td>
+        <td>${row.setupClass || "-"}</td>
+        <td>${row.stage || "-"}</td>
+        <td>${row.flow || "-"}</td>
+        <td>${row.rsiZone || "-"}</td>
+        <td>${row.rr ?? "-"}</td>
+        <td>${row.confluence ?? "-"}</td>
+        <td>${row.sniperScore ?? "-"}</td>
+        <td>${row.obBias || "-"} / ${row.obRel || "-"}</td>
+        <td>${row.btcState || "-"} / ${row.btcRel || "-"}</td>
+        <td class="${numClass(row.exitR)}">${row.exitR ?? "-"}</td>
+        <td class="${numClass(row.pnlPct)}">${row.pnlPct ?? "-"}</td>
+      </tr>
     `)
     .join("");
 }
 
-function statusPass(f, filter) {
-  if (filter === "ALL") return true;
-  if (filter === "EDGE") return ["STRONG_EDGE", "USABLE_EDGE"].includes(f.status);
-  if (filter === "BAD") return f.status === "BAD_EDGE";
-  if (filter === "COLLECTING") return f.status === "COLLECTING";
-  return true;
-}
+function renderActions(report) {
+  const rows = report.rows || [];
+  const query = $("actionsSearch")?.value || "";
 
-function applyFilters(families) {
-  const side = els.sideFilter.value;
-  const status = els.statusFilter.value;
-  const minClosed = Number(els.minClosed.value || 0);
-  const search = els.searchBox.value.trim().toUpperCase();
-  const hideEmpty = els.hideEmpty.checked;
-
-  return families.filter(f => {
-    if (side !== "ALL" && f.side !== side) return false;
-    if (!statusPass(f, status)) return false;
-    if (Number(f.closed || 0) < minClosed) return false;
-    if (hideEmpty && Number(f.observed || 0) === 0) return false;
-
-    if (search) {
-      const haystack = [
-        f.familyId,
-        f.name,
-        f.label,
-        f.scenarioKey,
-        f.qualityKey,
-        definitionText(f),
-        f.status,
-        f.confidence
-      ].join(" ").toUpperCase();
-
-      if (!haystack.includes(search)) return false;
-    }
-
-    return true;
-  });
-}
-
-function renderFamilies() {
-  const families = applyFilters(state.families);
-
-  els.familyRows.innerHTML = families
-    .map(f => {
-      const avgRClass = clsNumber(f.avgR);
-      const totalRClass = clsNumber(f.totalR);
-      const pnlClass = clsNumber(f.totalPnlPct);
-
-      return `
-        <tr data-family="${f.familyId}">
-          <td>
-            <div class="family-id">${f.familyId}</div>
-            <div class="badge">${f.side}</div>
-          </td>
-          <td class="definition">${definitionText(f)}</td>
-          <td>${f.observed}</td>
-          <td>${f.closed}</td>
-          <td>${f.open}</td>
-          <td class="good">${f.wins}</td>
-          <td class="bad">${f.losses}</td>
-          <td>${f.winrate}</td>
-          <td class="${avgRClass}">${fmt(f.avgR)}</td>
-          <td class="${totalRClass}">${fmt(f.totalR)}</td>
-          <td class="${pnlClass}">${fmt(f.avgPnlPct)}</td>
-          <td class="${pnlClass}">${fmt(f.totalPnlPct)}</td>
-          <td>${f.directSLPct}</td>
-          <td>${f.nearTpPct}</td>
-          <td><span class="badge">${f.confidence}</span></td>
-          <td><span class="badge">${f.status}</span></td>
-        </tr>
-      `;
-    })
-    .join("");
-
-  for (const tr of els.familyRows.querySelectorAll("tr[data-family]")) {
-    tr.addEventListener("click", () => {
-      const id = tr.getAttribute("data-family");
-      const family = state.families.find(f => f.familyId === id);
-      showDetails(family);
-    });
-  }
-}
-
-function renderTrackedFilters(filters = []) {
-  els.trackedFilters.innerHTML = filters
-    .map(name => `<span>${name}</span>`)
+  $("actionsBody").innerHTML = rows
+    .filter(row => rowMatches(row, query))
+    .slice(0, 500)
+    .map(row => `
+      <tr>
+        <td><strong>${row.symbol || "-"}</strong></td>
+        <td>${row.side || "-"}</td>
+        <td>${row.action || "-"}</td>
+        <td>${row.reason || "-"}</td>
+        <td>${row.setupClass || "-"}</td>
+        <td>${row.familyId || "-"}</td>
+        <td>${row.open ? "yes" : "no"}</td>
+        <td>${row.closed ? "yes" : "no"}</td>
+        <td>${row.win ? "yes" : "no"}</td>
+        <td>${row.loss ? "yes" : "no"}</td>
+      </tr>
+    `)
     .join("");
 }
 
-function showDetails(family) {
-  if (!family) return;
+function applySearchToFamilies() {
+  const report = state.report;
+  if (!report) return;
 
-  els.detailsTitle.textContent = `${family.familyId} — ${family.name}`;
-  els.detailsPre.textContent = JSON.stringify(family, null, 2);
-  els.detailsDialog.showModal();
+  const longQuery = String($("longSearch")?.value || "").toLowerCase();
+  const shortQuery = String($("shortSearch")?.value || "").toLowerCase();
+
+  const longRows = (report.longFamilies || []).filter(f => !longQuery || JSON.stringify(f).toLowerCase().includes(longQuery));
+  const shortRows = (report.shortFamilies || []).filter(f => !shortQuery || JSON.stringify(f).toLowerCase().includes(shortQuery));
+
+  $("longBody").innerHTML = longRows.map(familyRow).join("");
+  $("shortBody").innerHTML = shortRows.map(familyRow).join("");
 }
 
-async function loadData() {
-  els.refreshBtn.textContent = "Loading...";
+function renderRaw(report) {
+  $("rawBox").textContent = JSON.stringify(report, null, 2);
+}
+
+function render(report) {
+  state.report = report;
+
+  renderSummary(report);
+  renderFamilies(report);
+  renderFilters(report);
+  renderTrades(report);
+  renderActions(report);
+  renderRaw(report);
+}
+
+async function loadReport() {
+  showError("");
 
   try {
-    const res = await fetch(`/api/analyse?t=${Date.now()}`, {
+    const res = await fetch(`${API_URL}?t=${Date.now()}`, {
       cache: "no-store"
     });
 
-    const json = await res.json();
+    const data = await res.json();
 
-    if (!json.ok) {
-      throw new Error(json.error || "API_ERROR");
+    if (!res.ok || data?.ok === false) {
+      throw new Error(data?.error || `HTTP ${res.status}`);
     }
 
-    state.data = json;
-    state.families = Array.isArray(json.families) ? json.families : [];
+    const report = safeReport(data);
 
-    renderCards(json.summary, json.store);
-    renderTrackedFilters(json.trackedFilters || []);
-    renderFamilies();
+    render(report);
   } catch (e) {
-    els.familyRows.innerHTML = `
-      <tr>
-        <td colspan="16" class="bad">Analyse laden mislukt: ${e.message}</td>
-      </tr>
-    `;
-  } finally {
-    els.refreshBtn.textContent = "Refresh";
+    showError(`Load error: ${e.message}`);
   }
 }
 
-els.refreshBtn.addEventListener("click", loadData);
-els.sideFilter.addEventListener("change", renderFamilies);
-els.statusFilter.addEventListener("change", renderFamilies);
-els.minClosed.addEventListener("input", renderFamilies);
-els.searchBox.addEventListener("input", renderFamilies);
-els.hideEmpty.addEventListener("change", renderFamilies);
+async function resetReport() {
+  const ok = confirm("Reset alle analyse data?");
+  if (!ok) return;
 
-els.closeDialog.addEventListener("click", () => {
-  els.detailsDialog.close();
-});
+  showError("");
 
-loadData();
+  try {
+    const res = await fetch(`${API_URL}?reset=1&t=${Date.now()}`, {
+      method: "DELETE",
+      cache: "no-store"
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || data?.ok === false) {
+      throw new Error(data?.error || `HTTP ${res.status}`);
+    }
+
+    await loadReport();
+  } catch (e) {
+    showError(`Reset error: ${e.message}`);
+  }
+}
+
+function setActiveTab(name) {
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === name);
+  });
+
+  document.querySelectorAll(".panel").forEach(panel => {
+    panel.classList.toggle("active", panel.id === `tab-${name}`);
+  });
+}
+
+function toggleAuto() {
+  state.auto = !state.auto;
+
+  $("autoBtn").textContent = state.auto ? "Auto: ON" : "Auto: OFF";
+
+  if (state.timer) {
+    clearInterval(state.timer);
+    state.timer = null;
+  }
+
+  if (state.auto) {
+    state.timer = setInterval(loadReport, 10_000);
+  }
+}
+
+function bindEvents() {
+  $("refreshBtn")?.addEventListener("click", loadReport);
+  $("resetBtn")?.addEventListener("click", resetReport);
+  $("autoBtn")?.addEventListener("click", toggleAuto);
+
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
+  });
+
+  $("longSearch")?.addEventListener("input", applySearchToFamilies);
+  $("shortSearch")?.addEventListener("input", applySearchToFamilies);
+
+  $("filterSearch")?.addEventListener("input", () => {
+    if (state.report) renderFilters(state.report);
+  });
+
+  $("tradesSearch")?.addEventListener("input", () => {
+    if (state.report) renderTrades(state.report);
+  });
+
+  $("actionsSearch")?.addEventListener("input", () => {
+    if (state.report) renderActions(state.report);
+  });
+}
+
+bindEvents();
+loadReport();
