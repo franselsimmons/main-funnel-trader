@@ -14,17 +14,48 @@
   <main class="page">
     <section class="hero">
       <div class="hero-inner">
-        <h1>TradeSystem Analyse</h1>
-        <p>
-          50 LONG families + 50 SHORT families. Broad buckets.
-          Closed/open/shadow gescheiden.
-        </p>
+        <div class="hero-copy">
+          <p class="eyebrow">TradeSystem Analyzer</p>
+
+          <h1>Family Performance Matrix</h1>
+
+          <p class="hero-text">
+            50 LONG families + 50 SHORT families. Elke trade wordt op entry vastgezet in één frozen filter-family.
+            Winrate en PnL worden alleen betrouwbaar zodra er genoeg closed trades zijn.
+          </p>
+        </div>
 
         <div class="top-actions">
           <button id="refreshBtn" type="button">Refresh</button>
           <button id="autoBtn" type="button">Auto: OFF</button>
           <button id="resetBtn" type="button" class="danger">Reset</button>
-          <a id="apiLink" href="/api/analyse" target="_blank" rel="noopener">API</a>
+          <a id="apiLink" href="/api/analyse?minClosed=10&includeLatest=true" target="_blank" rel="noopener">API</a>
+        </div>
+
+        <div class="hero-status-grid" aria-label="Analyzer status">
+          <article class="status-card">
+            <span>Store</span>
+            <strong id="sStoreCount">0</strong>
+            <small id="sStorePath">-</small>
+          </article>
+
+          <article class="status-card">
+            <span>Latest scan</span>
+            <strong id="sLatestCount">0</strong>
+            <small id="sLatestTime">-</small>
+          </article>
+
+          <article class="status-card">
+            <span>Merged records</span>
+            <strong id="sMergedCount">0</strong>
+            <small id="sGeneratedAt">-</small>
+          </article>
+
+          <article class="status-card">
+            <span>Data state</span>
+            <strong id="sDataState">INIT</strong>
+            <small id="sLatency">0 ms</small>
+          </article>
         </div>
 
         <div id="statusLine" class="status-line">Nog niet geladen.</div>
@@ -87,14 +118,33 @@
       <article class="metric-card family-card">
         <span class="metric-label">Long families</span>
         <strong id="mLongFamilies" class="metric-value">50</strong>
-        <small id="mLongMeta" class="metric-sub">HOT 0 | STABLE 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
+        <small id="mLongMeta" class="metric-sub">HOT 0 | GOOD 0 | STABLE 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
       </article>
 
       <article class="metric-card family-card">
         <span class="metric-label">Short families</span>
         <strong id="mShortFamilies" class="metric-value">50</strong>
-        <small id="mShortMeta" class="metric-sub">HOT 0 | STABLE 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
+        <small id="mShortMeta" class="metric-sub">HOT 0 | GOOD 0 | STABLE 0 | BAD 0 | COLLECTING 0 | EMPTY 50</small>
       </article>
+    </section>
+
+    <section class="panel winners-panel" aria-label="Beste families">
+      <div class="table-header">
+        <div>
+          <h2>Winner candidates</h2>
+          <p class="panel-subtitle">
+            Families met voldoende closed trades komen pas als HOT / GOOD / STABLE naar boven.
+          </p>
+        </div>
+
+        <span id="winnerCount">0 winners</span>
+      </div>
+
+      <div id="winnerBody" class="winner-grid">
+        <article class="winner-empty">
+          Nog geen betrouwbare winner-family. Eerst closed trades verzamelen.
+        </article>
+      </div>
     </section>
 
     <section class="panel family-panel">
@@ -105,6 +155,14 @@
       </div>
 
       <div class="filter-grid">
+        <label class="field">
+          <span>Data source</span>
+          <select id="sourceSelect">
+            <option value="MERGED" selected>MERGED: store + latest</option>
+            <option value="STORED">STORED only</option>
+          </select>
+        </label>
+
         <label class="field">
           <span>Side</span>
           <select id="sideSelect">
@@ -129,22 +187,28 @@
 
         <label class="field">
           <span>Min closed</span>
-          <input id="minClosedInput" type="number" min="0" step="1" value="0" inputmode="numeric" />
+          <input id="minClosedInput" type="number" min="0" step="1" value="10" inputmode="numeric" />
         </label>
 
         <label class="field search-field">
           <span>Search</span>
-          <input id="searchInput" type="search" placeholder="LONG_4, MID, COUNTER, DEPTH..." autocomplete="off" />
+          <input id="searchInput" type="search" placeholder="LONG_24, Q3_BASE, COUNTER, DEPTH..." autocomplete="off" />
         </label>
 
         <label class="check-field">
-          <input id="hideEmptyInput" type="checkbox" />
+          <input id="hideEmptyInput" type="checkbox" checked />
           <span>Hide empty</span>
         </label>
       </div>
 
       <div class="table-header">
-        <h2>Families</h2>
+        <div>
+          <h2>Families</h2>
+          <p class="panel-subtitle">
+            Observed = alle records. Closed = alleen afgerekende trades. Winrate/PnL gebruikt uitsluitend closed.
+          </p>
+        </div>
+
         <span id="familyCount">0 rows</span>
       </div>
 
@@ -154,6 +218,9 @@
             <tr>
               <th>Family</th>
               <th>Side</th>
+              <th>Quality</th>
+              <th>Market</th>
+              <th>Timing</th>
               <th>Definition</th>
               <th>Observed</th>
               <th>Trades</th>
@@ -165,9 +232,11 @@
               <th>Total R</th>
               <th>Avg R</th>
               <th>Total PnL%</th>
+              <th>Avg PnL%</th>
               <th>Status</th>
             </tr>
           </thead>
+
           <tbody id="familyBody"></tbody>
         </table>
       </div>
@@ -179,11 +248,24 @@
 
     <section class="panel filters-panel">
       <div class="table-header">
-        <h2>Tracked filters</h2>
+        <div>
+          <h2>Tracked filters</h2>
+          <p class="panel-subtitle">
+            Dit zijn de labels waarop de families worden gegroepeerd.
+          </p>
+        </div>
+
         <span id="filterCount">0 labels</span>
       </div>
 
       <div id="filtersBody" class="filter-chip-grid"></div>
+    </section>
+
+    <section class="panel debug-panel">
+      <details>
+        <summary>Debug payload</summary>
+        <pre id="debugJson" class="debug-json">{}</pre>
+      </details>
     </section>
   </main>
 
