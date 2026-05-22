@@ -1,13 +1,21 @@
 import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 import { processTrades } from "../lib/tradeSystem.js";
 import { appendAnalyzeEvents } from "../lib/analyze/analyzeStore.js";
+import { buildAnalyzeReport } from "../lib/analyze/familyEngine.js";
 
 const MAX_RESPONSE_TRADES = 250;
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
 
 // ================= GENERIC HELPERS =================
+
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function safeObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
 }
 
 function safeNumber(value, fallback = 0) {
@@ -70,12 +78,38 @@ function candidateQualityScore(c) {
   );
 }
 
+function normalizeText(value) {
+  return String(value || "").toUpperCase().trim();
+}
+
+function normalizeTimestamp(value, fallback = Date.now()) {
+  if (value instanceof Date) return value.getTime();
+
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) return n;
+
+  const parsed = Date.parse(String(value || ""));
+  if (Number.isFinite(parsed)) return parsed;
+
+  return fallback;
+}
+
 // ================= NORMALISATIE HELPERS VOOR API-GATE =================
+
 function normalizeSide(value) {
   const s = String(value || "").toLowerCase().trim();
 
   if (["bull", "long", "buy"].includes(s)) return "bull";
   if (["bear", "short", "sell"].includes(s)) return "bear";
+
+  return "";
+}
+
+function normalizeAnalyzeSide(value) {
+  const s = String(value || "").toLowerCase().trim();
+
+  if (["bull", "long", "buy"].includes(s)) return "LONG";
+  if (["bear", "short", "sell"].includes(s)) return "SHORT";
 
   return "";
 }
@@ -111,7 +145,18 @@ function getCandidateScore(coin) {
   );
 }
 
+function getTradeId(action) {
+  const id =
+    action?.tradeId ||
+    action?.positionId ||
+    action?.orderId ||
+    action?.id;
+
+  return id ? String(id) : "";
+}
+
 // ================= TRADE-FUNNEL GATE =================
+
 const TRADE_FUNNEL_MIN_SCORE = 45;
 const TRADE_FUNNEL_ALMOST_MIN_SCORE = 45;
 
@@ -138,6 +183,7 @@ function passesTradeFunnelGate(coin) {
 }
 
 // ================= CANDIDATE SELECTOR =================
+
 function getTradeFunnelCandidates(latest) {
   const buckets = [
     ...safeArray(latest?.funnel?.bull?.entry),
@@ -238,7 +284,221 @@ function getTradeFunnelCandidates(latest) {
   };
 }
 
+// ================= ANALYZE LIFECYCLE FILTER =================
+
+function getLifecycleAction(action) {
+  const text = normalizeText(
+    action?.action ||
+      action?.status ||
+      action?.reason ||
+      action?.exitReason ||
+      action?.type
+  );
+
+  if (!text) return "";
+
+  if (
+    text === "WAIT" ||
+    text === "HOLD" ||
+    text === "RUNNING" ||
+    text === "NO_TRADE" ||
+    text === "SKIP" ||
+    text.includes("WAIT") ||
+    text.includes("HOLD") ||
+    text.includes("RUNNING")
+  ) {
+    return "";
+  }
+
+  if (
+    text === "ENTRY" ||
+    text === "OPEN" ||
+    text === "ENTER" ||
+    text.includes("ENTRY") ||
+    text.includes("OPEN_POSITION")
+  ) {
+    return "ENTRY";
+  }
+
+  if (
+    text === "EXIT" ||
+    text === "CLOSE" ||
+    text === "CLOSED" ||
+    text.includes("EXIT") ||
+    text.includes("CLOSE") ||
+    text.includes("TP") ||
+    text.includes("SL") ||
+    text.includes("STOP") ||
+    text.includes("TAKE_PROFIT")
+  ) {
+    return "EXIT";
+  }
+
+  if (action?.closed === true || action?.isClosed === true) return "EXIT";
+  if (action?.exitPrice !== undefined && action?.exitPrice !== null) return "EXIT";
+  if (action?.closedAt || action?.exitAt || action?.exitTs) return "EXIT";
+
+  return "";
+}
+
+function getActionTimestamp(action) {
+  return normalizeTimestamp(
+    action?.closedAt ??
+      action?.exitAt ??
+      action?.exitTs ??
+      action?.updatedAt ??
+      action?.createdAt ??
+      action?.openedAt ??
+      action?.entryTs ??
+      action?.ts,
+    Date.now()
+  );
+}
+
+function buildAnalyzeFamilySnapshot(event) {
+  try {
+    const report = buildAnalyzeReport([event], {
+      minClosed: 1,
+      familyCountLong: 50,
+      familyCountShort: 50,
+    });
+
+    const family = safeArray(report?.families?.all).find(f => safeNumber(f.observed, 0) > 0);
+
+    if (!family) return null;
+
+    return {
+      familyId: family.id,
+      side: family.side,
+      index: family.index,
+      qualityIndex: family.qualityIndex,
+      marketIndex: family.marketIndex,
+      timingIndex: family.timingIndex,
+      qualityBucket: family.qualityBucket,
+      marketBucket: family.marketBucket,
+      timingBucket: family.timingBucket,
+      definition: family.definition,
+      frozenAt: Date.now(),
+    };
+  } catch (e) {
+    console.error("ANALYZE FAMILY SNAPSHOT ERROR:", e);
+    return null;
+  }
+}
+
+function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
+  const lifecycleAction = getLifecycleAction(action);
+  if (!lifecycleAction) return null;
+
+  const tradeId = getTradeId(action);
+  if (!tradeId) return null;
+
+  const symbol = String(action.symbol || "").toUpperCase().trim();
+  const side = normalizeAnalyzeSide(action.side || action.direction || action.tradeSide);
+
+  if (!symbol || !side) return null;
+
+  const ts = getActionTimestamp(action);
+
+  const base = {
+    ...action,
+
+    tradeId,
+    symbol,
+    side,
+
+    action: lifecycleAction,
+    originalAction: action.action || action.status || action.reason || null,
+    analyzeLifecycle: lifecycleAction,
+    analyzeSource: "api_trade_funnel",
+    analyzeTs: ts,
+    ts,
+
+    closed: lifecycleAction === "EXIT"
+      ? true
+      : Boolean(action.closed || action.isClosed),
+
+    btc: action.btc ?? latest?.btc ?? null,
+    regime: action.regime ?? latest?.regime ?? null,
+    market: action.market ?? latest?.market ?? null,
+
+    tradeFunnelUpdatedAt: context.tradeFunnelUpdatedAt || Date.now(),
+    latestUpdatedAt: latest?.updatedAt || null,
+    sequenceIndex: index,
+  };
+
+  const snapshot =
+    safeObject(action.filterSnapshot).familyId
+      ? safeObject(action.filterSnapshot)
+      : buildAnalyzeFamilySnapshot(base);
+
+  return {
+    ...base,
+
+    familyId:
+      action.familyId ||
+      action.analyzeFamilyId ||
+      snapshot?.familyId ||
+      null,
+
+    analyzeFamilyId:
+      action.analyzeFamilyId ||
+      action.familyId ||
+      snapshot?.familyId ||
+      null,
+
+    filterSnapshot: snapshot || action.filterSnapshot || null,
+  };
+}
+
+function buildAnalyzeEvents(actions, latest, context = {}) {
+  const received = safeArray(actions);
+  const events = [];
+  const rejectCounts = {};
+
+  received.forEach((action, index) => {
+    if (!action || typeof action !== "object") {
+      incrementCounter(rejectCounts, "BAD_ACTION");
+      return;
+    }
+
+    const lifecycleAction = getLifecycleAction(action);
+
+    if (!lifecycleAction) {
+      incrementCounter(rejectCounts, "NOT_ENTRY_OR_EXIT");
+      return;
+    }
+
+    if (!getTradeId(action)) {
+      incrementCounter(rejectCounts, "NO_TRADE_ID");
+      return;
+    }
+
+    const normalized = normalizeAnalyzeEvent(action, latest, context, index);
+
+    if (!normalized) {
+      incrementCounter(rejectCounts, "NORMALIZE_FAILED");
+      return;
+    }
+
+    events.push(normalized);
+  });
+
+  return {
+    events,
+    stats: {
+      received: received.length,
+      accepted: events.length,
+      acceptedEntries: events.filter(e => e.action === "ENTRY").length,
+      acceptedExits: events.filter(e => e.action === "EXIT").length,
+      rejected: received.length - events.length,
+      rejectCounts,
+    },
+  };
+}
+
 // ================= ANALYZE APPEND =================
+
 async function appendTradesToAnalyzer(trades, latest, context = {}) {
   const actions = safeArray(trades);
 
@@ -248,13 +508,30 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       skipped: true,
       reason: "NO_ACTIONS",
       received: 0,
+      accepted: 0,
       acceptedEntries: 0,
       acceptedExits: 0,
+      rejected: 0,
+      rejectCounts: {},
+    };
+  }
+
+  const { events, stats } = buildAnalyzeEvents(actions, latest, {
+    tradeFunnelUpdatedAt: Date.now(),
+    ...context,
+  });
+
+  if (!events.length) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "NO_ENTRY_OR_EXIT_EVENTS",
+      ...stats,
     };
   }
 
   try {
-    return await appendAnalyzeEvents(actions, {
+    const result = await appendAnalyzeEvents(events, {
       source: "api_trade_funnel",
       tradeFunnelUpdatedAt: Date.now(),
       latestUpdatedAt: latest?.updatedAt || null,
@@ -263,18 +540,24 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       market: latest?.market || null,
       ...context,
     });
+
+    return {
+      ...result,
+      ...stats,
+    };
   } catch (e) {
     console.error("ANALYZE APPEND ERROR:", e);
 
     return {
       ok: false,
       error: e?.message || "analyze_append_failed",
-      received: actions.length,
+      ...stats,
     };
   }
 }
 
 // ================= RESPONSE COMPACTION =================
+
 function compactAction(action) {
   if (!action || typeof action !== "object") return action;
 
@@ -285,31 +568,43 @@ function compactAction(action) {
     action: action.action,
     reason: action.reason,
     exitReason: action.exitReason,
+
+    familyId: action.familyId || action.analyzeFamilyId || action.filterSnapshot?.familyId || null,
+
     setupClass: action.setupClass,
     grade: action.grade,
+
     entry: action.entry,
     exit: action.exit,
+    exitPrice: action.exitPrice,
     sl: action.sl,
     tp: action.tp,
+
     rr: action.rr,
     baseRR: action.baseRR,
     realizedR: action.realizedR,
     pnlR: action.pnlR,
     pnlPct: action.pnlPct,
+
     confluence: action.confluence,
     sniperScore: action.sniperScore,
     moveScore: action.moveScore,
     score: action.score,
+
     rsi: action.rsi,
     rsiHTF: action.rsiHTF,
     rsiZone: action.rsiZone,
+
     stage: action.stage,
+    scannerStage: action.scannerStage,
     flow: action.flow,
+
     obBias: action.obBias,
     spreadPct: action.spreadPct,
     depthMinUsd1p: action.depthMinUsd1p,
     btcState: action.btcState,
     fundingRate: action.fundingRate,
+
     regime: action.regime,
     strategyVersion: action.strategyVersion,
     ts: action.ts,
@@ -349,6 +644,7 @@ function compactResponse(data) {
 }
 
 // ================= CORE =================
+
 export async function runTradeFunnel(options = {}) {
   const notify = options.notify !== false;
   const store = options.store !== false;
@@ -379,10 +675,24 @@ export async function runTradeFunnel(options = {}) {
       ? result.actions
       : [];
 
-  const analyzeAppendResult = await appendTradesToAnalyzer(trades, latest, {
-    notify,
-    store,
-  });
+  const analyzeAppendResult = store
+    ? await appendTradesToAnalyzer(trades, latest, {
+        notify,
+        store,
+      })
+    : {
+        ok: true,
+        skipped: true,
+        reason: "STORE_FALSE",
+        received: trades.length,
+        accepted: 0,
+        acceptedEntries: 0,
+        acceptedExits: 0,
+        rejected: trades.length,
+        rejectCounts: {
+          STORE_FALSE: trades.length,
+        },
+      };
 
   const updated = {
     ...latest,
@@ -390,12 +700,14 @@ export async function runTradeFunnel(options = {}) {
     trades,
     tradeSystemResult: result,
     analyzeAppendResult,
+
     tradeFunnelRawCount: tradeFunnel.rawCount,
     tradeFunnelInputCount: candidates.length,
     tradeFunnelRejectCounts: tradeFunnel.rejectCounts,
     tradeFunnelInputSymbols: candidates.map(c =>
       `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`
     ),
+
     tradeFunnelUpdatedAt: now,
     updatedAt: now,
   };
@@ -408,6 +720,7 @@ export async function runTradeFunnel(options = {}) {
 }
 
 // ================= HANDLER =================
+
 export default async function handler(req, res) {
   const notify = normalizeNotify(req?.query?.notify, true);
   const store = normalizeStore(req?.query?.store, true);
