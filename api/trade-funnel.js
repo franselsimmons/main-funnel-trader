@@ -1,10 +1,17 @@
 import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 import { processTrades } from "../lib/tradeSystem.js";
 import { appendAnalyzeEvents } from "../lib/analyze/analyzeStore.js";
-import { buildAnalyzeReport } from "../lib/analyze/familyEngine.js";
+import {
+  classifyAnalyzeEvent,
+  createAnalyzeFamilies,
+} from "../lib/analyze/familyEngine.js";
 
 const MAX_RESPONSE_TRADES = 250;
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
+
+const FAMILY_BY_ID = new Map(
+  createAnalyzeFamilies().all.map(family => [family.id, family])
+);
 
 // ================= GENERIC HELPERS =================
 
@@ -21,6 +28,11 @@ function safeObject(value) {
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function nullableNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function normalizeBoolean(value, fallback = false) {
@@ -47,7 +59,8 @@ function normalizeFullResponse(value, fallback = false) {
 }
 
 function incrementCounter(map, key) {
-  map[key] = Number(map[key] || 0) + 1;
+  const k = key || "UNKNOWN";
+  map[k] = Number(map[k] || 0) + 1;
 }
 
 function stageRank(stage) {
@@ -148,8 +161,10 @@ function getCandidateScore(coin) {
 function getTradeId(action) {
   const id =
     action?.tradeId ||
+    action?.positionTradeId ||
     action?.positionId ||
     action?.orderId ||
+    action?.clientOrderId ||
     action?.id;
 
   return id ? String(id) : "";
@@ -286,57 +301,109 @@ function getTradeFunnelCandidates(latest) {
 
 // ================= ANALYZE LIFECYCLE FILTER =================
 
-function getLifecycleAction(action) {
-  const text = normalizeText(
-    action?.action ||
-      action?.status ||
-      action?.reason ||
-      action?.exitReason ||
-      action?.type
+function getActionCandidates(action) {
+  return [
+    action?.analyzeLifecycle,
+    action?.analyzeAction,
+    action?.lifecycleAction,
+    action?.tradeAction,
+    action?.action,
+    action?.status,
+    action?.state,
+    action?.type,
+    action?.reason,
+    action?.exitReason,
+  ]
+    .map(normalizeText)
+    .filter(Boolean);
+}
+
+function hasExitFields(action) {
+  return (
+    action?.closed === true ||
+    action?.isClosed === true ||
+    action?.exitPrice !== undefined ||
+    action?.exit !== undefined ||
+    action?.executionPrice !== undefined ||
+    action?.closedAt ||
+    action?.exitAt ||
+    action?.exitTs ||
+    action?.realizedR !== undefined ||
+    action?.pnlR !== undefined ||
+    action?.exitR !== undefined ||
+    action?.resultR !== undefined ||
+    action?.pnlPct !== undefined
   );
+}
 
-  if (!text) return "";
+function hasEntryFields(action) {
+  return (
+    action?.entry !== undefined ||
+    action?.entryPrice !== undefined ||
+    action?.openPrice !== undefined ||
+    action?.sl !== undefined ||
+    action?.tp !== undefined ||
+    action?.rr !== undefined ||
+    action?.baseRR !== undefined
+  );
+}
 
-  if (
-    text === "WAIT" ||
-    text === "HOLD" ||
-    text === "RUNNING" ||
-    text === "NO_TRADE" ||
-    text === "SKIP" ||
-    text.includes("WAIT") ||
-    text.includes("HOLD") ||
-    text.includes("RUNNING")
-  ) {
-    return "";
+function getLifecycleAction(action) {
+  const candidates = getActionCandidates(action);
+
+  for (const value of candidates) {
+    if (
+      value === "WAIT" ||
+      value === "HOLD" ||
+      value === "RUNNING" ||
+      value === "NO_TRADE" ||
+      value === "SKIP" ||
+      value === "IGNORE" ||
+      value.includes("WAIT") ||
+      value.includes("HOLD") ||
+      value.includes("RUNNING") ||
+      value.includes("REJECT")
+    ) {
+      return "";
+    }
   }
 
-  if (
-    text === "ENTRY" ||
-    text === "OPEN" ||
-    text === "ENTER" ||
-    text.includes("ENTRY") ||
-    text.includes("OPEN_POSITION")
-  ) {
-    return "ENTRY";
+  for (const value of candidates) {
+    if (
+      value === "EXIT" ||
+      value === "CLOSE" ||
+      value === "CLOSED" ||
+      value === "TP" ||
+      value === "SL" ||
+      value === "STOP" ||
+      value === "STOP_LOSS" ||
+      value === "TAKE_PROFIT" ||
+      value.includes("EXIT") ||
+      value.includes("CLOSE") ||
+      value.includes("TAKE_PROFIT") ||
+      value.includes("STOP_LOSS")
+    ) {
+      return "EXIT";
+    }
   }
 
-  if (
-    text === "EXIT" ||
-    text === "CLOSE" ||
-    text === "CLOSED" ||
-    text.includes("EXIT") ||
-    text.includes("CLOSE") ||
-    text.includes("TP") ||
-    text.includes("SL") ||
-    text.includes("STOP") ||
-    text.includes("TAKE_PROFIT")
-  ) {
-    return "EXIT";
+  if (hasExitFields(action)) return "EXIT";
+
+  for (const value of candidates) {
+    if (
+      value === "ENTRY" ||
+      value === "OPEN" ||
+      value === "ENTER" ||
+      value === "OPEN_LONG" ||
+      value === "OPEN_SHORT" ||
+      value.includes("ENTRY") ||
+      value.includes("OPEN_POSITION")
+    ) {
+      return "ENTRY";
+    }
   }
 
-  if (action?.closed === true || action?.isClosed === true) return "EXIT";
-  if (action?.exitPrice !== undefined && action?.exitPrice !== null) return "EXIT";
-  if (action?.closedAt || action?.exitAt || action?.exitTs) return "EXIT";
+  if (hasEntryFields(action)) return "ENTRY";
 
   return "";
 }
@@ -355,35 +422,111 @@ function getActionTimestamp(action) {
   );
 }
 
+function getEntryTimestamp(action) {
+  return normalizeTimestamp(
+    action?.openedAt ??
+      action?.entryTs ??
+      action?.createdAt ??
+      action?.ts,
+    Date.now()
+  );
+}
+
 function buildAnalyzeFamilySnapshot(event) {
   try {
-    const report = buildAnalyzeReport([event], {
-      minClosed: 1,
-      familyCountLong: 50,
-      familyCountShort: 50,
+    const classified = classifyAnalyzeEvent({
+      ...event,
+      closed: false,
+      action: "ENTRY",
+      analyzeLifecycle: "ENTRY",
     });
 
-    const family = safeArray(report?.families?.all).find(f => safeNumber(f.observed, 0) > 0);
+    if (!classified?.familyId) return null;
 
-    if (!family) return null;
+    const family = FAMILY_BY_ID.get(classified.familyId);
 
     return {
-      familyId: family.id,
-      side: family.side,
-      index: family.index,
-      qualityIndex: family.qualityIndex,
-      marketIndex: family.marketIndex,
-      timingIndex: family.timingIndex,
-      qualityBucket: family.qualityBucket,
-      marketBucket: family.marketBucket,
-      timingBucket: family.timingBucket,
-      definition: family.definition,
+      familyId: classified.familyId,
+      analyzeFamilyId: classified.familyId,
+      side: classified.side,
+      index: classified.index,
+      qualityIndex: classified.qualityIndex,
+      marketIndex: classified.marketIndex,
+      timingIndex: classified.timingIndex,
+      qualityBucket: family?.qualityBucket || null,
+      marketBucket: family?.marketBucket || null,
+      timingBucket: family?.timingBucket || null,
+      definition: family?.definition || null,
+      source: classified.source || "CLASSIFIED_FROM_FILTER_SNAPSHOT",
       frozenAt: Date.now(),
     };
   } catch (e) {
     console.error("ANALYZE FAMILY SNAPSHOT ERROR:", e);
     return null;
   }
+}
+
+function buildBaseFilterSnapshot(action) {
+  return {
+    ...safeObject(action?.filterSnapshot),
+    ...safeObject(action?.filters),
+    ...safeObject(action?.filterValues),
+    ...safeObject(action?.analysisFilters),
+
+    setupClass: action?.setupClass,
+    grade: action?.grade,
+
+    score: action?.score ?? action?.moveScore ?? action?.tradeScore,
+    moveScore: action?.moveScore ?? action?.score ?? action?.tradeScore,
+    confluence: action?.confluence,
+    sniperScore: action?.sniperScore,
+
+    rr: action?.rr,
+    baseRR: action?.baseRR,
+    finalRR: action?.finalRr ?? action?.finalRR,
+    plannedRR: action?.plannedRR,
+    effectiveRR: action?.effectiveRR,
+
+    stage: action?.stage,
+    scannerStage: action?.scannerStage,
+    stageSource: action?.stageSource,
+    flow: action?.flow,
+
+    rsi: action?.rsi,
+    rsiHTF: action?.rsiHTF,
+    rsiZone: action?.rsiZone,
+    tfScore: action?.tfScore,
+    tfStrength: action?.tfStrength,
+    tfAlignment: action?.tfAlignment,
+
+    obBias: action?.obBias,
+    spreadPct: action?.spreadPct,
+    spreadBps: action?.spreadBps,
+    depthMinUsd1p: action?.depthMinUsd1p,
+    depthUsd1p: action?.depthUsd1p,
+
+    btcState: action?.btcState,
+    regime: action?.regime,
+    market: action?.market,
+    fundingRate: action?.fundingRate,
+    funding: action?.funding,
+
+    pullbackConfirmed: action?.pullbackConfirmed,
+    sweepConfirmed: action?.sweepConfirmed,
+    retestConfirmed: action?.retestConfirmed,
+    distanceFromLocalHighPct: action?.distanceFromLocalHighPct,
+    pullbackFromHighPct: action?.pullbackFromHighPct,
+
+    strategyVersion: action?.strategyVersion,
+  };
+}
+
+function cleanObject(object) {
+  return Object.fromEntries(
+    Object.entries(safeObject(object)).filter(([, value]) => {
+      return value !== undefined && value !== null && value !== "";
+    })
+  );
 }
 
 function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
@@ -396,9 +539,28 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
   const symbol = String(action.symbol || "").toUpperCase().trim();
   const side = normalizeAnalyzeSide(action.side || action.direction || action.tradeSide);
 
-  if (!symbol || !side) return null;
+  if (lifecycleAction === "ENTRY" && (!symbol || !side)) return null;
 
   const ts = getActionTimestamp(action);
+  const openedAt = getEntryTimestamp(action);
+
+  const realizedR = nullableNumber(
+    action.realizedR ??
+      action.pnlR ??
+      action.exitR ??
+      action.resultR ??
+      action.outcomeR ??
+      action.rMultiple ??
+      action.r
+  );
+
+  const pnlPct = nullableNumber(
+    action.pnlPct ??
+      action.pnlPercent ??
+      action.realizedPnlPct ??
+      action.resultPnlPct ??
+      action.profitPct
+  );
 
   const base = {
     ...action,
@@ -414,9 +576,31 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
     analyzeTs: ts,
     ts,
 
+    openedAt: lifecycleAction === "ENTRY" ? openedAt : action.openedAt ?? null,
+    entryTs: lifecycleAction === "ENTRY" ? openedAt : action.entryTs ?? null,
+
     closed: lifecycleAction === "EXIT"
       ? true
       : Boolean(action.closed || action.isClosed),
+
+    closedAt: lifecycleAction === "EXIT"
+      ? normalizeTimestamp(action.closedAt ?? action.exitAt ?? action.exitTs ?? ts, ts)
+      : action.closedAt ?? null,
+
+    exitPrice: lifecycleAction === "EXIT"
+      ? nullableNumber(action.exitPrice ?? action.exit ?? action.executionPrice ?? action.price)
+      : nullableNumber(action.exitPrice ?? action.exit),
+
+    exit: lifecycleAction === "EXIT"
+      ? nullableNumber(action.exit ?? action.exitPrice ?? action.executionPrice ?? action.price)
+      : nullableNumber(action.exit),
+
+    realizedR,
+    pnlR: realizedR,
+    resultR: realizedR,
+    outcomeR: realizedR,
+    rMultiple: realizedR,
+    pnlPct,
 
     btc: action.btc ?? latest?.btc ?? null,
     regime: action.regime ?? latest?.regime ?? null,
@@ -427,27 +611,62 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
     sequenceIndex: index,
   };
 
-  const snapshot =
-    safeObject(action.filterSnapshot).familyId
-      ? safeObject(action.filterSnapshot)
-      : buildAnalyzeFamilySnapshot(base);
+  const baseSnapshot = cleanObject(buildBaseFilterSnapshot(action));
+
+  if (lifecycleAction === "EXIT") {
+    return {
+      ...base,
+      filterSnapshot: baseSnapshot,
+      familyId:
+        action.familyId ||
+        action.analyzeFamilyId ||
+        action.analysisFamilyId ||
+        action.filterSnapshot?.familyId ||
+        null,
+      analyzeFamilyId:
+        action.analyzeFamilyId ||
+        action.familyId ||
+        action.analysisFamilyId ||
+        action.filterSnapshot?.familyId ||
+        null,
+    };
+  }
+
+  const existingFamilyId =
+    action.familyId ||
+    action.analyzeFamilyId ||
+    action.analysisFamilyId ||
+    baseSnapshot.familyId ||
+    baseSnapshot.analyzeFamilyId ||
+    null;
+
+  const familySnapshot = existingFamilyId
+    ? {
+        familyId: String(existingFamilyId).toUpperCase(),
+        analyzeFamilyId: String(existingFamilyId).toUpperCase(),
+        frozenAt: Date.now(),
+        source: "EXISTING_FAMILY_ID",
+      }
+    : buildAnalyzeFamilySnapshot({
+        ...base,
+        filterSnapshot: baseSnapshot,
+      });
+
+  const familyId = familySnapshot?.familyId || null;
 
   return {
     ...base,
 
-    familyId:
-      action.familyId ||
-      action.analyzeFamilyId ||
-      snapshot?.familyId ||
-      null,
+    familyId,
+    analyzeFamilyId: familyId,
+    analysisFamilyId: familyId,
 
-    analyzeFamilyId:
-      action.analyzeFamilyId ||
-      action.familyId ||
-      snapshot?.familyId ||
-      null,
-
-    filterSnapshot: snapshot || action.filterSnapshot || null,
+    filterSnapshot: cleanObject({
+      ...baseSnapshot,
+      ...familySnapshot,
+      familyId,
+      analyzeFamilyId: familyId,
+    }),
   };
 }
 
@@ -569,21 +788,37 @@ function compactAction(action) {
     reason: action.reason,
     exitReason: action.exitReason,
 
-    familyId: action.familyId || action.analyzeFamilyId || action.filterSnapshot?.familyId || null,
+    familyId:
+      action.familyId ||
+      action.analyzeFamilyId ||
+      action.analysisFamilyId ||
+      action.filterSnapshot?.familyId ||
+      null,
 
     setupClass: action.setupClass,
     grade: action.grade,
 
     entry: action.entry,
+    entryPrice: action.entryPrice,
+    openedAt: action.openedAt,
+    entryTs: action.entryTs,
+
     exit: action.exit,
     exitPrice: action.exitPrice,
+    closed: action.closed,
+    closedAt: action.closedAt,
+
     sl: action.sl,
     tp: action.tp,
 
     rr: action.rr,
     baseRR: action.baseRR,
-    realizedR: action.realizedR,
-    pnlR: action.pnlR,
+    finalRr: action.finalRr,
+    plannedRR: action.plannedRR,
+
+    realizedR: action.realizedR ?? action.pnlR ?? action.exitR,
+    pnlR: action.pnlR ?? action.realizedR ?? action.exitR,
+    exitR: action.exitR,
     pnlPct: action.pnlPct,
 
     confluence: action.confluence,
@@ -601,9 +836,11 @@ function compactAction(action) {
 
     obBias: action.obBias,
     spreadPct: action.spreadPct,
+    spreadBps: action.spreadBps,
     depthMinUsd1p: action.depthMinUsd1p,
     btcState: action.btcState,
     fundingRate: action.fundingRate,
+    funding: action.funding,
 
     regime: action.regime,
     strategyVersion: action.strategyVersion,
@@ -663,6 +900,7 @@ export async function runTradeFunnel(options = {}) {
     ? await processTrades(candidates, {
         notify,
         log: true,
+        analyze: true,
         btc: latest.btc,
         regime: latest.regime,
         market: latest.market,
