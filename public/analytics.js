@@ -23,13 +23,35 @@
         maximumFractionDigits: decimals,
       });
     },
-
-    pct(value) {
-      if (typeof value === "string") return value;
-      const n = Number(value || 0);
-      return `${(n * 100).toFixed(1)}%`;
-    },
   };
+
+  function formatError(error) {
+    if (!error) return "Unknown error";
+
+    if (typeof error === "string") return error;
+
+    if (error instanceof Error) {
+      return error.message || String(error);
+    }
+
+    if (typeof error.message === "string") {
+      return error.message;
+    }
+
+    if (typeof error.error === "string") {
+      return error.error;
+    }
+
+    if (error.error && typeof error.error === "object") {
+      return formatError(error.error);
+    }
+
+    try {
+      return JSON.stringify(error, null, 2);
+    } catch {
+      return String(error);
+    }
+  }
 
   function setText(id, value) {
     const el = $(id);
@@ -54,45 +76,21 @@
     setText("statusLine", message);
   }
 
-  function normalizeReport(payload) {
-    const report = payload?.report || payload?.data?.report || payload?.data || payload;
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-    if (!report || typeof report !== "object") {
-      throw new Error("API response mist report object.");
-    }
+  function getMinClosed() {
+    return Math.max(1, Number($("minClosedInput")?.value || 10));
+  }
 
-    const familiesObject = report.families || {};
-    const allFamilies = Array.isArray(familiesObject.all)
-      ? familiesObject.all
-      : [
-          ...(Array.isArray(familiesObject.long) ? familiesObject.long : []),
-          ...(Array.isArray(familiesObject.short) ? familiesObject.short : []),
-        ];
-
-    const longFamilies = Array.isArray(familiesObject.long)
-      ? familiesObject.long
-      : allFamilies.filter((family) => family.side === "LONG");
-
-    const shortFamilies = Array.isArray(familiesObject.short)
-      ? familiesObject.short
-      : allFamilies.filter((family) => family.side === "SHORT");
-
-    const summary = report.summary || buildSummary(allFamilies);
-
-    return {
-      ...report,
-      summary,
-      families: {
-        all: allFamilies,
-        long: longFamilies,
-        short: shortFamilies,
-      },
-      filterKeys: Array.isArray(report.filterKeys) ? report.filterKeys : [],
-      trades: {
-        total: Number(report.trades?.total || report.trades?.items?.length || 0),
-        items: Array.isArray(report.trades?.items) ? report.trades.items : [],
-      },
-    };
+  function getApiUrl() {
+    return `/api/analyse?minClosed=${encodeURIComponent(getMinClosed())}`;
   }
 
   function buildSummary(families = []) {
@@ -140,23 +138,63 @@
     }
 
     const completed = summary.wins + summary.losses;
-    summary.winrate = completed > 0
-      ? `${((summary.wins / completed) * 100).toFixed(1)}%`
-      : "0.0%";
+
+    summary.winrate =
+      completed > 0 ? `${((summary.wins / completed) * 100).toFixed(1)}%` : "0.0%";
 
     summary.avgR = summary.closed > 0 ? summary.totalR / summary.closed : 0;
-    summary.avgPnlPct = summary.closed > 0 ? summary.totalPnlPct / summary.closed : 0;
+    summary.avgPnlPct =
+      summary.closed > 0 ? summary.totalPnlPct / summary.closed : 0;
 
     return summary;
   }
 
-  function getMinClosed() {
-    return Math.max(1, Number($("minClosedInput")?.value || 10));
-  }
+  function normalizeReport(payload) {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("API response is leeg of ongeldig.");
+    }
 
-  function getApiUrl() {
-    const minClosed = getMinClosed();
-    return `/api/analyse?minClosed=${encodeURIComponent(minClosed)}`;
+    if (payload.ok === false) {
+      throw payload.error || payload;
+    }
+
+    const report = payload.report || payload.data?.report || payload.data || payload;
+
+    if (!report || typeof report !== "object") {
+      throw new Error("API response mist report object.");
+    }
+
+    const familiesObject = report.families || {};
+
+    const allFamilies = Array.isArray(familiesObject.all)
+      ? familiesObject.all
+      : [
+          ...(Array.isArray(familiesObject.long) ? familiesObject.long : []),
+          ...(Array.isArray(familiesObject.short) ? familiesObject.short : []),
+        ];
+
+    const longFamilies = Array.isArray(familiesObject.long)
+      ? familiesObject.long
+      : allFamilies.filter((family) => family.side === "LONG");
+
+    const shortFamilies = Array.isArray(familiesObject.short)
+      ? familiesObject.short
+      : allFamilies.filter((family) => family.side === "SHORT");
+
+    return {
+      ...report,
+      summary: report.summary || buildSummary(allFamilies),
+      families: {
+        all: allFamilies,
+        long: longFamilies,
+        short: shortFamilies,
+      },
+      filterKeys: Array.isArray(report.filterKeys) ? report.filterKeys : [],
+      trades: {
+        total: Number(report.trades?.total || report.trades?.items?.length || 0),
+        items: Array.isArray(report.trades?.items) ? report.trades.items : [],
+      },
+    };
   }
 
   async function loadReport() {
@@ -179,14 +217,20 @@
     const text = await response.text();
 
     let payload;
+
     try {
       payload = JSON.parse(text);
-    } catch (error) {
-      throw new Error(`API gaf geen JSON terug.\nStatus: ${response.status}\nBody: ${text.slice(0, 500)}`);
+    } catch {
+      throw new Error(
+        `API gaf geen JSON terug.\nStatus: ${response.status}\nBody:\n${text.slice(
+          0,
+          1000
+        )}`
+      );
     }
 
-    if (!response.ok || payload?.ok === false) {
-      throw new Error(payload?.error || payload?.message || `API error ${response.status}`);
+    if (!response.ok) {
+      throw payload?.error || payload;
     }
 
     state.report = normalizeReport(payload);
@@ -205,7 +249,7 @@
     try {
       await loadReport();
     } catch (error) {
-      setError(`Load error: ${error?.message || error}`);
+      setError(`Load error:\n${formatError(error)}`);
       setStatus("Laden mislukt.");
       renderAll();
     }
@@ -234,7 +278,9 @@
 
     setText(
       "sumShortSub",
-      `COLLECTING ${summary.collectingFamilies || 0} | EMPTY ${summary.emptyFamilies || 0}`
+      `COLLECTING ${summary.collectingFamilies || 0} | EMPTY ${
+        summary.emptyFamilies || 0
+      }`
     );
   }
 
@@ -256,15 +302,11 @@
     const side = $("sideFilter")?.value || "ALL";
     const status = $("statusFilter")?.value || "ALL";
     const hideEmpty = Boolean($("hideEmptyInput")?.checked);
-    const minClosed = Math.max(0, Number($("minClosedInput")?.value || 0));
 
     return getBaseFamilies().filter((family) => {
       if (side !== "ALL" && family.side !== side) return false;
       if (status !== "ALL" && family.status !== status) return false;
       if (hideEmpty && family.status === "EMPTY") return false;
-      if (minClosed > 0 && Number(family.closed || 0) > 0 && Number(family.closed || 0) < minClosed) {
-        return false;
-      }
 
       if (!search) return true;
 
@@ -283,7 +325,7 @@
   }
 
   function familyRow(family) {
-    const statusClass = `status-${family.status || "EMPTY"}`;
+    const status = family.status || "EMPTY";
 
     return `
       <tr>
@@ -301,26 +343,27 @@
         <td class="num">${fmt.num(family.avgR, 3)}</td>
         <td class="num">${fmt.num(family.totalPnlPct, 3)}%</td>
         <td class="num">${escapeHtml(family.directSLPct || "0.0%")}</td>
-        <td><span class="status-pill ${statusClass}">${escapeHtml(family.status || "EMPTY")}</span></td>
+        <td><span class="status-pill status-${status}">${escapeHtml(status)}</span></td>
       </tr>
     `;
   }
 
   function renderFamilies() {
     const body = $("familiesBody");
-    const families = getFilteredFamilies();
-
     if (!body) return;
+
+    const families = getFilteredFamilies();
 
     body.innerHTML = families.length
       ? families.map(familyRow).join("")
       : `<tr><td colspan="15">Geen families gevonden.</td></tr>`;
 
-    const title = state.tab === "long"
-      ? "LONG families"
-      : state.tab === "short"
-        ? "SHORT families"
-        : "All families";
+    const title =
+      state.tab === "long"
+        ? "LONG families"
+        : state.tab === "short"
+          ? "SHORT families"
+          : "All families";
 
     setText("panelTitle", title);
     setText("panelMeta", `${families.length} zichtbaar`);
@@ -359,7 +402,9 @@
     setText("tradesMeta", `${trades.length} recent getoond`);
 
     body.innerHTML = trades.length
-      ? trades.map((trade) => `
+      ? trades
+          .map(
+            (trade) => `
           <tr>
             <td>${escapeHtml(trade.symbol || "")}</td>
             <td>${escapeHtml(trade.side || "")}</td>
@@ -375,22 +420,20 @@
             <td class="num">${fmt.int(trade.depthUsd)}</td>
             <td>${escapeHtml(trade.createdAt || "")}</td>
           </tr>
-        `).join("")
+        `
+          )
+          .join("")
       : `<tr><td colspan="13">Geen recente trades in report.</td></tr>`;
   }
 
   function renderPanels() {
-    const familiesPanel = $("familiesPanel");
-    const filtersPanel = $("filtersPanel");
-    const tradesPanel = $("tradesPanel");
-
-    familiesPanel?.classList.toggle(
+    $("familiesPanel")?.classList.toggle(
       "hidden",
       !["families", "long", "short"].includes(state.tab)
     );
 
-    filtersPanel?.classList.toggle("hidden", state.tab !== "filters");
-    tradesPanel?.classList.toggle("hidden", state.tab !== "trades");
+    $("filtersPanel")?.classList.toggle("hidden", state.tab !== "filters");
+    $("tradesPanel")?.classList.toggle("hidden", state.tab !== "trades");
   }
 
   function renderTabs() {
@@ -406,15 +449,6 @@
     renderFamilies();
     renderFilters();
     renderTrades();
-  }
-
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
   }
 
   function setAuto(enabled) {
@@ -433,31 +467,10 @@
   }
 
   async function resetAnalyze() {
-    const confirmed = window.confirm("Analyse resetten? Dit vraagt /api/analyse?reset=true aan.");
+    const confirmed = window.confirm("Analyse resetten?");
     if (!confirmed) return;
 
-    try {
-      setError("");
-      setStatus("Reset uitvoeren...");
-
-      const response = await fetch(`/api/analyse?reset=true&t=${Date.now()}`, {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Reset failed: ${response.status}`);
-      }
-
-      await safeLoadReport();
-    } catch (error) {
-      setError(`Reset error: ${error?.message || error}`);
-      setStatus("Reset mislukt.");
-    }
+    await safeLoadReport();
   }
 
   function bindEvents() {
@@ -480,20 +493,11 @@
       button.addEventListener("click", () => {
         state.tab = button.dataset.tab || "families";
 
-        if (state.tab === "long") {
-          const side = $("sideFilter");
-          if (side) side.value = "LONG";
-        }
+        const sideFilter = $("sideFilter");
 
-        if (state.tab === "short") {
-          const side = $("sideFilter");
-          if (side) side.value = "SHORT";
-        }
-
-        if (state.tab === "families") {
-          const side = $("sideFilter");
-          if (side) side.value = "ALL";
-        }
+        if (state.tab === "long" && sideFilter) sideFilter.value = "LONG";
+        if (state.tab === "short" && sideFilter) sideFilter.value = "SHORT";
+        if (state.tab === "families" && sideFilter) sideFilter.value = "ALL";
 
         renderAll();
       });
