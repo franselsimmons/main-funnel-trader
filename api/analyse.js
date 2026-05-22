@@ -65,11 +65,11 @@ function adminAllowed(req, query) {
   const token = process.env.ANALYZE_ADMIN_TOKEN || "";
   if (!token) return true;
 
-  const header = String(req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
-  return header === token || query.token === token;
+  const bearer = String(req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
+  return bearer === token || query.token === token;
 }
 
-function buildCompatReport({ analysis, store, rows }) {
+function buildCompatReport({ analysis, rows, store }) {
   const summary = analysis?.summary || {};
 
   return {
@@ -77,8 +77,8 @@ function buildCompatReport({ analysis, store, rows }) {
     generatedAt: analysis?.generatedAt || Date.now(),
 
     summary: {
-      actions: summary.normalizedRows ?? rows.length ?? 0,
-      trades: summary.normalizedRows ?? rows.length ?? 0,
+      actions: summary.actions ?? summary.normalizedRows ?? rows.length ?? 0,
+      trades: summary.trades ?? summary.normalizedRows ?? rows.length ?? 0,
 
       open: summary.open ?? 0,
       closed: summary.closed ?? 0,
@@ -88,28 +88,30 @@ function buildCompatReport({ analysis, store, rows }) {
       winrate: summary.winrate ?? "0.0%",
 
       totalR: summary.totalR ?? 0,
-      avgR:
-        Number(summary.closed || 0) > 0
-          ? Number(((Number(summary.totalR || 0)) / Number(summary.closed || 1)).toFixed(3))
-          : 0,
+      avgR: summary.avgR ?? 0,
 
       totalPnlPct: summary.totalPnlPct ?? 0,
+      avgPnlPct: summary.avgPnlPct ?? 0,
 
       longFamilies: summary.longFamilies ?? 50,
       shortFamilies: summary.shortFamilies ?? 50,
 
       rawRows: summary.rawRows ?? rows.length ?? 0,
       normalizedRows: summary.normalizedRows ?? 0,
-      observed: summary.observed ?? 0,
+      observedFamilies: summary.observedFamilies ?? 0,
       families: summary.families ?? 100
     },
 
-    families: analysis?.families || [],
     longFamilies: analysis?.longFamilies || [],
     shortFamilies: analysis?.shortFamilies || [],
+    families: analysis?.families || [],
 
     topLong: analysis?.topLong || [],
     topShort: analysis?.topShort || [],
+
+    rows: analysis?.rows || [],
+    actions: analysis?.rows || [],
+    trades: analysis?.rows || [],
 
     trackedFilters: analysis?.trackedFilters || TRACKED_FILTERS,
     filterValues: analysis?.filterValues || null,
@@ -183,8 +185,6 @@ export default async function handler(req, res) {
         version: ANALYZE_ENGINE_VERSION,
         trackedFilters: TRACKED_FILTERS,
         families: definitions,
-
-        // compat
         report: {
           version: ANALYZE_ENGINE_VERSION,
           summary: {
@@ -205,8 +205,8 @@ export default async function handler(req, res) {
 
     const report = buildCompatReport({
       analysis,
-      store,
-      rows
+      rows,
+      store
     });
 
     return sendJson(res, 200, {
@@ -216,7 +216,7 @@ export default async function handler(req, res) {
       store,
       ...analysis,
 
-      // oude frontend shape
+      // compat shape voor oude frontend
       report
     });
   } catch (e) {
@@ -225,7 +225,6 @@ export default async function handler(req, res) {
       error: e.message,
       stack: process.env.NODE_ENV === "development" ? e.stack : undefined,
 
-      // voorkom frontend crash
       report: {
         summary: {
           actions: 0,
@@ -238,13 +237,18 @@ export default async function handler(req, res) {
           totalR: 0,
           avgR: 0,
           totalPnlPct: 0,
-          longFamilies: 0,
-          shortFamilies: 0
+          avgPnlPct: 0,
+          longFamilies: 50,
+          shortFamilies: 50
         },
         families: [],
         longFamilies: [],
         shortFamilies: [],
-        trackedFilters: TRACKED_FILTERS
+        rows: [],
+        actions: [],
+        trades: [],
+        trackedFilters: TRACKED_FILTERS,
+        filterValues: null
       }
     });
   }
