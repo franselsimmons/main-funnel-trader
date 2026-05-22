@@ -50,13 +50,8 @@ function escapeHtml(value) {
 function fmtNum(value, decimals = 3) {
   const n = safeNumber(value, 0);
 
-  if (decimals === 0) {
-    return String(Math.round(n));
-  }
-
-  if (Number.isInteger(n)) {
-    return String(n);
-  }
+  if (decimals === 0) return String(Math.round(n));
+  if (Number.isInteger(n)) return String(n);
 
   return n.toFixed(decimals).replace(/\.?0+$/, "");
 }
@@ -156,19 +151,6 @@ function getMinClosedValue() {
   return Math.max(0, Math.round(value));
 }
 
-function ensureRuntimeDefaults() {
-  const minClosedInput = getMinClosedInput();
-
-  if (minClosedInput && (minClosedInput.value === "" || minClosedInput.value === "0")) {
-    minClosedInput.value = String(DEFAULT_MIN_CLOSED);
-  }
-
-  const apiLink = $("apiLink");
-  if (apiLink) {
-    apiLink.href = buildApiUrl({ debug: true });
-  }
-}
-
 function buildApiUrl(extra = {}) {
   const params = new URLSearchParams();
 
@@ -182,6 +164,21 @@ function buildApiUrl(extra = {}) {
   }
 
   return `${API_URL}?${params.toString()}`;
+}
+
+function ensureRuntimeDefaults() {
+  const minClosedInput = getMinClosedInput();
+
+  if (minClosedInput && (minClosedInput.value === "" || minClosedInput.value === "0")) {
+    minClosedInput.value = String(DEFAULT_MIN_CLOSED);
+  }
+
+  enhanceExistingDom();
+
+  const apiLink = $("apiLink");
+  if (apiLink) {
+    apiLink.href = buildApiUrl({ debug: true });
+  }
 }
 
 function normalizePayload(payload) {
@@ -207,11 +204,15 @@ function normalizePayload(payload) {
     report: {
       ...report,
       summary,
+      diagnostics: report.diagnostics || {},
+      config: report.config || {},
       families: {
         all: safeArray(families.all || families.ranked),
         long: safeArray(families.long),
         short: safeArray(families.short),
         ranked: safeArray(families.ranked || families.all),
+        best: safeArray(families.best),
+        worst: safeArray(families.worst),
       },
       filterValues: report.filterValues || {},
     },
@@ -285,8 +286,10 @@ function renderSummary() {
   setText(["mTrades", "kpiTrades"], fmtNum(summary.trades || summary.observed || 0, 0));
   setText(["mOpen", "kpiOpen"], fmtNum(summary.open || 0, 0));
   setText(["mClosed", "kpiClosed"], fmtNum(summary.closed || 0, 0));
+  setText(["mPending", "kpiPending"], fmtNum(summary.pendingOutcome || summary.unresolved || 0, 0));
   setText(["mWins", "kpiWins"], fmtNum(summary.wins || 0, 0));
   setText(["mLosses", "kpiLosses"], fmtNum(summary.losses || 0, 0));
+  setText(["mBreakeven", "kpiBreakeven"], fmtNum(summary.breakeven || 0, 0));
   setText(["mWinrate", "kpiWinrate"], summary.winrate || fmtPct(summary.winrateNum || 0));
   setText(["mTotalR", "kpiTotalR"], fmtNum(summary.totalR || 0, 3));
   setText(["mAvgR", "kpiAvgR"], fmtNum(summary.avgR || 0, 3));
@@ -385,6 +388,7 @@ function getSelectedFamilies() {
         row.id,
         row.side,
         row.status,
+        row.decision,
         row.definition,
         row.qualityBucket,
         row.marketBucket,
@@ -393,6 +397,8 @@ function getSelectedFamilies() {
         row.totalR,
         row.avgR,
         row.totalPnlPct,
+        row.pendingOutcome,
+        row.unresolved,
       ].join(" ").toUpperCase();
 
       return haystack.includes(query);
@@ -420,7 +426,7 @@ function renderFamilies() {
   if (!rows.length) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="14" class="empty-row">Geen families voor deze filters.</td>
+        <td colspan="15" class="empty-row">Geen families voor deze filters.</td>
       </tr>
     `;
     return;
@@ -433,6 +439,7 @@ function renderFamilies() {
     const totalRClass = signedClass(row.totalR);
     const avgRClass = signedClass(row.avgR);
     const pnlClass = signedClass(row.totalPnlPct);
+    const pending = safeNumber(row.pendingOutcome ?? row.unresolved, 0);
 
     return `
       <tr class="${statusClass(status)}">
@@ -447,6 +454,7 @@ function renderFamilies() {
         <td class="num">${fmtNum(row.trades, 0)}</td>
         <td class="num">${fmtNum(row.closed, 0)}</td>
         <td class="num">${fmtNum(row.open, 0)}</td>
+        <td class="num pending">${fmtNum(pending, 0)}</td>
         <td class="num">${fmtNum(row.wins, 0)}</td>
         <td class="num">${fmtNum(row.losses, 0)}</td>
         <td class="num">${escapeHtml(row.winrate || "0%")}</td>
@@ -463,9 +471,13 @@ function renderFamilies() {
 
 function getWinnerFamilies() {
   const minClosed = Math.max(1, getMinClosedValue());
-  const ranked = safeArray(state.report?.families?.ranked || state.report?.families?.all);
+  const apiBest = safeArray(state.report?.families?.best);
 
-  return ranked
+  const source = apiBest.length
+    ? apiBest
+    : safeArray(state.report?.families?.ranked || state.report?.families?.all);
+
+  return source
     .filter(row => ["HOT", "GOOD", "STABLE"].includes(text(row.status)))
     .filter(row => safeNumber(row.closed, 0) >= minClosed)
     .filter(row => safeNumber(row.avgR, 0) >= 0)
@@ -487,7 +499,7 @@ function renderWinners() {
   if (!winners.length) {
     grid.innerHTML = `
       <div class="winner-empty">
-        Nog geen echte winnaar-family. Wacht tot minimaal ${getMinClosedValue()} closed trades per family.
+        Nog geen winnaar-family. Nodig: minimaal ${getMinClosedValue()} closed trades met echte outcome-data per family.
       </div>
     `;
     return;
@@ -515,6 +527,10 @@ function renderWinners() {
           <div class="winner-stat">
             <span>Avg R</span>
             <strong class="${signedClass(row.avgR)}">${fmtNum(row.avgR, 3)}</strong>
+          </div>
+          <div class="winner-stat">
+            <span>PF</span>
+            <strong>${fmtNum(row.profitFactorR || 0, 3)}</strong>
           </div>
         </div>
 
@@ -578,6 +594,7 @@ function renderDebug() {
   debugJson.textContent = JSON.stringify({
     sources: state.raw?.sources || null,
     summary: state.report?.summary || null,
+    diagnostics: state.report?.diagnostics || null,
     config: state.report?.config || null,
   }, null, 2);
 }
@@ -599,8 +616,8 @@ function render() {
   }
 }
 
-async function loadAnalytics() {
-  if (state.loading) return;
+async function loadAnalytics({ force = false } = {}) {
+  if (state.loading && !force) return;
 
   setBusy(true);
   setStatus("Laden...", false);
@@ -632,7 +649,6 @@ async function resetAnalytics() {
   const ok = window.confirm("Analyse-store resetten? Dit wist de opgeslagen family-history.");
 
   if (!ok) return;
-
   if (state.loading) return;
 
   setBusy(true);
@@ -648,7 +664,8 @@ async function resetAnalytics() {
     state.raw = null;
     state.report = null;
 
-    await loadAnalytics();
+    setBusy(false);
+    await loadAnalytics({ force: true });
   } catch (error) {
     const message = errorToText(error);
 
@@ -708,7 +725,7 @@ function scheduleReload() {
 }
 
 function wireEvents() {
-  $("refreshBtn")?.addEventListener("click", loadAnalytics);
+  $("refreshBtn")?.addEventListener("click", () => loadAnalytics());
   $("resetBtn")?.addEventListener("click", resetAnalytics);
   $("autoBtn")?.addEventListener("click", toggleAuto);
 
@@ -751,8 +768,172 @@ function wireEvents() {
   });
 }
 
+// ================= DOM ENHANCERS =================
+
+function createMetricCard(id, label, value = "0") {
+  const article = document.createElement("article");
+  article.className = "metric-card";
+  article.innerHTML = `
+    <span class="metric-label">${escapeHtml(label)}</span>
+    <strong id="${escapeHtml(id)}" class="metric-value">${escapeHtml(value)}</strong>
+  `;
+  return article;
+}
+
+function enhanceMetricGrid() {
+  const grid = document.querySelector(".metric-grid");
+  if (!grid) return;
+
+  if (!$("mPending")) {
+    const closedCard = $("mClosed")?.closest(".metric-card");
+    const card = createMetricCard("mPending", "Pending outcome", "0");
+
+    if (closedCard?.nextSibling) {
+      grid.insertBefore(card, closedCard.nextSibling);
+    } else {
+      grid.appendChild(card);
+    }
+  }
+
+  if (!$("mBreakeven")) {
+    const lossesCard = $("mLosses")?.closest(".metric-card");
+    const card = createMetricCard("mBreakeven", "Breakeven", "0");
+
+    if (lossesCard?.nextSibling) {
+      grid.insertBefore(card, lossesCard.nextSibling);
+    } else {
+      grid.appendChild(card);
+    }
+  }
+}
+
+function enhanceSourceCards() {
+  if ($("sourceStored")) return;
+
+  const heroInner = document.querySelector(".hero-inner") || document.querySelector(".hero");
+  if (!heroInner) return;
+
+  const grid = document.createElement("div");
+  grid.className = "hero-status-grid";
+  grid.innerHTML = `
+    <article class="status-card">
+      <span>Stored</span>
+      <strong id="sourceStored">0</strong>
+      <small id="sourceStoredSub">store: n/a</small>
+    </article>
+    <article class="status-card">
+      <span>Latest</span>
+      <strong id="sourceLatest">0</strong>
+      <small id="sourceLatestSub">latest scan n/a</small>
+    </article>
+    <article class="status-card">
+      <span>Merged</span>
+      <strong id="sourceMerged">0</strong>
+      <small id="sourceMergedSub">loaded: 0</small>
+    </article>
+    <article class="status-card">
+      <span>Latency</span>
+      <strong id="sourceLatency">0ms</strong>
+      <small id="sourceLatencySub"></small>
+    </article>
+  `;
+
+  const statusLine = firstEl("statusLine", "statusText");
+  if (statusLine?.nextSibling) {
+    heroInner.insertBefore(grid, statusLine.nextSibling);
+  } else {
+    heroInner.appendChild(grid);
+  }
+}
+
+function enhanceWinnerPanel() {
+  if ($("winnerGrid")) return;
+
+  const familyPanel =
+    document.querySelector(".family-panel") ||
+    firstEl("familyBody", "familiesBody")?.closest(".panel");
+
+  const panel = document.createElement("section");
+  panel.className = "panel winner-panel";
+  panel.innerHTML = `
+    <div class="table-header">
+      <div>
+        <h2>Winner families</h2>
+        <p class="panel-subtitle">
+          Alleen HOT/GOOD/STABLE families met voldoende closed trades en positieve Avg R.
+        </p>
+      </div>
+      <span id="winnerCount">0 winners</span>
+    </div>
+    <div id="winnerGrid" class="winner-grid"></div>
+  `;
+
+  if (familyPanel?.parentNode) {
+    familyPanel.parentNode.insertBefore(panel, familyPanel);
+  } else {
+    document.querySelector("main")?.appendChild(panel);
+  }
+}
+
+function tableHasHeader(label) {
+  const headers = Array.from(document.querySelectorAll(".family-table thead th, table thead th"));
+  return headers.some(th => th.textContent.trim().toUpperCase() === label.toUpperCase());
+}
+
+function enhanceFamilyTableHeader() {
+  if (tableHasHeader("Pending")) return;
+
+  const table =
+    firstEl("familyBody", "familiesBody")?.closest("table") ||
+    document.querySelector(".family-table");
+
+  const headerRow = table?.querySelector("thead tr");
+  if (!headerRow) return;
+
+  const th = document.createElement("th");
+  th.textContent = "Pending";
+
+  const headers = Array.from(headerRow.children);
+  const openIndex = headers.findIndex(cell => cell.textContent.trim().toUpperCase() === "OPEN");
+
+  if (openIndex >= 0 && headers[openIndex]?.nextSibling) {
+    headerRow.insertBefore(th, headers[openIndex].nextSibling);
+  } else {
+    headerRow.appendChild(th);
+  }
+}
+
+function enhanceDebugPanel() {
+  if ($("debugJson")) return;
+
+  const main = document.querySelector("main");
+  if (!main) return;
+
+  const panel = document.createElement("section");
+  panel.className = "panel debug-panel";
+  panel.innerHTML = `
+    <details>
+      <summary>Debug payload</summary>
+      <pre id="debugJson" class="debug-json"></pre>
+    </details>
+  `;
+
+  main.appendChild(panel);
+}
+
+function enhanceExistingDom() {
+  enhanceMetricGrid();
+  enhanceSourceCards();
+  enhanceWinnerPanel();
+  enhanceFamilyTableHeader();
+  enhanceDebugPanel();
+}
+
 function ensureDom() {
-  if ($("familyBody") || $("familiesBody") || $("analyticsApp")) return;
+  if ($("familyBody") || $("familiesBody") || $("analyticsApp")) {
+    enhanceExistingDom();
+    return;
+  }
 
   document.body.innerHTML = `
     <main id="analyticsApp" class="page">
@@ -763,7 +944,7 @@ function ensureDom() {
             <h1>TradeSystem Analyse</h1>
             <p class="hero-text">
               50 LONG families + 50 SHORT families. Alleen ENTRY/EXIT trades worden geteld.
-              Winrate/PnL komt uit closed trades per frozen family.
+              Winrate/PnL komt uit closed trades met echte outcome-data per frozen family.
             </p>
           </div>
 
@@ -771,7 +952,8 @@ function ensureDom() {
             <button id="refreshBtn" type="button">Refresh</button>
             <button id="autoBtn" type="button">Auto: OFF</button>
             <button id="resetBtn" type="button" class="danger">Reset</button>
-            <a id="apiLink" href="/api/analyse" target="_blank" rel="noopener">API</a>
+            <button id="apiBtn" type="button">API</button>
+            <a id="apiLink" href="/api/analyse" target="_blank" rel="noopener">API JSON</a>
           </div>
 
           <div id="statusLine" class="status-line">Nog niet geladen.</div>
@@ -808,8 +990,10 @@ function ensureDom() {
         <article class="metric-card"><span class="metric-label">Trades</span><strong id="mTrades" class="metric-value">0</strong></article>
         <article class="metric-card"><span class="metric-label">Open</span><strong id="mOpen" class="metric-value">0</strong></article>
         <article class="metric-card"><span class="metric-label">Closed</span><strong id="mClosed" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Pending outcome</span><strong id="mPending" class="metric-value">0</strong></article>
         <article class="metric-card"><span class="metric-label">Wins</span><strong id="mWins" class="metric-value">0</strong></article>
         <article class="metric-card"><span class="metric-label">Losses</span><strong id="mLosses" class="metric-value">0</strong></article>
+        <article class="metric-card"><span class="metric-label">Breakeven</span><strong id="mBreakeven" class="metric-value">0</strong></article>
         <article class="metric-card"><span class="metric-label">Winrate</span><strong id="mWinrate" class="metric-value">0%</strong></article>
         <article class="metric-card"><span class="metric-label">Total R</span><strong id="mTotalR" class="metric-value">0</strong></article>
         <article class="metric-card"><span class="metric-label">Avg R</span><strong id="mAvgR" class="metric-value">0</strong></article>
@@ -826,11 +1010,13 @@ function ensureDom() {
         </article>
       </section>
 
-      <section class="panel">
+      <section class="panel winner-panel">
         <div class="table-header">
           <div>
             <h2>Winner families</h2>
-            <p class="panel-subtitle">Alleen HOT/GOOD/STABLE families met voldoende closed trades en positieve Avg R.</p>
+            <p class="panel-subtitle">
+              Alleen HOT/GOOD/STABLE families met voldoende closed trades en positieve Avg R.
+            </p>
           </div>
           <span id="winnerCount">0 winners</span>
         </div>
@@ -899,6 +1085,7 @@ function ensureDom() {
                 <th>Trades</th>
                 <th>Closed</th>
                 <th>Open</th>
+                <th>Pending</th>
                 <th>Wins</th>
                 <th>Losses</th>
                 <th>Winrate</th>
@@ -910,7 +1097,7 @@ function ensureDom() {
             </thead>
             <tbody id="familyBody">
               <tr>
-                <td colspan="14" class="empty-row">Nog geen data geladen.</td>
+                <td colspan="15" class="empty-row">Nog geen data geladen.</td>
               </tr>
             </tbody>
           </table>
