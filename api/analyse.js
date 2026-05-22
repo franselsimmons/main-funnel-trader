@@ -1,17 +1,11 @@
 import { getLatestScan } from "../lib/scanStore.js";
-import {
-  clearAnalyzeEvents,
-  getAnalyzeStoreInfo,
-  readAnalyzeEvents,
-} from "../lib/analyze/analyzeStore.js";
-import { buildAnalyzeReport } from "../lib/analyze/familyEngine.js";
+import * as analyzeStore from "../lib/analyze/analyzeStore.js";
+import * as familyEngine from "../lib/analyze/familyEngine.js";
+
+const DEFAULT_MIN_CLOSED = 10;
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function safeObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function safeNumber(value, fallback = 0) {
@@ -30,132 +24,249 @@ function normalizeBoolean(value, fallback = false) {
   return fallback;
 }
 
-function normalizeLatestEvent(event, source, fallbackTs) {
-  const e = safeObject(event);
+function normalizeTs(value, fallback = Date.now()) {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) return n;
+
+  const parsed = Date.parse(String(value || ""));
+  if (Number.isFinite(parsed)) return parsed;
+
+  return fallback;
+}
+
+function normalizeSide(value) {
+  const s = String(value || "").toLowerCase().trim();
+
+  if (["long", "bull", "buy"].includes(s)) return "LONG";
+  if (["short", "bear", "sell"].includes(s)) return "SHORT";
+
+  return "";
+}
+
+function stableNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+
+  return Math.round(n * 100000) / 100000;
+}
+
+function eventKey(event, fallbackIndex = 0) {
+  const explicit =
+    event.analyzeEventKey ||
+    event.analyzeEventId ||
+    event.eventId ||
+    event.tradeId ||
+    event.positionId ||
+    event.orderId ||
+    event.id;
+
+  if (explicit) return String(explicit);
+
+  const symbol = String(event.symbol || "").toUpperCase().trim();
+  const side = normalizeSide(event.side || event.direction);
+  const action = String(event.action || event.status || event.reason || "").toUpperCase().trim();
+  const entry = stableNumber(event.entry ?? event.entryPrice);
+  const sl = stableNumber(event.sl ?? event.stopLoss);
+  const tp = stableNumber(event.tp ?? event.takeProfit);
+  const ts = normalizeTs(
+    event.ts ??
+      event.createdAt ??
+      event.openedAt ??
+      event.updatedAt ??
+      event.closedAt,
+    fallbackIndex
+  );
+
+  return [symbol, side, action, entry, sl, tp, ts].join("|");
+}
+
+function dedupeEvents(events) {
+  const map = new Map();
+
+  safeArray(events).forEach((event, index) => {
+    if (!event || typeof event !== "object") return;
+
+    const key = eventKey(event, index);
+    map.set(key, {
+      ...event,
+      analyzeEventKey: key,
+    });
+  });
+
+  return Array.from(map.values());
+}
+
+function collectLatestEvents(latest) {
+  const events = [
+    ...safeArray(latest?.trades),
+    ...safeArray(latest?.tradeSystemResult?.actions),
+    ...safeArray(latest?.actions),
+  ];
+
+  return dedupeEvents(events)
+    .filter(event => event && typeof event === "object")
+    .map(event => ({
+      ...event,
+      analyzeSource: event.analyzeSource || "latest_scan",
+    }));
+}
+
+async function loadStoredEvents() {
+  const loadStore =
+    analyzeStore.loadAnalyzeStore ||
+    analyzeStore.default?.loadAnalyzeStore;
+
+  const loadEvents =
+    analyzeStore.loadAnalyzeEvents ||
+    analyzeStore.readAnalyzeEvents ||
+    analyzeStore.getAnalyzeEvents ||
+    analyzeStore.default?.loadAnalyzeEvents ||
+    analyzeStore.default?.readAnalyzeEvents ||
+    analyzeStore.default?.getAnalyzeEvents;
+
+  if (typeof loadStore === "function") {
+    const store = await loadStore();
+    return {
+      store: {
+        ok: Boolean(store?.ok),
+        path: store?.path || null,
+        count: safeNumber(store?.count, safeArray(store?.events).length),
+        maxStoredEvents: store?.maxStoredEvents || null,
+      },
+      events: safeArray(store?.events),
+    };
+  }
+
+  if (typeof loadEvents === "function") {
+    const events = await loadEvents();
+    return {
+      store: {
+        ok: true,
+        path: null,
+        count: safeArray(events).length,
+        maxStoredEvents: null,
+      },
+      events: safeArray(events),
+    };
+  }
 
   return {
-    ...e,
-    source: e.source || source,
-    analyzeTs: safeNumber(e.analyzeTs ?? e.ts ?? e.updatedAt ?? fallbackTs, Date.now()),
+    store: {
+      ok: false,
+      path: null,
+      count: 0,
+      maxStoredEvents: null,
+      error: "NO_ANALYZE_STORE_LOADER_FOUND",
+    },
+    events: [],
   };
 }
 
-function extractLatestEvents(latest) {
-  const root = safeObject(latest);
-  const ts = safeNumber(root.tradeFunnelUpdatedAt ?? root.updatedAt, Date.now());
+async function clearStoredEvents() {
+  const clearFn =
+    analyzeStore.clearAnalyzeEvents ||
+    analyzeStore.resetAnalyzeEvents ||
+    analyzeStore.default?.clearAnalyzeEvents ||
+    analyzeStore.default?.resetAnalyzeEvents;
 
-  return [
-    ...safeArray(root.trades).map((x) => normalizeLatestEvent(x, "latest.trades", ts)),
-    ...safeArray(root.actions).map((x) => normalizeLatestEvent(x, "latest.actions", ts)),
-    ...safeArray(root.tradeSystemResult?.actions).map((x) =>
-      normalizeLatestEvent(x, "latest.tradeSystemResult.actions", ts)
-    ),
-    ...safeArray(root.openPositions).map((x) => normalizeLatestEvent(x, "latest.openPositions", ts)),
-    ...safeArray(root.closedTrades).map((x) => normalizeLatestEvent(x, "latest.closedTrades", ts)),
-    ...safeArray(root.tradeHistory).map((x) => normalizeLatestEvent(x, "latest.tradeHistory", ts)),
-    ...safeArray(root.history).map((x) => normalizeLatestEvent(x, "latest.history", ts)),
-  ];
-}
-
-function eventSignature(event) {
-  const e = safeObject(event);
-
-  return [
-    e.id,
-    e.tradeId,
-    e.positionId,
-    e.orderId,
-    e.symbol,
-    e.side,
-    e.action,
-    e.status,
-    e.outcome,
-    e.result,
-    e.entry,
-    e.entryPrice,
-    e.exitPrice,
-    e.ts,
-    e.analyzeTs,
-  ]
-    .filter((v) => v !== undefined && v !== null && v !== "")
-    .join("|");
-}
-
-function mergeEvents(primary, secondary) {
-  const out = [];
-  const seen = new Set();
-
-  for (const event of [...safeArray(primary), ...safeArray(secondary)]) {
-    const sig = eventSignature(event);
-
-    if (sig && seen.has(sig)) continue;
-    if (sig) seen.add(sig);
-
-    out.push(event);
+  if (typeof clearFn !== "function") {
+    return {
+      ok: false,
+      error: "NO_CLEAR_ANALYZE_EVENTS_EXPORT_FOUND",
+    };
   }
 
-  return out;
+  return clearFn();
+}
+
+function buildReport(events, options) {
+  const buildFn =
+    familyEngine.buildAnalyzeReport ||
+    familyEngine.buildFamilyReport ||
+    familyEngine.buildReport ||
+    familyEngine.analyzeEvents ||
+    familyEngine.createAnalyzeReport ||
+    familyEngine.default?.buildAnalyzeReport ||
+    familyEngine.default?.buildFamilyReport ||
+    familyEngine.default?.buildReport ||
+    familyEngine.default?.analyzeEvents ||
+    familyEngine.default?.createAnalyzeReport;
+
+  if (typeof buildFn !== "function") {
+    throw new Error("NO_ANALYZE_REPORT_BUILDER_FOUND");
+  }
+
+  return buildFn(events, options);
+}
+
+function serializeError(error, debug = false) {
+  const payload = {
+    message: error?.message || String(error || "unknown_error"),
+    name: error?.name || "Error",
+  };
+
+  if (debug && error?.stack) {
+    payload.stack = error.stack;
+  }
+
+  return payload;
 }
 
 export default async function handler(req, res) {
-  const started = Date.now();
-
+  const startedAt = Date.now();
+  const debug = normalizeBoolean(req?.query?.debug, false);
   const reset = normalizeBoolean(req?.query?.reset, false);
   const includeLatest = normalizeBoolean(req?.query?.includeLatest, true);
-  const minClosed = safeNumber(req?.query?.minClosed, 10);
-  const limit = safeNumber(req?.query?.limit, 50_000);
+  const minClosed = safeNumber(req?.query?.minClosed, DEFAULT_MIN_CLOSED);
 
   try {
     if (reset) {
-      const cleared = await clearAnalyzeEvents();
+      const clearResult = await clearStoredEvents();
 
-      return res.status(200).json({
-        ok: true,
+      return res.status(clearResult?.ok ? 200 : 500).json({
+        ok: Boolean(clearResult?.ok),
         reset: true,
-        cleared,
+        clearResult,
         generatedAt: new Date().toISOString(),
+        latencyMs: Date.now() - startedAt,
       });
     }
 
-    const storedEvents = await readAnalyzeEvents({ limit });
+    const latest = await getLatestScan().catch(error => ({
+      ok: false,
+      error: error?.message || String(error),
+    }));
 
-    let latestEvents = [];
-    let latestMeta = null;
+    const { store, events: storedEventsRaw } = await loadStoredEvents();
+    const latestEventsRaw = includeLatest && latest?.ok ? collectLatestEvents(latest) : [];
 
-    if (includeLatest) {
-      try {
-        const latest = await getLatestScan();
-        latestMeta = {
-          ok: Boolean(latest?.ok),
-          updatedAt: latest?.updatedAt || null,
-          tradeFunnelUpdatedAt: latest?.tradeFunnelUpdatedAt || null,
-        };
+    const storedEvents = dedupeEvents(storedEventsRaw);
+    const latestEvents = dedupeEvents(latestEventsRaw);
+    const mergedEvents = dedupeEvents([...storedEvents, ...latestEvents]);
 
-        latestEvents = extractLatestEvents(latest);
-      } catch {
-        latestMeta = {
-          ok: false,
-          note: "latest_scan_unavailable",
-        };
-      }
-    }
-
-    const events = mergeEvents(storedEvents, latestEvents);
-    const report = buildAnalyzeReport(events, { minClosed });
-    const store = await getAnalyzeStoreInfo();
+    const report = buildReport(mergedEvents, {
+      minClosed,
+      familyCountLong: 50,
+      familyCountShort: 50,
+    });
 
     return res.status(200).json({
       ok: true,
-      generatedAt: report.generatedAt,
-      latencyMs: Date.now() - started,
+      generatedAt: new Date().toISOString(),
+      latencyMs: Date.now() - startedAt,
       sources: {
         storedEvents: storedEvents.length,
         latestEvents: latestEvents.length,
-        mergedEvents: events.length,
+        mergedEvents: mergedEvents.length,
         store,
-        latest: latestMeta,
+        latest: {
+          ok: Boolean(latest?.ok),
+          updatedAt: latest?.updatedAt || null,
+          tradeFunnelUpdatedAt: latest?.tradeFunnelUpdatedAt || null,
+          error: latest?.error || null,
+        },
       },
-      tradesLoaded: events.length,
+      tradesLoaded: mergedEvents.length,
       report,
     });
   } catch (error) {
@@ -163,9 +274,9 @@ export default async function handler(req, res) {
 
     return res.status(500).json({
       ok: false,
-      error: error?.message || "unknown_analyse_error",
-      latencyMs: Date.now() - started,
       generatedAt: new Date().toISOString(),
+      latencyMs: Date.now() - startedAt,
+      error: serializeError(error, debug),
     });
   }
 }
