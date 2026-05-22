@@ -3,51 +3,50 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>TradeSystem Analyze</title>
-
-  <link rel="stylesheet" href="/analytics.css?v=7" />
-  <script defer src="/analytics.js?v=7"></script>
+  <title>TradeSystem Analyse</title>
+  <link rel="stylesheet" href="/analytics.css" />
 </head>
-
 <body>
-  <main class="app">
+  <main class="page">
     <header class="hero">
       <div>
-        <p class="eyebrow">TradeSystem Analyze</p>
-        <h1>Filter Family Dashboard</h1>
+        <p class="eyebrow">TradeSystem</p>
+        <h1>Analyse</h1>
         <p class="subtitle">
-          50 LONG families + 50 SHORT families. Broad buckets. Closed, open en shadow gescheiden.
+          50 LONG families + 50 SHORT families. Volledige filter-combinaties.
+          Observed, open, real closed en shadow closed apart.
         </p>
       </div>
 
-      <div class="hero-actions">
+      <div class="toolbar">
         <button id="refreshBtn" class="btn primary">Refresh</button>
         <button id="autoBtn" class="btn">Auto: OFF</button>
-        <a class="btn ghost" href="/api/analyse" target="_blank" rel="noreferrer">API</a>
+        <button id="resetBtn" class="btn danger">Reset</button>
+        <a class="btn link" href="/api/analyse" target="_blank" rel="noreferrer">API</a>
       </div>
     </header>
 
-    <section id="errorBox" class="alert hidden"></section>
+    <section id="errorBox" class="error hidden"></section>
 
-    <section class="cards">
-      <div class="card"><span>Actions</span><b id="kpiActions">0</b></div>
-      <div class="card"><span>Trades</span><b id="kpiTrades">0</b></div>
-      <div class="card"><span>Open</span><b id="kpiOpen">0</b></div>
-      <div class="card"><span>Closed</span><b id="kpiClosed">0</b></div>
-      <div class="card"><span>Wins</span><b id="kpiWins">0</b></div>
-      <div class="card"><span>Losses</span><b id="kpiLosses">0</b></div>
-      <div class="card"><span>Winrate</span><b id="kpiWinrate">0%</b></div>
-      <div class="card"><span>Total R</span><b id="kpiTotalR">0</b></div>
-      <div class="card"><span>Avg R</span><b id="kpiAvgR">0</b></div>
-      <div class="card"><span>Total PnL%</span><b id="kpiPnl">0%</b></div>
-      <div class="card"><span>Long families</span><b id="kpiLong">0</b></div>
-      <div class="card"><span>Short families</span><b id="kpiShort">0</b></div>
+    <section class="stats" id="statsGrid">
+      <article class="stat"><span>Actions</span><strong id="statActions">0</strong></article>
+      <article class="stat"><span>Trades</span><strong id="statTrades">0</strong></article>
+      <article class="stat"><span>Observed</span><strong id="statObserved">0</strong></article>
+      <article class="stat"><span>Open</span><strong id="statOpen">0</strong></article>
+      <article class="stat"><span>Real closed</span><strong id="statRealClosed">0</strong></article>
+      <article class="stat"><span>Shadow closed</span><strong id="statShadowClosed">0</strong></article>
+      <article class="stat"><span>Wins</span><strong id="statWins">0</strong></article>
+      <article class="stat"><span>Losses</span><strong id="statLosses">0</strong></article>
+      <article class="stat"><span>Winrate</span><strong id="statWinrate">0.0%</strong></article>
+      <article class="stat"><span>Total R</span><strong id="statTotalR">0</strong></article>
+      <article class="stat"><span>Avg R</span><strong id="statAvgR">0</strong></article>
+      <article class="stat"><span>Total PnL%</span><strong id="statTotalPnl">0</strong></article>
     </section>
 
     <section class="controls">
       <label>
         Side
-        <select id="sideSelect">
+        <select id="sideFilter">
           <option value="ALL">ALL</option>
           <option value="LONG">LONG</option>
           <option value="SHORT">SHORT</option>
@@ -56,24 +55,24 @@
 
       <label>
         Status
-        <select id="statusSelect">
+        <select id="statusFilter">
           <option value="ALL">ALL</option>
           <option value="HOT">HOT</option>
-          <option value="BAD">BAD</option>
+          <option value="STABLE">STABLE</option>
           <option value="COLLECTING">COLLECTING</option>
-          <option value="OPEN_ONLY">OPEN_ONLY</option>
+          <option value="BAD">BAD</option>
           <option value="EMPTY">EMPTY</option>
         </select>
       </label>
 
       <label>
         Min closed
-        <input id="minClosedInput" type="number" value="0" min="0" inputmode="numeric" />
+        <input id="minClosedInput" type="number" min="0" step="1" value="0" />
       </label>
 
-      <label class="searchWrap">
+      <label class="search">
         Search
-        <input id="searchInput" type="search" placeholder="LONG_4, MID, COUNTER, RR_1p20..." />
+        <input id="searchInput" type="search" placeholder="LONG_17, Q2_LOW, SPREAD_5_12BPS..." />
       </label>
 
       <label class="check">
@@ -83,78 +82,57 @@
     </section>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="long">Long families</button>
-      <button class="tab" data-tab="short">Short families</button>
-      <button class="tab" data-tab="filters">Filter values</button>
-      <button class="tab" data-tab="trades">Trades</button>
-      <button class="tab" data-tab="raw">Raw</button>
+      <button class="tab active" data-tab="families">Families</button>
+      <button class="tab" data-tab="tracked">Tracked filters</button>
+      <button class="tab" data-tab="open">Open samples</button>
+      <button class="tab" data-tab="closed">Closed samples</button>
     </nav>
 
-    <section id="panelLong" class="panel active">
-      <div class="panelHead">
-        <h2>LONG families</h2>
-        <p>Alle long setups worden in brede, volledige filter-combinatie buckets gezet.</p>
-      </div>
-      <div class="tableWrap">
-        <table>
-          <thead id="longHead"></thead>
-          <tbody id="longBody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="panelShort" class="panel">
-      <div class="panelHead">
-        <h2>SHORT families</h2>
-        <p>Alle short setups worden apart gebucket zodat long/short edge niet mixt.</p>
-      </div>
-      <div class="tableWrap">
-        <table>
-          <thead id="shortHead"></thead>
-          <tbody id="shortBody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="panelFilters" class="panel">
-      <div class="panelHead">
-        <h2>Tracked filters</h2>
-        <p>Alle filterwaarden die de analyse gebruikt of ontvangt van het TradeSystem.</p>
-      </div>
+    <section id="familiesPanel" class="panel active">
       <div class="tableWrap">
         <table>
           <thead>
             <tr>
-              <th>Category</th>
-              <th>Filter</th>
-              <th>Value</th>
+              <th>Family</th>
+              <th>Side</th>
+              <th>Definition</th>
+              <th>Observed</th>
+              <th>Open</th>
+              <th>Real closed</th>
+              <th>Shadow closed</th>
+              <th>Wins</th>
+              <th>Losses</th>
+              <th>Winrate</th>
+              <th>Total R</th>
+              <th>Avg R</th>
+              <th>PnL%</th>
+              <th>Direct SL</th>
+              <th>Status</th>
             </tr>
           </thead>
-          <tbody id="filtersBody"></tbody>
+          <tbody id="familyTableBody"></tbody>
         </table>
       </div>
     </section>
 
-    <section id="panelTrades" class="panel">
-      <div class="panelHead">
-        <h2>Trades / observations</h2>
-        <p>Laatste real, open en shadow observations die aan families gekoppeld zijn.</p>
-      </div>
-      <div class="tableWrap">
-        <table>
-          <thead id="tradesHead"></thead>
-          <tbody id="tradesBody"></tbody>
-        </table>
-      </div>
+    <section id="trackedPanel" class="panel">
+      <div id="trackedFilters" class="chips"></div>
     </section>
 
-    <section id="panelRaw" class="panel">
-      <div class="panelHead">
-        <h2>Raw API payload</h2>
-        <p>Debug output van <code>/api/analyse</code>.</p>
-      </div>
-      <pre id="rawBox" class="raw">{}</pre>
+    <section id="openPanel" class="panel">
+      <div id="openSamples" class="cards"></div>
     </section>
+
+    <section id="closedPanel" class="panel">
+      <div id="closedSamples" class="cards"></div>
+    </section>
+
+    <footer class="footer">
+      <span id="lastUpdated">Not loaded</span>
+      <span id="storeInfo"></span>
+    </footer>
   </main>
+
+  <script src="/analytics.js"></script>
 </body>
 </html>
