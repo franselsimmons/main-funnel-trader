@@ -8,5 +8,11 @@
       "path": "/api/trade-funnel?notify=true&store=true",
       "schedule": "*/2 * * * *"
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/analytics",
+      "destination": "/analytics.html"
+    }
   ]
 }
