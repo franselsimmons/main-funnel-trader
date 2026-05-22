@@ -69,6 +69,55 @@ function adminAllowed(req, query) {
   return header === token || query.token === token;
 }
 
+function buildCompatReport({ analysis, store, rows }) {
+  const summary = analysis?.summary || {};
+
+  return {
+    version: analysis?.version || ANALYZE_ENGINE_VERSION,
+    generatedAt: analysis?.generatedAt || Date.now(),
+
+    summary: {
+      actions: summary.normalizedRows ?? rows.length ?? 0,
+      trades: summary.normalizedRows ?? rows.length ?? 0,
+
+      open: summary.open ?? 0,
+      closed: summary.closed ?? 0,
+
+      wins: summary.wins ?? 0,
+      losses: summary.losses ?? 0,
+      winrate: summary.winrate ?? "0.0%",
+
+      totalR: summary.totalR ?? 0,
+      avgR:
+        Number(summary.closed || 0) > 0
+          ? Number(((Number(summary.totalR || 0)) / Number(summary.closed || 1)).toFixed(3))
+          : 0,
+
+      totalPnlPct: summary.totalPnlPct ?? 0,
+
+      longFamilies: summary.longFamilies ?? 50,
+      shortFamilies: summary.shortFamilies ?? 50,
+
+      rawRows: summary.rawRows ?? rows.length ?? 0,
+      normalizedRows: summary.normalizedRows ?? 0,
+      observed: summary.observed ?? 0,
+      families: summary.families ?? 100
+    },
+
+    families: analysis?.families || [],
+    longFamilies: analysis?.longFamilies || [],
+    shortFamilies: analysis?.shortFamilies || [],
+
+    topLong: analysis?.topLong || [],
+    topShort: analysis?.topShort || [],
+
+    trackedFilters: analysis?.trackedFilters || TRACKED_FILTERS,
+    filterValues: analysis?.filterValues || null,
+
+    store
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") {
     return sendJson(res, 200, { ok: true });
@@ -114,23 +163,38 @@ export default async function handler(req, res) {
 
     const limit = Number(query.limit || process.env.ANALYZE_READ_LIMIT || 50_000);
     const rows = await loadAnalysisRows({ limit });
+    const store = getAnalyzeStoreInfo();
 
     if (query.raw === "1") {
       return sendJson(res, 200, {
         ok: true,
         version: ANALYZE_ENGINE_VERSION,
-        store: getAnalyzeStoreInfo(),
+        store,
         count: rows.length,
         rows
       });
     }
 
     if (query.definitions === "1") {
+      const definitions = buildFamilyDefinitions();
+
       return sendJson(res, 200, {
         ok: true,
         version: ANALYZE_ENGINE_VERSION,
         trackedFilters: TRACKED_FILTERS,
-        families: buildFamilyDefinitions()
+        families: definitions,
+
+        // compat
+        report: {
+          version: ANALYZE_ENGINE_VERSION,
+          summary: {
+            families: definitions.length,
+            longFamilies: definitions.filter(f => f.side === "LONG").length,
+            shortFamilies: definitions.filter(f => f.side === "SHORT").length
+          },
+          trackedFilters: TRACKED_FILTERS,
+          families: definitions
+        }
       });
     }
 
@@ -139,16 +203,49 @@ export default async function handler(req, res) {
       side: query.side || "ALL"
     });
 
+    const report = buildCompatReport({
+      analysis,
+      store,
+      rows
+    });
+
     return sendJson(res, 200, {
       ok: true,
-      store: getAnalyzeStoreInfo(),
-      ...analysis
+
+      // nieuwe shape
+      store,
+      ...analysis,
+
+      // oude frontend shape
+      report
     });
   } catch (e) {
     return sendJson(res, 500, {
       ok: false,
       error: e.message,
-      stack: process.env.NODE_ENV === "development" ? e.stack : undefined
+      stack: process.env.NODE_ENV === "development" ? e.stack : undefined,
+
+      // voorkom frontend crash
+      report: {
+        summary: {
+          actions: 0,
+          trades: 0,
+          open: 0,
+          closed: 0,
+          wins: 0,
+          losses: 0,
+          winrate: "0.0%",
+          totalR: 0,
+          avgR: 0,
+          totalPnlPct: 0,
+          longFamilies: 0,
+          shortFamilies: 0
+        },
+        families: [],
+        longFamilies: [],
+        shortFamilies: [],
+        trackedFilters: TRACKED_FILTERS
+      }
     });
   }
 }
