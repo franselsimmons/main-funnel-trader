@@ -7,7 +7,15 @@ import {
 } from "../lib/analyze/familyEngine.js";
 
 const MAX_RESPONSE_TRADES = 250;
+const MAX_STORED_TRADES = 500;
+
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
+
+const TRADE_FUNNEL_INCLUDE_BUILDUP = true;
+
+const TRADE_FUNNEL_ENTRY_MIN_SCORE = 35;
+const TRADE_FUNNEL_ALMOST_MIN_SCORE = 30;
+const TRADE_FUNNEL_BUILDUP_MIN_SCORE = 22;
 
 const FAMILY_BY_ID = new Map(
   createAnalyzeFamilies().all.map(family => [family.id, family])
@@ -63,34 +71,6 @@ function incrementCounter(map, key) {
   map[k] = Number(map[k] || 0) + 1;
 }
 
-function stageRank(stage) {
-  if (stage === "entry") return 2;
-  if (stage === "almost") return 1;
-  return 0;
-}
-
-function flowRank(flow) {
-  if (flow === "TREND") return 2;
-  if (flow === "BUILDING") return 1;
-  return 0;
-}
-
-function candidateQualityScore(c) {
-  const score = safeNumber(c.moveScore, 0);
-  const vm = safeNumber(c.vm, 0);
-  const tfStrength = safeNumber(c.tfStrength, Math.abs(safeNumber(c.tfScore, 0)));
-  const stage = String(c.stage || "").toLowerCase();
-  const flow = String(c.flow || "NEUTRAL").toUpperCase();
-
-  return (
-    score +
-    stageRank(stage) * 8 +
-    flowRank(flow) * 6 +
-    Math.min(tfStrength * 4, 10) +
-    Math.min(vm * 40, 10)
-  );
-}
-
 function normalizeText(value) {
   return String(value || "").toUpperCase().trim();
 }
@@ -107,7 +87,7 @@ function normalizeTimestamp(value, fallback = Date.now()) {
   return fallback;
 }
 
-// ================= NORMALISATIE HELPERS VOOR API-GATE =================
+// ================= TRADE FUNNEL NORMALIZERS =================
 
 function normalizeSide(value) {
   const s = String(value || "").toLowerCase().trim();
@@ -135,6 +115,7 @@ function normalizeStage(value) {
 
   if (s === "entry") return "entry";
   if (s === "almost") return "almost";
+  if (s === "buildup") return "buildup";
 
   return "";
 }
@@ -146,6 +127,19 @@ function normalizeFlow(value) {
   if (["BUILDING", "BUILDUP"].includes(f)) return "BUILDING";
 
   return "NEUTRAL";
+}
+
+function stageRank(stage) {
+  if (stage === "entry") return 3;
+  if (stage === "almost") return 2;
+  if (stage === "buildup") return 1;
+  return 0;
+}
+
+function flowRank(flow) {
+  if (flow === "TREND") return 2;
+  if (flow === "BUILDING") return 1;
+  return 0;
 }
 
 function getCandidateScore(coin) {
@@ -170,12 +164,23 @@ function getTradeId(action) {
   return id ? String(id) : "";
 }
 
-// ================= TRADE-FUNNEL GATE =================
+function candidateQualityScore(c) {
+  const score = safeNumber(c.moveScore, 0);
+  const vm = safeNumber(c.vm, 0);
+  const tfStrength = safeNumber(c.tfStrength, Math.abs(safeNumber(c.tfScore, 0)));
+  const stage = String(c.stage || "").toLowerCase();
+  const flow = String(c.flow || "NEUTRAL").toUpperCase();
 
-// Iets soepeler voor datacollectie.
-// Nog steeds geen UI fallback. Alleen echte FILTER entry/almost.
-const TRADE_FUNNEL_MIN_SCORE = 40;
-const TRADE_FUNNEL_ALMOST_MIN_SCORE = 38;
+  return (
+    score +
+    stageRank(stage) * 8 +
+    flowRank(flow) * 6 +
+    Math.min(tfStrength * 4, 10) +
+    Math.min(vm * 40, 10)
+  );
+}
+
+// ================= TRADE-FUNNEL GATE =================
 
 function passesTradeFunnelGate(coin) {
   const symbol = String(coin.symbol || "").toUpperCase().trim();
@@ -188,7 +193,7 @@ function passesTradeFunnelGate(coin) {
   if (Boolean(coin.uiOnly)) return { ok: false, reason: "UI_ONLY" };
   if (!stage) return { ok: false, reason: "BAD_STAGE" };
 
-  if (stage === "entry" && score < TRADE_FUNNEL_MIN_SCORE) {
+  if (stage === "entry" && score < TRADE_FUNNEL_ENTRY_MIN_SCORE) {
     return { ok: false, reason: "ENTRY_SCORE_TOO_LOW" };
   }
 
@@ -196,18 +201,81 @@ function passesTradeFunnelGate(coin) {
     return { ok: false, reason: "ALMOST_SCORE_TOO_LOW" };
   }
 
+  if (stage === "buildup" && score < TRADE_FUNNEL_BUILDUP_MIN_SCORE) {
+    return { ok: false, reason: "BUILDUP_SCORE_TOO_LOW" };
+  }
+
   return { ok: true, reason: "OK" };
 }
 
 // ================= CANDIDATE SELECTOR =================
 
-function getTradeFunnelCandidates(latest) {
+function getTradeFunnelBuckets(latest) {
   const buckets = [
     ...safeArray(latest?.funnel?.bull?.entry),
     ...safeArray(latest?.funnel?.bear?.entry),
+
     ...safeArray(latest?.funnel?.bull?.almost),
     ...safeArray(latest?.funnel?.bear?.almost),
   ];
+
+  if (TRADE_FUNNEL_INCLUDE_BUILDUP) {
+    buckets.push(
+      ...safeArray(latest?.funnel?.bull?.buildup),
+      ...safeArray(latest?.funnel?.bear?.buildup)
+    );
+  }
+
+  return buckets;
+}
+
+function normalizeCandidate(coin) {
+  const symbol = String(coin.symbol || "").toUpperCase().trim();
+  const side = normalizeSide(coin.side);
+  const stage = normalizeStage(coin.stage);
+  const flow = normalizeFlow(coin.flow);
+  const score = getCandidateScore(coin);
+
+  const vm = safeNumber(
+    coin.vm ??
+      coin.volumeMomentum ??
+      coin.volMomentum,
+    0
+  );
+
+  const tfScore = safeNumber(coin.tfScore, 0);
+  const tfStrength = safeNumber(
+    coin.tfStrength,
+    Math.abs(tfScore)
+  );
+
+  const normalized = {
+    ...coin,
+
+    symbol,
+    side,
+    stage,
+
+    scannerStage: stage,
+    stageSource: coin.stageSource || "tradefunnel_adapter",
+
+    flow,
+    moveScore: score,
+
+    vm,
+    tfScore,
+    tfStrength,
+
+    uiOnly: false,
+  };
+
+  normalized.tradeFunnelQuality = candidateQualityScore(normalized);
+
+  return normalized;
+}
+
+function getTradeFunnelCandidates(latest) {
+  const buckets = getTradeFunnelBuckets(latest);
 
   const accepted = new Map();
   const rejectCounts = {};
@@ -222,43 +290,8 @@ function getTradeFunnelCandidates(latest) {
       continue;
     }
 
-    const symbol = String(coin.symbol || "").toUpperCase().trim();
-    const side = normalizeSide(coin.side);
-    const stage = normalizeStage(coin.stage);
-    const flow = normalizeFlow(coin.flow);
-    const score = getCandidateScore(coin);
-
-    const vm = safeNumber(
-      coin.vm ??
-        coin.volumeMomentum ??
-        coin.volMomentum,
-      0
-    );
-
-    const tfScore = safeNumber(coin.tfScore, 0);
-    const tfStrength = safeNumber(
-      coin.tfStrength,
-      Math.abs(tfScore)
-    );
-
-    const normalized = {
-      ...coin,
-      symbol,
-      side,
-      stage,
-      scannerStage: stage,
-      stageSource: coin.stageSource || "tradefunnel_adapter",
-      flow,
-      moveScore: score,
-      vm,
-      tfScore,
-      tfStrength,
-      uiOnly: false,
-    };
-
-    normalized.tradeFunnelQuality = candidateQualityScore(normalized);
-
-    const key = `${symbol}_${side}`;
+    const normalized = normalizeCandidate(coin);
+    const key = `${normalized.symbol}_${normalized.side}`;
     const prev = accepted.get(key);
 
     if (!prev) {
@@ -334,6 +367,7 @@ function hasExitFields(action) {
     action?.pnlR !== undefined ||
     action?.exitR !== undefined ||
     action?.resultR !== undefined ||
+    action?.outcomeR !== undefined ||
     action?.pnlPct !== undefined
   );
 }
@@ -784,15 +818,35 @@ function compactAction(action) {
 
   return {
     tradeId: action.tradeId,
+    positionTradeId: action.positionTradeId,
+    positionId: action.positionId,
+    orderId: action.orderId,
+    clientOrderId: action.clientOrderId,
+    id: action.id,
+
     symbol: action.symbol,
     side: action.side,
+    direction: action.direction,
+    tradeSide: action.tradeSide,
+
     action: action.action,
+    status: action.status,
+    state: action.state,
+    type: action.type,
     reason: action.reason,
     exitReason: action.exitReason,
+    analyzeLifecycle: action.analyzeLifecycle,
 
     familyId:
       action.familyId ||
       action.analyzeFamilyId ||
+      action.analysisFamilyId ||
+      action.filterSnapshot?.familyId ||
+      null,
+
+    analyzeFamilyId:
+      action.analyzeFamilyId ||
+      action.familyId ||
       action.analysisFamilyId ||
       action.filterSnapshot?.familyId ||
       null,
@@ -802,13 +856,19 @@ function compactAction(action) {
 
     entry: action.entry,
     entryPrice: action.entryPrice,
+    openPrice: action.openPrice,
     openedAt: action.openedAt,
     entryTs: action.entryTs,
+    createdAt: action.createdAt,
 
     exit: action.exit,
     exitPrice: action.exitPrice,
+    executionPrice: action.executionPrice,
     closed: action.closed,
+    isClosed: action.isClosed,
     closedAt: action.closedAt,
+    exitAt: action.exitAt,
+    exitTs: action.exitTs,
 
     sl: action.sl,
     tp: action.tp,
@@ -816,17 +876,22 @@ function compactAction(action) {
     rr: action.rr,
     baseRR: action.baseRR,
     finalRr: action.finalRr,
+    finalRR: action.finalRR,
     plannedRR: action.plannedRR,
+    effectiveRR: action.effectiveRR,
 
-    realizedR: action.realizedR ?? action.pnlR ?? action.exitR,
-    pnlR: action.pnlR ?? action.realizedR ?? action.exitR,
+    realizedR: action.realizedR ?? action.pnlR ?? action.exitR ?? action.resultR ?? action.outcomeR,
+    pnlR: action.pnlR ?? action.realizedR ?? action.exitR ?? action.resultR ?? action.outcomeR,
     exitR: action.exitR,
+    resultR: action.resultR,
+    outcomeR: action.outcomeR,
     pnlPct: action.pnlPct,
 
     confluence: action.confluence,
     sniperScore: action.sniperScore,
     moveScore: action.moveScore,
     score: action.score,
+    tradeScore: action.tradeScore,
 
     rsi: action.rsi,
     rsiHTF: action.rsiHTF,
@@ -834,19 +899,67 @@ function compactAction(action) {
 
     stage: action.stage,
     scannerStage: action.scannerStage,
+    stageSource: action.stageSource,
     flow: action.flow,
 
     obBias: action.obBias,
     spreadPct: action.spreadPct,
     spreadBps: action.spreadBps,
     depthMinUsd1p: action.depthMinUsd1p,
+    depthUsd1p: action.depthUsd1p,
+
     btcState: action.btcState,
     fundingRate: action.fundingRate,
     funding: action.funding,
 
+    tfScore: action.tfScore,
+    tfStrength: action.tfStrength,
+    tfAlignment: action.tfAlignment,
+
+    btc: action.btc,
     regime: action.regime,
+    market: action.market,
+
     strategyVersion: action.strategyVersion,
     ts: action.ts,
+
+    filterSnapshot: action.filterSnapshot
+      ? {
+          familyId: action.filterSnapshot.familyId,
+          analyzeFamilyId: action.filterSnapshot.analyzeFamilyId,
+          side: action.filterSnapshot.side,
+          stage: action.filterSnapshot.stage,
+          flow: action.filterSnapshot.flow,
+          confluence: action.filterSnapshot.confluence,
+          sniperScore: action.filterSnapshot.sniperScore,
+          rr: action.filterSnapshot.rr,
+          baseRR: action.filterSnapshot.baseRR,
+          moveScore: action.filterSnapshot.moveScore,
+          rsi: action.filterSnapshot.rsi,
+          rsiZone: action.filterSnapshot.rsiZone,
+          obBias: action.filterSnapshot.obBias,
+          spreadPct: action.filterSnapshot.spreadPct,
+          spreadBps: action.filterSnapshot.spreadBps,
+          depthMinUsd1p: action.filterSnapshot.depthMinUsd1p,
+          btcState: action.filterSnapshot.btcState,
+          fundingRate: action.filterSnapshot.fundingRate,
+          tfScore: action.filterSnapshot.tfScore,
+          tfStrength: action.filterSnapshot.tfStrength,
+          source: action.filterSnapshot.source,
+          frozenAt: action.filterSnapshot.frozenAt,
+        }
+      : undefined,
+  };
+}
+
+function compactTradeSystemResult(result, actions) {
+  const sourceActions = safeArray(actions);
+
+  return {
+    candidatesCount: safeNumber(result?.candidatesCount, sourceActions.length),
+    strategyVersion: result?.strategyVersion || null,
+    durableEnabled: Boolean(result?.durableEnabled),
+    actions: sourceActions.slice(0, MAX_STORED_TRADES).map(compactAction),
   };
 }
 
@@ -888,9 +1001,6 @@ export async function runTradeFunnel(options = {}) {
   const notify = options.notify !== false;
   const store = options.store !== false;
 
-  // Belangrijk:
-  // Cron geeft de scanner-payload direct mee.
-  // Daardoor draait trade-funnel op dezelfde verse scan en niet per ongeluk op stale latest.
   const latest = options.latest?.ok
     ? options.latest
     : await getLatestScan();
@@ -939,11 +1049,18 @@ export async function runTradeFunnel(options = {}) {
         },
       };
 
+  const compactedActions = trades
+    .slice(0, MAX_STORED_TRADES)
+    .map(compactAction);
+
+  const compactedTradeSystemResult = compactTradeSystemResult(result, trades);
+
   const updated = {
     ...latest,
     ok: true,
-    trades,
-    tradeSystemResult: result,
+
+    trades: compactedActions,
+    tradeSystemResult: compactedTradeSystemResult,
     analyzeAppendResult,
 
     tradeFunnelRawCount: tradeFunnel.rawCount,
