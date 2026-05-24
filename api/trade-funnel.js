@@ -8,13 +8,25 @@ import {
 
 const MAX_RESPONSE_TRADES = readNumberEnv("TRADE_FUNNEL_MAX_RESPONSE_TRADES", 250);
 const MAX_TRADE_FUNNEL_INPUT = readNumberEnv("TRADE_FUNNEL_MAX_INPUT", 180);
-const MAX_ANALYZE_SYNTHETIC_ENTRIES = readNumberEnv("ANALYZE_SYNTHETIC_ENTRY_MAX", 60);
-const ANALYZE_SYNTHETIC_MIN_SCORE = readNumberEnv("ANALYZE_SYNTHETIC_MIN_SCORE", 45);
-const ANALYZE_ENTRY_WINDOW_MS = readNumberEnv("ANALYZE_ENTRY_WINDOW_MS", 2 * 60 * 1000);
 
 const ANALYZE_COLLECT_CANDIDATE_ENTRIES = readBooleanEnv(
   "ANALYZE_COLLECT_CANDIDATE_ENTRIES",
   true
+);
+
+const MAX_ANALYZE_SYNTHETIC_ENTRIES = readNumberEnv(
+  "ANALYZE_SYNTHETIC_ENTRY_MAX",
+  80
+);
+
+const ANALYZE_SYNTHETIC_MIN_SCORE = readNumberEnv(
+  "ANALYZE_SYNTHETIC_MIN_SCORE",
+  45
+);
+
+const ANALYZE_ENTRY_WINDOW_MS = readNumberEnv(
+  "ANALYZE_ENTRY_WINDOW_MS",
+  2 * 60 * 1000
 );
 
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
@@ -93,34 +105,6 @@ function incrementCounter(map, key) {
   map[k] = Number(map[k] || 0) + 1;
 }
 
-function stageRank(stage) {
-  if (stage === "entry") return 2;
-  if (stage === "almost") return 1;
-  return 0;
-}
-
-function flowRank(flow) {
-  if (flow === "TREND") return 2;
-  if (flow === "BUILDING") return 1;
-  return 0;
-}
-
-function candidateQualityScore(c) {
-  const score = safeNumber(c.moveScore, 0);
-  const vm = safeNumber(c.vm, 0);
-  const tfStrength = safeNumber(c.tfStrength, Math.abs(safeNumber(c.tfScore, 0)));
-  const stage = String(c.stage || "").toLowerCase();
-  const flow = String(c.flow || "NEUTRAL").toUpperCase();
-
-  return (
-    score +
-    stageRank(stage) * 8 +
-    flowRank(flow) * 6 +
-    Math.min(tfStrength * 4, 10) +
-    Math.min(vm * 40, 10)
-  );
-}
-
 function normalizeText(value) {
   return String(value || "").toUpperCase().trim();
 }
@@ -137,7 +121,15 @@ function normalizeTimestamp(value, fallback = Date.now()) {
   return fallback;
 }
 
-// ================= NORMALISATIE HELPERS VOOR API-GATE =================
+function cleanObject(object) {
+  return Object.fromEntries(
+    Object.entries(safeObject(object)).filter(([, value]) => {
+      return value !== undefined && value !== null && value !== "";
+    })
+  );
+}
+
+// ================= NORMALIZERS =================
 
 function normalizeSide(value) {
   const s = String(value || "").toLowerCase().trim();
@@ -201,7 +193,37 @@ function getTradeId(action) {
   return id ? String(id) : "";
 }
 
-// ================= TRADE-FUNNEL GATE =================
+// ================= QUALITY SCORE =================
+
+function stageRank(stage) {
+  if (stage === "entry") return 2;
+  if (stage === "almost") return 1;
+  return 0;
+}
+
+function flowRank(flow) {
+  if (flow === "TREND") return 2;
+  if (flow === "BUILDING") return 1;
+  return 0;
+}
+
+function candidateQualityScore(c) {
+  const score = safeNumber(c.moveScore, 0);
+  const vm = safeNumber(c.vm, 0);
+  const tfStrength = safeNumber(c.tfStrength, Math.abs(safeNumber(c.tfScore, 0)));
+  const stage = String(c.stage || "").toLowerCase();
+  const flow = String(c.flow || "NEUTRAL").toUpperCase();
+
+  return (
+    score +
+    stageRank(stage) * 8 +
+    flowRank(flow) * 6 +
+    Math.min(tfStrength * 4, 10) +
+    Math.min(vm * 40, 10)
+  );
+}
+
+// ================= TRADE FUNNEL GATE =================
 
 const TRADE_FUNNEL_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ENTRY_MIN_SCORE", 45);
 const TRADE_FUNNEL_ALMOST_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ALMOST_MIN_SCORE", 45);
@@ -231,8 +253,6 @@ function passesTradeFunnelGate(coin) {
 
   return { ok: true, reason: "OK" };
 }
-
-// ================= CANDIDATE SELECTOR =================
 
 function getTradeFunnelCandidates(latest) {
   const buckets = [
@@ -342,7 +362,7 @@ function getTradeFunnelCandidates(latest) {
   };
 }
 
-// ================= ANALYZE LIFECYCLE FILTER =================
+// ================= LIFECYCLE CLASSIFIER =================
 
 function getActionCandidates(action) {
   return [
@@ -360,6 +380,60 @@ function getActionCandidates(action) {
   ]
     .map(normalizeText)
     .filter(Boolean);
+}
+
+function isIgnoreLabel(value) {
+  return (
+    value === "WAIT" ||
+    value === "HOLD" ||
+    value === "RUNNING" ||
+    value === "NO_TRADE" ||
+    value === "NO TRADE" ||
+    value === "SKIP" ||
+    value === "IGNORE" ||
+    value === "REJECT" ||
+    value === "REJECTED" ||
+    value.includes("WAIT") ||
+    value.includes("HOLD") ||
+    value.includes("RUNNING") ||
+    value.includes("NO_TRADE") ||
+    value.includes("NO TRADE") ||
+    value.includes("REJECT")
+  );
+}
+
+function isExitLabel(value) {
+  return (
+    value === "EXIT" ||
+    value === "CLOSE" ||
+    value === "CLOSED" ||
+    value === "TP" ||
+    value === "SL" ||
+    value === "STOP" ||
+    value === "STOP_LOSS" ||
+    value === "TAKE_PROFIT" ||
+    value.includes("EXIT") ||
+    value.includes("CLOSE") ||
+    value.includes("TAKE_PROFIT") ||
+    value.includes("STOP_LOSS")
+  );
+}
+
+function isEntryLabel(value) {
+  return (
+    value === "ENTRY" ||
+    value === "OPEN" ||
+    value === "OPENED" ||
+    value === "ENTER" ||
+    value === "FILLED" ||
+    value === "PLACE_ORDER" ||
+    value === "OPEN_LONG" ||
+    value === "OPEN_SHORT" ||
+    value === "LONG_ENTRY" ||
+    value === "SHORT_ENTRY" ||
+    value.includes("ENTRY") ||
+    value.includes("OPEN_POSITION")
+  );
 }
 
 function hasExitFields(action) {
@@ -396,64 +470,17 @@ function hasEntryFields(action) {
 function getLifecycleAction(action) {
   const candidates = getActionCandidates(action);
 
-  for (const value of candidates) {
-    if (
-      value === "EXIT" ||
-      value === "CLOSE" ||
-      value === "CLOSED" ||
-      value === "TP" ||
-      value === "SL" ||
-      value === "STOP" ||
-      value === "STOP_LOSS" ||
-      value === "TAKE_PROFIT" ||
-      value.includes("EXIT") ||
-      value.includes("CLOSE") ||
-      value.includes("TAKE_PROFIT") ||
-      value.includes("STOP_LOSS")
-    ) {
-      return "EXIT";
-    }
-  }
+  const hasIgnore = candidates.some(isIgnoreLabel);
+  const hasExit = candidates.some(isExitLabel);
+  const hasEntry = candidates.some(isEntryLabel);
 
-  if (hasExitFields(action)) return "EXIT";
+  // Exit moet voorrang houden, anders worden echte closes soms genegeerd.
+  if (hasExit || hasExitFields(action)) return "EXIT";
 
-  for (const value of candidates) {
-    if (
-      value === "ENTRY" ||
-      value === "OPEN" ||
-      value === "OPENED" ||
-      value === "ENTER" ||
-      value === "FILLED" ||
-      value === "PLACE_ORDER" ||
-      value === "OPEN_LONG" ||
-      value === "OPEN_SHORT" ||
-      value === "LONG_ENTRY" ||
-      value === "SHORT_ENTRY" ||
-      value.includes("ENTRY") ||
-      value.includes("OPEN_POSITION")
-    ) {
-      return "ENTRY";
-    }
-  }
+  // Fix: WAIT / HOLD / NO_TRADE mag nooit ENTRY worden door entry/sl/tp velden.
+  if (hasIgnore) return "";
 
-  if (hasEntryFields(action)) return "ENTRY";
-
-  for (const value of candidates) {
-    if (
-      value === "WAIT" ||
-      value === "HOLD" ||
-      value === "RUNNING" ||
-      value === "NO_TRADE" ||
-      value === "SKIP" ||
-      value === "IGNORE" ||
-      value.includes("WAIT") ||
-      value.includes("HOLD") ||
-      value.includes("RUNNING") ||
-      value.includes("REJECT")
-    ) {
-      return "";
-    }
-  }
+  if (hasEntry || hasEntryFields(action)) return "ENTRY";
 
   return "";
 }
@@ -571,14 +598,6 @@ function buildBaseFilterSnapshot(action) {
 
     strategyVersion: action?.strategyVersion,
   };
-}
-
-function cleanObject(object) {
-  return Object.fromEntries(
-    Object.entries(safeObject(object)).filter(([, value]) => {
-      return value !== undefined && value !== null && value !== "";
-    })
-  );
 }
 
 function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
@@ -770,9 +789,6 @@ function buildAnalyzeEvents(actions, latest, context = {}) {
 }
 
 // ================= SYNTHETIC ANALYZE ENTRIES =================
-// Doel: als processTrades veel WAIT/HOLD teruggeeft, verzamelen we alsnog
-// paper-analyze entries uit de beste scanner/trade-funnel candidates.
-// Daardoor groeit de family matrix per scan.
 
 function inferRRFromCandidate(candidate) {
   const direct = nullableNumber(
@@ -799,29 +815,35 @@ function buildSyntheticTradeId(candidate, bucket) {
   const symbol = String(candidate.symbol || "").toUpperCase().trim();
   const side = normalizeSide(candidate.side);
   const stage = normalizeStage(candidate.stage) || "unknown";
-  const score = Math.round(getCandidateScore(candidate));
 
-  return `COLLECT_${bucket}_${symbol}_${side}_${stage}_${score}`;
+  return `COLLECT_${bucket}_${symbol}_${side}_${stage}`;
 }
 
 function buildSyntheticAnalyzeEntry(candidate, latest, context, index) {
   const symbol = String(candidate.symbol || "").toUpperCase().trim();
   const side = normalizeSide(candidate.side);
+  const analyzeSide = normalizeAnalyzeSide(side);
   const stage = normalizeStage(candidate.stage);
 
-  if (!symbol || !side || !stage) return null;
+  if (!symbol || !side || !analyzeSide || !stage) return null;
 
   const score = getCandidateScore(candidate);
   if (score < ANALYZE_SYNTHETIC_MIN_SCORE) return null;
 
   const now = context.tradeFunnelUpdatedAt || Date.now();
   const bucket = Math.floor(now / ANALYZE_ENTRY_WINDOW_MS);
-  const price = nullableNumber(candidate.entryPrice ?? candidate.entry ?? candidate.price);
+
+  const price = nullableNumber(
+    candidate.entryPrice ??
+      candidate.entry ??
+      candidate.openPrice ??
+      candidate.price ??
+      candidate.current_price
+  );
 
   if (price === null || price <= 0) return null;
 
   const rr = inferRRFromCandidate(candidate);
-  const analyzeSide = normalizeAnalyzeSide(side);
 
   return {
     tradeId: buildSyntheticTradeId(candidate, bucket),
@@ -885,7 +907,7 @@ function buildSyntheticAnalyzeEntry(candidate, latest, context, index) {
     createdAt: now,
 
     sequenceIndex: index,
-    strategyVersion: candidate.strategyVersion || "collector-v1",
+    strategyVersion: candidate.strategyVersion || "collector-v2",
 
     filterSnapshot: cleanObject({
       setupClass: candidate.setupClass,
@@ -925,7 +947,7 @@ function buildSyntheticAnalyzeEntry(candidate, latest, context, index) {
       tfStrength: nullableNumber(candidate.tfStrength),
       tfAlignment: candidate.tfAlignment,
 
-      strategyVersion: candidate.strategyVersion || "collector-v1",
+      strategyVersion: candidate.strategyVersion || "collector-v2",
     }),
   };
 }
@@ -934,6 +956,7 @@ function hasRealEntryForSymbolSide(actions) {
   const out = new Set();
 
   for (const action of safeArray(actions)) {
+    if (!getTradeId(action)) continue;
     if (getLifecycleAction(action) !== "ENTRY") continue;
 
     const symbol = String(action.symbol || "").toUpperCase().trim();
@@ -948,7 +971,17 @@ function hasRealEntryForSymbolSide(actions) {
 }
 
 function createSyntheticCandidateEntries(candidates, latest, context = {}, realActions = []) {
-  if (!ANALYZE_COLLECT_CANDIDATE_ENTRIES) return [];
+  const debug = {
+    enabled: ANALYZE_COLLECT_CANDIDATE_ENTRIES,
+    candidates: safeArray(candidates).length,
+    max: MAX_ANALYZE_SYNTHETIC_ENTRIES,
+    minScore: ANALYZE_SYNTHETIC_MIN_SCORE,
+    rejected: {},
+  };
+
+  if (!ANALYZE_COLLECT_CANDIDATE_ENTRIES) {
+    return { entries: [], debug };
+  }
 
   const realEntryKeys = hasRealEntryForSymbolSide(realActions);
   const out = [];
@@ -961,30 +994,58 @@ function createSyntheticCandidateEntries(candidates, latest, context = {}, realA
     const stage = normalizeStage(candidate.stage);
     const score = getCandidateScore(candidate);
 
-    if (!symbol || !side) continue;
-    if (realEntryKeys.has(`${symbol}_${side}`)) continue;
-    if (stage !== "entry" && stage !== "almost") continue;
-    if (score < ANALYZE_SYNTHETIC_MIN_SCORE) continue;
+    if (!symbol) {
+      incrementCounter(debug.rejected, "NO_SYMBOL");
+      continue;
+    }
+
+    if (!side) {
+      incrementCounter(debug.rejected, "BAD_SIDE");
+      continue;
+    }
+
+    if (realEntryKeys.has(`${symbol}_${side}`)) {
+      incrementCounter(debug.rejected, "REAL_ENTRY_EXISTS");
+      continue;
+    }
+
+    if (stage !== "entry" && stage !== "almost") {
+      incrementCounter(debug.rejected, "BAD_STAGE");
+      continue;
+    }
+
+    if (score < ANALYZE_SYNTHETIC_MIN_SCORE) {
+      incrementCounter(debug.rejected, "SCORE_TOO_LOW");
+      continue;
+    }
 
     const synthetic = buildSyntheticAnalyzeEntry(candidate, latest, context, out.length);
-    if (!synthetic) continue;
+
+    if (!synthetic) {
+      incrementCounter(debug.rejected, "BUILD_FAILED");
+      continue;
+    }
 
     out.push(synthetic);
   }
 
-  return out;
+  debug.created = out.length;
+  return { entries: out, debug };
 }
 
 // ================= ANALYZE APPEND =================
 
 async function appendTradesToAnalyzer(trades, latest, context = {}) {
   const actions = safeArray(trades);
-  const syntheticEntries = createSyntheticCandidateEntries(
+
+  const syntheticResult = createSyntheticCandidateEntries(
     context.candidates,
     latest,
     context,
     actions
   );
+
+  const syntheticEntries = syntheticResult.entries;
 
   const analyzeActions = [
     ...actions,
@@ -1001,6 +1062,7 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       acceptedEntries: 0,
       acceptedExits: 0,
       syntheticEntries: 0,
+      syntheticDebug: syntheticResult.debug,
       rejected: 0,
       rejectCounts: {},
     };
@@ -1017,6 +1079,7 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       skipped: true,
       reason: "NO_ENTRY_OR_EXIT_EVENTS",
       syntheticEntries: syntheticEntries.length,
+      syntheticDebug: syntheticResult.debug,
       ...stats,
     };
   }
@@ -1043,6 +1106,7 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       rejectCounts: stats.rejectCounts,
 
       syntheticEntries: syntheticEntries.length,
+      syntheticDebug: syntheticResult.debug,
       realActions: actions.length,
       normalizedEvents: events.length,
     };
@@ -1053,6 +1117,7 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       ok: false,
       error: e?.message || "analyze_append_failed",
       syntheticEntries: syntheticEntries.length,
+      syntheticDebug: syntheticResult.debug,
       ...stats,
     };
   }
@@ -1192,7 +1257,10 @@ export async function runTradeFunnel(options = {}) {
         regime: latest.regime,
         market: latest.market,
       })
-    : { actions: [], candidatesCount: 0 };
+    : {
+        actions: [],
+        candidatesCount: 0,
+      };
 
   const trades = Array.isArray(result)
     ? result
@@ -1205,6 +1273,7 @@ export async function runTradeFunnel(options = {}) {
         notify,
         store,
         candidates,
+        tradeFunnelUpdatedAt: now,
       })
     : {
         ok: true,
