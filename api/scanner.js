@@ -31,44 +31,68 @@ import { buildTimeframeContext } from "../lib/timeframe.js";
 
 const STAGES = ["entry", "almost", "buildup", "radar"];
 
+// ================= DATA COLLECTION CONFIG =================
+// Default AAN: doel is nu maximaal analyse-data verzamelen.
+// Zet SCANNER_COLLECTION_MODE=false als je later weer strenger wilt.
+const DATA_COLLECTION_MODE = process.env.SCANNER_COLLECTION_MODE !== "false";
+
+const COLLECTION_TARGET_PER_SIDE = Number(
+  process.env.SCANNER_COLLECTION_TARGET_PER_SIDE || 55
+);
+
+const COLLECTION_MAX_PER_SIDE = Number(
+  process.env.SCANNER_COLLECTION_MAX_PER_SIDE || 80
+);
+
+// Moet >= tradeFunnel gate zijn, anders wordt alles alsnog rejected.
+const COLLECTION_MIN_TRADE_SCORE = Number(
+  process.env.SCANNER_COLLECTION_MIN_TRADE_SCORE || 45
+);
+
+const COLLECTION_ENTRY_SCORE = Number(
+  process.env.SCANNER_COLLECTION_ENTRY_SCORE || 62
+);
+
 // ================= ADAPTIVE SCANNER CONFIG =================
 // Versoepeld voor dataverzameling: meer coins bereiken bullFilter/bearFilter.
+// Als filters niets teruggeven, krijgt coin FILTER_RELAXED i.p.v. uiOnly fallback.
 function getAdaptiveScannerConfig(regime, market) {
   const trend = String(market?.trend || market?.state || "").toUpperCase();
   const r = String(regime || "NORMAL").toUpperCase();
 
-  let cfg = {
-    vmMin: 0.004,
-    hardChange24: 0.08,
-    hardChange1h: 0.012,
-    targetMinimum: 50,
-    fallbackMax: 70,
-    scoreBoost: 6,
-    allowNeutralDirection: true
+  const cfg = {
+    vmMin: DATA_COLLECTION_MODE ? 0.0015 : 0.008,
+    hardChange24: DATA_COLLECTION_MODE ? 0 : 0.20,
+    hardChange1h: DATA_COLLECTION_MODE ? 0 : 0.03,
+    targetMinimum: DATA_COLLECTION_MODE ? COLLECTION_TARGET_PER_SIDE : 35,
+    fallbackMax: DATA_COLLECTION_MODE ? COLLECTION_MAX_PER_SIDE : 45,
+    scoreBoost: DATA_COLLECTION_MODE ? 10 : 0,
+    allowNeutralDirection: true,
+    collectionMode: DATA_COLLECTION_MODE
   };
 
   if (r === "LOW_VOL") {
-    cfg.vmMin = 0.003;
-    cfg.hardChange24 = 0.05;
-    cfg.hardChange1h = 0.008;
-    cfg.targetMinimum = 65;
-    cfg.fallbackMax = 85;
-    cfg.scoreBoost = 10;
+    cfg.vmMin = DATA_COLLECTION_MODE ? 0.001 : 0.006;
+    cfg.hardChange24 = DATA_COLLECTION_MODE ? 0 : 0.12;
+    cfg.hardChange1h = DATA_COLLECTION_MODE ? 0 : 0.02;
+    cfg.targetMinimum = DATA_COLLECTION_MODE ? COLLECTION_TARGET_PER_SIDE : 45;
+    cfg.fallbackMax = DATA_COLLECTION_MODE ? COLLECTION_MAX_PER_SIDE : 60;
+    cfg.scoreBoost = DATA_COLLECTION_MODE ? 12 : 4;
   }
 
   if (r === "HIGH_VOL") {
-    cfg.vmMin = 0.007;
-    cfg.hardChange24 = 0.16;
-    cfg.hardChange1h = 0.025;
-    cfg.targetMinimum = 45;
-    cfg.fallbackMax = 65;
-    cfg.scoreBoost = 3;
+    cfg.vmMin = DATA_COLLECTION_MODE ? 0.0025 : 0.015;
+    cfg.hardChange24 = DATA_COLLECTION_MODE ? 0 : 0.45;
+    cfg.hardChange1h = DATA_COLLECTION_MODE ? 0 : 0.07;
+    cfg.targetMinimum = DATA_COLLECTION_MODE ? COLLECTION_TARGET_PER_SIDE : 25;
+    cfg.fallbackMax = DATA_COLLECTION_MODE ? COLLECTION_MAX_PER_SIDE : 35;
+    cfg.scoreBoost = DATA_COLLECTION_MODE ? 7 : -2;
   }
 
   if (trend === "BEARISH" || trend === "BULLISH") {
-    cfg.targetMinimum += 10;
-    cfg.fallbackMax += 12;
-    cfg.scoreBoost += 2;
+    cfg.targetMinimum += DATA_COLLECTION_MODE ? 0 : 5;
+    cfg.fallbackMax += DATA_COLLECTION_MODE ? 0 : 8;
+    cfg.scoreBoost += DATA_COLLECTION_MODE ? 2 : 0;
   }
 
   return cfg;
@@ -82,6 +106,15 @@ function safeArray(value) {
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function pickNumber(object, keys, fallback = 0) {
+  for (const key of keys) {
+    const n = Number(object?.[key]);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return fallback;
 }
 
 function normalizeCounterMap(map) {
@@ -148,8 +181,10 @@ function normalizeDashboardStats(stats, now = Date.now()) {
 // ================= SIDE NORMALIZER =================
 function normalizeScanSide(side) {
   const s = String(side || "both").toLowerCase();
+
   if (s === "bull") return "bull";
   if (s === "bear") return "bear";
+
   return "both";
 }
 
@@ -164,6 +199,7 @@ function normalizeStore(value, fallback = true) {
   if (value === undefined || value === null) return fallback;
 
   const v = String(value || "").toLowerCase();
+
   if (v === "false" || v === "0" || v === "no") return false;
   if (v === "true" || v === "1" || v === "yes") return true;
 
@@ -184,10 +220,18 @@ function getDirectionalPressure(c) {
 }
 
 // ================= DIRECTION ALLOWANCE =================
-// Versoepeld: neutrale coins met voldoende VM mogen sneller door.
+// Collection mode: neutrale coins mogen door.
+// Anders krijg je bij change1h/change24 = 0 weer funnelCount 0.
 function displayDirectionAllowed(c, side, adaptive = {}) {
   const pressure = getDirectionalPressure(c);
   const vm = Number(c.vm || 0);
+
+  if (adaptive.collectionMode && vm >= Number(adaptive.vmMin || 0)) {
+    if (side === "bull" && pressure >= -0.35) return true;
+    if (side === "bear" && pressure <= 0.35) return true;
+    return true;
+  }
+
   const minPressure = adaptive.scoreBoost > 0 ? 0.012 : 0.02;
 
   if (side === "bull") {
@@ -214,10 +258,11 @@ function displayDirectionAllowed(c, side, adaptive = {}) {
 }
 
 // ================= FLOW =================
-// Versoepeld: meer coins krijgen BUILDING/TREND i.p.v. NEUTRAL.
+// Collection mode: bij ontbrekende change-data kan VM alsnog BUILDING opleveren.
 function detectFlow(c, adaptive = {}) {
   const ch1 = Math.abs(Number(c.change1h || 0));
   const ch24 = Math.abs(Number(c.change24 || 0));
+  const vm = Number(c.vm || 0);
   const boost = Number(adaptive.scoreBoost || 0);
 
   if (ch1 > (boost > 0 ? 0.22 : 0.30) && ch24 > (boost > 0 ? 0.85 : 1.15)) {
@@ -226,6 +271,11 @@ function detectFlow(c, adaptive = {}) {
 
   if (ch1 > (boost > 0 ? 0.035 : 0.06) || ch24 > (boost > 0 ? 0.20 : 0.32)) {
     return "BUILDING";
+  }
+
+  if (adaptive.collectionMode) {
+    if (vm >= Number(adaptive.vmMin || 0) * 2.0) return "BUILDING";
+    if (vm >= Number(adaptive.vmMin || 0)) return "BUILDING";
   }
 
   if (ch24 > 0.12 || ch1 > 0.015) {
@@ -240,6 +290,7 @@ function calculateFreshness(c, side) {
   const dir = side === "bear" ? -1 : 1;
   const ch24 = Math.max(0, Number(c.change24 || 0) * dir);
   const ch1 = Math.max(0, Number(c.change1h || 0) * dir);
+
   let freshness = 0;
 
   if (ch1 > 1.5) freshness += 18;
@@ -249,6 +300,7 @@ function calculateFreshness(c, side) {
 
   if (ch24 > 0) {
     const ratio = ch1 / Math.max(ch24, 0.01);
+
     if (ratio > 0.45) freshness += 8;
     else if (ratio > 0.25) freshness += 5;
     else if (ratio > 0.12) freshness += 2;
@@ -288,26 +340,34 @@ function calculateScore(c, regime, side, adaptive = {}) {
   else if (vm > 0.20) score += 12;
   else if (vm > 0.10) score += 7;
   else if (vm > 0.04) score += 3;
+  else if (adaptive.collectionMode && vm >= Number(adaptive.vmMin || 0) * 2.0) score += 4;
+  else if (adaptive.collectionMode && vm >= Number(adaptive.vmMin || 0)) score += 2;
 
   score += freshness;
 
   const pressure = getDirectionalPressure(c);
   const alignedPressure = side === "bear" ? -pressure : pressure;
 
-  // Versoepeld: minder hard afstraffen bij neutrale/counter pressure.
-  if (alignedPressure < 0.012) score -= 4;
-  if (alignedPressure < -0.035) score -= 10;
+  if (adaptive.collectionMode) {
+    if (alignedPressure < -0.35) score -= 8;
+  } else {
+    if (alignedPressure < 0.012) score -= 4;
+    if (alignedPressure < -0.035) score -= 10;
+  }
 
-  if (regime === "LOW_VOL") score -= 2;
+  if (regime === "LOW_VOL") score -= adaptive.collectionMode ? 0 : 2;
   if (regime === "HIGH_VOL") score += 6;
 
   score += Number(adaptive.scoreBoost || 0);
 
+  if (adaptive.collectionMode && vm >= Number(adaptive.vmMin || 0)) {
+    score = Math.max(score, COLLECTION_MIN_TRADE_SCORE);
+  }
+
   return Math.max(0, Math.min(score, 100));
 }
 
-// ================= UI FALLBACK STAGE =================
-// Bewust licht versoepeld. uiOnly blijft true bij fallback.
+// ================= FALLBACK STAGE =================
 function fallbackStage(score, flow, freshness = 0) {
   if (flow === "TREND" && score >= 64) return "entry";
   if (flow === "TREND" && score >= 48) return "almost";
@@ -315,11 +375,25 @@ function fallbackStage(score, flow, freshness = 0) {
 
   if (flow === "BUILDING" && score >= 52) return "almost";
   if (flow === "BUILDING" && score >= 24) return "buildup";
-  if (flow === "BUILDING" && freshness >= 3) return "radar";
+  if (flow === "BUILDING" && freshness >= 3) return "buildup";
 
-  if (flow === "EARLY" && score >= 12) return "radar";
+  if (flow === "EARLY" && score >= 12) return "buildup";
 
   return "radar";
+}
+
+// ================= RELAXED TRADE STAGE =================
+// Dit is de kernfix.
+// Geen uiOnly. Hierdoor kan tradeFunnel deze coins gebruiken.
+function relaxedTradeStage(score, flow, adaptive = {}) {
+  if (!adaptive.collectionMode) return "";
+
+  if (score >= COLLECTION_ENTRY_SCORE && flow === "TREND") return "entry";
+  if (score >= COLLECTION_ENTRY_SCORE + 5) return "entry";
+
+  if (score >= COLLECTION_MIN_TRADE_SCORE) return "almost";
+
+  return "";
 }
 
 // ================= STAGE MERGE =================
@@ -346,10 +420,17 @@ function normalizeBitgetContractSymbol(symbolKey) {
     .replace(/-CMCBL$/, "");
 }
 
+function normalizeBaseSymbol(symbolKey) {
+  return String(symbolKey || "")
+    .toUpperCase()
+    .trim()
+    .replace(/[-_]?USDT$/, "")
+    .replace(/[-_]?USDC$/, "")
+    .replace(/[-_]?USD$/, "");
+}
+
 function normalizeBitgetKey(symbolKey) {
-  return normalizeBitgetContractSymbol(symbolKey)
-    .replace(/USDT$/, "")
-    .replace(/USDC$/, "");
+  return normalizeBaseSymbol(normalizeBitgetContractSymbol(symbolKey));
 }
 
 function normalizeBitgetProductType(productType, rawSymbol = "") {
@@ -364,12 +445,41 @@ function normalizeBitgetProductType(productType, rawSymbol = "") {
   return "USDT-FUTURES";
 }
 
+function getFuturesEntries(futures) {
+  if (futures instanceof Map) return Array.from(futures.entries());
+
+  if (Array.isArray(futures)) {
+    return futures.map((value, index) => [
+      value?.symbol || value?.instId || value?.tickerId || index,
+      value
+    ]);
+  }
+
+  if (Array.isArray(futures?.data)) {
+    return futures.data.map((value, index) => [
+      value?.symbol || value?.instId || value?.tickerId || index,
+      value
+    ]);
+  }
+
+  if (futures && typeof futures === "object") {
+    return Object.entries(futures);
+  }
+
+  return [];
+}
+
 function buildTradableSymbolMap(futures) {
   const out = new Map();
 
-  for (const [key, value] of futures instanceof Map ? futures.entries() : []) {
+  for (const [key, value] of getFuturesEntries(futures)) {
     const rawBitgetSymbol = String(
-      value?.symbol || value?.instId || value?.tickerId || key || ""
+      value?.symbol ||
+        value?.instId ||
+        value?.tickerId ||
+        value?.symbolName ||
+        key ||
+        ""
     ).toUpperCase().trim();
 
     if (!rawBitgetSymbol) continue;
@@ -402,20 +512,80 @@ function buildTradableSymbolMap(futures) {
   return out;
 }
 
-// ================= NORMALIZE COIN FROM COINGECKO =================
+// ================= NORMALIZE COIN =================
+function estimateVm(marketCap, totalVolume) {
+  if (marketCap > 0 && totalVolume > 0) {
+    return totalVolume / marketCap;
+  }
+
+  if (totalVolume > 0) {
+    return Math.max(0.002, Math.min(totalVolume / 1_000_000_000, 0.08));
+  }
+
+  // Belangrijk: als CoinGecko-cache volume/marketCap mist,
+  // dan mag scanner niet leeg eindigen tijdens collection mode.
+  return DATA_COLLECTION_MODE ? 0.006 : 0;
+}
+
 function normalize(raw) {
-  const marketCap = Number(raw?.market_cap || 0);
-  const totalVolume = Number(raw?.total_volume || 0);
+  const marketCap = pickNumber(raw, [
+    "market_cap",
+    "marketCap",
+    "mc"
+  ], 0);
+
+  const totalVolume = pickNumber(raw, [
+    "total_volume",
+    "totalVolume",
+    "volume",
+    "quoteVolume",
+    "turnover24h",
+    "usdtVolume"
+  ], 0);
+
+  const change24 = pickNumber(raw, [
+    "price_change_percentage_24h",
+    "price_change_percentage_24h_in_currency",
+    "change24",
+    "change24h",
+    "priceChange24h",
+    "priceChangePercent24h",
+    "priceChangePercentage24h"
+  ], 0);
+
+  const change1h = pickNumber(raw, [
+    "price_change_percentage_1h_in_currency",
+    "price_change_percentage_1h",
+    "change1h",
+    "priceChange1h",
+    "priceChangePercent1h",
+    "priceChangePercentage1h"
+  ], 0);
+
+  const symbol = normalizeBaseSymbol(
+    raw?.symbol ||
+      raw?.baseSymbol ||
+      raw?.base ||
+      raw?.coin ||
+      ""
+  );
 
   return {
-    symbol: String(raw?.symbol || "").toUpperCase(),
-    name: raw?.name || "",
-    price: Number(raw?.current_price || 0),
-    change24: Number(raw?.price_change_percentage_24h || 0),
-    change1h: Number(raw?.price_change_percentage_1h_in_currency || 0),
+    symbol,
+    name: raw?.name || symbol,
+    price: pickNumber(raw, [
+      "current_price",
+      "price",
+      "last",
+      "lastPr",
+      "close",
+      "markPrice"
+    ], 0),
+    change24,
+    change1h,
     volume: totalVolume,
     marketCap,
-    vm: marketCap > 0 ? totalVolume / marketCap : 0,
+    vm: estimateVm(marketCap, totalVolume),
     ob: generateShallowOb()
   };
 }
@@ -466,7 +636,9 @@ function countSide(funnel, side) {
   let total = 0;
 
   for (const stage of STAGES) {
-    total += Array.isArray(funnel[side][stage]) ? funnel[side][stage].length : 0;
+    total += Array.isArray(funnel[side][stage])
+      ? funnel[side][stage].length
+      : 0;
   }
 
   return total;
@@ -491,24 +663,28 @@ function hasSymbolInSide(funnel, side, symbol) {
 function sortFunnel(funnel) {
   for (const side of ["bull", "bear"]) {
     for (const stageKey of STAGES) {
-      funnel[side][stageKey].sort((a, b) => Number(b.moveScore || 0) - Number(a.moveScore || 0));
+      funnel[side][stageKey].sort(
+        (a, b) => Number(b.moveScore || 0) - Number(a.moveScore || 0)
+      );
     }
   }
 }
 
-// ================= UI FALLBACK FILL =================
-// Blijft uiOnly=true. TradeSystem kan dit blijven negeren.
-function fillUiFallback({
+// ================= COLLECTION FILL =================
+// Geen UI fallback. Dit vult tradebare analyse-candidates aan.
+// uiOnly=false zodat tradeFunnel ze niet weggooit.
+function fillCollectionCandidates({
   rawCoins,
   regime,
   funnel,
   side,
   tradableSymbolMap,
-  max = 30,
+  max = COLLECTION_MAX_PER_SIDE,
   adaptive = {}
 }) {
-  const targetMinimum = adaptive.targetMinimum || 18;
+  if (!adaptive.collectionMode) return;
 
+  const targetMinimum = adaptive.targetMinimum || COLLECTION_TARGET_PER_SIDE;
   if (countSide(funnel, side) >= targetMinimum) return;
 
   const list = [];
@@ -517,36 +693,27 @@ function fillUiFallback({
     const base = normalize(raw);
 
     if (!base.symbol || base.price <= 0) continue;
+    if (hasSymbolInSide(funnel, side, base.symbol)) continue;
+    if (base.vm < Number(adaptive.vmMin || 0)) continue;
 
     const contractMeta = tradableSymbolMap.get(base.symbol);
-
     if (!contractMeta) continue;
-    if (hasSymbolInSide(funnel, side, base.symbol)) continue;
-    if (base.vm < (adaptive.vmMin || 0.012)) continue;
-
-    const ch24 = Number(base.change24 || 0);
-    const ch1 = Number(base.change1h || 0);
-
-    if (side === "bull" && ch24 <= 0 && ch1 <= 0) continue;
-    if (side === "bear" && ch24 >= 0 && ch1 >= 0) continue;
 
     const flow = detectFlow(base, adaptive);
-
-    if (flow !== "TREND" && flow !== "BUILDING") continue;
-
     const score = calculateScore(base, regime, side, adaptive);
-    const minFallbackScore = adaptive.scoreBoost > 0 ? 18 : 22;
+    const relaxedStage = relaxedTradeStage(score, flow, adaptive);
 
-    if (score < minFallbackScore) continue;
+    if (!relaxedStage) continue;
 
     const edge = calculateEdge(base, regime) || 0;
     const freshness = calculateFreshness(base, side);
+
     const tfMeta = buildCoinTimeframeMeta({
       ...base,
       side,
       flow,
-      moveScore: score,
       freshness,
+      moveScore: score,
       edge
     });
 
@@ -557,13 +724,17 @@ function fillUiFallback({
       freshness,
       moveScore: score,
       edge,
-      stage: fallbackStage(score, flow, freshness),
-      stageSource: "ui_fallback",
-      uiOnly: true,
+
+      stage: relaxedStage,
+      stageSource: "filter_relaxed_fill",
+      uiOnly: false,
+      scannerQuality: "FILTER_RELAXED",
+
       symbolTradable: true,
       bitgetSymbol: contractMeta.bitgetSymbol,
       productType: contractMeta.productType,
       rawBitgetSymbol: contractMeta.rawBitgetSymbol,
+
       tfContext: tfMeta.tfContext,
       tfScore: tfMeta.tfScore,
       tfStrength: tfMeta.tfStrength,
@@ -579,20 +750,8 @@ function fillUiFallback({
     if (added >= max) break;
     if (countSide(funnel, side) >= targetMinimum) break;
 
-    let stage = safeStage(coin.stage);
-
-    if (stage === "entry") {
-      stage = "almost";
-    }
-
-    funnel[side][stage].push({
-      ...coin,
-      stage,
-      stageSource: "ui_fallback",
-      uiOnly: true,
-      scannerQuality: "FALLBACK"
-    });
-
+    funnel[side][safeStage(coin.stage)].push(coin);
+    logAnalytics(coin);
     added++;
   }
 }
@@ -720,20 +879,20 @@ export async function buildScanPayload(options = {}) {
     return await handleBitgetUniverseUnavailable(scanSide);
   }
 
-  const btcRaw = rawCoins.find(c => String(c?.symbol || "").toUpperCase() === "BTC") || rawCoins[0];
+  const btcRaw =
+    rawCoins.find(c => normalizeBaseSymbol(c?.symbol) === "BTC") ||
+    rawCoins[0] ||
+    {};
 
-  const btcChange24 = Number(btcRaw?.price_change_percentage_24h || 0);
-  const btcChange1h = Number(btcRaw?.price_change_percentage_1h_in_currency || 0);
-
-  const btcState = classifyBtcState({
-    change24: btcChange24,
-    change1h: btcChange1h
-  });
+  const btcCoin = normalize(btcRaw);
 
   const btc = {
-    state: btcState,
-    chg24: btcChange24,
-    chg1h: btcChange1h
+    state: classifyBtcState({
+      change24: btcCoin.change24,
+      change1h: btcCoin.change1h
+    }),
+    chg24: btcCoin.change24,
+    chg1h: btcCoin.change1h
   };
 
   const regime = detectRegime(rawCoins) || "NORMAL";
@@ -756,16 +915,14 @@ export async function buildScanPayload(options = {}) {
     if (!base.symbol || base.price <= 0) continue;
 
     const contractMeta = tradableSymbolMap.get(base.symbol);
-    const symbolTradable = Boolean(contractMeta);
-
-    if (!symbolTradable) continue;
+    if (!contractMeta) continue;
 
     activeSymbols.push(base.symbol);
 
-    // ADAPTIVE SCANNER FILTERS — versoepeld.
     if (base.vm < adaptive.vmMin) continue;
 
     if (
+      !adaptive.collectionMode &&
       Math.abs(base.change24) < adaptive.hardChange24 &&
       Math.abs(base.change1h) < adaptive.hardChange1h
     ) {
@@ -796,10 +953,12 @@ export async function buildScanPayload(options = {}) {
         freshness,
         moveScore: score,
         edge,
+
         symbolTradable: true,
         bitgetSymbol: contractMeta.bitgetSymbol,
         productType: contractMeta.productType,
         rawBitgetSymbol: contractMeta.rawBitgetSymbol,
+
         tfContext: tfMeta.tfContext,
         tfScore: tfMeta.tfScore,
         tfStrength: tfMeta.tfStrength,
@@ -813,39 +972,55 @@ export async function buildScanPayload(options = {}) {
         ? bullFilter(coin)
         : bearFilter(coin);
 
-      const uiStage = realFilterStage || fallbackStage(score, flow, freshness);
+      const relaxedStage = !realFilterStage
+        ? relaxedTradeStage(score, flow, adaptive)
+        : "";
+
+      const effectiveStage = realFilterStage || relaxedStage;
+      const fallback = fallbackStage(score, flow, freshness);
 
       const newStage = safeStage(
-        realFilterStage
-          ? mergeStage(prev.stage, realFilterStage)
-          : uiStage
+        effectiveStage
+          ? mergeStage(prev.stage, effectiveStage)
+          : fallback
       );
 
       coin.stage = newStage;
-      coin.stageSource = realFilterStage ? "filter" : "fallback";
-      coin.uiOnly = !realFilterStage;
-      coin.scannerQuality = realFilterStage ? "FILTER" : "FALLBACK";
+      coin.stageSource = realFilterStage
+        ? "filter"
+        : relaxedStage
+          ? "filter_relaxed"
+          : "fallback";
+
+      coin.uiOnly = !(realFilterStage || relaxedStage);
+
+      coin.scannerQuality = realFilterStage
+        ? "FILTER"
+        : relaxedStage
+          ? "FILTER_RELAXED"
+          : "FALLBACK";
 
       funnel[direction][newStage].push(coin);
 
-      if (!coin.uiOnly && coin.stageSource === "filter") {
+      if (!coin.uiOnly) {
         logAnalytics(coin);
       }
 
-      if (realFilterStage === "entry") {
+      if (!coin.uiOnly && newStage === "entry") {
         if (direction === "bull") candidatesBull++;
         if (direction === "bear") candidatesBear++;
       }
 
       memory[key] = {
         stage: newStage,
-        prevStage: prev.stage || "radar"
+        prevStage: prev.stage || "radar",
+        updatedAt: Date.now()
       };
     }
   }
 
   if (scanSide === "both" || scanSide === "bull") {
-    fillUiFallback({
+    fillCollectionCandidates({
       rawCoins,
       regime,
       funnel,
@@ -857,7 +1032,7 @@ export async function buildScanPayload(options = {}) {
   }
 
   if (scanSide === "both" || scanSide === "bear") {
-    fillUiFallback({
+    fillCollectionCandidates({
       rawCoins,
       regime,
       funnel,
@@ -886,27 +1061,38 @@ export async function buildScanPayload(options = {}) {
     scanMode: scanSide,
     notify,
     store,
+
+    dataCollectionMode: adaptive.collectionMode,
+
     btc,
     regime,
     market,
+
     funnel,
     funnelCount: countFunnel(funnel),
     bullCount: countSide(funnel, "bull"),
     bearCount: countSide(funnel, "bear"),
+
     trades: safeArray(previousLatest?.trades),
     dashboardStats: normalizeDashboardStats(previousLatest?.dashboardStats, now),
     tradeSystemAnalysis: previousLatest?.tradeSystemAnalysis || null,
+
     analytics,
     advice,
+
     total: rawCoins.length,
+
     candidates: candidatesBull + candidatesBear,
     candidatesBull,
     candidatesBear,
+
     bitgetSymbols: validSymbols.size,
     bitgetUniverseReady: true,
+
     scannerUpdatedAt: now,
     tradeFunnelUpdatedAt: previousLatest?.tradeFunnelUpdatedAt || null,
     updatedAt: now,
+
     lastBullScan: scanSide === "bull" || scanSide === "both" ? now : null,
     lastBearScan: scanSide === "bear" || scanSide === "both" ? now : null
   };
@@ -920,6 +1106,7 @@ export async function buildScanPayload(options = {}) {
   return finalPayload;
 }
 
+// ================= HANDLER =================
 export default async function handler(req, res) {
   try {
     const side = normalizeScanSide(req?.query?.side);
