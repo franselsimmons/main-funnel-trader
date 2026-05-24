@@ -23,189 +23,125 @@ function normalizeBoolean(value, fallback = true) {
 }
 
 // ================= SIDE FROM MINUTE =================
-// Origineel gedrag blijft bestaan.
 // 00 / 15 / 30 / 45 = bull
 // 07 / 22 / 37 / 52 = bear
-// Overige minuten = both
+// andere minuten = both
 function inferSideFromMinute() {
   const minute = new Date().getUTCMinutes();
 
-  if ([0, 15, 30, 45].includes(minute)) {
-    return "bull";
-  }
-
-  if ([7, 22, 37, 52].includes(minute)) {
-    return "bear";
-  }
+  if ([0, 15, 30, 45].includes(minute)) return "bull";
+  if ([7, 22, 37, 52].includes(minute)) return "bear";
 
   return "both";
 }
 
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
+function countActions(data) {
+  if (Array.isArray(data?.tradeSystemResult?.actions)) {
+    return data.tradeSystemResult.actions.length;
+  }
 
-function safeNumber(value, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
+  if (Array.isArray(data?.trades)) {
+    return data.trades.length;
+  }
 
-function compactTradeFunnelResult(data) {
-  const actions = Array.isArray(data?.tradeSystemResult?.actions)
-    ? data.tradeSystemResult.actions
-    : safeArray(data?.trades);
-
-  return {
-    ok: Boolean(data?.ok),
-    updatedAt: data?.updatedAt || null,
-    tradeFunnelUpdatedAt: data?.tradeFunnelUpdatedAt || null,
-
-    tradeFunnelRawCount: safeNumber(data?.tradeFunnelRawCount, 0),
-    tradeFunnelInputCount: safeNumber(data?.tradeFunnelInputCount, 0),
-    tradeFunnelRejectCounts: data?.tradeFunnelRejectCounts || {},
-    tradeFunnelInputSymbols: safeArray(data?.tradeFunnelInputSymbols).slice(0, 150),
-
-    candidatesCount: safeNumber(data?.tradeSystemResult?.candidatesCount, 0),
-    actions: actions.length,
-
-    analyzeAppendResult: data?.analyzeAppendResult || null,
-  };
-}
-
-function compactScannerResult(data, side) {
-  return {
-    ok: Boolean(data?.ok),
-    side,
-    scanSide: data?.scanSide || side,
-    scanMode: data?.scanMode || side,
-
-    btc: data?.btc || null,
-    regime: data?.regime || null,
-    market: data?.market || null,
-
-    candidates: safeNumber(data?.candidates, 0),
-    candidatesBull: safeNumber(data?.candidatesBull, 0),
-    candidatesBear: safeNumber(data?.candidatesBear, 0),
-
-    funnelCount: safeNumber(data?.funnelCount, 0),
-    bullCount: safeNumber(data?.bullCount, 0),
-    bearCount: safeNumber(data?.bearCount, 0),
-
-    trades: Array.isArray(data?.trades) ? data.trades.length : 0,
-
-    lastBullScan: data?.lastBullScan || null,
-    lastBearScan: data?.lastBearScan || null,
-
-    scannerUpdatedAt: data?.scannerUpdatedAt || null,
-    tradeFunnelUpdatedAt: data?.tradeFunnelUpdatedAt || null,
-    updatedAt: data?.updatedAt || null,
-  };
+  return 0;
 }
 
 export default async function handler(req, res) {
   const startedAt = Date.now();
 
-  res.setHeader("Cache-Control", "no-store, max-age=0");
-
-  const querySide = normalizeSide(req?.query?.side);
-  const side = querySide || inferSideFromMinute();
-
-  const notify = normalizeBoolean(req?.query?.notify, true);
-  const store = normalizeBoolean(req?.query?.store, true);
-
-  const utcMinute = new Date().getUTCMinutes();
-
-  console.log("CRON START:", {
-    side,
-    querySide,
-    notify,
-    store,
-    utcMinute,
-    at: new Date().toISOString(),
-  });
-
-  let scannerData = null;
-  let tradeFunnelData = null;
-
   try {
-    // ================= STEP 1: SCANNER =================
-    // Schrijft latest scan via setLatestScan().
-    scannerData = await buildScanPayload({
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+
+    const querySide = normalizeSide(req?.query?.side);
+    const side = querySide || inferSideFromMinute();
+
+    const notify = normalizeBoolean(req?.query?.notify, true);
+    const store = normalizeBoolean(req?.query?.store, true);
+
+    const utcMinute = new Date().getUTCMinutes();
+
+    console.log("CRON START:", {
+      side,
+      querySide,
+      notify,
+      store,
+      utcMinute,
+      at: new Date().toISOString(),
+    });
+
+    // 1. Scanner draait en schrijft latest scan.
+    const scanData = await buildScanPayload({
       side,
       notify,
       store,
     });
 
-    const scannerSummary = compactScannerResult(scannerData, side);
-
-    console.log("CRON SCANNER DONE:", scannerSummary);
-
-    // ================= STEP 2: TRADE FUNNEL + ANALYZER =================
-    // Leest latest scan, draait processTrades(), appendt analyzer-events,
-    // en schrijft daarna latest scan opnieuw met tradeFunnelUpdatedAt.
-    tradeFunnelData = await runTradeFunnel({
+    // 2. Direct daarna trade-funnel + analyzer append.
+    // latestOverride voorkomt dat trade-funnel een oude/stale latest scan leest.
+    const tradeData = await runTradeFunnel({
+      latest: scanData,
       notify,
       store,
     });
-
-    const tradeFunnelSummary = compactTradeFunnelResult(tradeFunnelData);
-
-    console.log("CRON TRADE FUNNEL DONE:", tradeFunnelSummary);
 
     const result = {
       ok: true,
       source: "cron",
       side,
-      querySide,
       notify,
       store,
-
       ranAt: Date.now(),
       durationMs: Date.now() - startedAt,
 
-      scanner: scannerSummary,
-      tradeFunnel: tradeFunnelSummary,
-
-      latest: {
-        updatedAt: tradeFunnelData?.updatedAt || scannerData?.updatedAt || null,
-        scannerUpdatedAt: scannerData?.scannerUpdatedAt || null,
-        tradeFunnelUpdatedAt: tradeFunnelData?.tradeFunnelUpdatedAt || null,
+      scanner: {
+        ok: Boolean(scanData?.ok),
+        scanSide: scanData?.scanSide || side,
+        scanMode: scanData?.scanMode || side,
+        btc: scanData?.btc || null,
+        regime: scanData?.regime || null,
+        candidates: Number(scanData?.candidates || 0),
+        candidatesBull: Number(scanData?.candidatesBull || 0),
+        candidatesBear: Number(scanData?.candidatesBear || 0),
+        bullCount: Number(scanData?.bullCount || 0),
+        bearCount: Number(scanData?.bearCount || 0),
+        funnelCount: Number(scanData?.funnelCount || 0),
+        updatedAt: scanData?.updatedAt || null,
+        scannerUpdatedAt: scanData?.scannerUpdatedAt || null,
       },
+
+      tradeFunnel: {
+        ok: Boolean(tradeData?.ok),
+        rawCount: Number(tradeData?.tradeFunnelRawCount || 0),
+        inputCount: Number(tradeData?.tradeFunnelInputCount || 0),
+        rejected: tradeData?.tradeFunnelRejectCounts || {},
+        inputSymbols: Array.isArray(tradeData?.tradeFunnelInputSymbols)
+          ? tradeData.tradeFunnelInputSymbols.slice(0, 80)
+          : [],
+        actions: countActions(tradeData),
+        updatedAt: tradeData?.updatedAt || null,
+        tradeFunnelUpdatedAt: tradeData?.tradeFunnelUpdatedAt || null,
+      },
+
+      analyzer: tradeData?.analyzeAppendResult || null,
+
+      lastBullScan: tradeData?.lastBullScan || scanData?.lastBullScan || null,
+      lastBearScan: tradeData?.lastBearScan || scanData?.lastBearScan || null,
+      updatedAt: tradeData?.updatedAt || scanData?.updatedAt || null,
     };
 
     console.log("CRON DONE:", result);
 
     return res.status(200).json(result);
   } catch (err) {
-    const message = err?.message || "cron_failed";
-
-    console.error("CRON ERROR:", {
-      error: message,
-      stack: err?.stack || null,
-      scannerOk: Boolean(scannerData?.ok),
-      tradeFunnelOk: Boolean(tradeFunnelData?.ok),
-      durationMs: Date.now() - startedAt,
-    });
+    console.error("CRON ERROR:", err);
 
     return res.status(500).json({
       ok: false,
       source: "cron",
-      side,
-      querySide,
-      notify,
-      store,
-
-      error: message,
+      error: err?.message || "cron_failed",
       ranAt: Date.now(),
       durationMs: Date.now() - startedAt,
-
-      scanner: scannerData
-        ? compactScannerResult(scannerData, side)
-        : null,
-
-      tradeFunnel: tradeFunnelData
-        ? compactTradeFunnelResult(tradeFunnelData)
-        : null,
     });
   }
 }
