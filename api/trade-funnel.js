@@ -172,8 +172,10 @@ function getTradeId(action) {
 
 // ================= TRADE-FUNNEL GATE =================
 
-const TRADE_FUNNEL_MIN_SCORE = 45;
-const TRADE_FUNNEL_ALMOST_MIN_SCORE = 45;
+// Iets soepeler voor datacollectie.
+// Nog steeds geen UI fallback. Alleen echte FILTER entry/almost.
+const TRADE_FUNNEL_MIN_SCORE = 40;
+const TRADE_FUNNEL_ALMOST_MIN_SCORE = 38;
 
 function passesTradeFunnelGate(coin) {
   const symbol = String(coin.symbol || "").toUpperCase().trim();
@@ -886,7 +888,12 @@ export async function runTradeFunnel(options = {}) {
   const notify = options.notify !== false;
   const store = options.store !== false;
 
-  const latest = await getLatestScan();
+  // Belangrijk:
+  // Cron geeft de scanner-payload direct mee.
+  // Daardoor draait trade-funnel op dezelfde verse scan en niet per ongeluk op stale latest.
+  const latest = options.latest?.ok
+    ? options.latest
+    : await getLatestScan();
 
   if (!latest?.ok) {
     throw new Error("no_latest_scan_available");
