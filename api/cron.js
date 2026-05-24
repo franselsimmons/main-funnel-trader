@@ -1,8 +1,6 @@
 import { buildScanPayload } from "./scanner.js";
 import { runTradeFunnel } from "./trade-funnel.js";
 
-const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
-
 function normalizeSide(side) {
   const s = String(side || "").toLowerCase().trim();
 
@@ -13,161 +11,166 @@ function normalizeSide(side) {
   return null;
 }
 
-// ================= SIDE FROM UTC 2-MIN SLOT =================
-// Bij cron */2:
-// 00 = bull
-// 02 = bear
-// 04 = bull
-// 06 = bear
-// enz.
+function normalizeBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === "") return fallback;
+
+  const v = String(value).trim().toLowerCase();
+
+  if (["true", "1", "yes", "y"].includes(v)) return true;
+  if (["false", "0", "no", "n"].includes(v)) return false;
+
+  return fallback;
+}
+
+// ================= SIDE FROM MINUTE =================
+// Origineel gedrag blijft bestaan.
+// 00 / 15 / 30 / 45 = bull
+// 07 / 22 / 37 / 52 = bear
+// Overige minuten = both
 function inferSideFromMinute() {
   const minute = new Date().getUTCMinutes();
-  const slot = Math.floor(minute / 2);
 
-  return slot % 2 === 0 ? "bull" : "bear";
+  if ([0, 15, 30, 45].includes(minute)) {
+    return "bull";
+  }
+
+  if ([7, 22, 37, 52].includes(minute)) {
+    return "bear";
+  }
+
+  return "both";
 }
 
-function normalizeTradeSide(side) {
-  const s = String(side || "").toLowerCase().trim();
-
-  if (["bull", "long", "buy"].includes(s)) return "bull";
-  if (["bear", "short", "sell"].includes(s)) return "bear";
-
-  return "";
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
 }
 
-function countTradesBySide(trades, side) {
-  if (!Array.isArray(trades)) return 0;
-
-  return trades.filter(t => normalizeTradeSide(t?.side) === side).length;
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function getTrades(data) {
-  if (Array.isArray(data?.trades)) return data.trades;
-  if (Array.isArray(data?.tradeSystemResult?.actions)) return data.tradeSystemResult.actions;
-  return [];
-}
-
-function compactAnalyzeResult(result) {
-  if (!result || typeof result !== "object") return null;
+function compactTradeFunnelResult(data) {
+  const actions = Array.isArray(data?.tradeSystemResult?.actions)
+    ? data.tradeSystemResult.actions
+    : safeArray(data?.trades);
 
   return {
-    ok: Boolean(result.ok),
-    skipped: Boolean(result.skipped),
-    reason: result.reason || null,
+    ok: Boolean(data?.ok),
+    updatedAt: data?.updatedAt || null,
+    tradeFunnelUpdatedAt: data?.tradeFunnelUpdatedAt || null,
 
-    received: Number(result.received || 0),
-    accepted: Number(result.accepted || 0),
-    acceptedEntries: Number(result.acceptedEntries || 0),
-    acceptedExits: Number(result.acceptedExits || 0),
-    rejected: Number(result.rejected || 0),
+    tradeFunnelRawCount: safeNumber(data?.tradeFunnelRawCount, 0),
+    tradeFunnelInputCount: safeNumber(data?.tradeFunnelInputCount, 0),
+    tradeFunnelRejectCounts: data?.tradeFunnelRejectCounts || {},
+    tradeFunnelInputSymbols: safeArray(data?.tradeFunnelInputSymbols).slice(0, 150),
 
-    appended: Number(result.appended || result.written || result.saved || 0),
-    duplicates: Number(result.duplicates || result.duplicate || result.skippedDuplicates || 0),
+    candidatesCount: safeNumber(data?.tradeSystemResult?.candidatesCount, 0),
+    actions: actions.length,
 
-    rejectCounts: result.rejectCounts || {},
+    analyzeAppendResult: data?.analyzeAppendResult || null,
   };
 }
 
-function compactScanner(scanData, side) {
+function compactScannerResult(data, side) {
   return {
-    ok: Boolean(scanData?.ok),
-    scanSide: scanData?.scanSide || side,
-    scanMode: scanData?.scanMode || side,
+    ok: Boolean(data?.ok),
+    side,
+    scanSide: data?.scanSide || side,
+    scanMode: data?.scanMode || side,
 
-    btc: scanData?.btc || null,
-    regime: scanData?.regime || null,
-    market: scanData?.market || null,
+    btc: data?.btc || null,
+    regime: data?.regime || null,
+    market: data?.market || null,
 
-    funnelCount: Number(scanData?.funnelCount || 0),
-    bullCount: Number(scanData?.bullCount || 0),
-    bearCount: Number(scanData?.bearCount || 0),
+    candidates: safeNumber(data?.candidates, 0),
+    candidatesBull: safeNumber(data?.candidatesBull, 0),
+    candidatesBear: safeNumber(data?.candidatesBear, 0),
 
-    candidates: Number(scanData?.candidates || 0),
-    candidatesBull: Number(scanData?.candidatesBull || 0),
-    candidatesBear: Number(scanData?.candidatesBear || 0),
+    funnelCount: safeNumber(data?.funnelCount, 0),
+    bullCount: safeNumber(data?.bullCount, 0),
+    bearCount: safeNumber(data?.bearCount, 0),
 
-    scannerUpdatedAt: scanData?.scannerUpdatedAt || null,
-    tradeFunnelUpdatedAt: scanData?.tradeFunnelUpdatedAt || null,
-    updatedAt: scanData?.updatedAt || null,
+    trades: Array.isArray(data?.trades) ? data.trades.length : 0,
 
-    lastBullScan: scanData?.lastBullScan || null,
-    lastBearScan: scanData?.lastBearScan || null,
-  };
-}
+    lastBullScan: data?.lastBullScan || null,
+    lastBearScan: data?.lastBearScan || null,
 
-function compactTradeFunnel(funnelData) {
-  const trades = getTrades(funnelData);
-
-  return {
-    ok: Boolean(funnelData?.ok),
-
-    rawCount: Number(funnelData?.tradeFunnelRawCount || 0),
-    inputCount: Number(funnelData?.tradeFunnelInputCount || 0),
-    rejectCounts: funnelData?.tradeFunnelRejectCounts || {},
-
-    inputSymbols: Array.isArray(funnelData?.tradeFunnelInputSymbols)
-      ? funnelData.tradeFunnelInputSymbols.slice(0, 150)
-      : [],
-
-    trades: trades.length,
-    bullTrades: countTradesBySide(trades, "bull"),
-    bearTrades: countTradesBySide(trades, "bear"),
-
-    analyzeAppendResult: compactAnalyzeResult(funnelData?.analyzeAppendResult),
-
-    tradeFunnelUpdatedAt: funnelData?.tradeFunnelUpdatedAt || null,
-    updatedAt: funnelData?.updatedAt || null,
+    scannerUpdatedAt: data?.scannerUpdatedAt || null,
+    tradeFunnelUpdatedAt: data?.tradeFunnelUpdatedAt || null,
+    updatedAt: data?.updatedAt || null,
   };
 }
 
 export default async function handler(req, res) {
   const startedAt = Date.now();
 
-  let scanData = null;
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+
+  const querySide = normalizeSide(req?.query?.side);
+  const side = querySide || inferSideFromMinute();
+
+  const notify = normalizeBoolean(req?.query?.notify, true);
+  const store = normalizeBoolean(req?.query?.store, true);
+
+  const utcMinute = new Date().getUTCMinutes();
+
+  console.log("CRON START:", {
+    side,
+    querySide,
+    notify,
+    store,
+    utcMinute,
+    at: new Date().toISOString(),
+  });
+
+  let scannerData = null;
+  let tradeFunnelData = null;
 
   try {
-    res.setHeader("Cache-Control", "no-store, max-age=0");
-
-    const querySide = normalizeSide(req?.query?.side);
-    const side = querySide || inferSideFromMinute();
-
-    const utcMinute = new Date().getUTCMinutes();
-
-    console.log("CRON START:", {
+    // ================= STEP 1: SCANNER =================
+    // Schrijft latest scan via setLatestScan().
+    scannerData = await buildScanPayload({
       side,
-      querySide,
-      utcMinute,
-      at: new Date().toISOString(),
+      notify,
+      store,
     });
 
-    // 1. Scanner draait eerst en schrijft latest scan.
-    scanData = await buildScanPayload({
-      side,
-      notify: true,
-      store: true,
+    const scannerSummary = compactScannerResult(scannerData, side);
+
+    console.log("CRON SCANNER DONE:", scannerSummary);
+
+    // ================= STEP 2: TRADE FUNNEL + ANALYZER =================
+    // Leest latest scan, draait processTrades(), appendt analyzer-events,
+    // en schrijft daarna latest scan opnieuw met tradeFunnelUpdatedAt.
+    tradeFunnelData = await runTradeFunnel({
+      notify,
+      store,
     });
 
-    // 2. Trade-funnel draait direct daarna op dezelfde latest payload.
-    // Hierdoor groeit analyzer automatisch.
-    const funnelData = await runTradeFunnel({
-      notify: true,
-      store: true,
-      latest: scanData,
-    });
+    const tradeFunnelSummary = compactTradeFunnelResult(tradeFunnelData);
+
+    console.log("CRON TRADE FUNNEL DONE:", tradeFunnelSummary);
 
     const result = {
       ok: true,
-      source: "scanner_plus_trade_funnel_cron",
+      source: "cron",
       side,
       querySide,
-      utcMinute,
+      notify,
+      store,
 
       ranAt: Date.now(),
       durationMs: Date.now() - startedAt,
 
-      scanner: compactScanner(scanData, side),
-      tradeFunnel: compactTradeFunnel(funnelData),
+      scanner: scannerSummary,
+      tradeFunnel: tradeFunnelSummary,
+
+      latest: {
+        updatedAt: tradeFunnelData?.updatedAt || scannerData?.updatedAt || null,
+        scannerUpdatedAt: scannerData?.scannerUpdatedAt || null,
+        tradeFunnelUpdatedAt: tradeFunnelData?.tradeFunnelUpdatedAt || null,
+      },
     };
 
     console.log("CRON DONE:", result);
@@ -176,28 +179,33 @@ export default async function handler(req, res) {
   } catch (err) {
     const message = err?.message || "cron_failed";
 
-    if (message === LOCK_BUSY_ERROR) {
-      return res.status(200).json({
-        ok: true,
-        skipped: true,
-        busy: true,
-        source: "scanner_plus_trade_funnel_cron",
-        reason: LOCK_BUSY_ERROR,
-        note: "Scanner ran, but trade-funnel was still busy. This trade-funnel tick was skipped.",
-        scanner: scanData ? compactScanner(scanData, scanData?.scanSide || "unknown") : null,
-        ranAt: Date.now(),
-        durationMs: Date.now() - startedAt,
-      });
-    }
-
-    console.error("CRON ERROR:", err);
+    console.error("CRON ERROR:", {
+      error: message,
+      stack: err?.stack || null,
+      scannerOk: Boolean(scannerData?.ok),
+      tradeFunnelOk: Boolean(tradeFunnelData?.ok),
+      durationMs: Date.now() - startedAt,
+    });
 
     return res.status(500).json({
       ok: false,
-      source: "scanner_plus_trade_funnel_cron",
+      source: "cron",
+      side,
+      querySide,
+      notify,
+      store,
+
       error: message,
       ranAt: Date.now(),
       durationMs: Date.now() - startedAt,
+
+      scanner: scannerData
+        ? compactScannerResult(scannerData, side)
+        : null,
+
+      tradeFunnel: tradeFunnelData
+        ? compactTradeFunnelResult(tradeFunnelData)
+        : null,
     });
   }
 }
