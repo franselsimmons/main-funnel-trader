@@ -1,35 +1,30 @@
 import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 import { processTrades } from "../lib/tradeSystem.js";
-import { appendAnalyzeEvents } from "../lib/analyze/analyzeStore.js";
+import {
+  appendAnalyzeEvents,
+  loadAnalyzeEvents,
+} from "../lib/analyze/analyzeStore.js";
+
 import {
   classifyAnalyzeEvent,
   createAnalyzeFamilies,
 } from "../lib/analyze/familyEngine.js";
 
-const MAX_RESPONSE_TRADES = readNumberEnv("TRADE_FUNNEL_MAX_RESPONSE_TRADES", 250);
-const MAX_TRADE_FUNNEL_INPUT = readNumberEnv("TRADE_FUNNEL_MAX_INPUT", 180);
-
-const ANALYZE_COLLECT_CANDIDATE_ENTRIES = readBooleanEnv(
-  "ANALYZE_COLLECT_CANDIDATE_ENTRIES",
-  true
-);
-
-const MAX_ANALYZE_SYNTHETIC_ENTRIES = readNumberEnv(
-  "ANALYZE_SYNTHETIC_ENTRY_MAX",
-  80
-);
-
-const ANALYZE_SYNTHETIC_MIN_SCORE = readNumberEnv(
-  "ANALYZE_SYNTHETIC_MIN_SCORE",
-  45
-);
-
-const ANALYZE_ENTRY_WINDOW_MS = readNumberEnv(
-  "ANALYZE_ENTRY_WINDOW_MS",
-  2 * 60 * 1000
-);
-
+const MAX_RESPONSE_TRADES = 250;
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
+
+const TRADE_FUNNEL_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_MIN_SCORE", 45);
+const TRADE_FUNNEL_ALMOST_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ALMOST_MIN_SCORE", 45);
+const TRADE_FUNNEL_MAX_INPUT = readNumberEnv("TRADE_FUNNEL_MAX_INPUT", 180);
+
+const SYNTHETIC_ANALYZE_ENABLED = readBooleanEnv("ANALYZE_SYNTHETIC_ENABLED", true);
+const SYNTHETIC_ENTRY_MAX = readNumberEnv("ANALYZE_SYNTHETIC_ENTRY_MAX", 80);
+const SYNTHETIC_ENTRY_MIN_SCORE = readNumberEnv("ANALYZE_SYNTHETIC_ENTRY_MIN_SCORE", 45);
+
+const SYNTHETIC_EXIT_ENABLED = readBooleanEnv("ANALYZE_SYNTHETIC_EXIT_ENABLED", true);
+const SYNTHETIC_EXIT_AFTER_MS = readNumberEnv("ANALYZE_SYNTHETIC_EXIT_AFTER_MS", 20 * 60 * 1000);
+const SYNTHETIC_EXIT_MIN_AGE_MS = readNumberEnv("ANALYZE_SYNTHETIC_EXIT_MIN_AGE_MS", 4 * 60 * 1000);
+const SYNTHETIC_EXIT_MAX_PER_RUN = readNumberEnv("ANALYZE_SYNTHETIC_EXIT_MAX_PER_RUN", 120);
 
 const FAMILY_BY_ID = new Map(
   createAnalyzeFamilies().all.map(family => [family.id, family])
@@ -105,8 +100,16 @@ function incrementCounter(map, key) {
   map[k] = Number(map[k] || 0) + 1;
 }
 
-function normalizeText(value) {
-  return String(value || "").toUpperCase().trim();
+function cleanObject(object) {
+  return Object.fromEntries(
+    Object.entries(safeObject(object)).filter(([, value]) => {
+      return value !== undefined && value !== null && value !== "";
+    })
+  );
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function normalizeTimestamp(value, fallback = Date.now()) {
@@ -121,15 +124,47 @@ function normalizeTimestamp(value, fallback = Date.now()) {
   return fallback;
 }
 
-function cleanObject(object) {
-  return Object.fromEntries(
-    Object.entries(safeObject(object)).filter(([, value]) => {
-      return value !== undefined && value !== null && value !== "";
-    })
+function normalizeText(value) {
+  return String(value || "").toUpperCase().trim();
+}
+
+// ================= RANK HELPERS =================
+
+function stageRank(stage) {
+  const s = String(stage || "").toLowerCase();
+
+  if (s === "entry") return 2;
+  if (s === "almost") return 1;
+
+  return 0;
+}
+
+function flowRank(flow) {
+  const f = String(flow || "NEUTRAL").toUpperCase();
+
+  if (f === "TREND") return 2;
+  if (f === "BUILDING") return 1;
+
+  return 0;
+}
+
+function candidateQualityScore(c) {
+  const score = safeNumber(c.moveScore, 0);
+  const vm = safeNumber(c.vm, 0);
+  const tfStrength = safeNumber(c.tfStrength, Math.abs(safeNumber(c.tfScore, 0)));
+  const stage = String(c.stage || "").toLowerCase();
+  const flow = String(c.flow || "NEUTRAL").toUpperCase();
+
+  return (
+    score +
+    stageRank(stage) * 8 +
+    flowRank(flow) * 6 +
+    Math.min(tfStrength * 4, 10) +
+    Math.min(vm * 40, 10)
   );
 }
 
-// ================= NORMALIZERS =================
+// ================= NORMALIZATION =================
 
 function normalizeSide(value) {
   const s = String(value || "").toLowerCase().trim();
@@ -146,7 +181,19 @@ function normalizeAnalyzeSide(value) {
   if (["bull", "long", "buy"].includes(s)) return "LONG";
   if (["bear", "short", "sell"].includes(s)) return "SHORT";
 
+  if (String(value || "").toUpperCase() === "LONG") return "LONG";
+  if (String(value || "").toUpperCase() === "SHORT") return "SHORT";
+
   return "";
+}
+
+function sideToScannerSide(value) {
+  const s = normalizeAnalyzeSide(value);
+
+  if (s === "LONG") return "bull";
+  if (s === "SHORT") return "bear";
+
+  return normalizeSide(value);
 }
 
 function normalizeStage(value) {
@@ -157,7 +204,6 @@ function normalizeStage(value) {
 
   if (s === "entry") return "entry";
   if (s === "almost") return "almost";
-  if (s === "buildup") return "buildup";
 
   return "";
 }
@@ -193,40 +239,146 @@ function getTradeId(action) {
   return id ? String(id) : "";
 }
 
-// ================= QUALITY SCORE =================
+// ================= LIFECYCLE =================
 
-function stageRank(stage) {
-  if (stage === "entry") return 2;
-  if (stage === "almost") return 1;
-  return 0;
+function getActionCandidates(action) {
+  return [
+    action?.analyzeLifecycle,
+    action?.analyzeAction,
+    action?.lifecycleAction,
+    action?.tradeAction,
+    action?.action,
+    action?.status,
+    action?.state,
+    action?.type,
+    action?.reason,
+    action?.exitReason,
+  ]
+    .map(normalizeText)
+    .filter(Boolean);
 }
 
-function flowRank(flow) {
-  if (flow === "TREND") return 2;
-  if (flow === "BUILDING") return 1;
-  return 0;
-}
-
-function candidateQualityScore(c) {
-  const score = safeNumber(c.moveScore, 0);
-  const vm = safeNumber(c.vm, 0);
-  const tfStrength = safeNumber(c.tfStrength, Math.abs(safeNumber(c.tfScore, 0)));
-  const stage = String(c.stage || "").toLowerCase();
-  const flow = String(c.flow || "NEUTRAL").toUpperCase();
-
+function hasExitFields(action) {
   return (
-    score +
-    stageRank(stage) * 8 +
-    flowRank(flow) * 6 +
-    Math.min(tfStrength * 4, 10) +
-    Math.min(vm * 40, 10)
+    action?.closed === true ||
+    action?.isClosed === true ||
+    action?.exitPrice !== undefined ||
+    action?.exit !== undefined ||
+    action?.executionPrice !== undefined ||
+    action?.closedAt ||
+    action?.exitAt ||
+    action?.exitTs ||
+    action?.realizedR !== undefined ||
+    action?.pnlR !== undefined ||
+    action?.exitR !== undefined ||
+    action?.resultR !== undefined ||
+    action?.outcomeR !== undefined ||
+    action?.pnlPct !== undefined
   );
 }
 
-// ================= TRADE FUNNEL GATE =================
+function hasEntryFields(action) {
+  return (
+    action?.entry !== undefined ||
+    action?.entryPrice !== undefined ||
+    action?.openPrice !== undefined ||
+    action?.sl !== undefined ||
+    action?.tp !== undefined ||
+    action?.rr !== undefined ||
+    action?.baseRR !== undefined
+  );
+}
 
-const TRADE_FUNNEL_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ENTRY_MIN_SCORE", 45);
-const TRADE_FUNNEL_ALMOST_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ALMOST_MIN_SCORE", 45);
+function getLifecycleAction(action) {
+  const candidates = getActionCandidates(action);
+
+  for (const value of candidates) {
+    if (
+      value === "EXIT" ||
+      value === "CLOSE" ||
+      value === "CLOSED" ||
+      value === "TP" ||
+      value === "SL" ||
+      value === "STOP" ||
+      value === "STOP_LOSS" ||
+      value === "TAKE_PROFIT" ||
+      value.includes("EXIT") ||
+      value.includes("CLOSE") ||
+      value.includes("TAKE_PROFIT") ||
+      value.includes("STOP_LOSS")
+    ) {
+      return "EXIT";
+    }
+  }
+
+  if (hasExitFields(action)) return "EXIT";
+
+  for (const value of candidates) {
+    if (
+      value === "WAIT" ||
+      value === "HOLD" ||
+      value === "RUNNING" ||
+      value === "NO_TRADE" ||
+      value === "SKIP" ||
+      value === "IGNORE" ||
+      value.includes("WAIT") ||
+      value.includes("HOLD") ||
+      value.includes("RUNNING") ||
+      value.includes("REJECT")
+    ) {
+      return "";
+    }
+  }
+
+  for (const value of candidates) {
+    if (
+      value === "ENTRY" ||
+      value === "OPEN" ||
+      value === "OPENED" ||
+      value === "ENTER" ||
+      value === "FILLED" ||
+      value === "PLACE_ORDER" ||
+      value === "OPEN_LONG" ||
+      value === "OPEN_SHORT" ||
+      value === "LONG_ENTRY" ||
+      value === "SHORT_ENTRY" ||
+      value.includes("ENTRY") ||
+      value.includes("OPEN_POSITION")
+    ) {
+      return "ENTRY";
+    }
+  }
+
+  if (hasEntryFields(action)) return "ENTRY";
+
+  return "";
+}
+
+function getActionTimestamp(action) {
+  return normalizeTimestamp(
+    action?.closedAt ??
+      action?.exitAt ??
+      action?.exitTs ??
+      action?.updatedAt ??
+      action?.createdAt ??
+      action?.openedAt ??
+      action?.entryTs ??
+      action?.ts,
+    Date.now()
+  );
+}
+
+function getEntryTimestamp(action) {
+  return normalizeTimestamp(
+    action?.openedAt ??
+      action?.entryTs ??
+      action?.createdAt ??
+      action?.ts,
+    Date.now()
+  );
+}
+
+// ================= TRADE-FUNNEL GATE =================
 
 function passesTradeFunnelGate(coin) {
   const symbol = String(coin.symbol || "").toUpperCase().trim();
@@ -247,12 +399,10 @@ function passesTradeFunnelGate(coin) {
     return { ok: false, reason: "ALMOST_SCORE_TOO_LOW" };
   }
 
-  if (stage === "buildup") {
-    return { ok: false, reason: "BUILDUP_NOT_TRADE_FUNNEL" };
-  }
-
   return { ok: true, reason: "OK" };
 }
+
+// ================= CANDIDATE SELECTOR =================
 
 function getTradeFunnelCandidates(latest) {
   const buckets = [
@@ -324,7 +474,7 @@ function getTradeFunnelCandidates(latest) {
     }
   }
 
-  const sorted = Array.from(accepted.values()).sort((a, b) => {
+  let result = Array.from(accepted.values()).sort((a, b) => {
     const qDiff =
       safeNumber(b.tradeFunnelQuality, 0) -
       safeNumber(a.tradeFunnelQuality, 0);
@@ -337,15 +487,13 @@ function getTradeFunnelCandidates(latest) {
     return safeNumber(b.moveScore, 0) - safeNumber(a.moveScore, 0);
   });
 
-  const result = sorted.slice(0, MAX_TRADE_FUNNEL_INPUT);
-
-  if (sorted.length > result.length) {
-    rejectCounts.CAPPED_INPUT = sorted.length - result.length;
+  if (result.length > TRADE_FUNNEL_MAX_INPUT) {
+    rejectCounts.CAPPED_INPUT = result.length - TRADE_FUNNEL_MAX_INPUT;
+    result = result.slice(0, TRADE_FUNNEL_MAX_INPUT);
   }
 
   console.log("TRADE FUNNEL raw:", buckets.length);
-  console.log("TRADE FUNNEL accepted before cap:", sorted.length);
-  console.log("TRADE FUNNEL accepted after cap:", result.length);
+  console.log("TRADE FUNNEL accepted:", result.length);
   console.log("TRADE FUNNEL rejected:", rejectCounts);
   console.log(
     "TRADE FUNNEL symbols:",
@@ -357,196 +505,14 @@ function getTradeFunnelCandidates(latest) {
   return {
     candidates: result,
     rawCount: buckets.length,
-    acceptedBeforeCap: sorted.length,
     rejectCounts,
   };
 }
 
-// ================= LIFECYCLE CLASSIFIER =================
-
-function getActionCandidates(action) {
-  return [
-    action?.analyzeLifecycle,
-    action?.analyzeAction,
-    action?.lifecycleAction,
-    action?.tradeAction,
-    action?.action,
-    action?.status,
-    action?.state,
-    action?.type,
-    action?.decision,
-    action?.reason,
-    action?.exitReason,
-  ]
-    .map(normalizeText)
-    .filter(Boolean);
-}
-
-function isIgnoreLabel(value) {
-  return (
-    value === "WAIT" ||
-    value === "HOLD" ||
-    value === "RUNNING" ||
-    value === "NO_TRADE" ||
-    value === "NO TRADE" ||
-    value === "SKIP" ||
-    value === "IGNORE" ||
-    value === "REJECT" ||
-    value === "REJECTED" ||
-    value.includes("WAIT") ||
-    value.includes("HOLD") ||
-    value.includes("RUNNING") ||
-    value.includes("NO_TRADE") ||
-    value.includes("NO TRADE") ||
-    value.includes("REJECT")
-  );
-}
-
-function isExitLabel(value) {
-  return (
-    value === "EXIT" ||
-    value === "CLOSE" ||
-    value === "CLOSED" ||
-    value === "TP" ||
-    value === "SL" ||
-    value === "STOP" ||
-    value === "STOP_LOSS" ||
-    value === "TAKE_PROFIT" ||
-    value.includes("EXIT") ||
-    value.includes("CLOSE") ||
-    value.includes("TAKE_PROFIT") ||
-    value.includes("STOP_LOSS")
-  );
-}
-
-function isEntryLabel(value) {
-  return (
-    value === "ENTRY" ||
-    value === "OPEN" ||
-    value === "OPENED" ||
-    value === "ENTER" ||
-    value === "FILLED" ||
-    value === "PLACE_ORDER" ||
-    value === "OPEN_LONG" ||
-    value === "OPEN_SHORT" ||
-    value === "LONG_ENTRY" ||
-    value === "SHORT_ENTRY" ||
-    value.includes("ENTRY") ||
-    value.includes("OPEN_POSITION")
-  );
-}
-
-function hasExitFields(action) {
-  return (
-    action?.closed === true ||
-    action?.isClosed === true ||
-    action?.exitPrice !== undefined ||
-    action?.exit !== undefined ||
-    action?.executionPrice !== undefined ||
-    action?.closedAt ||
-    action?.exitAt ||
-    action?.exitTs ||
-    action?.realizedR !== undefined ||
-    action?.pnlR !== undefined ||
-    action?.exitR !== undefined ||
-    action?.resultR !== undefined ||
-    action?.outcomeR !== undefined ||
-    action?.pnlPct !== undefined
-  );
-}
-
-function hasEntryFields(action) {
-  return (
-    action?.entry !== undefined ||
-    action?.entryPrice !== undefined ||
-    action?.openPrice !== undefined ||
-    action?.sl !== undefined ||
-    action?.tp !== undefined ||
-    action?.rr !== undefined ||
-    action?.baseRR !== undefined
-  );
-}
-
-function getLifecycleAction(action) {
-  const candidates = getActionCandidates(action);
-
-  const hasIgnore = candidates.some(isIgnoreLabel);
-  const hasExit = candidates.some(isExitLabel);
-  const hasEntry = candidates.some(isEntryLabel);
-
-  // Exit moet voorrang houden, anders worden echte closes soms genegeerd.
-  if (hasExit || hasExitFields(action)) return "EXIT";
-
-  // Fix: WAIT / HOLD / NO_TRADE mag nooit ENTRY worden door entry/sl/tp velden.
-  if (hasIgnore) return "";
-
-  if (hasEntry || hasEntryFields(action)) return "ENTRY";
-
-  return "";
-}
-
-function getActionTimestamp(action) {
-  return normalizeTimestamp(
-    action?.closedAt ??
-      action?.exitAt ??
-      action?.exitTs ??
-      action?.updatedAt ??
-      action?.createdAt ??
-      action?.openedAt ??
-      action?.entryTs ??
-      action?.ts,
-    Date.now()
-  );
-}
-
-function getEntryTimestamp(action) {
-  return normalizeTimestamp(
-    action?.openedAt ??
-      action?.entryTs ??
-      action?.createdAt ??
-      action?.ts,
-    Date.now()
-  );
-}
-
 // ================= FAMILY SNAPSHOT =================
 
-function buildAnalyzeFamilySnapshot(event) {
-  try {
-    const classified = classifyAnalyzeEvent({
-      ...event,
-      closed: false,
-      action: "ENTRY",
-      analyzeLifecycle: "ENTRY",
-    });
-
-    if (!classified?.familyId) return null;
-
-    const family = FAMILY_BY_ID.get(classified.familyId);
-
-    return {
-      familyId: classified.familyId,
-      analyzeFamilyId: classified.familyId,
-      side: classified.side,
-      index: classified.index,
-      qualityIndex: classified.qualityIndex,
-      marketIndex: classified.marketIndex,
-      timingIndex: classified.timingIndex,
-      qualityBucket: family?.qualityBucket || null,
-      marketBucket: family?.marketBucket || null,
-      timingBucket: family?.timingBucket || null,
-      definition: family?.definition || null,
-      source: classified.source || "CLASSIFIED_FROM_FILTER_SNAPSHOT",
-      frozenAt: Date.now(),
-    };
-  } catch (e) {
-    console.error("ANALYZE FAMILY SNAPSHOT ERROR:", e);
-    return null;
-  }
-}
-
 function buildBaseFilterSnapshot(action) {
-  return {
+  return cleanObject({
     ...safeObject(action?.filterSnapshot),
     ...safeObject(action?.filters),
     ...safeObject(action?.filterValues),
@@ -584,7 +550,7 @@ function buildBaseFilterSnapshot(action) {
     depthMinUsd1p: action?.depthMinUsd1p,
     depthUsd1p: action?.depthUsd1p,
 
-    btcState: action?.btcState,
+    btcState: action?.btcState ?? action?.btc?.state,
     regime: action?.regime,
     market: action?.market,
     fundingRate: action?.fundingRate,
@@ -597,8 +563,694 @@ function buildBaseFilterSnapshot(action) {
     pullbackFromHighPct: action?.pullbackFromHighPct,
 
     strategyVersion: action?.strategyVersion,
+  });
+}
+
+function buildAnalyzeFamilySnapshot(event) {
+  try {
+    const classified = classifyAnalyzeEvent({
+      ...event,
+      closed: false,
+      action: "ENTRY",
+      analyzeLifecycle: "ENTRY",
+    });
+
+    if (!classified?.familyId) return null;
+
+    const family = FAMILY_BY_ID.get(classified.familyId);
+
+    return {
+      familyId: classified.familyId,
+      analyzeFamilyId: classified.familyId,
+      side: classified.side,
+      index: classified.index,
+      qualityIndex: classified.qualityIndex,
+      marketIndex: classified.marketIndex,
+      timingIndex: classified.timingIndex,
+      qualityBucket: family?.qualityBucket || null,
+      marketBucket: family?.marketBucket || null,
+      timingBucket: family?.timingBucket || null,
+      definition: family?.definition || null,
+      source: classified.source || "CLASSIFIED_FROM_FILTER_SNAPSHOT",
+      frozenAt: Date.now(),
+    };
+  } catch (e) {
+    console.error("ANALYZE FAMILY SNAPSHOT ERROR:", e);
+    return null;
+  }
+}
+
+function buildSyntheticTradeId({ symbol, analyzeSide, familyId }) {
+  const s = String(symbol || "").toUpperCase().trim();
+  const side = String(analyzeSide || "").toUpperCase().trim();
+  const family = String(familyId || "UNKNOWN").toUpperCase().trim();
+
+  return `SIM_${side}_${family}_${s}`;
+}
+
+// ================= SYNTHETIC ENTRIES =================
+
+function buildSyntheticEntryEvent(candidate, latest, index = 0) {
+  const symbol = String(candidate.symbol || "").toUpperCase().trim();
+  const scannerSide = normalizeSide(candidate.side);
+  const analyzeSide = normalizeAnalyzeSide(candidate.side);
+  const entryPrice = nullableNumber(candidate.entry ?? candidate.entryPrice ?? candidate.price);
+
+  if (!symbol || !scannerSide || !analyzeSide || !entryPrice || entryPrice <= 0) {
+    return null;
+  }
+
+  const now = Date.now();
+
+  const base = cleanObject({
+    ...candidate,
+
+    symbol,
+    side: analyzeSide,
+
+    action: "ENTRY",
+    analyzeLifecycle: "ENTRY",
+    analyzeSource: "synthetic_scan_candidate",
+    syntheticAnalyzeEntry: true,
+
+    openedAt: now,
+    entryTs: now,
+    ts: now,
+    analyzeTs: now,
+
+    entry: entryPrice,
+    entryPrice,
+    openPrice: entryPrice,
+
+    stage: candidate.stage,
+    scannerStage: candidate.scannerStage || candidate.stage,
+    stageSource: candidate.stageSource,
+    flow: candidate.flow,
+
+    moveScore: candidate.moveScore,
+    score: candidate.score ?? candidate.moveScore,
+    confluence: candidate.confluence,
+    sniperScore: candidate.sniperScore,
+
+    rr: candidate.rr ?? candidate.baseRR ?? 1.2,
+    baseRR: candidate.baseRR ?? candidate.rr ?? 1.2,
+
+    rsi: candidate.rsi,
+    rsiHTF: candidate.rsiHTF,
+    rsiZone: candidate.rsiZone,
+
+    obBias: candidate.obBias,
+    spreadPct: candidate.spreadPct,
+    spreadBps: candidate.spreadBps,
+    depthMinUsd1p: candidate.depthMinUsd1p ?? candidate.depthUsd1p,
+
+    btcState: candidate.btcState ?? latest?.btc?.state,
+    btc: latest?.btc || candidate.btc || null,
+    regime: candidate.regime ?? latest?.regime,
+    market: candidate.market ?? latest?.market,
+
+    fundingRate: candidate.fundingRate,
+    funding: candidate.funding,
+
+    tfScore: candidate.tfScore,
+    tfStrength: candidate.tfStrength,
+    tfAlignment: candidate.tfAlignment,
+
+    strategyVersion: candidate.strategyVersion || "synthetic-analyze-v1",
+    sequenceIndex: index,
+  });
+
+  const baseSnapshot = buildBaseFilterSnapshot(base);
+  const familySnapshot = buildAnalyzeFamilySnapshot({
+    ...base,
+    filterSnapshot: baseSnapshot,
+  });
+
+  const familyId = familySnapshot?.familyId || null;
+  const tradeId = buildSyntheticTradeId({
+    symbol,
+    analyzeSide,
+    familyId,
+  });
+
+  return cleanObject({
+    ...base,
+
+    tradeId,
+    familyId,
+    analyzeFamilyId: familyId,
+    analysisFamilyId: familyId,
+
+    closed: false,
+
+    filterSnapshot: cleanObject({
+      ...baseSnapshot,
+      ...familySnapshot,
+      familyId,
+      analyzeFamilyId: familyId,
+    }),
+  });
+}
+
+function buildSyntheticEntryEvents(candidates, latest) {
+  if (!SYNTHETIC_ANALYZE_ENABLED) {
+    return {
+      events: [],
+      debug: {
+        enabled: false,
+        candidates: safeArray(candidates).length,
+        max: SYNTHETIC_ENTRY_MAX,
+        minScore: SYNTHETIC_ENTRY_MIN_SCORE,
+        rejected: {},
+        created: 0,
+      },
+    };
+  }
+
+  const events = [];
+  const rejected = {};
+  const rows = safeArray(candidates);
+
+  for (const candidate of rows) {
+    if (events.length >= SYNTHETIC_ENTRY_MAX) break;
+
+    const score = getCandidateScore(candidate);
+
+    if (score < SYNTHETIC_ENTRY_MIN_SCORE) {
+      incrementCounter(rejected, "SCORE_TOO_LOW");
+      continue;
+    }
+
+    const event = buildSyntheticEntryEvent(candidate, latest, events.length);
+
+    if (!event) {
+      incrementCounter(rejected, "BUILD_FAILED");
+      continue;
+    }
+
+    events.push(event);
+  }
+
+  return {
+    events,
+    debug: {
+      enabled: true,
+      candidates: rows.length,
+      max: SYNTHETIC_ENTRY_MAX,
+      minScore: SYNTHETIC_ENTRY_MIN_SCORE,
+      rejected,
+      created: events.length,
+    },
   };
 }
+
+// ================= SYNTHETIC EXIT ENGINE =================
+
+function collectLatestCoins(latest) {
+  const rows = [];
+
+  for (const side of ["bull", "bear"]) {
+    for (const stage of ["entry", "almost", "buildup", "radar"]) {
+      rows.push(...safeArray(latest?.funnel?.[side]?.[stage]));
+    }
+  }
+
+  return rows;
+}
+
+function buildCurrentPriceMap(latest) {
+  const map = new Map();
+
+  for (const coin of collectLatestCoins(latest)) {
+    const symbol = String(coin.symbol || "").toUpperCase().trim();
+    const scannerSide = normalizeSide(coin.side);
+    const price = nullableNumber(coin.price ?? coin.lastPrice ?? coin.markPrice);
+
+    if (!symbol || !scannerSide || !price || price <= 0) continue;
+
+    map.set(`${symbol}_${scannerSide}`, {
+      symbol,
+      scannerSide,
+      price,
+      coin,
+    });
+  }
+
+  return map;
+}
+
+function getOpenAnalyzeEntries(records) {
+  return safeArray(records).filter(record => {
+    const action = normalizeText(record?.action || record?.analyzeLifecycle);
+    const closed = record?.closed === true;
+
+    if (closed) return false;
+    if (action !== "ENTRY") return false;
+
+    return Boolean(
+      record.syntheticAnalyzeEntry ||
+        record.analyzeSource === "synthetic_scan_candidate" ||
+        String(record.tradeId || "").startsWith("SIM_")
+    );
+  });
+}
+
+function getEntryPrice(record) {
+  return nullableNumber(
+    record.entryPrice ??
+      record.entry ??
+      record.openPrice ??
+      record.price
+  );
+}
+
+function getEntryAgeMs(record, now = Date.now()) {
+  const openedAt = normalizeTimestamp(
+    record.openedAt ??
+      record.entryTs ??
+      record.analyzeTs ??
+      record.ts,
+    now
+  );
+
+  return Math.max(0, now - openedAt);
+}
+
+function deriveSyntheticRiskPct(record) {
+  const snapshot = safeObject(record.filterSnapshot);
+
+  const explicit =
+    nullableNumber(record.riskPct) ??
+    nullableNumber(record.stopDistancePct) ??
+    nullableNumber(snapshot.riskPct) ??
+    nullableNumber(snapshot.stopDistancePct);
+
+  if (explicit && explicit > 0) {
+    return clamp(explicit, 0.20, 3.00);
+  }
+
+  const spreadBps = safeNumber(
+    record.spreadBps ??
+      snapshot.spreadBps,
+    0
+  );
+
+  if (spreadBps > 0) {
+    return clamp((spreadBps / 100) * 6, 0.35, 1.50);
+  }
+
+  const rr = safeNumber(record.rr ?? record.baseRR ?? snapshot.rr ?? snapshot.baseRR, 1.2);
+
+  if (rr >= 1.5) return 0.75;
+  if (rr >= 1.2) return 0.65;
+
+  return 0.55;
+}
+
+function deriveSyntheticRR(record) {
+  const snapshot = safeObject(record.filterSnapshot);
+
+  return clamp(
+    safeNumber(
+      record.rr ??
+        record.baseRR ??
+        snapshot.rr ??
+        snapshot.baseRR,
+      1.2
+    ),
+    0.8,
+    3.0
+  );
+}
+
+function computeDirectionalPnlPct({ side, entryPrice, exitPrice }) {
+  const analyzeSide = normalizeAnalyzeSide(side);
+
+  if (!entryPrice || !exitPrice || entryPrice <= 0 || exitPrice <= 0) return null;
+
+  if (analyzeSide === "LONG") {
+    return ((exitPrice - entryPrice) / entryPrice) * 100;
+  }
+
+  if (analyzeSide === "SHORT") {
+    return ((entryPrice - exitPrice) / entryPrice) * 100;
+  }
+
+  return null;
+}
+
+function buildSyntheticExitForOpenEntry(record, latestPriceRow, now = Date.now()) {
+  const tradeId = getTradeId(record);
+  const symbol = String(record.symbol || "").toUpperCase().trim();
+  const analyzeSide = normalizeAnalyzeSide(record.side);
+  const entryPrice = getEntryPrice(record);
+  const exitPrice = nullableNumber(latestPriceRow?.price);
+
+  if (!tradeId || !symbol || !analyzeSide || !entryPrice || !exitPrice) return null;
+
+  const ageMs = getEntryAgeMs(record, now);
+  const riskPct = deriveSyntheticRiskPct(record);
+  const rr = deriveSyntheticRR(record);
+
+  const pnlPct = computeDirectionalPnlPct({
+    side: analyzeSide,
+    entryPrice,
+    exitPrice,
+  });
+
+  if (pnlPct === null) return null;
+
+  const hitStop = ageMs >= SYNTHETIC_EXIT_MIN_AGE_MS && pnlPct <= -riskPct;
+  const hitTarget = ageMs >= SYNTHETIC_EXIT_MIN_AGE_MS && pnlPct >= riskPct * rr;
+  const timedOut = ageMs >= SYNTHETIC_EXIT_AFTER_MS;
+
+  if (!hitStop && !hitTarget && !timedOut) return null;
+
+  let realizedR = pnlPct / riskPct;
+  let exitReason = "SYNTHETIC_TIMEOUT";
+
+  if (hitStop) {
+    realizedR = -1;
+    exitReason = "SYNTHETIC_SL";
+  } else if (hitTarget) {
+    realizedR = rr;
+    exitReason = "SYNTHETIC_TP";
+  } else {
+    realizedR = clamp(realizedR, -1.25, Math.max(1.25, rr));
+  }
+
+  const snapshot = safeObject(record.filterSnapshot);
+  const familyId =
+    record.familyId ||
+    record.analyzeFamilyId ||
+    record.analysisFamilyId ||
+    snapshot.familyId ||
+    snapshot.analyzeFamilyId ||
+    null;
+
+  return cleanObject({
+    tradeId,
+    symbol,
+    side: analyzeSide,
+
+    action: "EXIT",
+    analyzeLifecycle: "EXIT",
+    analyzeSource: "synthetic_exit_engine",
+    syntheticAnalyzeExit: true,
+
+    closed: true,
+    closedAt: now,
+    exitTs: now,
+    analyzeTs: now,
+    ts: now,
+
+    entry: entryPrice,
+    entryPrice,
+    exit: exitPrice,
+    exitPrice,
+
+    realizedR,
+    pnlR: realizedR,
+    resultR: realizedR,
+    outcomeR: realizedR,
+    rMultiple: realizedR,
+    pnlPct,
+
+    exitReason,
+
+    familyId: familyId ? String(familyId).toUpperCase() : null,
+    analyzeFamilyId: familyId ? String(familyId).toUpperCase() : null,
+    analysisFamilyId: familyId ? String(familyId).toUpperCase() : null,
+
+    rr,
+    baseRR: record.baseRR ?? record.rr ?? rr,
+
+    stage: record.stage,
+    scannerStage: record.scannerStage,
+    stageSource: record.stageSource,
+    flow: record.flow,
+
+    confluence: record.confluence,
+    sniperScore: record.sniperScore,
+    moveScore: record.moveScore,
+    score: record.score,
+
+    rsi: record.rsi,
+    rsiHTF: record.rsiHTF,
+    rsiZone: record.rsiZone,
+
+    obBias: record.obBias,
+    spreadPct: record.spreadPct,
+    spreadBps: record.spreadBps,
+    depthMinUsd1p: record.depthMinUsd1p,
+
+    btcState: latestPriceRow?.coin?.btcState ?? record.btcState ?? record.btc?.state,
+    btc: record.btc,
+    regime: record.regime,
+    market: record.market,
+
+    fundingRate: record.fundingRate,
+    funding: record.funding,
+
+    tfScore: record.tfScore,
+    tfStrength: record.tfStrength,
+    tfAlignment: record.tfAlignment,
+
+    strategyVersion: record.strategyVersion || "synthetic-analyze-v1",
+
+    filterSnapshot: cleanObject({
+      ...snapshot,
+      familyId: familyId ? String(familyId).toUpperCase() : snapshot.familyId,
+      analyzeFamilyId: familyId ? String(familyId).toUpperCase() : snapshot.analyzeFamilyId,
+    }),
+  });
+}
+
+async function buildSyntheticExitEvents(latest, now = Date.now()) {
+  if (!SYNTHETIC_EXIT_ENABLED) {
+    return {
+      events: [],
+      debug: {
+        enabled: false,
+        open: 0,
+        created: 0,
+        rejected: {},
+      },
+    };
+  }
+
+  const rejected = {};
+  const currentPriceMap = buildCurrentPriceMap(latest);
+  const records = await loadAnalyzeEvents({ force: true }).catch(() => []);
+  const openEntries = getOpenAnalyzeEntries(records);
+
+  const events = [];
+
+  for (const record of openEntries) {
+    if (events.length >= SYNTHETIC_EXIT_MAX_PER_RUN) break;
+
+    const symbol = String(record.symbol || "").toUpperCase().trim();
+    const scannerSide = sideToScannerSide(record.side);
+    const current = currentPriceMap.get(`${symbol}_${scannerSide}`);
+
+    if (!current) {
+      incrementCounter(rejected, "NO_CURRENT_PRICE");
+      continue;
+    }
+
+    const event = buildSyntheticExitForOpenEntry(record, current, now);
+
+    if (!event) {
+      incrementCounter(rejected, "NOT_READY");
+      continue;
+    }
+
+    events.push(event);
+  }
+
+  return {
+    events,
+    debug: {
+      enabled: true,
+      open: openEntries.length,
+      created: events.length,
+      rejected,
+      holdMs: SYNTHETIC_EXIT_AFTER_MS,
+      minAgeMs: SYNTHETIC_EXIT_MIN_AGE_MS,
+      maxPerRun: SYNTHETIC_EXIT_MAX_PER_RUN,
+    },
+  };
+}
+
+// ================= ACTION ENRICHMENT =================
+
+function buildCandidateIndex(candidates, latest) {
+  const map = new Map();
+
+  for (const candidate of safeArray(candidates)) {
+    const symbol = String(candidate.symbol || "").toUpperCase().trim();
+    const side = normalizeSide(candidate.side);
+
+    if (!symbol || !side) continue;
+
+    const syntheticEntry = buildSyntheticEntryEvent(candidate, latest, 0);
+    const tradeId = syntheticEntry?.tradeId || null;
+
+    map.set(`${symbol}_${side}`, {
+      candidate,
+      syntheticEntry,
+      tradeId,
+    });
+  }
+
+  return map;
+}
+
+function findCandidateForAction(action, candidateIndex) {
+  const symbol = String(action?.symbol || action?.baseSymbol || "").toUpperCase().trim();
+  const scannerSide = sideToScannerSide(action?.side || action?.direction || action?.tradeSide);
+
+  if (symbol && scannerSide) {
+    const direct = candidateIndex.get(`${symbol}_${scannerSide}`);
+    if (direct) return direct;
+  }
+
+  return null;
+}
+
+function enrichTradeAction(action, latest, candidateIndex, index = 0) {
+  if (!action || typeof action !== "object") return null;
+
+  const match = findCandidateForAction(action, candidateIndex);
+  const candidate = match?.candidate || {};
+
+  const symbol = String(
+    action.symbol ||
+      action.baseSymbol ||
+      candidate.symbol ||
+      ""
+  ).toUpperCase().trim();
+
+  const scannerSide = sideToScannerSide(
+    action.side ||
+      action.direction ||
+      action.tradeSide ||
+      candidate.side
+  );
+
+  const analyzeSide = normalizeAnalyzeSide(
+    action.side ||
+      action.direction ||
+      action.tradeSide ||
+      candidate.side
+  );
+
+  const lifecycle = getLifecycleAction(action);
+  const explicitTradeId = getTradeId(action);
+  const syntheticTradeId = match?.tradeId || "";
+  const tradeId = explicitTradeId || syntheticTradeId;
+
+  const enriched = cleanObject({
+    ...candidate,
+    ...action,
+
+    tradeId,
+
+    symbol,
+    side: analyzeSide || action.side || candidate.side,
+
+    action: lifecycle || action.action,
+    analyzeLifecycle: lifecycle || action.analyzeLifecycle,
+
+    analyzeSource: action.analyzeSource || "api_trade_funnel",
+    analyzeTs: getActionTimestamp(action),
+    ts: getActionTimestamp(action),
+
+    openedAt: lifecycle === "ENTRY"
+      ? getEntryTimestamp(action)
+      : action.openedAt,
+
+    entryTs: lifecycle === "ENTRY"
+      ? getEntryTimestamp(action)
+      : action.entryTs,
+
+    btc: action.btc ?? latest?.btc ?? null,
+    regime: action.regime ?? latest?.regime ?? null,
+    market: action.market ?? latest?.market ?? null,
+
+    stage: action.stage ?? candidate.stage,
+    scannerStage: action.scannerStage ?? candidate.scannerStage ?? candidate.stage,
+    stageSource: action.stageSource ?? candidate.stageSource,
+    flow: action.flow ?? candidate.flow,
+
+    moveScore: action.moveScore ?? action.score ?? candidate.moveScore,
+    score: action.score ?? action.moveScore ?? candidate.score ?? candidate.moveScore,
+
+    entry: action.entry ?? action.entryPrice ?? candidate.entry ?? candidate.entryPrice ?? candidate.price,
+    entryPrice: action.entryPrice ?? action.entry ?? candidate.entryPrice ?? candidate.entry ?? candidate.price,
+    openPrice: action.openPrice ?? action.entryPrice ?? action.entry ?? candidate.price,
+
+    rr: action.rr ?? action.baseRR ?? candidate.rr ?? candidate.baseRR,
+    baseRR: action.baseRR ?? action.rr ?? candidate.baseRR ?? candidate.rr,
+
+    sequenceIndex: index,
+  });
+
+  const baseSnapshot = buildBaseFilterSnapshot(enriched);
+
+  if (lifecycle === "ENTRY") {
+    const familySnapshot = buildAnalyzeFamilySnapshot({
+      ...enriched,
+      filterSnapshot: baseSnapshot,
+    });
+
+    const familyId =
+      enriched.familyId ||
+      enriched.analyzeFamilyId ||
+      enriched.analysisFamilyId ||
+      familySnapshot?.familyId ||
+      null;
+
+    return cleanObject({
+      ...enriched,
+      familyId,
+      analyzeFamilyId: familyId,
+      analysisFamilyId: familyId,
+      filterSnapshot: cleanObject({
+        ...baseSnapshot,
+        ...familySnapshot,
+        familyId,
+        analyzeFamilyId: familyId,
+      }),
+    });
+  }
+
+  if (lifecycle === "EXIT") {
+    const familyId =
+      enriched.familyId ||
+      enriched.analyzeFamilyId ||
+      enriched.analysisFamilyId ||
+      baseSnapshot.familyId ||
+      baseSnapshot.analyzeFamilyId ||
+      null;
+
+    return cleanObject({
+      ...enriched,
+      familyId,
+      analyzeFamilyId: familyId,
+      analysisFamilyId: familyId,
+      filterSnapshot: cleanObject({
+        ...baseSnapshot,
+        familyId,
+        analyzeFamilyId: familyId,
+      }),
+    });
+  }
+
+  return enriched;
+}
+
+// ================= ANALYZE NORMALIZATION =================
 
 function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
   const lifecycleAction = getLifecycleAction(action);
@@ -633,7 +1285,7 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
       action.profitPct
   );
 
-  const base = {
+  const base = cleanObject({
     ...action,
 
     tradeId,
@@ -674,19 +1326,18 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
     pnlPct,
 
     btc: action.btc ?? latest?.btc ?? null,
-    btcState: action.btcState ?? latest?.btc?.state ?? null,
     regime: action.regime ?? latest?.regime ?? null,
     market: action.market ?? latest?.market ?? null,
 
     tradeFunnelUpdatedAt: context.tradeFunnelUpdatedAt || Date.now(),
     latestUpdatedAt: latest?.updatedAt || null,
     sequenceIndex: index,
-  };
+  });
 
-  const baseSnapshot = cleanObject(buildBaseFilterSnapshot(base));
+  const baseSnapshot = buildBaseFilterSnapshot(action);
 
   if (lifecycleAction === "EXIT") {
-    return {
+    return cleanObject({
       ...base,
       filterSnapshot: baseSnapshot,
       familyId:
@@ -701,7 +1352,7 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
         action.analysisFamilyId ||
         action.filterSnapshot?.familyId ||
         null,
-    };
+    });
   }
 
   const existingFamilyId =
@@ -726,7 +1377,7 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
 
   const familyId = familySnapshot?.familyId || null;
 
-  return {
+  return cleanObject({
     ...base,
 
     familyId,
@@ -739,7 +1390,7 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
       familyId,
       analyzeFamilyId: familyId,
     }),
-  };
+  });
 }
 
 function buildAnalyzeEvents(actions, latest, context = {}) {
@@ -788,271 +1439,12 @@ function buildAnalyzeEvents(actions, latest, context = {}) {
   };
 }
 
-// ================= SYNTHETIC ANALYZE ENTRIES =================
-
-function inferRRFromCandidate(candidate) {
-  const direct = nullableNumber(
-    candidate.rr ??
-      candidate.baseRR ??
-      candidate.finalRR ??
-      candidate.finalRr ??
-      candidate.plannedRR
-  );
-
-  if (direct !== null && direct > 0) return direct;
-
-  const score = getCandidateScore(candidate);
-
-  if (score >= 85) return 2.0;
-  if (score >= 75) return 1.65;
-  if (score >= 65) return 1.35;
-  if (score >= 50) return 1.15;
-
-  return 1.0;
-}
-
-function buildSyntheticTradeId(candidate, bucket) {
-  const symbol = String(candidate.symbol || "").toUpperCase().trim();
-  const side = normalizeSide(candidate.side);
-  const stage = normalizeStage(candidate.stage) || "unknown";
-
-  return `COLLECT_${bucket}_${symbol}_${side}_${stage}`;
-}
-
-function buildSyntheticAnalyzeEntry(candidate, latest, context, index) {
-  const symbol = String(candidate.symbol || "").toUpperCase().trim();
-  const side = normalizeSide(candidate.side);
-  const analyzeSide = normalizeAnalyzeSide(side);
-  const stage = normalizeStage(candidate.stage);
-
-  if (!symbol || !side || !analyzeSide || !stage) return null;
-
-  const score = getCandidateScore(candidate);
-  if (score < ANALYZE_SYNTHETIC_MIN_SCORE) return null;
-
-  const now = context.tradeFunnelUpdatedAt || Date.now();
-  const bucket = Math.floor(now / ANALYZE_ENTRY_WINDOW_MS);
-
-  const price = nullableNumber(
-    candidate.entryPrice ??
-      candidate.entry ??
-      candidate.openPrice ??
-      candidate.price ??
-      candidate.current_price
-  );
-
-  if (price === null || price <= 0) return null;
-
-  const rr = inferRRFromCandidate(candidate);
-
-  return {
-    tradeId: buildSyntheticTradeId(candidate, bucket),
-
-    symbol,
-    side,
-    tradeSide: analyzeSide,
-
-    action: "ENTRY",
-    analyzeLifecycle: "ENTRY",
-    analyzeSource: "synthetic_candidate_entry",
-    syntheticAnalyzeEntry: true,
-
-    reason: "COLLECT_CANDIDATE_ENTRY",
-
-    entry: price,
-    entryPrice: price,
-    openPrice: price,
-
-    rr,
-    baseRR: rr,
-    plannedRR: rr,
-
-    stage,
-    scannerStage: stage,
-    stageSource: candidate.stageSource || "scanner_filter",
-    flow: normalizeFlow(candidate.flow),
-
-    score,
-    moveScore: score,
-    tradeScore: score,
-    confluence: nullableNumber(candidate.confluence) ?? score,
-    sniperScore: nullableNumber(candidate.sniperScore) ?? score,
-
-    rsi: nullableNumber(candidate.rsi),
-    rsiHTF: nullableNumber(candidate.rsiHTF),
-    rsiZone:
-      candidate.rsiZone ||
-      (side === "bull" ? "RSI_LOWER_OR_MID" : "RSI_UPPER_OR_MID"),
-
-    obBias: candidate.obBias || "NEUTRAL",
-    spreadPct: nullableNumber(candidate.spreadPct),
-    spreadBps: nullableNumber(candidate.spreadBps),
-    depthMinUsd1p: nullableNumber(candidate.depthMinUsd1p ?? candidate.depthUsd1p),
-
-    btcState: latest?.btc?.state,
-    btc: latest?.btc || null,
-    regime: latest?.regime || null,
-    market: latest?.market || null,
-
-    fundingRate: nullableNumber(candidate.fundingRate),
-    funding: candidate.funding,
-
-    tfScore: nullableNumber(candidate.tfScore),
-    tfStrength: nullableNumber(candidate.tfStrength),
-    tfAlignment: candidate.tfAlignment,
-
-    openedAt: now,
-    entryTs: now,
-    ts: now,
-    createdAt: now,
-
-    sequenceIndex: index,
-    strategyVersion: candidate.strategyVersion || "collector-v2",
-
-    filterSnapshot: cleanObject({
-      setupClass: candidate.setupClass,
-      grade: candidate.grade,
-
-      stage,
-      scannerStage: stage,
-      stageSource: candidate.stageSource || "scanner_filter",
-      flow: normalizeFlow(candidate.flow),
-
-      confluence: nullableNumber(candidate.confluence) ?? score,
-      sniperScore: nullableNumber(candidate.sniperScore) ?? score,
-      score,
-      moveScore: score,
-
-      rr,
-      baseRR: rr,
-
-      rsi: nullableNumber(candidate.rsi),
-      rsiHTF: nullableNumber(candidate.rsiHTF),
-      rsiZone:
-        candidate.rsiZone ||
-        (side === "bull" ? "RSI_LOWER_OR_MID" : "RSI_UPPER_OR_MID"),
-
-      obBias: candidate.obBias || "NEUTRAL",
-      spreadPct: nullableNumber(candidate.spreadPct),
-      spreadBps: nullableNumber(candidate.spreadBps),
-      depthMinUsd1p: nullableNumber(candidate.depthMinUsd1p ?? candidate.depthUsd1p),
-
-      btcState: latest?.btc?.state,
-      regime: latest?.regime,
-
-      fundingRate: nullableNumber(candidate.fundingRate),
-      funding: candidate.funding,
-
-      tfScore: nullableNumber(candidate.tfScore),
-      tfStrength: nullableNumber(candidate.tfStrength),
-      tfAlignment: candidate.tfAlignment,
-
-      strategyVersion: candidate.strategyVersion || "collector-v2",
-    }),
-  };
-}
-
-function hasRealEntryForSymbolSide(actions) {
-  const out = new Set();
-
-  for (const action of safeArray(actions)) {
-    if (!getTradeId(action)) continue;
-    if (getLifecycleAction(action) !== "ENTRY") continue;
-
-    const symbol = String(action.symbol || "").toUpperCase().trim();
-    const side = normalizeSide(action.side || action.direction || action.tradeSide);
-
-    if (symbol && side) {
-      out.add(`${symbol}_${side}`);
-    }
-  }
-
-  return out;
-}
-
-function createSyntheticCandidateEntries(candidates, latest, context = {}, realActions = []) {
-  const debug = {
-    enabled: ANALYZE_COLLECT_CANDIDATE_ENTRIES,
-    candidates: safeArray(candidates).length,
-    max: MAX_ANALYZE_SYNTHETIC_ENTRIES,
-    minScore: ANALYZE_SYNTHETIC_MIN_SCORE,
-    rejected: {},
-  };
-
-  if (!ANALYZE_COLLECT_CANDIDATE_ENTRIES) {
-    return { entries: [], debug };
-  }
-
-  const realEntryKeys = hasRealEntryForSymbolSide(realActions);
-  const out = [];
-
-  for (const candidate of safeArray(candidates)) {
-    if (out.length >= MAX_ANALYZE_SYNTHETIC_ENTRIES) break;
-
-    const symbol = String(candidate.symbol || "").toUpperCase().trim();
-    const side = normalizeSide(candidate.side);
-    const stage = normalizeStage(candidate.stage);
-    const score = getCandidateScore(candidate);
-
-    if (!symbol) {
-      incrementCounter(debug.rejected, "NO_SYMBOL");
-      continue;
-    }
-
-    if (!side) {
-      incrementCounter(debug.rejected, "BAD_SIDE");
-      continue;
-    }
-
-    if (realEntryKeys.has(`${symbol}_${side}`)) {
-      incrementCounter(debug.rejected, "REAL_ENTRY_EXISTS");
-      continue;
-    }
-
-    if (stage !== "entry" && stage !== "almost") {
-      incrementCounter(debug.rejected, "BAD_STAGE");
-      continue;
-    }
-
-    if (score < ANALYZE_SYNTHETIC_MIN_SCORE) {
-      incrementCounter(debug.rejected, "SCORE_TOO_LOW");
-      continue;
-    }
-
-    const synthetic = buildSyntheticAnalyzeEntry(candidate, latest, context, out.length);
-
-    if (!synthetic) {
-      incrementCounter(debug.rejected, "BUILD_FAILED");
-      continue;
-    }
-
-    out.push(synthetic);
-  }
-
-  debug.created = out.length;
-  return { entries: out, debug };
-}
-
 // ================= ANALYZE APPEND =================
 
-async function appendTradesToAnalyzer(trades, latest, context = {}) {
-  const actions = safeArray(trades);
+async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
+  const actions = safeArray(eventsToAppend);
 
-  const syntheticResult = createSyntheticCandidateEntries(
-    context.candidates,
-    latest,
-    context,
-    actions
-  );
-
-  const syntheticEntries = syntheticResult.entries;
-
-  const analyzeActions = [
-    ...actions,
-    ...syntheticEntries,
-  ];
-
-  if (!analyzeActions.length) {
+  if (!actions.length) {
     return {
       ok: true,
       skipped: true,
@@ -1061,14 +1453,12 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       accepted: 0,
       acceptedEntries: 0,
       acceptedExits: 0,
-      syntheticEntries: 0,
-      syntheticDebug: syntheticResult.debug,
       rejected: 0,
       rejectCounts: {},
     };
   }
 
-  const { events, stats } = buildAnalyzeEvents(analyzeActions, latest, {
+  const { events, stats } = buildAnalyzeEvents(actions, latest, {
     tradeFunnelUpdatedAt: Date.now(),
     ...context,
   });
@@ -1078,8 +1468,6 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
       ok: true,
       skipped: true,
       reason: "NO_ENTRY_OR_EXIT_EVENTS",
-      syntheticEntries: syntheticEntries.length,
-      syntheticDebug: syntheticResult.debug,
       ...stats,
     };
   }
@@ -1097,18 +1485,7 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
 
     return {
       ...result,
-
-      received: stats.received,
-      accepted: stats.accepted,
-      acceptedEntries: stats.acceptedEntries,
-      acceptedExits: stats.acceptedExits,
-      rejected: stats.rejected,
-      rejectCounts: stats.rejectCounts,
-
-      syntheticEntries: syntheticEntries.length,
-      syntheticDebug: syntheticResult.debug,
-      realActions: actions.length,
-      normalizedEvents: events.length,
+      ...stats,
     };
   } catch (e) {
     console.error("ANALYZE APPEND ERROR:", e);
@@ -1116,8 +1493,6 @@ async function appendTradesToAnalyzer(trades, latest, context = {}) {
     return {
       ok: false,
       error: e?.message || "analyze_append_failed",
-      syntheticEntries: syntheticEntries.length,
-      syntheticDebug: syntheticResult.debug,
       ...stats,
     };
   }
@@ -1137,14 +1512,15 @@ function compactAction(action) {
     reason: action.reason,
     exitReason: action.exitReason,
 
-    syntheticAnalyzeEntry: Boolean(action.syntheticAnalyzeEntry),
-
     familyId:
       action.familyId ||
       action.analyzeFamilyId ||
       action.analysisFamilyId ||
       action.filterSnapshot?.familyId ||
       null,
+
+    syntheticAnalyzeEntry: action.syntheticAnalyzeEntry,
+    syntheticAnalyzeExit: action.syntheticAnalyzeExit,
 
     setupClass: action.setupClass,
     grade: action.grade,
@@ -1214,12 +1590,12 @@ function compactResponse(data) {
     market: data?.market || null,
 
     tradeFunnelRawCount: safeNumber(data?.tradeFunnelRawCount, 0),
-    tradeFunnelAcceptedBeforeCap: safeNumber(data?.tradeFunnelAcceptedBeforeCap, 0),
     tradeFunnelRejectCounts: data?.tradeFunnelRejectCounts || {},
     tradeFunnelInputCount: safeNumber(data?.tradeFunnelInputCount, 0),
     tradeFunnelInputSymbols: safeArray(data?.tradeFunnelInputSymbols).slice(0, 250),
 
     analyzeAppendResult: data?.analyzeAppendResult || null,
+    syntheticDebug: data?.syntheticDebug || null,
 
     trades: actions.slice(0, MAX_RESPONSE_TRADES).map(compactAction),
 
@@ -1248,6 +1624,11 @@ export async function runTradeFunnel(options = {}) {
   const candidates = tradeFunnel.candidates;
   const now = Date.now();
 
+  const candidateIndex = buildCandidateIndex(candidates, latest);
+
+  const syntheticEntries = buildSyntheticEntryEvents(candidates, latest);
+  const syntheticExits = await buildSyntheticExitEvents(latest, now);
+
   const result = candidates.length
     ? await processTrades(candidates, {
         notify,
@@ -1257,48 +1638,73 @@ export async function runTradeFunnel(options = {}) {
         regime: latest.regime,
         market: latest.market,
       })
-    : {
-        actions: [],
-        candidatesCount: 0,
-      };
+    : { actions: [], candidatesCount: 0 };
 
-  const trades = Array.isArray(result)
+  const rawTradeActions = Array.isArray(result)
     ? result
     : Array.isArray(result?.actions)
       ? result.actions
       : [];
 
+  const enrichedTradeActions = rawTradeActions
+    .map((action, index) => enrichTradeAction(action, latest, candidateIndex, index))
+    .filter(Boolean);
+
+  const analyzeEvents = [
+    ...syntheticEntries.events,
+    ...syntheticExits.events,
+    ...enrichedTradeActions,
+  ];
+
   const analyzeAppendResult = store
-    ? await appendTradesToAnalyzer(trades, latest, {
+    ? await appendTradesToAnalyzer(analyzeEvents, latest, {
         notify,
         store,
-        candidates,
-        tradeFunnelUpdatedAt: now,
+        syntheticEntries: syntheticEntries.events.length,
+        syntheticExits: syntheticExits.events.length,
+        realActions: enrichedTradeActions.length,
       })
     : {
         ok: true,
         skipped: true,
         reason: "STORE_FALSE",
-        received: trades.length,
+        received: analyzeEvents.length,
         accepted: 0,
         acceptedEntries: 0,
         acceptedExits: 0,
-        syntheticEntries: 0,
-        rejected: trades.length,
+        rejected: analyzeEvents.length,
         rejectCounts: {
-          STORE_FALSE: trades.length,
+          STORE_FALSE: analyzeEvents.length,
         },
+      };
+
+  const updatedResult = Array.isArray(result)
+    ? {
+        actions: enrichedTradeActions,
+        candidatesCount: candidates.length,
+      }
+    : {
+        ...result,
+        actions: enrichedTradeActions,
+        candidatesCount: result?.candidatesCount ?? candidates.length,
       };
 
   const updated = {
     ...latest,
     ok: true,
-    trades,
-    tradeSystemResult: result,
+
+    trades: enrichedTradeActions,
+    tradeSystemResult: updatedResult,
     analyzeAppendResult,
 
+    syntheticDebug: {
+      entries: syntheticEntries.debug,
+      exits: syntheticExits.debug,
+      analyzeEvents: analyzeEvents.length,
+      realActions: enrichedTradeActions.length,
+    },
+
     tradeFunnelRawCount: tradeFunnel.rawCount,
-    tradeFunnelAcceptedBeforeCap: tradeFunnel.acceptedBeforeCap,
     tradeFunnelInputCount: candidates.length,
     tradeFunnelRejectCounts: tradeFunnel.rejectCounts,
     tradeFunnelInputSymbols: candidates.map(c =>
@@ -1324,10 +1730,7 @@ export default async function handler(req, res) {
   const full = normalizeFullResponse(req?.query?.full, false);
 
   try {
-    const data = await runTradeFunnel({
-      notify,
-      store,
-    });
+    const data = await runTradeFunnel({ notify, store });
 
     return res.status(200).json(full ? data : compactResponse(data));
   } catch (e) {
