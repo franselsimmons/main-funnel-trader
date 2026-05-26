@@ -1,205 +1,287 @@
-#!/usr/bin/env node
-
-import process from 'node:process';
-
 import {
-  runWeeklyRotation,
-  readRotationStatus,
-} from '../lib/rotation/rotationRunner.js';
+  loadRotationStatus,
+  saveRotationStatus,
+} from '../lib/rotation/rotationStore.js';
 
-function parseBool(value, fallback = false) {
-  if (value === undefined || value === null) return fallback;
+const RUNNER_MODULE_CANDIDATES = Object.freeze([
+  '../lib/rotation/weeklyRotation.js',
+  '../lib/rotation/rotationRunner.js',
+  '../lib/rotation/rotationOrchestrator.js',
+  '../lib/rotation/rotationEngine.js',
+]);
 
-  const normalized = String(value).trim().toLowerCase();
+const RUNNER_FUNCTION_CANDIDATES = Object.freeze([
+  'runWeeklyRotation',
+  'runRotationCycle',
+  'rotateWeeklyFamilies',
+  'createWeeklyRotation',
+  'buildWeeklyRotation',
+  'runFamilyRotation',
+  'default',
+]);
 
-  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+const logger = Object.freeze({
+  info: (...args) => console.log('[rotation]', ...args),
+  warn: (...args) => console.warn('[rotation:warn]', ...args),
+  error: (...args) => console.error('[rotation:error]', ...args),
+});
 
-  return fallback;
-}
+function parseArgs(argv = process.argv.slice(2)) {
+  const args = new Set(argv);
 
-function parseNumber(value, fallback) {
-  const parsed = Number(value);
+  const getValue = name => {
+    const prefix = `${name}=`;
+    const found = argv.find(item => item.startsWith(prefix));
 
-  if (!Number.isFinite(parsed)) return fallback;
+    if (!found) return null;
 
-  return parsed;
-}
-
-function hasArg(name) {
-  return process.argv.includes(name);
-}
-
-function getArgValue(name, fallback = null) {
-  const index = process.argv.indexOf(name);
-
-  if (index === -1) return fallback;
-
-  return process.argv[index + 1] ?? fallback;
-}
-
-function buildOptionsFromCli() {
-  const dryRun = hasArg('--dry-run') || parseBool(process.env.ROTATION_DRY_RUN, false);
-  const force = hasArg('--force') || parseBool(process.env.ROTATION_FORCE, false);
-  const json = hasArg('--json') || parseBool(process.env.ROTATION_JSON, false);
-
-  const mode = getArgValue('--mode', process.env.ROTATION_MODE || 'weekly');
-
-  const minClosed = parseNumber(
-    getArgValue('--min-closed', process.env.ROTATION_MIN_CLOSED),
-    undefined
-  );
-
-  const maxFamiliesPerSide = parseNumber(
-    getArgValue('--max-per-side', process.env.ROTATION_MAX_PER_SIDE),
-    undefined
-  );
-
-  const lookbackDays = parseNumber(
-    getArgValue('--lookback-days', process.env.ROTATION_LOOKBACK_DAYS),
-    undefined
-  );
+    return found.slice(prefix.length).trim() || null;
+  };
 
   return {
-    dryRun,
-    force,
-    json,
-    mode,
-    minClosed,
-    maxFamiliesPerSide,
-    lookbackDays,
+    dryRun: args.has('--dry') || args.has('--dry-run'),
+    force: args.has('--force'),
+    json: args.has('--json'),
+    quiet: args.has('--quiet'),
+    sourceWeekKey: getValue('--source-week'),
+    targetWeekKey: getValue('--target-week'),
+    minClosed: Number(getValue('--min-closed') || process.env.ROTATION_MIN_CLOSED || 6),
+    maxFamilies: Number(getValue('--max-families') || process.env.ROTATION_MAX_FAMILIES || 6),
   };
 }
 
-function printHelp() {
-  console.log(`
-Weekly Rotation Runner
+async function loadRunnerModule() {
+  const errors = [];
 
-Gebruik:
-  node scripts/runWeeklyRotation.js
-  node scripts/runWeeklyRotation.js --dry-run
-  node scripts/runWeeklyRotation.js --force
-  node scripts/runWeeklyRotation.js --json
+  for (const modulePath of RUNNER_MODULE_CANDIDATES) {
+    try {
+      const mod = await import(modulePath);
 
-Opties:
-  --dry-run              Bereken nieuwe rotatie, maar schrijf activeRotation.json niet weg.
-  --force                Forceer nieuwe rotatie, ook als huidige rotatie nog actief is.
-  --json                 Print machine-readable JSON.
-  --mode weekly          Label voor rotatie-run. Default: weekly.
-  --min-closed 20        Override minimum closed trades per family.
-  --max-per-side 3       Override max families per LONG/SHORT.
-  --lookback-days 7      Override lookback window.
-`);
-}
-
-function cleanUndefined(obj) {
-  return Object.fromEntries(
-    Object.entries(obj).filter(([, value]) => value !== undefined)
-  );
-}
-
-function printHumanResult(result) {
-  const rotation = result?.rotation || result?.activeRotation || null;
-  const status = result?.status || null;
-  const selected = rotation?.allowlist || [];
-
-  console.log('');
-  console.log('ROTATION RUN COMPLETE');
-  console.log('---------------------');
-
-  console.log(`Mode: ${result?.mode || rotation?.mode || 'n/a'}`);
-  console.log(`Dry run: ${result?.dryRun ? 'YES' : 'NO'}`);
-  console.log(`Rotation ID: ${rotation?.rotationId || 'n/a'}`);
-  console.log(`Created at: ${rotation?.createdAt || 'n/a'}`);
-  console.log(`Expires at: ${rotation?.expiresAt || 'n/a'}`);
-  console.log(`Selected families: ${selected.length}`);
-
-  if (status) {
-    console.log(`Status: ${status.state || status.status || 'n/a'}`);
-  }
-
-  if (!selected.length) {
-    console.log('');
-    console.log('Geen families geselecteerd.');
-    console.log('Meest waarschijnlijke oorzaak: nog te weinig closed trades of geen positieve Avg R.');
-    return;
-  }
-
-  console.log('');
-  console.log('ACTIVE ALLOWLIST');
-  console.log('----------------');
-
-  for (const item of selected) {
-    const side = item.side || 'n/a';
-    const familyId = item.familyId || 'n/a';
-    const statusText = item.status || item.quality || 'n/a';
-    const closed = item.closed ?? item.tradesClosed ?? 'n/a';
-    const winrate = item.winratePct ?? item.winrate ?? 'n/a';
-    const avgR = item.avgR ?? 'n/a';
-    const pf = item.pf ?? item.profitFactor ?? 'n/a';
-
-    console.log(
-      `${side.padEnd(5)} | ${String(familyId).padEnd(36)} | ${String(statusText).padEnd(10)} | closed=${closed} | WR=${winrate} | avgR=${avgR} | PF=${pf}`
-    );
-  }
-
-  console.log('');
-}
-
-async function main() {
-  if (hasArg('--help') || hasArg('-h')) {
-    printHelp();
-    return;
-  }
-
-  const cliOptions = buildOptionsFromCli();
-
-  const runOptions = cleanUndefined({
-    dryRun: cliOptions.dryRun,
-    force: cliOptions.force,
-    mode: cliOptions.mode,
-    minClosed: cliOptions.minClosed,
-    maxFamiliesPerSide: cliOptions.maxFamiliesPerSide,
-    lookbackDays: cliOptions.lookbackDays,
-  });
-
-  const result = await runWeeklyRotation(runOptions);
-  const status = await readRotationStatus();
-
-  const payload = {
-    ok: true,
-    ...result,
-    status,
-  };
-
-  if (cliOptions.json) {
-    console.log(JSON.stringify(payload, null, 2));
-    return;
-  }
-
-  printHumanResult(payload);
-}
-
-main().catch(error => {
-  const payload = {
-    ok: false,
-    error: error?.message || String(error),
-    stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
-  };
-
-  if (hasArg('--json')) {
-    console.error(JSON.stringify(payload, null, 2));
-  } else {
-    console.error('');
-    console.error('ROTATION RUN FAILED');
-    console.error('-------------------');
-    console.error(payload.error);
-
-    if (payload.stack) {
-      console.error('');
-      console.error(payload.stack);
+      return {
+        modulePath,
+        mod,
+      };
+    } catch (error) {
+      errors.push({
+        modulePath,
+        message: error?.message || String(error),
+      });
     }
   }
 
-  process.exitCode = 1;
+  const message = errors
+    .map(item => `- ${item.modulePath}: ${item.message}`)
+    .join('\n');
+
+  throw new Error(`Geen weekly rotation runner-module gevonden.\n${message}`);
+}
+
+function resolveRunnerFunction(mod) {
+  for (const name of RUNNER_FUNCTION_CANDIDATES) {
+    if (typeof mod[name] === 'function') {
+      return {
+        name,
+        fn: mod[name],
+      };
+    }
+  }
+
+  throw new Error(
+    `Geen geldige runner-functie gevonden. Verwacht één van: ${RUNNER_FUNCTION_CANDIDATES.join(', ')}`,
+  );
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+
+  return [];
+}
+
+function extractActiveRotation(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  if (payload.activeRotation && typeof payload.activeRotation === 'object') {
+    return payload.activeRotation;
+  }
+
+  if (payload.rotation && typeof payload.rotation === 'object') {
+    return payload.rotation;
+  }
+
+  if (payload.status?.activeRotation && typeof payload.status.activeRotation === 'object') {
+    return payload.status.activeRotation;
+  }
+
+  if (payload.result?.activeRotation && typeof payload.result.activeRotation === 'object') {
+    return payload.result.activeRotation;
+  }
+
+  if (payload.allowlist || payload.liveAllowlist || payload.allowedFamilies || payload.families) {
+    return payload;
+  }
+
+  return null;
+}
+
+function extractAllowlist(activeRotation) {
+  if (!activeRotation || typeof activeRotation !== 'object') return [];
+
+  return [
+    ...asArray(activeRotation.allowlist),
+    ...asArray(activeRotation.liveAllowlist),
+    ...asArray(activeRotation.allowedFamilies),
+    ...asArray(activeRotation.families),
+  ]
+    .filter(Boolean)
+    .filter((item, index, arr) => {
+      const familyId = item.familyId || item.id || item.microFamilyId;
+      if (!familyId) return false;
+
+      return arr.findIndex(other => {
+        const otherId = other.familyId || other.id || other.microFamilyId;
+
+        return otherId === familyId;
+      }) === index;
+    });
+}
+
+function normalizeRotationStatus(payload, previousStatus) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Runner gaf geen bruikbare rotation payload terug.');
+  }
+
+  if (payload.version && Object.hasOwn(payload, 'activeRotation')) {
+    return payload;
+  }
+
+  if (payload.status?.version && Object.hasOwn(payload.status, 'activeRotation')) {
+    return payload.status;
+  }
+
+  const activeRotation = extractActiveRotation(payload);
+
+  if (!activeRotation) {
+    throw new Error('Runner payload bevat geen activeRotation.');
+  }
+
+  const allowlist = extractAllowlist(activeRotation);
+
+  const normalizedActiveRotation = {
+    ...activeRotation,
+    allowlist,
+    liveAllowlist: allowlist,
+    allowedFamilies: allowlist,
+    families: allowlist,
+  };
+
+  return {
+    version: previousStatus?.version || 1,
+    mode: payload.mode || previousStatus?.mode || 'WEEKLY_ROTATION',
+    updatedAt: new Date().toISOString(),
+    activeRotation: normalizedActiveRotation,
+    previousRotation: previousStatus?.activeRotation || previousStatus?.previousRotation || null,
+    history: asArray(previousStatus?.history),
+  };
+}
+
+function summarizeStatus(status) {
+  const activeRotation = status?.activeRotation || null;
+  const allowlist = extractAllowlist(activeRotation);
+
+  const longCount = allowlist.filter(item => String(item.side || '').toUpperCase() === 'LONG').length;
+  const shortCount = allowlist.filter(item => String(item.side || '').toUpperCase() === 'SHORT').length;
+
+  const topRows = allowlist.slice(0, 10).map(item => ({
+    familyId: item.familyId || item.id || item.microFamilyId || 'UNKNOWN',
+    side: item.side || 'UNKNOWN',
+    status: item.status || item.quality || 'UNKNOWN',
+    closed: item.closed ?? item.trades ?? 0,
+    winrate: item.winrate ?? item.wr ?? null,
+    avgR: item.avgR ?? item.averageR ?? null,
+    pf: item.pf ?? item.profitFactor ?? null,
+    score: item.score ?? null,
+  }));
+
+  return {
+    id: activeRotation?.id || null,
+    weekKey: activeRotation?.weekKey || null,
+    sourceWeekKey: activeRotation?.sourceWeekKey || null,
+    activatedAt: activeRotation?.activatedAt || activeRotation?.selectedAt || null,
+    expiresAt: activeRotation?.expiresAt || null,
+    allowed: allowlist.length,
+    long: longCount,
+    short: shortCount,
+    topRows,
+  };
+}
+
+function printTextSummary(summary, options) {
+  if (options.quiet) return;
+
+  console.log('');
+  console.log('WEEKLY ROTATION COMPLETE');
+  console.log('------------------------');
+  console.log(`Rotation ID     : ${summary.id || 'n/a'}`);
+  console.log(`Target week     : ${summary.weekKey || 'n/a'}`);
+  console.log(`Source week     : ${summary.sourceWeekKey || 'n/a'}`);
+  console.log(`Active from     : ${summary.activatedAt || 'n/a'}`);
+  console.log(`Expires at      : ${summary.expiresAt || 'n/a'}`);
+  console.log(`Allowed families: ${summary.allowed} (${summary.long} LONG / ${summary.short} SHORT)`);
+
+  if (!summary.topRows.length) {
+    console.log('');
+    console.log('Geen allowlist families gevonden.');
+    return;
+  }
+
+  console.log('');
+  console.table(summary.topRows);
+}
+
+async function main() {
+  const options = parseArgs();
+  const previousStatus = await loadRotationStatus().catch(() => null);
+
+  const { modulePath, mod } = await loadRunnerModule();
+  const { name, fn } = resolveRunnerFunction(mod);
+
+  logger.info(`using ${modulePath} -> ${name}`);
+
+  const runnerPayload = await fn({
+    ...options,
+    logger,
+    now: new Date(),
+  });
+
+  const normalizedStatus = normalizeRotationStatus(runnerPayload, previousStatus);
+  const summary = summarizeStatus(normalizedStatus);
+
+  if (!options.dryRun) {
+    await saveRotationStatus(normalizedStatus);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify({
+      dryRun: options.dryRun,
+      runnerModule: modulePath,
+      runnerFunction: name,
+      summary,
+      status: normalizedStatus,
+    }, null, 2));
+
+    return;
+  }
+
+  printTextSummary(summary, options);
+
+  if (options.dryRun && !options.quiet) {
+    console.log('');
+    console.log('DRY RUN: rotation status is niet opgeslagen.');
+  }
+}
+
+main().catch(error => {
+  console.error('Weekly rotation failed');
+  console.error(error);
+  process.exit(1);
 });
