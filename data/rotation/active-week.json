@@ -1,0 +1,29 @@
+{
+  "rotationId": "2026-W22",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "sourceWindow": {
+    "from": "2026-05-18T00:00:00.000Z",
+    "to": "2026-05-25T00:00:00.000Z"
+  },
+  "mode": "WEEKLY_MICRO_CHAMPIONS",
+  "allowlist": [
+    {
+      "microFamilyId": "MICRO_LONG_LONG_6_HFOQKE",
+      "side": "LONG",
+      "status": "ACTIVE",
+      "closed": 13,
+      "winrate": 92.3,
+      "avgR": 0.853,
+      "pf": 15.286
+    },
+    {
+      "microFamilyId": "MICRO_SHORT_SHORT_UNKNOWN_1OJZ169",
+      "side": "SHORT",
+      "status": "ACTIVE",
+      "closed": 9,
+      "winrate": 55.6,
+      "avgR": 0.641,
+      "pf": 2.934
+    }
+  ]
+}
