@@ -1,10 +1,19 @@
 import { getLatestScan } from "../lib/scanStore.js";
 import * as analyzeStore from "../lib/analyze/analyzeStore.js";
 import * as familyEngine from "../lib/analyze/familyEngine.js";
+import * as familyMicroAnalyzer from "../lib/familyMicroAnalyzer.js";
 
 const DEFAULT_MIN_CLOSED = 10;
 const DEFAULT_INCLUDE_LATEST = false;
 const MAX_DEBUG_EVENTS = 50;
+
+// Microfamily defaults.
+// Parent blijft gelijk aan analyzer minClosed.
+// Sub/micro mogen iets lager staan zodat je sneller ziet waar edge ontstaat,
+// maar live allowlist kan straks alsnog strenger.
+const DEFAULT_MIN_PARENT_CLOSED = DEFAULT_MIN_CLOSED;
+const DEFAULT_MIN_SUB_CLOSED = 8;
+const DEFAULT_MIN_MICRO_CLOSED = 6;
 
 // ================= GENERIC HELPERS =================
 
@@ -62,7 +71,7 @@ function normalizeTs(value, fallback = Date.now()) {
 function serializeError(error, debug = false) {
   const payload = {
     message: error?.message || String(error || "unknown_error"),
-    name: error?.name || "Error",
+    name: error?.name || "Error"
   };
 
   if (debug && error?.stack) {
@@ -154,7 +163,7 @@ function compactLatestEvent(event) {
     tradeId: tradeId || undefined,
     side: side || event.side,
     analyzeSource: event.analyzeSource || "latest_scan_debug",
-    analyzeTs: getEventTs(event),
+    analyzeTs: getEventTs(event)
   };
 }
 
@@ -183,7 +192,7 @@ function dedupeEvents(events) {
     if (!previous) {
       map.set(key, {
         ...event,
-        analyzeEventKey: event.analyzeEventKey || key,
+        analyzeEventKey: event.analyzeEventKey || key
       });
       return;
     }
@@ -195,7 +204,7 @@ function dedupeEvents(events) {
       map.set(key, {
         ...previous,
         ...event,
-        analyzeEventKey: previous.analyzeEventKey || event.analyzeEventKey || key,
+        analyzeEventKey: previous.analyzeEventKey || event.analyzeEventKey || key
       });
     }
   });
@@ -209,7 +218,7 @@ function collectLatestEvents(latest) {
   const raw = [
     ...safeArray(latest.trades),
     ...safeArray(latest.tradeSystemResult?.actions),
-    ...safeArray(latest.actions),
+    ...safeArray(latest.actions)
   ];
 
   return dedupeEvents(raw.map(compactLatestEvent));
@@ -245,9 +254,9 @@ async function loadStoredEvents() {
         primary: store?.primary || store?.source || null,
         redisEnabled: Boolean(store?.redisEnabled),
         fileEnabled: store?.fileEnabled !== false,
-        error: store?.error || null,
+        error: store?.error || null
       },
-      events,
+      events
     };
   }
 
@@ -265,9 +274,9 @@ async function loadStoredEvents() {
         primary: "events_loader",
         redisEnabled: false,
         fileEnabled: false,
-        error: null,
+        error: null
       },
-      events: safeArray(events),
+      events: safeArray(events)
     };
   }
 
@@ -282,9 +291,9 @@ async function loadStoredEvents() {
       primary: null,
       redisEnabled: false,
       fileEnabled: false,
-      error: "NO_ANALYZE_STORE_LOADER_FOUND",
+      error: "NO_ANALYZE_STORE_LOADER_FOUND"
     },
-    events: [],
+    events: []
   };
 }
 
@@ -298,7 +307,7 @@ async function clearStoredEvents() {
   if (typeof clearFn !== "function") {
     return {
       ok: false,
-      error: "NO_CLEAR_ANALYZE_EVENTS_EXPORT_FOUND",
+      error: "NO_CLEAR_ANALYZE_EVENTS_EXPORT_FOUND"
     };
   }
 
@@ -327,6 +336,178 @@ function buildReport(events, options) {
   return buildFn(events, options);
 }
 
+// ================= MICRO FAMILY BUILDER =================
+
+function getMicroBuildFn() {
+  return (
+    familyMicroAnalyzer.buildMainFamilyMicroAnalysis ||
+    familyMicroAnalyzer.buildFamilyMicroAnalysis ||
+    familyMicroAnalyzer.buildMicroFamilyAnalysis ||
+    familyMicroAnalyzer.buildFamilyMicroReport ||
+    familyMicroAnalyzer.buildMicroReport ||
+    familyMicroAnalyzer.default?.buildMainFamilyMicroAnalysis ||
+    familyMicroAnalyzer.default?.buildFamilyMicroAnalysis ||
+    familyMicroAnalyzer.default?.buildMicroFamilyAnalysis ||
+    familyMicroAnalyzer.default?.buildFamilyMicroReport ||
+    familyMicroAnalyzer.default?.buildMicroReport
+  );
+}
+
+function getBestMainLongShortFn() {
+  return (
+    familyMicroAnalyzer.getBestMainLongShort ||
+    familyMicroAnalyzer.getBestLongShort ||
+    familyMicroAnalyzer.getBestMicroLongShort ||
+    familyMicroAnalyzer.default?.getBestMainLongShort ||
+    familyMicroAnalyzer.default?.getBestLongShort ||
+    familyMicroAnalyzer.default?.getBestMicroLongShort
+  );
+}
+
+function getAllowlistFn() {
+  return (
+    familyMicroAnalyzer.buildMainDiscordAllowlist ||
+    familyMicroAnalyzer.buildDiscordAllowlist ||
+    familyMicroAnalyzer.buildMicroAllowlist ||
+    familyMicroAnalyzer.default?.buildMainDiscordAllowlist ||
+    familyMicroAnalyzer.default?.buildDiscordAllowlist ||
+    familyMicroAnalyzer.default?.buildMicroAllowlist
+  );
+}
+
+function getStatusRank(status) {
+  const s = normalizeText(status);
+
+  if (s === "ELITE") return 6;
+  if (s === "HOT") return 5;
+  if (s === "GOOD") return 4;
+  if (s === "STABLE") return 3;
+  if (s === "CANDIDATE") return 2;
+  if (s === "COLLECTING") return 1;
+  if (s === "EMPTY") return 0;
+  if (s === "BAD") return -1;
+
+  return 0;
+}
+
+function sortMainMicroFallback(a, b) {
+  const statusDiff = getStatusRank(b.status) - getStatusRank(a.status);
+  if (statusDiff !== 0) return statusDiff;
+
+  const winrateDiff = safeNumber(b.winrateNum, 0) - safeNumber(a.winrateNum, 0);
+  if (winrateDiff !== 0) return winrateDiff;
+
+  const avgRDiff = safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0);
+  if (avgRDiff !== 0) return avgRDiff;
+
+  const pfDiff = safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0);
+  if (pfDiff !== 0) return pfDiff;
+
+  return safeNumber(b.closed, 0) - safeNumber(a.closed, 0);
+}
+
+function fallbackBestMainLongShort(microAnalysis, minClosed) {
+  const rows = [
+    ...safeArray(microAnalysis?.microFamilies),
+    ...safeArray(microAnalysis?.subFamilies),
+    ...safeArray(microAnalysis?.parentFamilies)
+  ]
+    .filter(row => safeNumber(row.closed, 0) >= minClosed)
+    .filter(row => safeNumber(row.avgR, 0) >= 0)
+    .filter(row => safeNumber(row.profitFactor, 0) >= 1.05)
+    .sort(sortMainMicroFallback);
+
+  return {
+    mode: "MAIN",
+    level: "fallback_combined",
+    minClosed,
+    bestLong: rows.find(row => normalizeSide(row.side) === "LONG") || null,
+    bestShort: rows.find(row => normalizeSide(row.side) === "SHORT") || null
+  };
+}
+
+function fallbackAllowlist(microAnalysis) {
+  return [
+    ...safeArray(microAnalysis?.allowlists?.micro),
+    ...safeArray(microAnalysis?.allowlists?.sub),
+    ...safeArray(microAnalysis?.allowlists?.parent)
+  ].filter(item => ["ELITE", "HOT", "GOOD", "STABLE"].includes(normalizeText(item.status)));
+}
+
+function buildMicroAnalysis(events, options = {}) {
+  const buildFn = getMicroBuildFn();
+
+  if (typeof buildFn !== "function") {
+    return {
+      ok: false,
+      enabled: false,
+      error: "NO_FAMILY_MICRO_ANALYZER_EXPORT_FOUND",
+      expectedFile: "../lib/familyMicroAnalyzer.js"
+    };
+  }
+
+  return buildFn(events, options);
+}
+
+function buildMicroPayload(events, options = {}) {
+  const minClosed = safeNumber(options.minClosed, DEFAULT_MIN_CLOSED);
+  const minParentClosed = safeNumber(options.minParentClosed, DEFAULT_MIN_PARENT_CLOSED);
+  const minSubClosed = safeNumber(options.minSubClosed, DEFAULT_MIN_SUB_CLOSED);
+  const minMicroClosed = safeNumber(options.minMicroClosed, DEFAULT_MIN_MICRO_CLOSED);
+
+  const microAnalysis = buildMicroAnalysis(events, {
+    minClosed,
+    minParentClosed,
+    minSubClosed,
+    minMicroClosed,
+
+    familyCountLong: 50,
+    familyCountShort: 50,
+
+    profile: "MAIN",
+    mode: "MAIN"
+  });
+
+  if (!microAnalysis?.ok) {
+    return {
+      microAnalysis,
+      bestMicroMain: {
+        mode: "MAIN",
+        ok: false,
+        reason: microAnalysis?.error || "MICRO_ANALYSIS_NOT_AVAILABLE",
+        bestLong: null,
+        bestShort: null
+      },
+      mainDiscordAllowlist: []
+    };
+  }
+
+  const bestFn = getBestMainLongShortFn();
+  const allowlistFn = getAllowlistFn();
+
+  const bestMicroMain =
+    typeof bestFn === "function"
+      ? bestFn(microAnalysis, {
+          level: "micro",
+          minClosed: minMicroClosed
+        })
+      : fallbackBestMainLongShort(microAnalysis, minMicroClosed);
+
+  const mainDiscordAllowlist =
+    typeof allowlistFn === "function"
+      ? allowlistFn(microAnalysis, {
+          level: "micro",
+          minStatus: "STABLE"
+        })
+      : fallbackAllowlist(microAnalysis);
+
+  return {
+    microAnalysis,
+    bestMicroMain,
+    mainDiscordAllowlist
+  };
+}
+
 function compactSourcePreview(events) {
   return safeArray(events)
     .slice(-MAX_DEBUG_EVENTS)
@@ -341,7 +522,7 @@ function compactSourcePreview(events) {
       realizedR: event.realizedR ?? event.pnlR ?? event.resultR ?? null,
       pnlPct: event.pnlPct ?? event.realizedPnlPct ?? null,
       exitReason: event.exitReason || null,
-      ts: getEventTs(event, null),
+      ts: getEventTs(event, null)
     }));
 }
 
@@ -360,20 +541,20 @@ function selectEvents({ storedEvents, latestEvents, sourceMode }) {
   if (sourceMode === "latest") {
     return {
       selectedEvents: latestEvents,
-      selectedSource: "latest",
+      selectedSource: "latest"
     };
   }
 
   if (sourceMode === "merged") {
     return {
       selectedEvents: dedupeEvents([...storedEvents, ...latestEvents]),
-      selectedSource: "merged",
+      selectedSource: "merged"
     };
   }
 
   return {
     selectedEvents: storedEvents,
-    selectedSource: "stored",
+    selectedSource: "stored"
   };
 }
 
@@ -392,6 +573,21 @@ export default async function handler(req, res) {
 
   const minClosed = safeNumber(req?.query?.minClosed, DEFAULT_MIN_CLOSED);
 
+  const minParentClosed = safeNumber(
+    req?.query?.minParentClosed,
+    minClosed
+  );
+
+  const minSubClosed = safeNumber(
+    req?.query?.minSubClosed,
+    DEFAULT_MIN_SUB_CLOSED
+  );
+
+  const minMicroClosed = safeNumber(
+    req?.query?.minMicroClosed,
+    DEFAULT_MIN_MICRO_CLOSED
+  );
+
   const sourceMode = String(req?.query?.source || "stored").toLowerCase().trim();
   const normalizedSourceMode = ["stored", "latest", "merged"].includes(sourceMode)
     ? sourceMode
@@ -406,7 +602,7 @@ export default async function handler(req, res) {
         reset: true,
         clearResult,
         generatedAt: new Date().toISOString(),
-        latencyMs: Date.now() - startedAt,
+        latencyMs: Date.now() - startedAt
       });
     }
 
@@ -416,15 +612,16 @@ export default async function handler(req, res) {
       includeLatest || normalizedSourceMode === "latest" || normalizedSourceMode === "merged"
         ? await getLatestScan().catch(error => ({
             ok: false,
-            error: error?.message || String(error),
+            error: error?.message || String(error)
           }))
         : {
             ok: null,
             skipped: true,
-            reason: "includeLatest=false",
+            reason: "includeLatest=false"
           };
 
     const storedEvents = dedupeEvents(storedEventsRaw);
+
     const latestEvents =
       latest?.ok &&
       (includeLatest || normalizedSourceMode === "latest" || normalizedSourceMode === "merged")
@@ -434,14 +631,41 @@ export default async function handler(req, res) {
     const { selectedEvents, selectedSource } = selectEvents({
       storedEvents,
       latestEvents,
-      sourceMode: normalizedSourceMode,
+      sourceMode: normalizedSourceMode
     });
 
-    const report = buildReport(selectedEvents, {
+    const baseReport = buildReport(selectedEvents, {
       minClosed,
       familyCountLong: 50,
-      familyCountShort: 50,
+      familyCountShort: 50
     });
+
+    const {
+      microAnalysis,
+      bestMicroMain,
+      mainDiscordAllowlist
+    } = buildMicroPayload(selectedEvents, {
+      minClosed,
+      minParentClosed,
+      minSubClosed,
+      minMicroClosed
+    });
+
+    const report = {
+      ...safeObject(baseReport),
+
+      microAnalysis,
+      bestMicroMain,
+      mainDiscordAllowlist,
+
+      microConfig: {
+        enabled: Boolean(microAnalysis?.ok),
+        minParentClosed,
+        minSubClosed,
+        minMicroClosed,
+        note: "Microfamilies gebruiken alleen entry-known velden. Outcome-data wordt alleen gebruikt voor ranking/statistiek."
+      }
+    };
 
     const response = {
       ok: true,
@@ -452,10 +676,13 @@ export default async function handler(req, res) {
         source: selectedSource,
         includeLatest,
         minClosed,
+        minParentClosed,
+        minSubClosed,
+        minMicroClosed,
         note:
           selectedSource === "stored"
             ? "Analyse gebruikt alleen opgeslagen analyse-records. Latest scan wordt niet meegeteld tenzij source=latest/merged of includeLatest=true."
-            : "Analyse gebruikt debug/latest data. Gebruik source=stored voor echte family-statistiek.",
+            : "Analyse gebruikt debug/latest data. Gebruik source=stored voor echte family-statistiek."
       },
 
       sources: {
@@ -472,19 +699,26 @@ export default async function handler(req, res) {
           reason: latest?.reason || null,
           updatedAt: latest?.updatedAt || null,
           tradeFunnelUpdatedAt: latest?.tradeFunnelUpdatedAt || null,
-          error: latest?.error || null,
-        },
+          error: latest?.error || null
+        }
       },
 
       tradesLoaded: selectedEvents.length,
-      report,
+
+      // Top-level shortcuts voor frontend.
+      microAnalysis,
+      bestMicroMain,
+      mainDiscordAllowlist,
+
+      // Bestaande analyzer blijft onder report staan.
+      report
     };
 
     if (debug) {
       response.debug = {
         storedPreview: compactSourcePreview(storedEvents),
         latestPreview: compactSourcePreview(latestEvents),
-        selectedPreview: compactSourcePreview(selectedEvents),
+        selectedPreview: compactSourcePreview(selectedEvents)
       };
     }
 
@@ -496,7 +730,7 @@ export default async function handler(req, res) {
       ok: false,
       generatedAt: new Date().toISOString(),
       latencyMs: Date.now() - startedAt,
-      error: serializeError(error, debug),
+      error: serializeError(error, debug)
     });
   }
 }
