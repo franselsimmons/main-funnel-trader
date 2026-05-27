@@ -1,19 +1,36 @@
+import fs from "fs/promises";
+import path from "path";
+
 import { getLatestScan } from "../lib/scanStore.js";
 import * as analyzeStore from "../lib/analyze/analyzeStore.js";
 import * as familyEngine from "../lib/analyze/familyEngine.js";
 import * as familyMicroAnalyzer from "../lib/familyMicroAnalyzer.js";
 
+const ROOT_DIR = process.cwd();
+const DATA_DIR = path.join(ROOT_DIR, "data");
+const ANALYZER_DIR = path.join(DATA_DIR, "analyzer");
+
+const DEFAULT_ANALYZER_EXPORT_FILE = path.join(
+  ANALYZER_DIR,
+  "latest-microfamily-analysis.json"
+);
+
 const DEFAULT_MIN_CLOSED = 10;
 const DEFAULT_INCLUDE_LATEST = false;
 const MAX_DEBUG_EVENTS = 50;
 
-// Microfamily defaults.
-// Parent blijft gelijk aan analyzer minClosed.
-// Sub/micro mogen iets lager staan zodat je sneller ziet waar edge ontstaat,
-// maar live allowlist kan straks alsnog strenger.
 const DEFAULT_MIN_PARENT_CLOSED = DEFAULT_MIN_CLOSED;
 const DEFAULT_MIN_SUB_CLOSED = 8;
 const DEFAULT_MIN_MICRO_CLOSED = 6;
+
+const DAY_MS = 86400000;
+
+const ACCEPTED_ROTATION_STATUSES = new Set([
+  "ELITE",
+  "HOT",
+  "GOOD",
+  "STABLE"
+]);
 
 // ================= GENERIC HELPERS =================
 
@@ -28,7 +45,17 @@ function safeObject(value) {
 }
 
 function safeNumber(value, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string") {
+    const cleaned = value.replace("%", "").replace(",", ".").trim();
+    const n = Number(cleaned);
+
+    return Number.isFinite(n) ? n : fallback;
+  }
+
   const n = Number(value);
+
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -37,8 +64,8 @@ function normalizeBoolean(value, fallback = false) {
 
   const v = String(value).trim().toLowerCase();
 
-  if (["true", "1", "yes", "y"].includes(v)) return true;
-  if (["false", "0", "no", "n"].includes(v)) return false;
+  if (["true", "1", "yes", "y", "on"].includes(v)) return true;
+  if (["false", "0", "no", "n", "off"].includes(v)) return false;
 
   return fallback;
 }
@@ -52,6 +79,15 @@ function normalizeSide(value) {
 
   if (["long", "bull", "buy"].includes(s)) return "LONG";
   if (["short", "bear", "sell"].includes(s)) return "SHORT";
+
+  return "";
+}
+
+function inferSideFromFamilyId(value) {
+  const id = normalizeText(value);
+
+  if (id.includes("SHORT")) return "SHORT";
+  if (id.includes("LONG")) return "LONG";
 
   return "";
 }
@@ -79,6 +115,71 @@ function serializeError(error, debug = false) {
   }
 
   return payload;
+}
+
+function getEnvList(key, fallback = []) {
+  const raw = process.env[key];
+
+  if (!raw) return fallback;
+
+  return String(raw)
+    .split(",")
+    .map(item => normalizeText(item))
+    .filter(Boolean);
+}
+
+function resolveProjectPath(inputPath, fallbackPath) {
+  if (!inputPath) return fallbackPath;
+  if (path.isAbsolute(inputPath)) return inputPath;
+
+  return path.join(ROOT_DIR, inputPath);
+}
+
+function getAnalyzerExportFilePath() {
+  return resolveProjectPath(
+    process.env.WEEKLY_ROTATION_ANALYZER_FILE ||
+      process.env.ANALYZER_MICRO_ROTATION_EXPORT_FILE,
+    DEFAULT_ANALYZER_EXPORT_FILE
+  );
+}
+
+async function ensureParentDir(filePath) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+}
+
+async function writeJsonAtomic(filePath, data) {
+  await ensureParentDir(filePath);
+
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const payload = JSON.stringify(data, null, 2);
+
+  await fs.writeFile(tmpPath, `${payload}\n`, "utf8");
+  await fs.rename(tmpPath, filePath);
+
+  return {
+    ok: true,
+    path: filePath,
+    bytes: Buffer.byteLength(payload, "utf8")
+  };
+}
+
+function addDays(dateInput, days) {
+  const date = new Date(dateInput);
+
+  return new Date(date.getTime() + days * DAY_MS);
+}
+
+function getIsoWeekId(dateInput = new Date()) {
+  const date = new Date(dateInput);
+  const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+
+  const dayNum = utcDate.getUTCDay() || 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - dayNum);
+
+  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((utcDate - yearStart) / DAY_MS + 1) / 7);
+
+  return `${utcDate.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
 }
 
 // ================= TRADE RECORD HELPERS =================
@@ -390,17 +491,30 @@ function getStatusRank(status) {
   return 0;
 }
 
+function getRowProfitFactor(row) {
+  return safeNumber(row?.pf ?? row?.profitFactor, 0);
+}
+
+function getRowWinrate(row) {
+  const raw = row?.winrate ?? row?.winRate ?? row?.winrateNum ?? row?.winRateNum;
+  const value = safeNumber(raw, 0);
+
+  if (value > 0 && value <= 1) return value * 100;
+
+  return value;
+}
+
 function sortMainMicroFallback(a, b) {
   const statusDiff = getStatusRank(b.status) - getStatusRank(a.status);
   if (statusDiff !== 0) return statusDiff;
 
-  const winrateDiff = safeNumber(b.winrateNum, 0) - safeNumber(a.winrateNum, 0);
+  const winrateDiff = getRowWinrate(b) - getRowWinrate(a);
   if (winrateDiff !== 0) return winrateDiff;
 
   const avgRDiff = safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0);
   if (avgRDiff !== 0) return avgRDiff;
 
-  const pfDiff = safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0);
+  const pfDiff = getRowProfitFactor(b) - getRowProfitFactor(a);
   if (pfDiff !== 0) return pfDiff;
 
   return safeNumber(b.closed, 0) - safeNumber(a.closed, 0);
@@ -414,7 +528,7 @@ function fallbackBestMainLongShort(microAnalysis, minClosed) {
   ]
     .filter(row => safeNumber(row.closed, 0) >= minClosed)
     .filter(row => safeNumber(row.avgR, 0) >= 0)
-    .filter(row => safeNumber(row.profitFactor, 0) >= 1.05)
+    .filter(row => getRowProfitFactor(row) >= 1.05)
     .sort(sortMainMicroFallback);
 
   return {
@@ -431,7 +545,7 @@ function fallbackAllowlist(microAnalysis) {
     ...safeArray(microAnalysis?.allowlists?.micro),
     ...safeArray(microAnalysis?.allowlists?.sub),
     ...safeArray(microAnalysis?.allowlists?.parent)
-  ].filter(item => ["ELITE", "HOT", "GOOD", "STABLE"].includes(normalizeText(item.status)));
+  ].filter(item => ACCEPTED_ROTATION_STATUSES.has(normalizeText(item.status)));
 }
 
 function buildMicroAnalysis(events, options = {}) {
@@ -507,6 +621,369 @@ function buildMicroPayload(events, options = {}) {
     mainDiscordAllowlist
   };
 }
+
+// ================= ROTATION EXPORT BUILDER =================
+
+function extractFamilyId(row) {
+  if (typeof row === "string") return row.trim();
+
+  return String(
+    row?.microFamilyId ||
+      row?.familyId ||
+      row?.family ||
+      row?.id ||
+      row?.key ||
+      row?.name ||
+      ""
+  ).trim();
+}
+
+function extractParentFamilyId(row) {
+  return (
+    row?.parentFamilyId ||
+    row?.parentFamily ||
+    row?.parent ||
+    row?.parentId ||
+    row?.mainFamily ||
+    null
+  );
+}
+
+function normalizeDefinition(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split("|")
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizeWinnerForExport(row, fallbackSide = "") {
+  const raw = typeof row === "string" ? { microFamilyId: row } : safeObject(row);
+  const microFamilyId = extractFamilyId(raw);
+
+  if (!microFamilyId) return null;
+
+  const side =
+    normalizeSide(raw.side || raw.direction) ||
+    inferSideFromFamilyId(microFamilyId) ||
+    fallbackSide;
+
+  if (!side) return null;
+
+  const winrate = getRowWinrate(raw);
+  const pf = getRowProfitFactor(raw);
+
+  return {
+    microFamilyId,
+    parentFamilyId: extractParentFamilyId(raw),
+    level: normalizeText(raw.level || "MICRO"),
+    side,
+    status: normalizeText(raw.status || raw.rating || "ACTIVE"),
+
+    observed: safeNumber(raw.observed ?? raw.trades ?? raw.count, 0),
+    trades: safeNumber(raw.trades ?? raw.observed ?? raw.count, 0),
+    closed: safeNumber(
+      raw.closed ??
+        raw.closedTrades ??
+        raw.closedCount ??
+        raw.sampleSize,
+      0
+    ),
+    wins: safeNumber(raw.wins, 0),
+    losses: safeNumber(raw.losses, 0),
+    breakeven: safeNumber(raw.breakeven ?? raw.be, 0),
+
+    winrate,
+    avgR: safeNumber(raw.avgR ?? raw.averageR, 0),
+    totalR: safeNumber(raw.totalR ?? raw.sumR, 0),
+    pf,
+    score: safeNumber(raw.score ?? raw.analyzerScore, 0),
+
+    definition: normalizeDefinition(
+      raw.definition ||
+        raw.filterFamily ||
+        raw.signature ||
+        raw.filters ||
+        raw.tags
+    ),
+
+    selectedAt: new Date().toISOString(),
+    source: "TRADESYSTEM_ANALYZER"
+  };
+}
+
+function selectDirectBest(bestMicroMain, side) {
+  const payload = safeObject(bestMicroMain);
+  const wantedSide = normalizeText(side);
+
+  if (wantedSide === "LONG") {
+    return (
+      payload.bestMainLong ||
+      payload.bestMicroLong ||
+      payload.bestLong ||
+      payload.long ||
+      payload.LONG ||
+      null
+    );
+  }
+
+  if (wantedSide === "SHORT") {
+    return (
+      payload.bestMainShort ||
+      payload.bestMicroShort ||
+      payload.bestShort ||
+      payload.short ||
+      payload.SHORT ||
+      null
+    );
+  }
+
+  return null;
+}
+
+function collectCandidateRows(microAnalysis, mainDiscordAllowlist) {
+  return [
+    ...safeArray(mainDiscordAllowlist),
+    ...safeArray(microAnalysis?.allowlists?.micro),
+    ...safeArray(microAnalysis?.microFamilies),
+    ...safeArray(microAnalysis?.subFamilies),
+    ...safeArray(microAnalysis?.parentFamilies)
+  ];
+}
+
+function rowPassesRotationExport(row, side, minClosed) {
+  const normalized = normalizeWinnerForExport(row, side);
+
+  if (!normalized) return false;
+  if (normalized.side !== side) return false;
+  if (normalized.level && normalized.level !== "MICRO") return false;
+  if (!ACCEPTED_ROTATION_STATUSES.has(normalized.status)) return false;
+  if (normalized.closed < minClosed) return false;
+  if (normalized.avgR <= 0) return false;
+  if (normalized.pf > 0 && normalized.pf < 1) return false;
+
+  return true;
+}
+
+function selectFallbackWinner({
+  microAnalysis,
+  mainDiscordAllowlist,
+  side,
+  minClosed
+}) {
+  return collectCandidateRows(microAnalysis, mainDiscordAllowlist)
+    .filter(row => rowPassesRotationExport(row, side, minClosed))
+    .sort(sortMainMicroFallback)[0] || null;
+}
+
+function selectWinnerForExport({
+  bestMicroMain,
+  microAnalysis,
+  mainDiscordAllowlist,
+  side,
+  minClosed
+}) {
+  const direct = normalizeWinnerForExport(selectDirectBest(bestMicroMain, side), side);
+
+  if (direct?.microFamilyId && direct.side === side) {
+    return direct;
+  }
+
+  const fallback = selectFallbackWinner({
+    microAnalysis,
+    mainDiscordAllowlist,
+    side,
+    minClosed
+  });
+
+  return normalizeWinnerForExport(fallback, side);
+}
+
+function shouldExportMicroRotation(selectedSource) {
+  const enabled = normalizeBoolean(
+    process.env.ANALYZER_MICRO_ROTATION_EXPORT ??
+      process.env.ANALYZER_MICRO_ROTATION_EXPORT_ENABLED,
+    true
+  );
+
+  if (!enabled) return false;
+
+  const allowedSources = getEnvList("ANALYZER_MICRO_ROTATION_EXPORT_SOURCES", [
+    "STORED"
+  ]);
+
+  return allowedSources.includes(normalizeText(selectedSource));
+}
+
+function buildMicroRotationExportPayload({
+  selectedSource,
+  selectedEvents,
+  store,
+  latest,
+  microAnalysis,
+  bestMicroMain,
+  mainDiscordAllowlist,
+  minClosed,
+  minParentClosed,
+  minSubClosed,
+  minMicroClosed,
+  generatedAt
+}) {
+  const generatedDate = new Date(generatedAt);
+  const sourceWeekId = getIsoWeekId(generatedDate);
+  const targetWeekId = getIsoWeekId(addDays(generatedDate, 7));
+
+  const bestMainLong = selectWinnerForExport({
+    bestMicroMain,
+    microAnalysis,
+    mainDiscordAllowlist,
+    side: "LONG",
+    minClosed: minMicroClosed
+  });
+
+  const bestMainShort = selectWinnerForExport({
+    bestMicroMain,
+    microAnalysis,
+    mainDiscordAllowlist,
+    side: "SHORT",
+    minClosed: minMicroClosed
+  });
+
+  const allowlist = [bestMainLong, bestMainShort].filter(Boolean);
+
+  return {
+    ok: allowlist.length > 0,
+    exportVersion: 1,
+    type: "LATEST_MICROFAMILY_ANALYSIS",
+    mode: "MAIN_MICRO_WEEKLY_ROTATION",
+    source: "TRADESYSTEM_ANALYZER",
+
+    generatedAt,
+    updatedAt: generatedAt,
+
+    weekId: sourceWeekId,
+    sourceWeekId,
+    nextWeekId: targetWeekId,
+    targetWeekId,
+
+    selectedSource,
+
+    bestMainLong,
+    bestMainShort,
+
+    winners: {
+      long: bestMainLong,
+      short: bestMainShort
+    },
+
+    allowlist,
+
+    config: {
+      minClosed,
+      minParentClosed,
+      minSubClosed,
+      minMicroClosed,
+      level: "MICRO",
+      acceptedStatuses: Array.from(ACCEPTED_ROTATION_STATUSES)
+    },
+
+    stats: {
+      selectedEvents: safeArray(selectedEvents).length,
+      microFamilies: safeArray(microAnalysis?.microFamilies).length,
+      subFamilies: safeArray(microAnalysis?.subFamilies).length,
+      parentFamilies: safeArray(microAnalysis?.parentFamilies).length,
+      mainDiscordAllowlist: safeArray(mainDiscordAllowlist).length
+    },
+
+    sourceState: {
+      store: {
+        ok: Boolean(store?.ok),
+        count: safeNumber(store?.count, 0),
+        trades: safeNumber(store?.trades, 0),
+        primary: store?.primary || null,
+        path: store?.path || null,
+        error: store?.error || null
+      },
+      latest: {
+        ok: latest?.ok ?? null,
+        skipped: Boolean(latest?.skipped),
+        updatedAt: latest?.updatedAt || null,
+        error: latest?.error || null
+      }
+    },
+
+    note:
+      "Dit bestand is de source-of-truth voor weekly rotation. Beste MICRO LONG en MICRO SHORT van deze analyzer-week worden door rotationStore overgenomen als next-week allowlist."
+  };
+}
+
+async function exportMicroRotationAnalysis({
+  selectedSource,
+  selectedEvents,
+  store,
+  latest,
+  microAnalysis,
+  bestMicroMain,
+  mainDiscordAllowlist,
+  minClosed,
+  minParentClosed,
+  minSubClosed,
+  minMicroClosed,
+  generatedAt
+}) {
+  if (!shouldExportMicroRotation(selectedSource)) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "EXPORT_DISABLED_OR_SOURCE_NOT_ALLOWED",
+      selectedSource,
+      allowedSources: getEnvList("ANALYZER_MICRO_ROTATION_EXPORT_SOURCES", [
+        "STORED"
+      ])
+    };
+  }
+
+  const filePath = getAnalyzerExportFilePath();
+
+  const payload = buildMicroRotationExportPayload({
+    selectedSource,
+    selectedEvents,
+    store,
+    latest,
+    microAnalysis,
+    bestMicroMain,
+    mainDiscordAllowlist,
+    minClosed,
+    minParentClosed,
+    minSubClosed,
+    minMicroClosed,
+    generatedAt
+  });
+
+  const writeResult = await writeJsonAtomic(filePath, payload);
+
+  return {
+    ok: true,
+    skipped: false,
+    reason: "MICRO_ROTATION_ANALYSIS_EXPORTED",
+    file: writeResult.path,
+    bytes: writeResult.bytes,
+    weekId: payload.weekId,
+    targetWeekId: payload.targetWeekId,
+    bestMainLong: payload.bestMainLong?.microFamilyId || null,
+    bestMainShort: payload.bestMainShort?.microFamilyId || null,
+    allowlistCount: payload.allowlist.length
+  };
+}
+
+// ================= DEBUG HELPERS =================
 
 function compactSourcePreview(events) {
   return safeArray(events)
@@ -589,6 +1066,7 @@ export default async function handler(req, res) {
   );
 
   const sourceMode = String(req?.query?.source || "stored").toLowerCase().trim();
+
   const normalizedSourceMode = ["stored", "latest", "merged"].includes(sourceMode)
     ? sourceMode
     : "stored";
@@ -605,6 +1083,8 @@ export default async function handler(req, res) {
         latencyMs: Date.now() - startedAt
       });
     }
+
+    const generatedAt = new Date().toISOString();
 
     const { store, events: storedEventsRaw } = await loadStoredEvents();
 
@@ -663,13 +1143,49 @@ export default async function handler(req, res) {
         minParentClosed,
         minSubClosed,
         minMicroClosed,
-        note: "Microfamilies gebruiken alleen entry-known velden. Outcome-data wordt alleen gebruikt voor ranking/statistiek."
+        note:
+          "Microfamilies gebruiken alleen entry-known velden. Outcome-data wordt alleen gebruikt voor ranking/statistiek."
       }
     };
 
+    let analyzerExport = {
+      ok: false,
+      skipped: true,
+      reason: "MICRO_ANALYSIS_NOT_OK"
+    };
+
+    if (microAnalysis?.ok) {
+      try {
+        analyzerExport = await exportMicroRotationAnalysis({
+          selectedSource,
+          selectedEvents,
+          store,
+          latest,
+          microAnalysis,
+          bestMicroMain,
+          mainDiscordAllowlist,
+          minClosed,
+          minParentClosed,
+          minSubClosed,
+          minMicroClosed,
+          generatedAt
+        });
+      } catch (exportError) {
+        analyzerExport = {
+          ok: false,
+          skipped: false,
+          reason: "MICRO_ROTATION_EXPORT_FAILED",
+          error: serializeError(exportError, debug),
+          file: getAnalyzerExportFilePath()
+        };
+
+        console.error("MICRO ROTATION EXPORT ERROR:", exportError);
+      }
+    }
+
     const response = {
       ok: true,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       latencyMs: Date.now() - startedAt,
 
       mode: {
@@ -704,6 +1220,8 @@ export default async function handler(req, res) {
       },
 
       tradesLoaded: selectedEvents.length,
+
+      analyzerExport,
 
       // Top-level shortcuts voor frontend.
       microAnalysis,
