@@ -32,6 +32,36 @@ const ACCEPTED_ROTATION_STATUSES = new Set([
   "STABLE"
 ]);
 
+// Winrate-first fair ranking.
+// 10/10 mag niet automatisch boven 80/100 eindigen.
+const FAIR_WINRATE_TARGET_CLOSED = readPositiveNumberEnv(
+  "ANALYZER_FAIR_WINRATE_TARGET_CLOSED",
+  100
+);
+
+const FAIR_WINRATE_WILSON_Z = readPositiveNumberEnv(
+  "ANALYZER_FAIR_WINRATE_WILSON_Z",
+  1.96
+);
+
+const FAIR_WINRATE_PRIOR_ALPHA = readPositiveNumberEnv(
+  "ANALYZER_FAIR_WINRATE_PRIOR_ALPHA",
+  8
+);
+
+const FAIR_WINRATE_PRIOR_BETA = readPositiveNumberEnv(
+  "ANALYZER_FAIR_WINRATE_PRIOR_BETA",
+  8
+);
+
+// ================= ENV HELPERS =================
+
+function readPositiveNumberEnv(key, fallback) {
+  const n = Number(process.env[key]);
+
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // ================= GENERIC HELPERS =================
 
 function safeArray(value) {
@@ -57,6 +87,17 @@ function safeNumber(value, fallback = 0) {
   const n = Number(value);
 
   return Number.isFinite(n) ? n : fallback;
+}
+
+function round(value, decimals = 3) {
+  const n = safeNumber(value, 0);
+  const p = 10 ** decimals;
+
+  return Math.round(n * p) / p;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function normalizeBoolean(value, fallback = false) {
@@ -180,6 +221,126 @@ function getIsoWeekId(dateInput = new Date()) {
   const weekNo = Math.ceil(((utcDate - yearStart) / DAY_MS + 1) / 7);
 
   return `${utcDate.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+// ================= FAIR WINRATE HELPERS =================
+
+function wilsonLowerBound(wins, total, z = FAIR_WINRATE_WILSON_Z) {
+  const n = safeNumber(total, 0);
+  const w = safeNumber(wins, 0);
+
+  if (n <= 0) return 0;
+
+  const p = clamp(w / n, 0, 1);
+  const z2 = z * z;
+
+  const numerator =
+    p +
+    z2 / (2 * n) -
+    z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n);
+
+  const denominator = 1 + z2 / n;
+
+  return clamp(numerator / denominator, 0, 1);
+}
+
+function bayesianWinrate(wins, total) {
+  const w = safeNumber(wins, 0);
+  const n = safeNumber(total, 0);
+
+  return (
+    (w + FAIR_WINRATE_PRIOR_ALPHA) /
+    (n + FAIR_WINRATE_PRIOR_ALPHA + FAIR_WINRATE_PRIOR_BETA)
+  );
+}
+
+function normalizePercent(value) {
+  const n = safeNumber(value, 0);
+
+  if (n > 0 && n <= 1) return n * 100;
+
+  return n;
+}
+
+function getRowClosed(row) {
+  return safeNumber(
+    row?.closed ??
+      row?.closedTrades ??
+      row?.closedCount ??
+      row?.sampleSize,
+    0
+  );
+}
+
+function getRowWins(row) {
+  const directWins = row?.wins;
+
+  if (directWins !== undefined && directWins !== null && directWins !== "") {
+    return safeNumber(directWins, 0);
+  }
+
+  const closed = getRowClosed(row);
+  const rawWinrate = getRowWinrate(row);
+
+  if (closed <= 0 || rawWinrate <= 0) return 0;
+
+  return Math.round((rawWinrate / 100) * closed);
+}
+
+function calculateFairWinrateMeta(row) {
+  const closed = getRowClosed(row);
+  const wins = getRowWins(row);
+
+  const directFairScore = safeNumber(row?.fairWinrateScore, NaN);
+  const directWilson = normalizePercent(row?.wilsonLowerBoundNum ?? row?.wilsonLowerBound);
+  const directAdjusted = normalizePercent(row?.adjustedWinrateNum ?? row?.adjustedWinrate);
+
+  if (Number.isFinite(directFairScore) && directFairScore > 0) {
+    return {
+      wins,
+      closed,
+      winrate: getRowWinrate(row),
+      adjustedWinrate: directAdjusted,
+      wilsonLowerBound: directWilson,
+      sampleConfidence: normalizePercent(row?.sampleConfidenceNum ?? row?.sampleConfidence),
+      fairWinrateScore: directFairScore,
+      source: "ROW_FAIR_SCORE"
+    };
+  }
+
+  if (closed <= 0) {
+    return {
+      wins: 0,
+      closed: 0,
+      winrate: 0,
+      adjustedWinrate: 0,
+      wilsonLowerBound: 0,
+      sampleConfidence: 0,
+      fairWinrateScore: 0,
+      source: "NO_CLOSED_SAMPLE"
+    };
+  }
+
+  const raw = clamp(wins / closed, 0, 1);
+  const adjusted = bayesianWinrate(wins, closed);
+  const wilson = wilsonLowerBound(wins, closed);
+  const sampleConfidence = clamp(closed / FAIR_WINRATE_TARGET_CLOSED, 0, 1);
+
+  const fairWinrateScore =
+    wilson * 72 +
+    adjusted * 20 +
+    raw * 8;
+
+  return {
+    wins,
+    closed,
+    winrate: round(raw * 100, 3),
+    adjustedWinrate: round(adjusted * 100, 3),
+    wilsonLowerBound: round(wilson * 100, 3),
+    sampleConfidence: round(sampleConfidence * 100, 3),
+    fairWinrateScore: round(fairWinrateScore, 3),
+    source: "CALCULATED_WILSON_BAYES"
+  };
 }
 
 // ================= TRADE RECORD HELPERS =================
@@ -492,32 +653,65 @@ function getStatusRank(status) {
 }
 
 function getRowProfitFactor(row) {
-  return safeNumber(row?.pf ?? row?.profitFactor, 0);
+  return safeNumber(row?.pf ?? row?.profitFactor ?? row?.profitFactorR, 0);
 }
 
 function getRowWinrate(row) {
-  const raw = row?.winrate ?? row?.winRate ?? row?.winrateNum ?? row?.winRateNum;
-  const value = safeNumber(raw, 0);
+  const raw =
+    row?.winrate ??
+    row?.winRate ??
+    row?.winrateNum ??
+    row?.winRateNum;
 
-  if (value > 0 && value <= 1) return value * 100;
+  return normalizePercent(raw);
+}
 
-  return value;
+function getRowFairScore(row) {
+  return calculateFairWinrateMeta(row).fairWinrateScore;
+}
+
+function getRowWilson(row) {
+  return calculateFairWinrateMeta(row).wilsonLowerBound;
+}
+
+function getRowAdjustedWinrate(row) {
+  return calculateFairWinrateMeta(row).adjustedWinrate;
+}
+
+function getRowSampleConfidence(row) {
+  return calculateFairWinrateMeta(row).sampleConfidence;
 }
 
 function sortMainMicroFallback(a, b) {
   const statusDiff = getStatusRank(b.status) - getStatusRank(a.status);
   if (statusDiff !== 0) return statusDiff;
 
-  const winrateDiff = getRowWinrate(b) - getRowWinrate(a);
-  if (winrateDiff !== 0) return winrateDiff;
+  const fairScoreDiff = getRowFairScore(b) - getRowFairScore(a);
+  if (fairScoreDiff !== 0) return fairScoreDiff;
 
+  const wilsonDiff = getRowWilson(b) - getRowWilson(a);
+  if (wilsonDiff !== 0) return wilsonDiff;
+
+  const adjustedWinrateDiff = getRowAdjustedWinrate(b) - getRowAdjustedWinrate(a);
+  if (adjustedWinrateDiff !== 0) return adjustedWinrateDiff;
+
+  const rawWinrateDiff = getRowWinrate(b) - getRowWinrate(a);
+  if (rawWinrateDiff !== 0) return rawWinrateDiff;
+
+  const sampleDiff = getRowSampleConfidence(b) - getRowSampleConfidence(a);
+  if (sampleDiff !== 0) return sampleDiff;
+
+  const closedDiff = getRowClosed(b) - getRowClosed(a);
+  if (closedDiff !== 0) return closedDiff;
+
+  // Alleen tie-break. Niet primair.
   const avgRDiff = safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0);
   if (avgRDiff !== 0) return avgRDiff;
 
   const pfDiff = getRowProfitFactor(b) - getRowProfitFactor(a);
   if (pfDiff !== 0) return pfDiff;
 
-  return safeNumber(b.closed, 0) - safeNumber(a.closed, 0);
+  return String(extractFamilyId(b)).localeCompare(String(extractFamilyId(a)));
 }
 
 function fallbackBestMainLongShort(microAnalysis, minClosed) {
@@ -526,15 +720,15 @@ function fallbackBestMainLongShort(microAnalysis, minClosed) {
     ...safeArray(microAnalysis?.subFamilies),
     ...safeArray(microAnalysis?.parentFamilies)
   ]
-    .filter(row => safeNumber(row.closed, 0) >= minClosed)
-    .filter(row => safeNumber(row.avgR, 0) >= 0)
-    .filter(row => getRowProfitFactor(row) >= 1.05)
+    .filter(row => getRowClosed(row) >= minClosed)
+    .filter(row => getRowFairScore(row) > 0)
     .sort(sortMainMicroFallback);
 
   return {
     mode: "MAIN",
     level: "fallback_combined",
     minClosed,
+    rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
     bestLong: rows.find(row => normalizeSide(row.side) === "LONG") || null,
     bestShort: rows.find(row => normalizeSide(row.side) === "SHORT") || null
   };
@@ -579,7 +773,10 @@ function buildMicroPayload(events, options = {}) {
     familyCountShort: 50,
 
     profile: "MAIN",
-    mode: "MAIN"
+    mode: "MAIN",
+
+    rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+    optimizeFor: "WINRATE"
   });
 
   if (!microAnalysis?.ok) {
@@ -603,7 +800,9 @@ function buildMicroPayload(events, options = {}) {
     typeof bestFn === "function"
       ? bestFn(microAnalysis, {
           level: "micro",
-          minClosed: minMicroClosed
+          minClosed: minMicroClosed,
+          rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+          optimizeFor: "WINRATE"
         })
       : fallbackBestMainLongShort(microAnalysis, minMicroClosed);
 
@@ -611,7 +810,9 @@ function buildMicroPayload(events, options = {}) {
     typeof allowlistFn === "function"
       ? allowlistFn(microAnalysis, {
           level: "micro",
-          minStatus: "STABLE"
+          minStatus: "STABLE",
+          rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+          optimizeFor: "WINRATE"
         })
       : fallbackAllowlist(microAnalysis);
 
@@ -677,8 +878,10 @@ function normalizeWinnerForExport(row, fallbackSide = "") {
 
   if (!side) return null;
 
-  const winrate = getRowWinrate(raw);
+  const fair = calculateFairWinrateMeta(raw);
+  const winrate = fair.winrate || getRowWinrate(raw);
   const pf = getRowProfitFactor(raw);
+  const closed = getRowClosed(raw);
 
   return {
     microFamilyId,
@@ -689,18 +892,19 @@ function normalizeWinnerForExport(row, fallbackSide = "") {
 
     observed: safeNumber(raw.observed ?? raw.trades ?? raw.count, 0),
     trades: safeNumber(raw.trades ?? raw.observed ?? raw.count, 0),
-    closed: safeNumber(
-      raw.closed ??
-        raw.closedTrades ??
-        raw.closedCount ??
-        raw.sampleSize,
-      0
-    ),
-    wins: safeNumber(raw.wins, 0),
-    losses: safeNumber(raw.losses, 0),
+    closed,
+    wins: fair.wins,
+    losses: safeNumber(raw.losses, Math.max(0, closed - fair.wins)),
     breakeven: safeNumber(raw.breakeven ?? raw.be, 0),
 
     winrate,
+    adjustedWinrate: fair.adjustedWinrate,
+    wilsonLowerBound: fair.wilsonLowerBound,
+    sampleConfidence: fair.sampleConfidence,
+    fairWinrateScore: fair.fairWinrateScore,
+    fairWinrateSource: fair.source,
+    rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+
     avgR: safeNumber(raw.avgR ?? raw.averageR, 0),
     totalR: safeNumber(raw.totalR ?? raw.sumR, 0),
     pf,
@@ -766,21 +970,43 @@ function rowPassesRotationExport(row, side, minClosed) {
   if (normalized.level && normalized.level !== "MICRO") return false;
   if (!ACCEPTED_ROTATION_STATUSES.has(normalized.status)) return false;
   if (normalized.closed < minClosed) return false;
-  if (normalized.avgR <= 0) return false;
-  if (normalized.pf > 0 && normalized.pf < 1) return false;
+  if (normalized.fairWinrateScore <= 0) return false;
 
+  // Geen avgR/PF hard-block meer.
+  // Winrate is leidend; avgR/PF zijn alleen tie-breaks en diagnostiek.
   return true;
 }
 
-function selectFallbackWinner({
-  microAnalysis,
-  mainDiscordAllowlist,
-  side,
-  minClosed
-}) {
-  return collectCandidateRows(microAnalysis, mainDiscordAllowlist)
-    .filter(row => rowPassesRotationExport(row, side, minClosed))
-    .sort(sortMainMicroFallback)[0] || null;
+function sortExportWinners(a, b) {
+  const statusDiff = getStatusRank(b.status) - getStatusRank(a.status);
+  if (statusDiff !== 0) return statusDiff;
+
+  const fairDiff = safeNumber(b.fairWinrateScore, 0) - safeNumber(a.fairWinrateScore, 0);
+  if (fairDiff !== 0) return fairDiff;
+
+  const wilsonDiff = safeNumber(b.wilsonLowerBound, 0) - safeNumber(a.wilsonLowerBound, 0);
+  if (wilsonDiff !== 0) return wilsonDiff;
+
+  const adjustedDiff = safeNumber(b.adjustedWinrate, 0) - safeNumber(a.adjustedWinrate, 0);
+  if (adjustedDiff !== 0) return adjustedDiff;
+
+  const rawWinrateDiff = safeNumber(b.winrate, 0) - safeNumber(a.winrate, 0);
+  if (rawWinrateDiff !== 0) return rawWinrateDiff;
+
+  const confidenceDiff = safeNumber(b.sampleConfidence, 0) - safeNumber(a.sampleConfidence, 0);
+  if (confidenceDiff !== 0) return confidenceDiff;
+
+  const closedDiff = safeNumber(b.closed, 0) - safeNumber(a.closed, 0);
+  if (closedDiff !== 0) return closedDiff;
+
+  // Alleen tie-break.
+  const avgRDiff = safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0);
+  if (avgRDiff !== 0) return avgRDiff;
+
+  const pfDiff = safeNumber(b.pf, 0) - safeNumber(a.pf, 0);
+  if (pfDiff !== 0) return pfDiff;
+
+  return String(a.microFamilyId).localeCompare(String(b.microFamilyId));
 }
 
 function selectWinnerForExport({
@@ -790,20 +1016,19 @@ function selectWinnerForExport({
   side,
   minClosed
 }) {
-  const direct = normalizeWinnerForExport(selectDirectBest(bestMicroMain, side), side);
+  const direct = selectDirectBest(bestMicroMain, side);
 
-  if (direct?.microFamilyId && direct.side === side) {
-    return direct;
-  }
+  const candidates = [
+    direct,
+    ...collectCandidateRows(microAnalysis, mainDiscordAllowlist)
+  ]
+    .filter(Boolean)
+    .map(row => normalizeWinnerForExport(row, side))
+    .filter(Boolean)
+    .filter(row => rowPassesRotationExport(row, side, minClosed))
+    .sort(sortExportWinners);
 
-  const fallback = selectFallbackWinner({
-    microAnalysis,
-    mainDiscordAllowlist,
-    side,
-    minClosed
-  });
-
-  return normalizeWinnerForExport(fallback, side);
+  return candidates[0] || null;
 }
 
 function shouldExportMicroRotation(selectedSource) {
@@ -860,7 +1085,7 @@ function buildMicroRotationExportPayload({
 
   return {
     ok: allowlist.length > 0,
-    exportVersion: 1,
+    exportVersion: 2,
     type: "LATEST_MICROFAMILY_ANALYSIS",
     mode: "MAIN_MICRO_WEEKLY_ROTATION",
     source: "TRADESYSTEM_ANALYZER",
@@ -875,6 +1100,18 @@ function buildMicroRotationExportPayload({
 
     selectedSource,
 
+    ranking: {
+      primary: "FAIR_WINRATE_WILSON_BAYES",
+      optimizeFor: "WINRATE",
+      pnlIsPrimary: false,
+      avgRIsTieBreakOnly: true,
+      targetClosed: FAIR_WINRATE_TARGET_CLOSED,
+      wilsonZ: FAIR_WINRATE_WILSON_Z,
+      priorAlpha: FAIR_WINRATE_PRIOR_ALPHA,
+      priorBeta: FAIR_WINRATE_PRIOR_BETA,
+      formula: "fairWinrateScore = wilsonLowerBound*72 + bayesianAdjustedWinrate*20 + rawWinrate*8"
+    },
+
     bestMainLong,
     bestMainShort,
 
@@ -882,6 +1119,9 @@ function buildMicroRotationExportPayload({
       long: bestMainLong,
       short: bestMainShort
     },
+
+    allowedMicroFamilyIds: allowlist.map(row => row.microFamilyId),
+    activeMicroFamilyIds: allowlist.map(row => row.microFamilyId),
 
     allowlist,
 
@@ -920,7 +1160,7 @@ function buildMicroRotationExportPayload({
     },
 
     note:
-      "Dit bestand is de source-of-truth voor weekly rotation. Beste MICRO LONG en MICRO SHORT van deze analyzer-week worden door rotationStore overgenomen als next-week allowlist."
+      "Dit bestand is de source-of-truth voor weekly rotation. Beste MICRO LONG en MICRO SHORT worden gekozen op fair winrate, niet op hoogste PnL."
   };
 }
 
@@ -970,13 +1210,16 @@ async function exportMicroRotationAnalysis({
   const writeResult = await writeJsonAtomic(filePath, payload);
 
   return {
-    ok: true,
+    ok: Boolean(payload.ok),
     skipped: false,
-    reason: "MICRO_ROTATION_ANALYSIS_EXPORTED",
+    reason: payload.ok
+      ? "MICRO_ROTATION_ANALYSIS_EXPORTED"
+      : "MICRO_ROTATION_ANALYSIS_EXPORTED_WITH_EMPTY_ALLOWLIST",
     file: writeResult.path,
     bytes: writeResult.bytes,
     weekId: payload.weekId,
     targetWeekId: payload.targetWeekId,
+    rankingMetric: payload.ranking.primary,
     bestMainLong: payload.bestMainLong?.microFamilyId || null,
     bestMainShort: payload.bestMainShort?.microFamilyId || null,
     allowlistCount: payload.allowlist.length
@@ -1117,7 +1360,9 @@ export default async function handler(req, res) {
     const baseReport = buildReport(selectedEvents, {
       minClosed,
       familyCountLong: 50,
-      familyCountShort: 50
+      familyCountShort: 50,
+      rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+      optimizeFor: "WINRATE"
     });
 
     const {
@@ -1143,8 +1388,11 @@ export default async function handler(req, res) {
         minParentClosed,
         minSubClosed,
         minMicroClosed,
+        rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+        optimizeFor: "WINRATE",
+        pnlIsPrimary: false,
         note:
-          "Microfamilies gebruiken alleen entry-known velden. Outcome-data wordt alleen gebruikt voor ranking/statistiek."
+          "Microfamilies gebruiken alleen entry-known velden voor classificatie. Outcome-data wordt alleen gebruikt voor fair-winrate ranking/statistiek."
       }
     };
 
@@ -1195,6 +1443,9 @@ export default async function handler(req, res) {
         minParentClosed,
         minSubClosed,
         minMicroClosed,
+        rankingMetric: "FAIR_WINRATE_WILSON_BAYES",
+        optimizeFor: "WINRATE",
+        pnlIsPrimary: false,
         note:
           selectedSource === "stored"
             ? "Analyse gebruikt alleen opgeslagen analyse-records. Latest scan wordt niet meegeteld tenzij source=latest/merged of includeLatest=true."
