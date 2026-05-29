@@ -10,7 +10,7 @@ import {
   createAnalyzeFamilies,
 } from "../lib/analyze/familyEngine.js";
 
-const TRADE_FUNNEL_ROUTE_VERSION = "trade-funnel-trace-v1";
+const TRADE_FUNNEL_ROUTE_VERSION = "trade-funnel-trace-v2";
 
 console.log("TRADE_FUNNEL_MODULE_LOADED:", JSON.stringify({
   version: TRADE_FUNNEL_ROUTE_VERSION,
@@ -18,11 +18,38 @@ console.log("TRADE_FUNNEL_MODULE_LOADED:", JSON.stringify({
 }));
 
 const MAX_RESPONSE_TRADES = 250;
+
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
+const PROCESS_TRADES_FAILED = "PROCESS_TRADES_FAILED";
+const PROCESS_TRADES_TIMEOUT = "PROCESS_TRADES_TIMEOUT";
+const DURABLE_SAVE_TOO_LARGE = "TRADE_SYSTEM_DURABLE_SAVE_TOO_LARGE";
+
+const REDIS_SET_TOO_LARGE = "REDIS_SET_ABORTED_TOO_LARGE";
+const REDIS_PAYLOAD_TOO_LARGE = "REDIS_PAYLOAD_TOO_LARGE";
 
 const TRADE_FUNNEL_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_MIN_SCORE", 45);
 const TRADE_FUNNEL_ALMOST_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ALMOST_MIN_SCORE", 45);
 const TRADE_FUNNEL_MAX_INPUT = readNumberEnv("TRADE_FUNNEL_MAX_INPUT", 180);
+
+const PROCESS_TRADES_TIMEOUT_MS = readNumberEnv(
+  "TRADE_FUNNEL_PROCESS_TRADES_TIMEOUT_MS",
+  55_000
+);
+
+const ANALYZE_LOAD_TIMEOUT_MS = readNumberEnv(
+  "TRADE_FUNNEL_ANALYZE_LOAD_TIMEOUT_MS",
+  12_000
+);
+
+const ANALYZE_APPEND_TIMEOUT_MS = readNumberEnv(
+  "TRADE_FUNNEL_ANALYZE_APPEND_TIMEOUT_MS",
+  15_000
+);
+
+const SCAN_STORE_TIMEOUT_MS = readNumberEnv(
+  "TRADE_FUNNEL_SCAN_STORE_TIMEOUT_MS",
+  12_000
+);
 
 const SYNTHETIC_ANALYZE_ENABLED = readBooleanEnv("ANALYZE_SYNTHETIC_ENABLED", true);
 const SYNTHETIC_ENTRY_MAX = readNumberEnv("ANALYZE_SYNTHETIC_ENTRY_MAX", 80);
@@ -62,6 +89,7 @@ function errorTradeFunnel(label, error, payload = {}) {
     ts: Date.now(),
     message: error?.message || String(error || "unknown_error"),
     name: error?.name || null,
+    code: error?.code || null,
     stack: error?.stack?.slice?.(0, 2500) || null,
     ...payload,
   }));
@@ -69,12 +97,93 @@ function errorTradeFunnel(label, error, payload = {}) {
 
 function isLockBusyError(value) {
   const message = String(value?.message || value?.error || value?.reason || value || "");
+
   return (
     message === LOCK_BUSY_ERROR ||
     message.includes(LOCK_BUSY_ERROR) ||
     value?.reason === LOCK_BUSY_ERROR ||
     value?.busy === true
   );
+}
+
+function isRedisPayloadTooLargeError(value) {
+  const message = String(value?.message || value?.error || value?.reason || value || "");
+
+  return (
+    message.includes(REDIS_SET_TOO_LARGE) ||
+    message.includes(REDIS_PAYLOAD_TOO_LARGE) ||
+    message.includes("runtime:core bytes=") ||
+    message.includes("max=9000000")
+  );
+}
+
+function isTimeoutError(value) {
+  const message = String(value?.message || value?.error || value?.reason || value || "");
+  const code = String(value?.code || "");
+
+  return (
+    code.includes("TIMEOUT") ||
+    message.includes("_TIMEOUT_") ||
+    message.includes("PROCESS_TRADES_TIMEOUT")
+  );
+}
+
+function classifyProcessTradesError(error) {
+  if (isLockBusyError(error)) {
+    return {
+      ok: true,
+      busy: true,
+      skipped: true,
+      reason: LOCK_BUSY_ERROR,
+      nonFatal: true,
+    };
+  }
+
+  if (isRedisPayloadTooLargeError(error)) {
+    return {
+      ok: true,
+      busy: false,
+      skipped: true,
+      reason: DURABLE_SAVE_TOO_LARGE,
+      nonFatal: true,
+    };
+  }
+
+  if (isTimeoutError(error)) {
+    return {
+      ok: false,
+      busy: false,
+      skipped: true,
+      reason: PROCESS_TRADES_TIMEOUT,
+      nonFatal: false,
+    };
+  }
+
+  return {
+    ok: false,
+    busy: false,
+    skipped: true,
+    reason: PROCESS_TRADES_FAILED,
+    nonFatal: false,
+  };
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${label}_TIMEOUT_${timeoutMs}MS`);
+      error.code = `${label}_TIMEOUT`;
+      reject(error);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ================= ENV HELPERS =================
@@ -1091,7 +1200,11 @@ async function buildSyntheticExitEvents(latest, now = Date.now()) {
   let records = [];
 
   try {
-    records = await loadAnalyzeEvents({ force: true });
+    records = await withTimeout(
+      loadAnalyzeEvents({ force: true }),
+      ANALYZE_LOAD_TIMEOUT_MS,
+      "LOAD_ANALYZE_EVENTS"
+    );
   } catch (e) {
     errorTradeFunnel("LOAD_ANALYZE_EVENTS_FOR_SYNTHETIC_EXIT", e);
     records = [];
@@ -1185,7 +1298,7 @@ function enrichTradeAction(action, latest, candidateIndex, index = 0) {
       ""
   ).toUpperCase().trim();
 
-  const scannerSide = sideToScannerSide(
+  sideToScannerSide(
     action.side ||
       action.direction ||
       action.tradeSide ||
@@ -1540,15 +1653,19 @@ async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
   }
 
   try {
-    const result = await appendAnalyzeEvents(events, {
-      source: "api_trade_funnel",
-      tradeFunnelUpdatedAt: Date.now(),
-      latestUpdatedAt: latest?.updatedAt || null,
-      btc: latest?.btc || null,
-      regime: latest?.regime || null,
-      market: latest?.market || null,
-      ...context,
-    });
+    const result = await withTimeout(
+      appendAnalyzeEvents(events, {
+        source: "api_trade_funnel",
+        tradeFunnelUpdatedAt: Date.now(),
+        latestUpdatedAt: latest?.updatedAt || null,
+        btc: latest?.btc || null,
+        regime: latest?.regime || null,
+        market: latest?.market || null,
+        ...context,
+      }),
+      ANALYZE_APPEND_TIMEOUT_MS,
+      "APPEND_ANALYZE_EVENTS"
+    );
 
     traceTradeFunnel("ANALYZE_APPEND_AFTER", {
       ok: Boolean(result?.ok),
@@ -1581,6 +1698,7 @@ async function runProcessTradesSafe(candidates, latest, notify) {
   traceTradeFunnel("PROCESS_TRADES_BEFORE", {
     candidates: rows.length,
     notify,
+    timeoutMs: PROCESS_TRADES_TIMEOUT_MS,
     hasBtc: Boolean(latest?.btc),
     hasRegime: Boolean(latest?.regime),
     hasMarket: Boolean(latest?.market),
@@ -1603,14 +1721,18 @@ async function runProcessTradesSafe(candidates, latest, notify) {
   }
 
   try {
-    const result = await processTrades(rows, {
-      notify,
-      log: true,
-      analyze: true,
-      btc: latest.btc,
-      regime: latest.regime,
-      market: latest.market,
-    });
+    const result = await withTimeout(
+      processTrades(rows, {
+        notify,
+        log: true,
+        analyze: true,
+        btc: latest.btc,
+        regime: latest.regime,
+        market: latest.market,
+      }),
+      PROCESS_TRADES_TIMEOUT_MS,
+      "PROCESS_TRADES"
+    );
 
     const actions = Array.isArray(result)
       ? result
@@ -1664,31 +1786,39 @@ async function runProcessTradesSafe(candidates, latest, notify) {
       error: null,
     };
   } catch (error) {
-    const busy = isLockBusyError(error);
+    const classification = classifyProcessTradesError(error);
 
     errorTradeFunnel("PROCESS_TRADES", error, {
-      busy,
+      busy: classification.busy,
+      skipped: classification.skipped,
+      reason: classification.reason,
+      nonFatal: classification.nonFatal,
       candidates: rows.length,
     });
 
+    const ok = classification.ok === true;
+
     return {
-      ok: false,
+      ok,
       skipped: true,
-      busy,
+      busy: classification.busy,
       result: {
-        ok: false,
+        ok,
         skipped: true,
-        busy,
-        reason: busy ? LOCK_BUSY_ERROR : "PROCESS_TRADES_FAILED",
+        busy: classification.busy,
+        reason: classification.reason,
         error: error?.message || "process_trades_failed",
         actions: [],
         candidatesCount: rows.length,
+        durableSaveFailed: classification.reason === DURABLE_SAVE_TOO_LARGE,
       },
       error: {
-        reason: busy ? LOCK_BUSY_ERROR : "PROCESS_TRADES_FAILED",
+        reason: classification.reason,
         message: error?.message || "process_trades_failed",
         name: error?.name || null,
+        code: error?.code || null,
         stack: error?.stack?.slice?.(0, 2500) || null,
+        nonFatal: classification.nonFatal,
       },
     };
   }
@@ -1814,6 +1944,7 @@ function compactResponse(data) {
       candidatesCount: safeNumber(data?.tradeSystemResult?.candidatesCount, 0),
       strategyVersion: data?.tradeSystemResult?.strategyVersion || null,
       durableEnabled: Boolean(data?.tradeSystemResult?.durableEnabled),
+      durableSaveFailed: Boolean(data?.tradeSystemResult?.durableSaveFailed),
       actions: actions.slice(0, MAX_RESPONSE_TRADES).map(compactAction),
     },
   };
@@ -2082,15 +2213,19 @@ export async function runTradeFunnel(options = {}) {
         analyzeOk: analyzeAppendResult?.ok ?? null,
       });
 
-      await setLatestScan({
-        ...updated,
-        scanStoreResult: {
-          ok: true,
-          skipped: false,
-          reason: "LATEST_SCAN_UPDATED",
-          ts: Date.now(),
-        },
-      });
+      await withTimeout(
+        setLatestScan({
+          ...updated,
+          scanStoreResult: {
+            ok: true,
+            skipped: false,
+            reason: "LATEST_SCAN_UPDATED",
+            ts: Date.now(),
+          },
+        }),
+        SCAN_STORE_TIMEOUT_MS,
+        "SET_LATEST_SCAN"
+      );
 
       scanStoreResult = {
         ok: true,
@@ -2190,20 +2325,26 @@ export default async function handler(req, res) {
     );
   } catch (error) {
     const busy = isLockBusyError(error);
+    const redisTooLarge = isRedisPayloadTooLargeError(error);
 
     errorTradeFunnel("HANDLER_FATAL", error, {
       notify,
       store,
       full,
       busy,
+      redisTooLarge,
       durationMs: Date.now() - startedAt,
     });
 
     return res.status(200).json({
-      ok: false,
+      ok: redisTooLarge ? true : false,
       skipped: true,
       busy,
-      reason: busy ? LOCK_BUSY_ERROR : "TRADE_FUNNEL_API_ERROR",
+      reason: busy
+        ? LOCK_BUSY_ERROR
+        : redisTooLarge
+          ? DURABLE_SAVE_TOO_LARGE
+          : "TRADE_FUNNEL_API_ERROR",
       error: error?.message || "trade_funnel_api_error",
       traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
       notify,
