@@ -10,6 +10,13 @@ import {
   createAnalyzeFamilies,
 } from "../lib/analyze/familyEngine.js";
 
+const TRADE_FUNNEL_ROUTE_VERSION = "trade-funnel-trace-v1";
+
+console.log("TRADE_FUNNEL_MODULE_LOADED:", JSON.stringify({
+  version: TRADE_FUNNEL_ROUTE_VERSION,
+  ts: Date.now(),
+}));
+
 const MAX_RESPONSE_TRADES = 250;
 const LOCK_BUSY_ERROR = "TRADE_SYSTEM_DURABLE_LOCK_BUSY";
 
@@ -29,6 +36,46 @@ const SYNTHETIC_EXIT_MAX_PER_RUN = readNumberEnv("ANALYZE_SYNTHETIC_EXIT_MAX_PER
 const FAMILY_BY_ID = new Map(
   createAnalyzeFamilies().all.map(family => [family.id, family])
 );
+
+// ================= TRACE HELPERS =================
+
+function traceTradeFunnel(label, payload = {}) {
+  try {
+    console.log(`TRADE_FUNNEL_TRACE_${label}:`, JSON.stringify({
+      version: TRADE_FUNNEL_ROUTE_VERSION,
+      ts: Date.now(),
+      ...payload,
+    }));
+  } catch (e) {
+    console.log(`TRADE_FUNNEL_TRACE_${label}:`, {
+      version: TRADE_FUNNEL_ROUTE_VERSION,
+      ts: Date.now(),
+      payloadType: typeof payload,
+      error: e?.message,
+    });
+  }
+}
+
+function errorTradeFunnel(label, error, payload = {}) {
+  console.error(`TRADE_FUNNEL_ERROR_${label}:`, JSON.stringify({
+    version: TRADE_FUNNEL_ROUTE_VERSION,
+    ts: Date.now(),
+    message: error?.message || String(error || "unknown_error"),
+    name: error?.name || null,
+    stack: error?.stack?.slice?.(0, 2500) || null,
+    ...payload,
+  }));
+}
+
+function isLockBusyError(value) {
+  const message = String(value?.message || value?.error || value?.reason || value || "");
+  return (
+    message === LOCK_BUSY_ERROR ||
+    message.includes(LOCK_BUSY_ERROR) ||
+    value?.reason === LOCK_BUSY_ERROR ||
+    value?.busy === true
+  );
+}
 
 // ================= ENV HELPERS =================
 
@@ -126,22 +173,6 @@ function normalizeTimestamp(value, fallback = Date.now()) {
 
 function normalizeText(value) {
   return String(value || "").toUpperCase().trim();
-}
-
-function serializeError(error, maxStack = 2500) {
-  return {
-    message: error?.message || String(error || "unknown_error"),
-    name: error?.name || null,
-    stack: error?.stack?.slice?.(0, maxStack) || null,
-  };
-}
-
-function isLockBusyError(errorOrMessage) {
-  const message = typeof errorOrMessage === "string"
-    ? errorOrMessage
-    : errorOrMessage?.message || "";
-
-  return message === LOCK_BUSY_ERROR || message.includes(LOCK_BUSY_ERROR);
 }
 
 // ================= RANK HELPERS =================
@@ -508,15 +539,14 @@ function getTradeFunnelCandidates(latest) {
     result = result.slice(0, TRADE_FUNNEL_MAX_INPUT);
   }
 
-  console.log("TRADE FUNNEL raw:", buckets.length);
-  console.log("TRADE FUNNEL accepted:", result.length);
-  console.log("TRADE FUNNEL rejected:", rejectCounts);
-  console.log(
-    "TRADE FUNNEL symbols:",
-    result
-      .map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`)
-      .join(", ")
-  );
+  traceTradeFunnel("TRADE_FUNNEL_SELECTED", {
+    raw: buckets.length,
+    accepted: result.length,
+    rejected: rejectCounts,
+    symbols: result
+      .slice(0, 80)
+      .map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore)}`),
+  });
 
   return {
     candidates: result,
@@ -611,7 +641,7 @@ function buildAnalyzeFamilySnapshot(event) {
       frozenAt: Date.now(),
     };
   } catch (e) {
-    console.error("ANALYZE FAMILY SNAPSHOT ERROR:", serializeError(e));
+    errorTradeFunnel("ANALYZE_FAMILY_SNAPSHOT", e);
     return null;
   }
 }
@@ -1058,11 +1088,14 @@ async function buildSyntheticExitEvents(latest, now = Date.now()) {
   const rejected = {};
   const currentPriceMap = buildCurrentPriceMap(latest);
 
-  const records = await loadAnalyzeEvents({ force: true }).catch(error => {
-    console.error("SYNTHETIC_EXIT_LOAD_ANALYZE_EVENTS_ERROR:", serializeError(error));
+  let records = [];
 
-    return [];
-  });
+  try {
+    records = await loadAnalyzeEvents({ force: true });
+  } catch (e) {
+    errorTradeFunnel("LOAD_ANALYZE_EVENTS_FOR_SYNTHETIC_EXIT", e);
+    records = [];
+  }
 
   const openEntries = getOpenAnalyzeEntries(records);
   const events = [];
@@ -1465,6 +1498,10 @@ function buildAnalyzeEvents(actions, latest, context = {}) {
 async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
   const actions = safeArray(eventsToAppend);
 
+  traceTradeFunnel("ANALYZE_APPEND_BEFORE", {
+    received: actions.length,
+  });
+
   if (!actions.length) {
     return {
       ok: true,
@@ -1482,6 +1519,15 @@ async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
   const { events, stats } = buildAnalyzeEvents(actions, latest, {
     tradeFunnelUpdatedAt: Date.now(),
     ...context,
+  });
+
+  traceTradeFunnel("ANALYZE_NORMALIZED", {
+    received: stats.received,
+    accepted: stats.accepted,
+    acceptedEntries: stats.acceptedEntries,
+    acceptedExits: stats.acceptedExits,
+    rejected: stats.rejected,
+    rejectCounts: stats.rejectCounts,
   });
 
   if (!events.length) {
@@ -1504,18 +1550,146 @@ async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
       ...context,
     });
 
+    traceTradeFunnel("ANALYZE_APPEND_AFTER", {
+      ok: Boolean(result?.ok),
+      accepted: stats.accepted,
+      acceptedEntries: stats.acceptedEntries,
+      acceptedExits: stats.acceptedExits,
+      resultKeys: Object.keys(result || {}).slice(0, 20),
+    });
+
     return {
       ...result,
       ...stats,
     };
   } catch (e) {
-    console.error("ANALYZE_APPEND_ERROR:", JSON.stringify(serializeError(e)));
+    errorTradeFunnel("ANALYZE_APPEND", e, stats);
 
     return {
       ok: false,
-      reason: "ANALYZE_APPEND_FAILED",
       error: e?.message || "analyze_append_failed",
       ...stats,
+    };
+  }
+}
+
+// ================= PROCESS TRADES SAFE WRAPPER =================
+
+async function runProcessTradesSafe(candidates, latest, notify) {
+  const rows = safeArray(candidates);
+
+  traceTradeFunnel("PROCESS_TRADES_BEFORE", {
+    candidates: rows.length,
+    notify,
+    hasBtc: Boolean(latest?.btc),
+    hasRegime: Boolean(latest?.regime),
+    hasMarket: Boolean(latest?.market),
+  });
+
+  if (!rows.length) {
+    traceTradeFunnel("PROCESS_TRADES_SKIPPED_NO_CANDIDATES");
+
+    return {
+      ok: true,
+      skipped: false,
+      busy: false,
+      result: {
+        ok: true,
+        actions: [],
+        candidatesCount: 0,
+      },
+      error: null,
+    };
+  }
+
+  try {
+    const result = await processTrades(rows, {
+      notify,
+      log: true,
+      analyze: true,
+      btc: latest.btc,
+      regime: latest.regime,
+      market: latest.market,
+    });
+
+    const actions = Array.isArray(result)
+      ? result
+      : safeArray(result?.actions);
+
+    traceTradeFunnel("PROCESS_TRADES_AFTER", {
+      resultIsArray: Array.isArray(result),
+      ok: result?.ok ?? null,
+      skipped: Boolean(result?.skipped),
+      busy: Boolean(result?.busy),
+      reason: result?.reason || null,
+      candidatesCount: result?.candidatesCount ?? rows.length,
+      actions: actions.length,
+      entries: actions.filter(a => String(a?.action).toUpperCase() === "ENTRY").length,
+      exits: actions.filter(a => String(a?.action).toUpperCase() === "EXIT").length,
+      waits: actions.filter(a => String(a?.action).toUpperCase() === "WAIT").length,
+      holds: actions.filter(a => String(a?.action).toUpperCase() === "HOLD").length,
+    });
+
+    if (result?.skipped && result?.reason === LOCK_BUSY_ERROR) {
+      return {
+        ok: true,
+        skipped: true,
+        busy: true,
+        result: {
+          ...result,
+          ok: true,
+          actions,
+          candidatesCount: result?.candidatesCount ?? rows.length,
+        },
+        error: null,
+      };
+    }
+
+    return {
+      ok: result?.ok !== false,
+      skipped: Boolean(result?.skipped),
+      busy: Boolean(result?.busy),
+      result: Array.isArray(result)
+        ? {
+            ok: true,
+            actions: result,
+            candidatesCount: rows.length,
+          }
+        : {
+            ok: result?.ok !== false,
+            ...safeObject(result),
+            actions,
+            candidatesCount: result?.candidatesCount ?? rows.length,
+          },
+      error: null,
+    };
+  } catch (error) {
+    const busy = isLockBusyError(error);
+
+    errorTradeFunnel("PROCESS_TRADES", error, {
+      busy,
+      candidates: rows.length,
+    });
+
+    return {
+      ok: false,
+      skipped: true,
+      busy,
+      result: {
+        ok: false,
+        skipped: true,
+        busy,
+        reason: busy ? LOCK_BUSY_ERROR : "PROCESS_TRADES_FAILED",
+        error: error?.message || "process_trades_failed",
+        actions: [],
+        candidatesCount: rows.length,
+      },
+      error: {
+        reason: busy ? LOCK_BUSY_ERROR : "PROCESS_TRADES_FAILED",
+        message: error?.message || "process_trades_failed",
+        name: error?.name || null,
+        stack: error?.stack?.slice?.(0, 2500) || null,
+      },
     };
   }
 }
@@ -1606,14 +1780,14 @@ function compactResponse(data) {
     ok: Boolean(data?.ok),
     skipped: Boolean(data?.skipped),
     busy: Boolean(data?.busy),
-
     reason: data?.reason || null,
     error: data?.error || null,
-    errorDetail: data?.errorDetail || null,
+
+    traceVersion: data?.traceVersion || TRADE_FUNNEL_ROUTE_VERSION,
+    durationMs: data?.durationMs ?? null,
 
     updatedAt: data?.updatedAt || Date.now(),
     tradeFunnelUpdatedAt: data?.tradeFunnelUpdatedAt || null,
-    durationMs: data?.durationMs ?? null,
 
     btc: data?.btc || null,
     regime: data?.regime || null,
@@ -1624,7 +1798,7 @@ function compactResponse(data) {
     tradeFunnelInputCount: safeNumber(data?.tradeFunnelInputCount, 0),
     tradeFunnelInputSymbols: safeArray(data?.tradeFunnelInputSymbols).slice(0, 250),
 
-    tradeSystemError: data?.tradeSystemError || null,
+    processTradesError: data?.processTradesError || null,
     analyzeAppendResult: data?.analyzeAppendResult || null,
     scanStoreResult: data?.scanStoreResult || null,
     syntheticDebug: data?.syntheticDebug || null,
@@ -1637,104 +1811,12 @@ function compactResponse(data) {
       busy: Boolean(data?.tradeSystemResult?.busy),
       reason: data?.tradeSystemResult?.reason || null,
       error: data?.tradeSystemResult?.error || null,
-
       candidatesCount: safeNumber(data?.tradeSystemResult?.candidatesCount, 0),
       strategyVersion: data?.tradeSystemResult?.strategyVersion || null,
       durableEnabled: Boolean(data?.tradeSystemResult?.durableEnabled),
       actions: actions.slice(0, MAX_RESPONSE_TRADES).map(compactAction),
     },
   };
-}
-
-// ================= SAFE TRADE SYSTEM CALL =================
-
-async function runProcessTradesSafe(candidates, latest, notify) {
-  if (!safeArray(candidates).length) {
-    return {
-      ok: true,
-      skipped: false,
-      result: {
-        ok: true,
-        actions: [],
-        candidatesCount: 0,
-      },
-      error: null,
-    };
-  }
-
-  try {
-    const result = await processTrades(candidates, {
-      notify,
-      log: true,
-      analyze: true,
-      btc: latest.btc,
-      regime: latest.regime,
-      market: latest.market,
-    });
-
-    if (result?.skipped && result?.reason === LOCK_BUSY_ERROR) {
-      return {
-        ok: true,
-        skipped: true,
-        busy: true,
-        result: {
-          ...result,
-          ok: true,
-          actions: safeArray(result?.actions),
-          candidatesCount: result?.candidatesCount ?? candidates.length,
-        },
-        error: null,
-      };
-    }
-
-    return {
-      ok: result?.ok !== false,
-      skipped: Boolean(result?.skipped),
-      busy: Boolean(result?.busy),
-      result: Array.isArray(result)
-        ? {
-            ok: true,
-            actions: result,
-            candidatesCount: candidates.length,
-          }
-        : {
-            ok: result?.ok !== false,
-            ...safeObject(result),
-            actions: safeArray(result?.actions),
-            candidatesCount: result?.candidatesCount ?? candidates.length,
-          },
-      error: null,
-    };
-  } catch (error) {
-    const serialized = serializeError(error);
-    const busy = isLockBusyError(error);
-
-    console.error("TRADE_FUNNEL_PROCESS_TRADES_ERROR:", JSON.stringify({
-      ...serialized,
-      busy,
-      candidates: candidates.length,
-      ts: Date.now(),
-    }));
-
-    return {
-      ok: false,
-      skipped: true,
-      busy,
-      result: {
-        ok: false,
-        skipped: true,
-        busy,
-        reason: busy ? LOCK_BUSY_ERROR : "PROCESS_TRADES_FAILED",
-        error: serialized.message,
-        actions: [],
-        candidatesCount: candidates.length,
-      },
-      error: {
-        reason: busy ? LOCK_BUSY_ERROR : "PROCESS_TRADES_FAILED",
-        ...serialized,
-      },
-    };
-  }
 }
 
 // ================= CORE =================
@@ -1745,34 +1827,50 @@ export async function runTradeFunnel(options = {}) {
   const notify = options.notify !== false;
   const store = options.store !== false;
 
+  traceTradeFunnel("RUN_START", {
+    notify,
+    store,
+  });
+
   let latest = null;
 
   try {
-    latest = await getLatestScan();
-  } catch (error) {
-    const serialized = serializeError(error);
+    traceTradeFunnel("GET_LATEST_SCAN_BEFORE");
 
-    console.error("TRADE_FUNNEL_LATEST_SCAN_LOAD_ERROR:", JSON.stringify({
-      ...serialized,
-      ts: Date.now(),
-    }));
+    latest = await getLatestScan();
+
+    traceTradeFunnel("GET_LATEST_SCAN_AFTER", {
+      hasLatest: Boolean(latest),
+      ok: Boolean(latest?.ok),
+      updatedAt: latest?.updatedAt || null,
+      hasFunnel: Boolean(latest?.funnel),
+      bullEntry: safeArray(latest?.funnel?.bull?.entry).length,
+      bearEntry: safeArray(latest?.funnel?.bear?.entry).length,
+      bullAlmost: safeArray(latest?.funnel?.bull?.almost).length,
+      bearAlmost: safeArray(latest?.funnel?.bear?.almost).length,
+    });
+  } catch (error) {
+    errorTradeFunnel("GET_LATEST_SCAN", error);
 
     return {
       ok: false,
       skipped: true,
+      busy: false,
       reason: "LATEST_SCAN_LOAD_FAILED",
-      error: serialized.message,
-      errorDetail: serialized,
+      error: error?.message || "latest_scan_load_failed",
       notify,
       store,
       trades: [],
       tradeSystemResult: {
         ok: false,
         skipped: true,
+        busy: false,
         reason: "LATEST_SCAN_LOAD_FAILED",
+        error: error?.message || "latest_scan_load_failed",
         actions: [],
         candidatesCount: 0,
       },
+      processTradesError: null,
       analyzeAppendResult: null,
       scanStoreResult: null,
       syntheticDebug: null,
@@ -1782,14 +1880,21 @@ export async function runTradeFunnel(options = {}) {
       tradeFunnelInputSymbols: [],
       tradeFunnelUpdatedAt: Date.now(),
       updatedAt: Date.now(),
+      traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
       durationMs: Date.now() - startedAt,
     };
   }
 
   if (!latest?.ok) {
+    traceTradeFunnel("NO_LATEST_SCAN_AVAILABLE", {
+      latestOk: latest?.ok ?? null,
+      keys: latest ? Object.keys(latest).slice(0, 30) : [],
+    });
+
     return {
       ok: false,
       skipped: true,
+      busy: false,
       reason: "NO_LATEST_SCAN_AVAILABLE",
       error: "no_latest_scan_available",
       notify,
@@ -1798,10 +1903,13 @@ export async function runTradeFunnel(options = {}) {
       tradeSystemResult: {
         ok: false,
         skipped: true,
+        busy: false,
         reason: "NO_LATEST_SCAN_AVAILABLE",
+        error: "no_latest_scan_available",
         actions: [],
         candidatesCount: 0,
       },
+      processTradesError: null,
       analyzeAppendResult: null,
       scanStoreResult: null,
       syntheticDebug: null,
@@ -1811,6 +1919,7 @@ export async function runTradeFunnel(options = {}) {
       tradeFunnelInputSymbols: [],
       tradeFunnelUpdatedAt: Date.now(),
       updatedAt: Date.now(),
+      traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
       durationMs: Date.now() - startedAt,
     };
   }
@@ -1819,13 +1928,29 @@ export async function runTradeFunnel(options = {}) {
   const candidates = tradeFunnel.candidates;
   const now = Date.now();
 
+  traceTradeFunnel("CANDIDATES_READY", {
+    rawCount: tradeFunnel.rawCount,
+    candidates: candidates.length,
+    rejectCounts: tradeFunnel.rejectCounts,
+    symbols: candidates
+      .slice(0, 40)
+      .map(c => `${c.symbol}_${c.side}_${c.stage}_${Math.round(c.moveScore || 0)}`),
+  });
+
   const candidateIndex = buildCandidateIndex(candidates, latest);
 
   const syntheticEntries = buildSyntheticEntryEvents(candidates, latest);
   const syntheticExits = await buildSyntheticExitEvents(latest, now);
 
-  const processResult = await runProcessTradesSafe(candidates, latest, notify);
-  const result = processResult.result;
+  traceTradeFunnel("SYNTHETIC_READY", {
+    syntheticEntries: syntheticEntries.events.length,
+    syntheticExits: syntheticExits.events.length,
+    syntheticEntryDebug: syntheticEntries.debug,
+    syntheticExitDebug: syntheticExits.debug,
+  });
+
+  const processTradesResult = await runProcessTradesSafe(candidates, latest, notify);
+  const result = processTradesResult.result;
 
   const rawTradeActions = Array.isArray(result)
     ? result
@@ -1833,9 +1958,23 @@ export async function runTradeFunnel(options = {}) {
       ? result.actions
       : [];
 
+  traceTradeFunnel("RAW_TRADE_ACTIONS_READY", {
+    rawTradeActions: rawTradeActions.length,
+    processOk: processTradesResult.ok,
+    processSkipped: processTradesResult.skipped,
+    processBusy: processTradesResult.busy,
+    processReason: result?.reason || null,
+  });
+
   const enrichedTradeActions = rawTradeActions
     .map((action, index) => enrichTradeAction(action, latest, candidateIndex, index))
     .filter(Boolean);
+
+  traceTradeFunnel("ENRICHED_TRADE_ACTIONS_READY", {
+    enrichedTradeActions: enrichedTradeActions.length,
+    entries: enrichedTradeActions.filter(a => String(a?.action).toUpperCase() === "ENTRY").length,
+    exits: enrichedTradeActions.filter(a => String(a?.action).toUpperCase() === "EXIT").length,
+  });
 
   const analyzeEvents = [
     ...syntheticEntries.events,
@@ -1843,106 +1982,71 @@ export async function runTradeFunnel(options = {}) {
     ...enrichedTradeActions,
   ];
 
-  let analyzeAppendResult = null;
+  traceTradeFunnel("ANALYZE_EVENTS_READY", {
+    analyzeEvents: analyzeEvents.length,
+    syntheticEntries: syntheticEntries.events.length,
+    syntheticExits: syntheticExits.events.length,
+    realActions: enrichedTradeActions.length,
+  });
 
-  if (store) {
-    try {
-      analyzeAppendResult = await appendTradesToAnalyzer(analyzeEvents, latest, {
+  const analyzeAppendResult = store
+    ? await appendTradesToAnalyzer(analyzeEvents, latest, {
         notify,
         store,
         syntheticEntries: syntheticEntries.events.length,
         syntheticExits: syntheticExits.events.length,
         realActions: enrichedTradeActions.length,
-      });
-    } catch (error) {
-      const serialized = serializeError(error);
-
-      console.error("TRADE_FUNNEL_ANALYZE_APPEND_FATAL_ERROR:", JSON.stringify({
-        ...serialized,
-        analyzeEvents: analyzeEvents.length,
-        ts: Date.now(),
-      }));
-
-      analyzeAppendResult = {
-        ok: false,
-        reason: "ANALYZE_APPEND_FATAL_FAILED",
-        error: serialized.message,
+      })
+    : {
+        ok: true,
+        skipped: true,
+        reason: "STORE_FALSE",
         received: analyzeEvents.length,
         accepted: 0,
         acceptedEntries: 0,
         acceptedExits: 0,
         rejected: analyzeEvents.length,
         rejectCounts: {
-          ANALYZE_APPEND_FATAL_FAILED: analyzeEvents.length,
+          STORE_FALSE: analyzeEvents.length,
         },
       };
-    }
-  } else {
-    analyzeAppendResult = {
-      ok: true,
-      skipped: true,
-      reason: "STORE_FALSE",
-      received: analyzeEvents.length,
-      accepted: 0,
-      acceptedEntries: 0,
-      acceptedExits: 0,
-      rejected: analyzeEvents.length,
-      rejectCounts: {
-        STORE_FALSE: analyzeEvents.length,
-      },
-    };
-  }
 
   const updatedResult = Array.isArray(result)
     ? {
-        ok: processResult.ok,
-        skipped: processResult.skipped,
-        busy: processResult.busy,
+        ok: true,
         actions: enrichedTradeActions,
         candidatesCount: candidates.length,
       }
     : {
-        ...result,
-        ok: processResult.ok,
-        skipped: processResult.skipped || Boolean(result?.skipped),
-        busy: processResult.busy || Boolean(result?.busy),
+        ok: result?.ok !== false,
+        ...safeObject(result),
         actions: enrichedTradeActions,
         candidatesCount: result?.candidatesCount ?? candidates.length,
       };
 
-  let scanStoreResult = {
-    ok: true,
-    skipped: !store,
-    reason: store ? "PENDING" : "STORE_FALSE",
-  };
-
   const updated = {
     ...latest,
+    ok: processTradesResult.ok !== false,
 
-    ok:
-      processResult.ok !== false &&
-      analyzeAppendResult?.ok !== false,
-
-    skipped: Boolean(processResult.skipped),
-    busy: Boolean(processResult.busy),
-
+    skipped: Boolean(processTradesResult.skipped),
+    busy: Boolean(processTradesResult.busy),
     reason:
-      processResult.error?.reason ||
-      analyzeAppendResult?.reason ||
+      result?.reason ||
+      processTradesResult.error?.reason ||
       null,
-
     error:
-      processResult.error?.message ||
-      (analyzeAppendResult?.ok === false ? analyzeAppendResult?.error : null) ||
+      processTradesResult.error?.message ||
+      result?.error ||
       null,
 
-    errorDetail: processResult.error || null,
-    tradeSystemError: processResult.error || null,
+    traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
 
     trades: enrichedTradeActions,
     tradeSystemResult: updatedResult,
+    processTradesError: processTradesResult.error,
     analyzeAppendResult,
-    scanStoreResult,
+
+    scanStoreResult: null,
 
     syntheticDebug: {
       entries: syntheticEntries.debug,
@@ -1963,8 +2067,21 @@ export async function runTradeFunnel(options = {}) {
     durationMs: Date.now() - startedAt,
   };
 
+  let scanStoreResult = {
+    ok: true,
+    skipped: true,
+    reason: "STORE_FALSE",
+    ts: Date.now(),
+  };
+
   if (store) {
     try {
+      traceTradeFunnel("SET_LATEST_SCAN_BEFORE", {
+        trades: enrichedTradeActions.length,
+        actions: updatedResult.actions?.length || 0,
+        analyzeOk: analyzeAppendResult?.ok ?? null,
+      });
+
       await setLatestScan({
         ...updated,
         scanStoreResult: {
@@ -1981,35 +2098,43 @@ export async function runTradeFunnel(options = {}) {
         reason: "LATEST_SCAN_UPDATED",
         ts: Date.now(),
       };
-    } catch (error) {
-      const serialized = serializeError(error);
 
-      console.error("TRADE_FUNNEL_SET_LATEST_SCAN_ERROR:", JSON.stringify({
-        ...serialized,
-        ts: Date.now(),
-      }));
+      traceTradeFunnel("SET_LATEST_SCAN_AFTER", {
+        ok: true,
+      });
+    } catch (error) {
+      errorTradeFunnel("SET_LATEST_SCAN", error);
 
       scanStoreResult = {
         ok: false,
         skipped: false,
         reason: "SET_LATEST_SCAN_FAILED",
-        error: serialized.message,
+        error: error?.message || "set_latest_scan_failed",
         ts: Date.now(),
       };
     }
   }
 
-  updated.scanStoreResult = scanStoreResult;
-  updated.ok = Boolean(updated.ok && scanStoreResult.ok !== false);
+  const finalData = {
+    ...updated,
+    scanStoreResult,
+    durationMs: Date.now() - startedAt,
+  };
 
-  if (scanStoreResult.ok === false && !updated.error) {
-    updated.error = scanStoreResult.error || "set_latest_scan_failed";
-    updated.reason = scanStoreResult.reason;
-  }
+  traceTradeFunnel("RUN_DONE", {
+    ok: Boolean(finalData.ok),
+    skipped: Boolean(finalData.skipped),
+    busy: Boolean(finalData.busy),
+    reason: finalData.reason || null,
+    error: finalData.error || null,
+    candidates: finalData.tradeFunnelInputCount,
+    trades: finalData.trades.length,
+    analyzeOk: finalData.analyzeAppendResult?.ok ?? null,
+    scanStoreOk: finalData.scanStoreResult?.ok ?? null,
+    durationMs: finalData.durationMs,
+  });
 
-  updated.durationMs = Date.now() - startedAt;
-
-  return updated;
+  return finalData;
 }
 
 // ================= HANDLER =================
@@ -2022,44 +2147,65 @@ export default async function handler(req, res) {
   const full = normalizeFullResponse(req?.query?.full, false);
 
   res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("X-Trade-Funnel-Version", TRADE_FUNNEL_ROUTE_VERSION);
+
+  traceTradeFunnel("HANDLER_START", {
+    method: req?.method || null,
+    url: req?.url || null,
+    notify,
+    store,
+    full,
+    query: req?.query || {},
+  });
 
   try {
     const data = await runTradeFunnel({ notify, store });
+
+    traceTradeFunnel("HANDLER_SUCCESS", {
+      ok: Boolean(data?.ok),
+      skipped: Boolean(data?.skipped),
+      busy: Boolean(data?.busy),
+      reason: data?.reason || null,
+      error: data?.error || null,
+      trades: safeArray(data?.trades).length,
+      candidates: data?.tradeFunnelInputCount || 0,
+      analyzeOk: data?.analyzeAppendResult?.ok ?? null,
+      scanStoreOk: data?.scanStoreResult?.ok ?? null,
+      durationMs: Date.now() - startedAt,
+    });
 
     return res.status(200).json(
       full
         ? {
             ...data,
+            traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
             httpStatus: 200,
             durationMs: data?.durationMs ?? Date.now() - startedAt,
           }
         : compactResponse({
             ...data,
+            traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
             durationMs: data?.durationMs ?? Date.now() - startedAt,
           })
     );
   } catch (error) {
-    const serialized = serializeError(error);
     const busy = isLockBusyError(error);
 
-    console.error("TRADE_FUNNEL_API_ERROR:", JSON.stringify({
-      route: "/api/trade-funnel",
+    errorTradeFunnel("HANDLER_FATAL", error, {
       notify,
       store,
       full,
       busy,
-      ...serialized,
       durationMs: Date.now() - startedAt,
-      ts: Date.now(),
-    }));
+    });
 
     return res.status(200).json({
       ok: false,
       skipped: true,
       busy,
       reason: busy ? LOCK_BUSY_ERROR : "TRADE_FUNNEL_API_ERROR",
-      error: serialized.message,
-      errorDetail: serialized,
+      error: error?.message || "trade_funnel_api_error",
+      traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
       notify,
       store,
       httpStatus: 200,
