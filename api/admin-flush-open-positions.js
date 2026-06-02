@@ -1,707 +1,760 @@
+export const config = {
+  maxDuration: 60,
+};
+
 const DEFAULT_STRATEGY_VERSION = 'TS_V12_8_WEEKLY_MICRO_ROTATION_CLEAN';
-const DEFAULT_ANALYZE_KEY = 'tradesystem:analyze:store:v3:events';
 
-const REDIS_URL_KEYS = [
-  'KV_REST_API_URL',
-  'UPSTASH_REDIS_REST_URL',
-  'REDIS_REST_API_URL',
-];
+const ANALYZE_EVENTS_KEY = 'tradesystem:analyze:store:v3:events';
+const LATEST_SCAN_KEY = 'tradeSystem:latestScan:v1';
 
-const REDIS_TOKEN_KEYS = [
-  'KV_REST_API_TOKEN',
-  'UPSTASH_REDIS_REST_TOKEN',
-  'REDIS_REST_API_TOKEN',
-];
+const CONFIRM_TEXT = 'RESET_OPEN_POSITIONS';
 
-function send(res, status, payload) {
-  res.status(status).json(payload);
-}
+const OPEN_CONTAINER_KEY_RX =
+  /^(openPositions|open_positions|openTrades|open_trades|activePositions|active_positions|runningPositions|running_positions|heldPositions|held_positions|positionMemory|position_memory|openPositionMemory|open_position_memory)$/i;
 
-function getEnv(names) {
-  for (const name of names) {
-    const value = process.env[name];
-    if (value && String(value).trim()) return String(value).trim();
+const OPEN_COUNT_KEY_RX =
+  /^(openPositionCount|openPositionsCount|openTradeCount|openTradesCount|openCount|open_count)$/i;
+
+const POSITION_CONTAINER_KEY_RX =
+  /^(memory|positions|positionMap|position_map|positionsBySymbol|positions_by_symbol|openBySymbol|open_by_symbol)$/i;
+
+function getRedisConfig() {
+  const url =
+    process.env.KV_REST_API_URL ||
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.REDIS_REST_URL;
+
+  const token =
+    process.env.KV_REST_API_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.REDIS_REST_TOKEN;
+
+  if (!url || !token) {
+    throw new Error('REDIS_REST_ENV_MISSING');
   }
 
-  return null;
+  return {
+    url: String(url).replace(/\/$/, ''),
+    token,
+  };
 }
 
-function isEnabled() {
-  const value = String(process.env.TS_ADMIN_FLUSH_ENABLED || '').toLowerCase();
-  return value === 'true' || value === '1' || value === 'yes';
-}
+async function redis(command, ...args) {
+  const { url, token } = getRedisConfig();
 
-function getExpectedSecret() {
-  return String(
-    process.env.TS_ADMIN_SECRET ||
-      process.env.ADMIN_SECRET ||
-      process.env.FLUSH_ADMIN_SECRET ||
-      ''
-  ).trim();
-}
-
-function getProvidedSecret(req, body) {
-  return String(
-    req.headers['x-admin-secret'] ||
-      req.headers['x-ts-admin-secret'] ||
-      body?.secret ||
-      body?.adminSecret ||
-      req.query?.secret ||
-      ''
-  ).trim();
-}
-
-async function readBody(req) {
-  if (req.body && typeof req.body === 'object') return req.body;
-
-  if (typeof req.body === 'string') {
-    try {
-      return JSON.parse(req.body);
-    } catch {
-      return {};
-    }
-  }
-
-  return await new Promise((resolve) => {
-    let raw = '';
-
-    req.on('data', (chunk) => {
-      raw += chunk;
-    });
-
-    req.on('end', () => {
-      if (!raw) {
-        resolve({});
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        resolve({});
-      }
-    });
-
-    req.on('error', () => resolve({}));
-  });
-}
-
-async function redisCommand(redis, args) {
-  const response = await fetch(redis.url, {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${redis.token}`,
-      'content-type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
-    body: JSON.stringify(args),
+    body: JSON.stringify([command, ...args]),
   });
 
   const text = await response.text();
 
-  let data;
+  let json = null;
   try {
-    data = JSON.parse(text);
+    json = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(`REDIS_NON_JSON_RESPONSE:${response.status}:${text.slice(0, 300)}`);
+    throw new Error(`REDIS_BAD_JSON_RESPONSE:${text.slice(0, 300)}`);
   }
 
-  if (!response.ok || data?.error) {
-    throw new Error(`REDIS_ERROR:${response.status}:${data?.error || text.slice(0, 300)}`);
+  if (!response.ok) {
+    throw new Error(`REDIS_HTTP_${response.status}:${text.slice(0, 300)}`);
   }
 
-  return data.result;
+  if (json?.error) {
+    throw new Error(`REDIS_ERROR:${json.error}`);
+  }
+
+  return json?.result;
 }
 
-function tryJsonParse(value) {
-  if (typeof value !== 'string') return null;
+function asBool(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
 
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
+  const normalized = String(value).trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+
+  return fallback;
 }
 
-function isObject(value) {
+async function getPayload(req) {
+  const host = req.headers.host || 'localhost';
+  const url = new URL(req.url, `https://${host}`);
+
+  if (req.method === 'GET') {
+    return {
+      secret: url.searchParams.get('secret'),
+      dryRun: url.searchParams.get('dryRun'),
+      confirm: url.searchParams.get('confirm'),
+      strategyVersion: url.searchParams.get('strategyVersion'),
+      mode: url.searchParams.get('mode'),
+      maxKeys: url.searchParams.get('maxKeys'),
+    };
+  }
+
+  return req.body || {};
+}
+
+function parseJsonDeep(raw) {
+  let value = raw;
+
+  for (let i = 0; i < 4; i += 1) {
+    if (typeof value !== 'string') {
+      return {
+        ok: true,
+        value,
+      };
+    }
+
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return {
+        ok: false,
+        error: 'EMPTY_STRING',
+      };
+    }
+
+    const looksJson =
+      trimmed.startsWith('{') ||
+      trimmed.startsWith('[') ||
+      trimmed.startsWith('"');
+
+    if (!looksJson) {
+      return {
+        ok: false,
+        error: 'NOT_JSON',
+      };
+    }
+
+    try {
+      value = JSON.parse(trimmed);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `JSON_PARSE_FAILED:${error.message}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    value,
+  };
+}
+
+function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalize(value) {
-  return String(value || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+function countContainerRows(value) {
+  if (Array.isArray(value)) return value.length;
+  if (isPlainObject(value)) return Object.keys(value).length;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  return 0;
 }
 
-function isHistoryOrLearningKey(key) {
-  const lower = String(key || '').toLowerCase();
-
-  return (
-    lower.includes(':closed_trades:') ||
-    lower.includes(':shadow_outcomes:') ||
-    lower.includes(':feature_store:') ||
-    lower.includes(':recent_entries') ||
-    lower.includes(':learning') ||
-    lower.includes(':rotation') ||
-    lower.includes(':micro')
-  );
+function emptyLike(value) {
+  if (Array.isArray(value)) return [];
+  if (isPlainObject(value)) return {};
+  if (typeof value === 'number') return 0;
+  if (typeof value === 'boolean') return false;
+  if (typeof value === 'string') return '';
+  return value;
 }
 
-function isDedicatedOpenKey(key) {
-  const lower = normalize(key);
-
-  return (
-    lower.includes('openposition') ||
-    lower.includes('openpositions') ||
-    lower.includes('activeposition') ||
-    lower.includes('activepositions') ||
-    lower.includes('runningposition') ||
-    lower.includes('holdingposition') ||
-    lower.includes('portfolioopen') ||
-    lower.endsWith('memory')
-  );
+function normalizeAction(value) {
+  return String(value || '').trim().toUpperCase();
 }
 
-function isPositionLike(row) {
-  if (!isObject(row)) return false;
+function isOpenPositionLike(row) {
+  if (!isPlainObject(row)) return false;
 
-  const hasSymbol = typeof row.symbol === 'string' && row.symbol.length > 0;
-  const hasSide = typeof row.side === 'string' && row.side.length > 0;
+  const action = normalizeAction(row.action || row.analyzeLifecycle);
+  const reason = normalizeAction(row.reason);
+  const closed = row.closed === true || row.isClosed === true;
+
+  if (closed) return false;
+  if (action === 'EXIT') return false;
+  if (reason === 'TP' || reason === 'SL' || reason === 'STOP' || reason === 'CLOSED') return false;
+
+  const hasSymbol = typeof row.symbol === 'string' && row.symbol.trim().length > 0;
+  if (!hasSymbol) return false;
+
   const hasEntry =
     Number.isFinite(Number(row.entry)) ||
-    Number.isFinite(Number(row.entryPrice)) ||
-    Number.isFinite(Number(row.openPrice));
+    Number.isFinite(Number(row.entryPrice));
 
-  if (!hasSymbol || !hasSide || !hasEntry) return false;
+  const hasRiskBox =
+    Number.isFinite(Number(row.sl)) ||
+    Number.isFinite(Number(row.tp));
 
-  const action = String(row.action || '').toUpperCase();
-  const reason = String(row.reason || '').toUpperCase();
-  const stage = String(row.scannerStage || row.stage || '').toLowerCase();
-
-  if (action === 'HOLD') return true;
-  if (reason === 'RUNNING') return true;
-  if (reason === 'HOLD_RUNNING') return true;
-  if (stage === 'open_position') return true;
-  if (row.closed === false) return true;
-  if (!row.closedAt && !row.exit && !row.exitPrice && !row.realizedR) return true;
-
-  return false;
-}
-
-function isExitLike(row) {
-  if (!isObject(row)) return false;
-
-  const action = String(row.action || row.analyzeLifecycle || '').toUpperCase();
-
-  return (
-    action === 'EXIT' ||
-    row.closed === true ||
-    Boolean(row.closedAt) ||
-    Number.isFinite(Number(row.exit)) ||
-    Number.isFinite(Number(row.exitPrice))
-  );
-}
-
-function isEntryLike(row) {
-  if (!isObject(row)) return false;
-
-  const action = String(row.action || row.analyzeLifecycle || '').toUpperCase();
-
-  return (
-    action === 'ENTRY' ||
-    action === 'OPEN' ||
+  const isRunning =
     action === 'HOLD' ||
-    isPositionLike(row)
-  );
+    action === 'ENTRY' ||
+    reason === 'RUNNING' ||
+    row.scannerStage === 'open_position';
+
+  return Boolean(hasEntry && hasRiskBox && isRunning);
 }
 
-function getTradeKey(row) {
-  if (!isObject(row)) return null;
-
-  if (row.tradeId) return `id:${row.tradeId}`;
-
-  const symbol = String(row.symbol || '').toUpperCase();
-  const side = String(row.side || '').toUpperCase();
-
-  if (!symbol || !side) return null;
-
-  return `sym:${symbol}:${side}`;
-}
-
-function shouldResetArrayByName(path, key) {
-  const p = normalize(`${path}.${key}`);
-
-  return (
-    p.includes('openpositions') ||
-    p.includes('activepositions') ||
-    p.includes('runningpositions') ||
-    p.includes('holdingpositions') ||
-    p.includes('portfolio.positions') ||
-    p.includes('runtime.positions') ||
-    p.includes('state.positions') ||
-    p.includes('paper.positions') ||
-    p.includes('sim.positions')
-  );
-}
-
-function shouldResetObjectByName(path, key) {
-  const p = normalize(`${path}.${key}`);
-
-  return (
-    p.includes('openpositions') ||
-    p.includes('activepositions') ||
-    p.includes('runningpositions') ||
-    p.includes('holdingpositions') ||
-    p.includes('openpositionmap') ||
-    p.includes('positionmap') ||
-    p.endsWith('positions')
-  );
-}
-
-function resetOpenStateDeep(node, path = '') {
-  const changes = [];
-
-  if (!node || typeof node !== 'object') return changes;
-
-  if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i += 1) {
-      changes.push(...resetOpenStateDeep(node[i], `${path}.${i}`));
-    }
-
-    return changes;
+function countOpenPositionLikeRows(value) {
+  if (Array.isArray(value)) {
+    return value.filter(isOpenPositionLike).length;
   }
 
-  for (const [key, value] of Object.entries(node)) {
-    const fullPath = path ? `${path}.${key}` : key;
-    const normalizedKey = normalize(key);
+  if (isPlainObject(value)) {
+    return Object.values(value).filter(isOpenPositionLike).length;
+  }
 
-    if (
-      normalizedKey === 'opencount' ||
-      normalizedKey === 'openpositioncount' ||
-      normalizedKey === 'openpositionscount' ||
-      normalizedKey === 'activeopenpositions' ||
-      normalizedKey === 'totalopenpositions' ||
-      normalizedKey === 'runningpositionscount' ||
-      normalizedKey === 'holdingpositionscount'
-    ) {
-      node[key] = 0;
-      changes.push({
-        path: fullPath,
-        action: 'ZERO_COUNTER',
+  return 0;
+}
+
+function scrubOpenRuntimeState(root) {
+  const seen = new WeakSet();
+
+  const stats = {
+    changed: false,
+    openBefore: 0,
+    cleared: [],
+  };
+
+  function clearContainer(parent, key, path) {
+    const before = countContainerRows(parent[key]);
+
+    stats.openBefore += before;
+    parent[key] = emptyLike(parent[key]);
+    stats.changed = true;
+
+    stats.cleared.push({
+      path: [...path, key].join('.'),
+      before,
+    });
+  }
+
+  function walk(node, path = []) {
+    if (!node || typeof node !== 'object') return;
+    if (seen.has(node)) return;
+
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        walk(item, path);
+      }
+      return;
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      if (OPEN_CONTAINER_KEY_RX.test(key)) {
+        clearContainer(node, key, path);
+        continue;
+      }
+
+      if (OPEN_COUNT_KEY_RX.test(key) && typeof value === 'number') {
+        stats.openBefore += Number(value) || 0;
+        node[key] = 0;
+        stats.changed = true;
+
+        stats.cleared.push({
+          path: [...path, key].join('.'),
+          before: value,
+        });
+
+        continue;
+      }
+
+      if (POSITION_CONTAINER_KEY_RX.test(key)) {
+        const openLike = countOpenPositionLikeRows(value);
+
+        if (openLike > 0) {
+          stats.openBefore += openLike;
+          node[key] = emptyLike(value);
+          stats.changed = true;
+
+          stats.cleared.push({
+            path: [...path, key].join('.'),
+            before: openLike,
+            reason: 'POSITION_LIKE_CONTAINER',
+          });
+
+          continue;
+        }
+      }
+
+      walk(value, [...path, key]);
+    }
+  }
+
+  walk(root);
+
+  return stats;
+}
+
+function scrubLatestScanState(root) {
+  if (!isPlainObject(root)) {
+    return {
+      changed: false,
+      cleared: [],
+    };
+  }
+
+  const cleared = [];
+
+  for (const key of ['trades', 'actions', 'openPositions', 'open_positions']) {
+    if (Array.isArray(root[key]) && root[key].length > 0) {
+      cleared.push({
+        path: key,
+        before: root[key].length,
       });
-      continue;
-    }
 
-    if (Array.isArray(value)) {
-      const positionLikeCount = value.filter(isPositionLike).length;
-      const shouldReset =
-        shouldResetArrayByName(path, key) ||
-        (value.length > 0 && positionLikeCount > 0 && positionLikeCount / value.length >= 0.5);
-
-      if (shouldReset) {
-        node[key] = [];
-        changes.push({
-          path: fullPath,
-          action: 'RESET_ARRAY',
-          beforeLength: value.length,
-          positionLikeCount,
-        });
-        continue;
-      }
-
-      for (let i = 0; i < value.length; i += 1) {
-        changes.push(...resetOpenStateDeep(value[i], `${fullPath}.${i}`));
-      }
-
-      continue;
-    }
-
-    if (isObject(value)) {
-      const values = Object.values(value);
-      const positionLikeCount = values.filter(isPositionLike).length;
-
-      const shouldReset =
-        shouldResetObjectByName(path, key) ||
-        (values.length > 0 && positionLikeCount > 0 && positionLikeCount / values.length >= 0.5);
-
-      if (shouldReset) {
-        node[key] = {};
-        changes.push({
-          path: fullPath,
-          action: 'RESET_OBJECT',
-          beforeKeys: values.length,
-          positionLikeCount,
-        });
-        continue;
-      }
-
-      changes.push(...resetOpenStateDeep(value, fullPath));
+      root[key] = [];
     }
   }
 
-  return changes;
+  return {
+    changed: cleared.length > 0,
+    cleared,
+  };
 }
 
-async function scanKeys(redis, pattern) {
-  const keys = [];
+async function scanKeys(pattern, maxKeys = 1000) {
   let cursor = '0';
+  const keys = [];
 
   do {
-    const result = await redisCommand(redis, [
-      'SCAN',
-      cursor,
-      'MATCH',
-      pattern,
-      'COUNT',
-      '250',
-    ]);
+    const result = await redis('SCAN', cursor, 'MATCH', pattern, 'COUNT', 100);
 
-    cursor = String(result?.[0] || '0');
+    cursor = String(result?.[0] ?? '0');
 
     const batch = Array.isArray(result?.[1]) ? result[1] : [];
-    for (const key of batch) keys.push(String(key));
+    keys.push(...batch);
+
+    if (keys.length >= maxKeys) break;
   } while (cursor !== '0');
 
-  return keys;
+  return [...new Set(keys)].slice(0, maxKeys);
 }
 
-async function discoverRuntimeKeys(redis, strategyVersion) {
-  const keys = new Set([
-    `${strategyVersion}:runtime`,
-    `${strategyVersion}:runtime:core`,
-    `${strategyVersion}:runtime:memory`,
-    `${strategyVersion}:runtime:openPositions`,
-    `${strategyVersion}:runtime:open_positions`,
-    `${strategyVersion}:runtime:activePositions`,
-    `${strategyVersion}:runtime:active_positions`,
-    `${strategyVersion}:runtime:positions`,
-    `${strategyVersion}:runtime:portfolio`,
-  ]);
+async function mutateJsonKey(key, dryRun, mutator) {
+  let raw;
 
-  const patterns = [
-    `${strategyVersion}:runtime:*`,
-    `*${strategyVersion}*runtime*`,
-    `*${strategyVersion}*position*`,
-    `*${strategyVersion}*open*`,
-    `*${strategyVersion}*portfolio*`,
-    `*${strategyVersion}*memory*`,
-    `*${strategyVersion}*core*`,
-  ];
-
-  for (const pattern of patterns) {
-    const found = await scanKeys(redis, pattern);
-    for (const key of found) keys.add(key);
-  }
-
-  return [...keys];
-}
-
-async function resetRuntimeJsonKey(redis, key, dryRun) {
-  if (isHistoryOrLearningKey(key)) {
+  try {
+    raw = await redis('GET', key);
+  } catch (error) {
     return {
       key,
-      touched: false,
-      reason: 'SKIPPED_HISTORY_OR_LEARNING_KEY',
-      changes: [],
+      ok: false,
+      changed: false,
+      error: error.message,
     };
   }
 
-  const type = await redisCommand(redis, ['TYPE', key]);
-
-  if (type === 'none') {
+  if (raw === null || raw === undefined) {
     return {
       key,
-      touched: false,
-      reason: 'KEY_NOT_FOUND',
-      changes: [],
+      ok: true,
+      changed: false,
+      reason: 'KEY_EMPTY_OR_MISSING',
     };
   }
 
-  if (isDedicatedOpenKey(key)) {
-    if (!dryRun) await redisCommand(redis, ['DEL', key]);
+  const parsed = parseJsonDeep(raw);
 
+  if (!parsed.ok) {
     return {
       key,
-      touched: true,
-      reason: dryRun ? 'DRY_RUN_DELETE_DEDICATED_OPEN_KEY' : 'DELETED_DEDICATED_OPEN_KEY',
-      changes: [{ path: key, action: 'DEL' }],
+      ok: true,
+      changed: false,
+      reason: parsed.error,
     };
   }
 
-  if (type !== 'string') {
+  const value = parsed.value;
+  const mutation = mutator(value);
+
+  if (!mutation.changed) {
     return {
       key,
-      touched: false,
-      reason: `SKIPPED_NON_STRING:${type}`,
-      changes: [],
-    };
-  }
-
-  const raw = await redisCommand(redis, ['GET', key]);
-
-  if (typeof raw !== 'string') {
-    return {
-      key,
-      touched: false,
-      reason: 'EMPTY',
-      changes: [],
-    };
-  }
-
-  const parsed = tryJsonParse(raw);
-
-  if (!parsed || typeof parsed !== 'object') {
-    return {
-      key,
-      touched: false,
-      reason: 'NOT_JSON',
-      changes: [],
-    };
-  }
-
-  const changes = resetOpenStateDeep(parsed);
-
-  if (changes.length === 0) {
-    return {
-      key,
-      touched: false,
-      reason: 'NO_OPEN_RUNTIME_STATE_FOUND',
-      changes: [],
+      ok: true,
+      changed: false,
+      reason: 'NO_MUTATION',
+      ...mutation,
     };
   }
 
   if (!dryRun) {
-    await redisCommand(redis, ['SET', key, JSON.stringify(parsed)]);
+    await redis('SET', key, JSON.stringify(value));
   }
 
   return {
     key,
-    touched: true,
-    reason: dryRun ? 'DRY_RUN_RUNTIME_RESET_MATCH' : 'RUNTIME_RESET_DONE',
-    changes,
+    ok: true,
+    changed: true,
+    dryRun,
+    ...mutation,
   };
 }
 
-async function resetAnalyzeStoreOpenEntries(redis, analyzeKey, dryRun) {
-  const type = await redisCommand(redis, ['TYPE', analyzeKey]);
+function normalizeSide(side) {
+  const value = String(side || '').trim().toUpperCase();
 
-  if (type === 'none') {
-    return {
-      key: analyzeKey,
-      touched: false,
-      reason: 'ANALYZE_KEY_NOT_FOUND',
-      before: 0,
-      after: 0,
-      removed: 0,
-    };
+  if (value === 'BULL' || value === 'LONG') return 'LONG';
+  if (value === 'BEAR' || value === 'SHORT') return 'SHORT';
+
+  return value || 'UNKNOWN';
+}
+
+function isAnalyzeEntry(event) {
+  if (!isPlainObject(event)) return false;
+
+  const lifecycle = normalizeAction(event.analyzeLifecycle);
+  const action = normalizeAction(event.action);
+
+  return lifecycle === 'ENTRY' || action === 'ENTRY';
+}
+
+function isAnalyzeExit(event) {
+  if (!isPlainObject(event)) return false;
+
+  const lifecycle = normalizeAction(event.analyzeLifecycle);
+  const action = normalizeAction(event.action);
+
+  return lifecycle === 'EXIT' || action === 'EXIT';
+}
+
+function getAnalyzeEventKey(event) {
+  const tradeId = String(event.tradeId || event.id || '').trim();
+
+  if (tradeId) {
+    return `id:${tradeId}`;
   }
 
-  if (type !== 'list') {
-    return {
-      key: analyzeKey,
-      touched: false,
-      reason: `ANALYZE_KEY_NOT_LIST:${type}`,
-      before: 0,
-      after: 0,
-      removed: 0,
-    };
-  }
+  const symbol = String(event.symbol || '').trim().toUpperCase();
+  const side = normalizeSide(event.side);
 
-  const rawItems = await redisCommand(redis, ['LRANGE', analyzeKey, '0', '-1']);
-  const items = Array.isArray(rawItems) ? rawItems : [];
+  if (!symbol || side === 'UNKNOWN') return null;
 
-  const parsedRows = items.map((raw, index) => ({
-    index,
-    raw,
-    parsed: tryJsonParse(raw),
-  }));
+  return `sym:${symbol}:${side}`;
+}
 
-  const closedKeys = new Set();
+function getSymbolSideKey(event) {
+  const symbol = String(event.symbol || '').trim().toUpperCase();
+  const side = normalizeSide(event.side);
 
-  for (const item of parsedRows) {
-    const row = item.parsed;
-    if (!row || !isExitLike(row)) continue;
+  if (!symbol || side === 'UNKNOWN') return null;
 
-    const key = getTradeKey(row);
-    if (key) closedKeys.add(key);
-  }
+  return `sym:${symbol}:${side}`;
+}
 
-  const keep = [];
-  const removed = [];
+function computeOpenAnalyzeEntries(events) {
+  const openByPrimaryKey = new Map();
+  const openBySymbolSide = new Map();
 
-  for (const item of parsedRows) {
-    const row = item.parsed;
+  for (const event of events) {
+    if (!isPlainObject(event)) continue;
 
-    if (!row || !isEntryLike(row)) {
-      keep.push(item.raw);
+    const primaryKey = getAnalyzeEventKey(event);
+    const symbolSideKey = getSymbolSideKey(event);
+
+    if (isAnalyzeEntry(event)) {
+      if (primaryKey) openByPrimaryKey.set(primaryKey, event);
+      if (symbolSideKey) openBySymbolSide.set(symbolSideKey, event);
       continue;
     }
 
-    const key = getTradeKey(row);
-
-    if (!key) {
-      keep.push(item.raw);
-      continue;
+    if (isAnalyzeExit(event)) {
+      if (primaryKey) openByPrimaryKey.delete(primaryKey);
+      if (symbolSideKey) openBySymbolSide.delete(symbolSideKey);
     }
-
-    if (closedKeys.has(key) || isExitLike(row)) {
-      keep.push(item.raw);
-      continue;
-    }
-
-    removed.push({
-      index: item.index,
-      key,
-      symbol: row.symbol || null,
-      side: row.side || null,
-      action: row.action || row.analyzeLifecycle || null,
-      reason: row.reason || null,
-    });
   }
 
-  if (removed.length === 0) {
+  const merged = new Map();
+
+  for (const [key, event] of openByPrimaryKey.entries()) {
+    merged.set(key, event);
+  }
+
+  for (const [key, event] of openBySymbolSide.entries()) {
+    const primaryKey = getAnalyzeEventKey(event);
+    const finalKey = primaryKey || key;
+
+    if (!merged.has(finalKey)) {
+      merged.set(finalKey, event);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function buildAdminExitEvent(entry, strategyVersion, now) {
+  const side = normalizeSide(entry.side);
+  const symbol = String(entry.symbol || '').trim().toUpperCase();
+
+  const entryPrice =
+    Number(entry.entryPrice) ||
+    Number(entry.entry) ||
+    Number(entry.price) ||
+    0;
+
+  return {
+    tradeId:
+      entry.tradeId ||
+      entry.id ||
+      `ADMIN_FLUSH_${strategyVersion}_${symbol}_${side}_${now}`,
+
+    symbol,
+    side,
+
+    action: 'EXIT',
+    analyzeLifecycle: 'EXIT',
+
+    reason: 'ADMIN_FLUSH_OPEN_RESET',
+    closed: true,
+    closedAt: now,
+
+    entry: entryPrice,
+    entryPrice,
+    exit: entryPrice,
+    exitPrice: entryPrice,
+
+    sl: entry.sl ?? null,
+    tp: entry.tp ?? null,
+
+    rr: entry.rr ?? entry.baseRR ?? null,
+    baseRR: entry.baseRR ?? entry.rr ?? null,
+
+    realizedR: 0,
+    pnlR: 0,
+    exitR: 0,
+    pnlPct: 0,
+
+    familyId: entry.familyId ?? null,
+    microFamilyId: entry.microFamilyId ?? null,
+    setupClass: entry.setupClass ?? null,
+    grade: entry.grade ?? null,
+
+    confluence: entry.confluence ?? null,
+    sniperScore: entry.sniperScore ?? null,
+    score: entry.score ?? null,
+
+    strategyVersion,
+    adminFlush: true,
+    ts: now,
+  };
+}
+
+async function appendRedisList(key, rows) {
+  const chunkSize = 100;
+
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize).map((row) => JSON.stringify(row));
+    await redis('RPUSH', key, ...chunk);
+  }
+}
+
+async function closeAnalyzeOpenEntries({ strategyVersion, dryRun }) {
+  let rawRows;
+
+  try {
+    rawRows = await redis('LRANGE', ANALYZE_EVENTS_KEY, 0, -1);
+  } catch (error) {
     return {
-      key: analyzeKey,
-      touched: false,
-      reason: 'NO_OPEN_ANALYZE_ENTRIES_FOUND',
-      before: items.length,
-      after: keep.length,
-      removed: 0,
+      ok: false,
+      key: ANALYZE_EVENTS_KEY,
+      error: error.message,
+      openBefore: null,
+      openAfter: null,
+      forceExits: 0,
     };
   }
 
-  if (!dryRun) {
-    await redisCommand(redis, ['DEL', analyzeKey]);
+  if (!Array.isArray(rawRows)) {
+    return {
+      ok: false,
+      key: ANALYZE_EVENTS_KEY,
+      error: 'ANALYZE_EVENTS_NOT_A_REDIS_LIST',
+      openBefore: null,
+      openAfter: null,
+      forceExits: 0,
+    };
+  }
 
-    if (keep.length > 0) {
-      const chunkSize = 250;
+  const events = [];
 
-      for (let i = 0; i < keep.length; i += chunkSize) {
-        const chunk = keep.slice(i, i + chunkSize);
-        await redisCommand(redis, ['RPUSH', analyzeKey, ...chunk]);
-      }
+  for (const raw of rawRows) {
+    const parsed = parseJsonDeep(raw);
+    if (parsed.ok && isPlainObject(parsed.value)) {
+      events.push(parsed.value);
     }
+  }
+
+  const openEntries = computeOpenAnalyzeEntries(events);
+  const now = Date.now();
+
+  const exitEvents = openEntries.map((entry) =>
+    buildAdminExitEvent(entry, strategyVersion, now)
+  );
+
+  if (!dryRun && exitEvents.length > 0) {
+    await appendRedisList(ANALYZE_EVENTS_KEY, exitEvents);
   }
 
   return {
-    key: analyzeKey,
-    touched: true,
-    reason: dryRun ? 'DRY_RUN_ANALYZE_OPEN_ENTRIES_REMOVED' : 'ANALYZE_OPEN_ENTRIES_REMOVED',
-    before: items.length,
-    after: keep.length,
-    removed: removed.length,
-    removedSample: removed.slice(0, 50),
+    ok: true,
+    key: ANALYZE_EVENTS_KEY,
+    dryRun,
+    totalEvents: events.length,
+    openBefore: openEntries.length,
+    forceExits: exitEvents.length,
+    openAfter: dryRun ? openEntries.length : 0,
+    sample: openEntries.slice(0, 20).map((entry) => ({
+      tradeId: entry.tradeId || null,
+      symbol: entry.symbol,
+      side: entry.side,
+      action: entry.action,
+      reason: entry.reason,
+    })),
   };
+}
+
+async function resetRuntimeOpenPositions({ strategyVersion, dryRun, maxKeys }) {
+  const directKeys = [
+    `${strategyVersion}:runtime:core`,
+    `${strategyVersion}:runtime:recent_entries`,
+  ];
+
+  const scannedKeys = await scanKeys(`${strategyVersion}:runtime:*`, maxKeys);
+
+  const keys = [...new Set([...directKeys, ...scannedKeys])];
+
+  const results = [];
+
+  for (const key of keys) {
+    const result = await mutateJsonKey(key, dryRun, scrubOpenRuntimeState);
+
+    if (result.changed || result.openBefore > 0 || result.error) {
+      results.push(result);
+    }
+  }
+
+  const openBefore = results.reduce((sum, item) => {
+    return sum + (Number(item.openBefore) || 0);
+  }, 0);
+
+  return {
+    ok: true,
+    strategyVersion,
+    dryRun,
+    keysScanned: keys.length,
+    touchedKeys: results.filter((item) => item.changed).length,
+    openBefore,
+    openAfter: dryRun ? openBefore : 0,
+    touched: results,
+  };
+}
+
+async function clearLatestScan({ dryRun }) {
+  return mutateJsonKey(LATEST_SCAN_KEY, dryRun, scrubLatestScanState);
 }
 
 export default async function handler(req, res) {
   const startedAt = Date.now();
 
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+
   try {
-    if (req.method !== 'POST') {
-      send(res, 405, {
+    if (!['GET', 'POST'].includes(req.method)) {
+      return res.status(405).json({
         ok: false,
         error: 'METHOD_NOT_ALLOWED',
-        expected: 'POST',
+        expected: 'GET_OR_POST',
       });
-      return;
     }
 
-    if (!isEnabled()) {
-      send(res, 403, {
-        ok: false,
-        error: 'ADMIN_FLUSH_DISABLED',
-        requiredEnv: 'TS_ADMIN_FLUSH_ENABLED=true',
-      });
-      return;
-    }
+    const payload = await getPayload(req);
 
-    const body = await readBody(req);
-
-    const expectedSecret = getExpectedSecret();
-    const providedSecret = getProvidedSecret(req, body);
+    const secret = String(payload.secret || '').trim();
+    const expectedSecret = String(process.env.ADMIN_FLUSH_SECRET || '').trim();
 
     if (!expectedSecret) {
-      send(res, 500, {
+      return res.status(500).json({
         ok: false,
-        error: 'ADMIN_SECRET_ENV_MISSING',
+        error: 'ADMIN_FLUSH_SECRET_ENV_MISSING',
       });
-      return;
     }
 
-    if (providedSecret !== expectedSecret) {
-      send(res, 401, {
+    if (!secret || secret !== expectedSecret) {
+      return res.status(401).json({
         ok: false,
         error: 'UNAUTHORIZED',
       });
-      return;
     }
 
-    const redisUrl = getEnv(REDIS_URL_KEYS);
-    const redisToken = getEnv(REDIS_TOKEN_KEYS);
+    const dryRun = asBool(payload.dryRun, true);
+    const confirm = String(payload.confirm || '').trim();
 
-    if (!redisUrl || !redisToken) {
-      send(res, 500, {
+    if (!dryRun && confirm !== CONFIRM_TEXT) {
+      return res.status(400).json({
         ok: false,
-        error: 'REDIS_ENV_MISSING',
+        error: 'CONFIRM_REQUIRED',
+        expected: `confirm=${CONFIRM_TEXT}`,
+        dryRun,
       });
-      return;
     }
 
-    const redis = {
-      url: redisUrl.replace(/\/+$/, ''),
-      token: redisToken,
-    };
+    const strategyVersion =
+      String(payload.strategyVersion || '').trim() || DEFAULT_STRATEGY_VERSION;
 
-    const dryRun = body?.dryRun !== false;
+    const mode = String(payload.mode || 'all').trim().toLowerCase();
+    const maxKeys = Math.max(50, Math.min(Number(payload.maxKeys) || 1000, 5000));
 
-    const strategyVersion = String(
-      body?.strategyVersion ||
-        process.env.STRATEGY_VERSION ||
-        process.env.TRADE_SYSTEM_STRATEGY_VERSION ||
-        DEFAULT_STRATEGY_VERSION
-    ).trim();
-
-    const analyzeKey = String(body?.analyzeKey || DEFAULT_ANALYZE_KEY).trim();
-
-    const runtimeKeys = await discoverRuntimeKeys(redis, strategyVersion);
-
-    const runtimeResults = [];
-
-    for (const key of runtimeKeys) {
-      const result = await resetRuntimeJsonKey(redis, key, dryRun);
-      runtimeResults.push(result);
-    }
-
-    const analyzeResult = await resetAnalyzeStoreOpenEntries(redis, analyzeKey, dryRun);
-
-    const touchedRuntime = runtimeResults.filter((item) => item.touched);
-
-    send(res, 200, {
+    const output = {
       ok: true,
       dryRun,
+      mode,
       strategyVersion,
-      analyzeKey,
-      runtimeKeysScanned: runtimeKeys.length,
-      runtimeTouchedKeys: touchedRuntime.length,
-      analyzeTouched: analyzeResult.touched,
-      durationMs: Date.now() - startedAt,
-      runtimeTouched: touchedRuntime.map((item) => ({
-        key: item.key,
-        reason: item.reason,
-        changes: item.changes.slice(0, 100),
-      })),
-      analyzeResult,
-      skippedSample: runtimeResults
-        .filter((item) => !item.touched)
-        .slice(0, 40)
-        .map((item) => ({
-          key: item.key,
-          reason: item.reason,
-        })),
-    });
+      runtime: null,
+      analyze: null,
+      latestScan: null,
+      durationMs: null,
+    };
+
+    if (mode === 'all' || mode === 'runtime') {
+      output.runtime = await resetRuntimeOpenPositions({
+        strategyVersion,
+        dryRun,
+        maxKeys,
+      });
+    }
+
+    if (mode === 'all' || mode === 'analyze') {
+      output.analyze = await closeAnalyzeOpenEntries({
+        strategyVersion,
+        dryRun,
+      });
+    }
+
+    if (mode === 'all' || mode === 'latest') {
+      output.latestScan = await clearLatestScan({
+        dryRun,
+      });
+    }
+
+    output.durationMs = Date.now() - startedAt;
+
+    return res.status(200).json(output);
   } catch (error) {
-    send(res, 500, {
+    return res.status(500).json({
       ok: false,
-      error: String(error?.message || error),
-      stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
+      error: error.message,
+      durationMs: Date.now() - startedAt,
     });
   }
 }
