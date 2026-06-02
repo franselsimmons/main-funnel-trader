@@ -12,15 +12,42 @@ const REDIS_TOKEN_KEYS = [
   'REDIS_REST_API_TOKEN',
 ];
 
-const POSITION_CONTAINER_KEYS = new Set([
+const NUKE_FIELD_NAMES = new Set([
   'openpositions',
+  'openposition',
   'activepositions',
+  'activeposition',
   'runtimeopenpositions',
   'virtualopenpositions',
   'paperopenpositions',
+  'currentpositions',
+  'runningpositions',
+  'holdingpositions',
+  'holds',
+  'holding',
 ]);
 
-function getEnvValue(names) {
+const ZERO_COUNTER_NAMES = new Set([
+  'memory',
+  'openpositions',
+  'opencount',
+  'openpositioncount',
+  'openpositionscount',
+  'activeopenpositions',
+  'totalopenpositions',
+  'runningpositions',
+  'holdingpositions',
+]);
+
+function send(res, status, payload) {
+  res.status(status).json(payload);
+}
+
+function normalizeKey(key) {
+  return String(key || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+function getEnv(names) {
   for (const name of names) {
     const value = process.env[name];
     if (value && String(value).trim()) return String(value).trim();
@@ -29,32 +56,28 @@ function getEnvValue(names) {
   return null;
 }
 
-function send(res, status, payload) {
-  res.status(status).json(payload);
-}
-
 function isEnabled() {
   const value = String(process.env.TS_ADMIN_FLUSH_ENABLED || '').toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
 }
 
 function getExpectedSecret() {
-  return (
+  return String(
     process.env.TS_ADMIN_SECRET ||
-    process.env.ADMIN_SECRET ||
-    process.env.FLUSH_ADMIN_SECRET ||
-    ''
+      process.env.ADMIN_SECRET ||
+      process.env.FLUSH_ADMIN_SECRET ||
+      ''
   ).trim();
 }
 
 function getProvidedSecret(req, body) {
   return String(
     req.headers['x-admin-secret'] ||
-    req.headers['x-ts-admin-secret'] ||
-    body?.secret ||
-    body?.adminSecret ||
-    req.query?.secret ||
-    ''
+      req.headers['x-ts-admin-secret'] ||
+      body?.secret ||
+      body?.adminSecret ||
+      req.query?.secret ||
+      ''
   ).trim();
 }
 
@@ -93,73 +116,6 @@ async function readBody(req) {
   });
 }
 
-function safeParseJson(value) {
-  if (typeof value !== 'string') return null;
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function countContainer(value) {
-  if (Array.isArray(value)) return value.length;
-
-  if (value && typeof value === 'object') {
-    return Object.keys(value).length;
-  }
-
-  return 0;
-}
-
-function emptyLike(value) {
-  if (Array.isArray(value)) return [];
-
-  if (value && typeof value === 'object') return {};
-
-  return [];
-}
-
-function mutateOpenPositionContainers(node, path = []) {
-  const changes = [];
-
-  if (!node || typeof node !== 'object') return changes;
-
-  if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i += 1) {
-      changes.push(...mutateOpenPositionContainers(node[i], path.concat(String(i))));
-    }
-
-    return changes;
-  }
-
-  for (const [key, value] of Object.entries(node)) {
-    const normalizedKey = key.toLowerCase();
-
-    if (POSITION_CONTAINER_KEYS.has(normalizedKey)) {
-      const before = countContainer(value);
-
-      node[key] = emptyLike(value);
-
-      changes.push({
-        path: path.concat(key).join('.'),
-        key,
-        before,
-        after: 0,
-      });
-
-      continue;
-    }
-
-    if (value && typeof value === 'object') {
-      changes.push(...mutateOpenPositionContainers(value, path.concat(key)));
-    }
-  }
-
-  return changes;
-}
-
 async function redisCommand(redis, args) {
   const response = await fetch(redis.url, {
     method: 'POST',
@@ -176,18 +132,93 @@ async function redisCommand(redis, args) {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`REDIS_NON_JSON_RESPONSE:${response.status}:${text.slice(0, 200)}`);
+    throw new Error(`REDIS_NON_JSON_RESPONSE:${response.status}:${text.slice(0, 300)}`);
   }
 
   if (!response.ok || data?.error) {
-    throw new Error(`REDIS_ERROR:${response.status}:${data?.error || text.slice(0, 200)}`);
+    throw new Error(`REDIS_ERROR:${response.status}:${data?.error || text.slice(0, 300)}`);
   }
 
   return data.result;
 }
 
-async function scanPattern(redis, pattern, maxKeys = 5000) {
-  const found = [];
+function tryJsonParse(value) {
+  if (typeof value !== 'string') return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function replacementFor(value, key) {
+  const normalized = normalizeKey(key);
+
+  if (ZERO_COUNTER_NAMES.has(normalized)) return 0;
+  if (Array.isArray(value)) return [];
+  if (isObject(value)) return {};
+  if (typeof value === 'number') return 0;
+  if (typeof value === 'boolean') return false;
+
+  return null;
+}
+
+function hardResetOpenState(node, path = []) {
+  const changes = [];
+
+  if (!node || typeof node !== 'object') return changes;
+
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i += 1) {
+      changes.push(...hardResetOpenState(node[i], path.concat(String(i))));
+    }
+
+    return changes;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    const normalized = normalizeKey(key);
+    const currentPath = path.concat(key).join('.');
+
+    const shouldNuke =
+      NUKE_FIELD_NAMES.has(normalized) ||
+      ZERO_COUNTER_NAMES.has(normalized);
+
+    if (shouldNuke) {
+      const nextValue = replacementFor(value, key);
+
+      node[key] = nextValue;
+
+      changes.push({
+        path: currentPath,
+        key,
+        beforeType: Array.isArray(value) ? 'array' : typeof value,
+        beforeSize: Array.isArray(value)
+          ? value.length
+          : isObject(value)
+            ? Object.keys(value).length
+            : value,
+        after: nextValue,
+      });
+
+      continue;
+    }
+
+    if (value && typeof value === 'object') {
+      changes.push(...hardResetOpenState(value, path.concat(key)));
+    }
+  }
+
+  return changes;
+}
+
+async function scanKeys(redis, pattern) {
+  const keys = [];
   let cursor = '0';
 
   do {
@@ -200,126 +231,107 @@ async function scanPattern(redis, pattern, maxKeys = 5000) {
       '250',
     ]);
 
-    if (!Array.isArray(result) || result.length < 2) break;
+    cursor = String(result?.[0] || '0');
 
-    cursor = String(result[0] || '0');
-
-    const keys = Array.isArray(result[1]) ? result[1] : [];
-    for (const key of keys) {
-      found.push(String(key));
-      if (found.length >= maxKeys) return found;
-    }
+    const batch = Array.isArray(result?.[1]) ? result[1] : [];
+    for (const key of batch) keys.push(String(key));
   } while (cursor !== '0');
 
-  return found;
+  return keys;
 }
 
-async function discoverCandidateKeys(redis, strategyVersion) {
+async function discoverKeys(redis, strategyVersion) {
+  const keys = new Set([
+    `${strategyVersion}:runtime:core`,
+    `${strategyVersion}:runtime`,
+    `${strategyVersion}:runtime:memory`,
+    `${strategyVersion}:runtime:openPositions`,
+    `${strategyVersion}:runtime:open_positions`,
+    `${strategyVersion}:runtime:activePositions`,
+    `${strategyVersion}:runtime:active_positions`,
+  ]);
+
   const patterns = [
-    `${strategyVersion}*`,
-    `*${strategyVersion}*`,
-    `tradeSystem:*`,
-    `tradesystem:*`,
-    `trade-system:*`,
-    `*runtime*`,
-    `*durable*`,
-    `*open*position*`,
+    `${strategyVersion}:runtime:*`,
+    `*${strategyVersion}*open*`,
+    `*${strategyVersion}*position*`,
+    `*${strategyVersion}*memory*`,
+    `*${strategyVersion}*core*`,
   ];
 
-  const keys = new Set();
-
   for (const pattern of patterns) {
-    const scanned = await scanPattern(redis, pattern);
-
-    for (const key of scanned) {
-      keys.add(key);
-    }
+    const found = await scanKeys(redis, pattern);
+    for (const key of found) keys.add(key);
   }
 
   return [...keys];
 }
 
-async function getRedisString(redis, key) {
-  try {
-    const type = await redisCommand(redis, ['TYPE', key]);
+function shouldSkipWholeKey(key) {
+  const lower = String(key || '').toLowerCase();
 
-    if (type && type !== 'string') {
-      return {
-        ok: false,
-        skipped: true,
-        reason: `NON_STRING_TYPE:${type}`,
-        value: null,
-      };
-    }
+  if (lower.includes(':closed_trades:')) return true;
+  if (lower.includes(':shadow_outcomes:')) return true;
+  if (lower.includes(':feature_store:')) return true;
+  if (lower.includes(':recent_entries')) return true;
+  if (lower.includes(':micro')) return true;
+  if (lower.includes(':learning')) return true;
+  if (lower.includes(':rotation')) return true;
 
-    const value = await redisCommand(redis, ['GET', key]);
-
-    if (typeof value !== 'string') {
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'EMPTY_OR_NON_STRING_VALUE',
-        value: null,
-      };
-    }
-
-    return {
-      ok: true,
-      skipped: false,
-      reason: null,
-      value,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      skipped: true,
-      reason: String(error?.message || error),
-      value: null,
-    };
-  }
+  return false;
 }
 
-async function inspectAndMaybeFlushKey(redis, key, dryRun) {
-  const loaded = await getRedisString(redis, key);
-
-  if (!loaded.ok) {
+async function resetStringJsonKey(redis, key, dryRun) {
+  if (shouldSkipWholeKey(key)) {
     return {
       key,
       touched: false,
-      skipped: true,
-      reason: loaded.reason,
-      openBefore: 0,
-      openAfter: 0,
+      reason: 'SKIPPED_HISTORY_OR_LEARNING_KEY',
       changes: [],
     };
   }
 
-  const parsed = safeParseJson(loaded.value);
+  const type = await redisCommand(redis, ['TYPE', key]);
+
+  if (type !== 'string') {
+    return {
+      key,
+      touched: false,
+      reason: `SKIPPED_NON_STRING:${type}`,
+      changes: [],
+    };
+  }
+
+  const raw = await redisCommand(redis, ['GET', key]);
+
+  if (typeof raw !== 'string') {
+    return {
+      key,
+      touched: false,
+      reason: 'EMPTY',
+      changes: [],
+    };
+  }
+
+  const parsed = tryJsonParse(raw);
 
   if (!parsed || typeof parsed !== 'object') {
     return {
       key,
       touched: false,
-      skipped: true,
-      reason: 'NOT_JSON_OBJECT',
-      openBefore: 0,
-      openAfter: 0,
+      reason: 'NOT_JSON',
       changes: [],
     };
   }
 
-  const changes = mutateOpenPositionContainers(parsed);
-  const openBefore = changes.reduce((sum, change) => sum + change.before, 0);
+  const changes = hardResetOpenState(parsed);
 
-  if (!changes.length || openBefore <= 0) {
+  if (changes.length === 0) {
     return {
       key,
       touched: false,
-      skipped: false,
-      reason: 'NO_OPEN_POSITION_CONTAINER_WITH_ROWS',
-      openBefore: 0,
-      openAfter: 0,
-      changes,
+      reason: 'NO_OPEN_FIELDS_FOUND',
+      changes: [],
     };
   }
 
@@ -330,11 +342,53 @@ async function inspectAndMaybeFlushKey(redis, key, dryRun) {
   return {
     key,
     touched: true,
-    skipped: false,
-    reason: dryRun ? 'DRY_RUN_MATCHED' : 'FLUSHED',
-    openBefore,
-    openAfter: 0,
+    reason: dryRun ? 'DRY_RUN_RESET_MATCH' : 'RESET_DONE',
     changes,
+  };
+}
+
+async function deleteDedicatedOpenKeys(redis, key, dryRun) {
+  const normalized = normalizeKey(key);
+
+  const isDedicatedOpenKey =
+    normalized.includes('openpositions') ||
+    normalized.includes('openposition') ||
+    normalized.includes('activepositions') ||
+    normalized.includes('activeposition') ||
+    normalized.endsWith('memory');
+
+  if (!isDedicatedOpenKey) {
+    return {
+      key,
+      touched: false,
+      reason: 'NOT_DEDICATED_OPEN_KEY',
+      changes: [],
+    };
+  }
+
+  if (shouldSkipWholeKey(key)) {
+    return {
+      key,
+      touched: false,
+      reason: 'SKIPPED_HISTORY_OR_LEARNING_KEY',
+      changes: [],
+    };
+  }
+
+  if (!dryRun) {
+    await redisCommand(redis, ['DEL', key]);
+  }
+
+  return {
+    key,
+    touched: true,
+    reason: dryRun ? 'DRY_RUN_DELETE_DEDICATED_KEY' : 'DELETED_DEDICATED_KEY',
+    changes: [
+      {
+        path: key,
+        action: 'DEL',
+      },
+    ],
   };
 }
 
@@ -369,16 +423,11 @@ export default async function handler(req, res) {
       send(res, 500, {
         ok: false,
         error: 'ADMIN_SECRET_ENV_MISSING',
-        acceptedEnvNames: [
-          'TS_ADMIN_SECRET',
-          'ADMIN_SECRET',
-          'FLUSH_ADMIN_SECRET',
-        ],
       });
       return;
     }
 
-    if (!providedSecret || providedSecret !== expectedSecret) {
+    if (providedSecret !== expectedSecret) {
       send(res, 401, {
         ok: false,
         error: 'UNAUTHORIZED',
@@ -386,15 +435,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    const redisUrl = getEnvValue(REDIS_URL_KEYS);
-    const redisToken = getEnvValue(REDIS_TOKEN_KEYS);
+    const redisUrl = getEnv(REDIS_URL_KEYS);
+    const redisToken = getEnv(REDIS_TOKEN_KEYS);
 
     if (!redisUrl || !redisToken) {
       send(res, 500, {
         ok: false,
         error: 'REDIS_ENV_MISSING',
-        requiredOneOfUrl: REDIS_URL_KEYS,
-        requiredOneOfToken: REDIS_TOKEN_KEYS,
       });
       return;
     }
@@ -405,24 +452,29 @@ export default async function handler(req, res) {
     };
 
     const dryRun = body?.dryRun !== false;
+
     const strategyVersion = String(
       body?.strategyVersion ||
-      process.env.STRATEGY_VERSION ||
-      process.env.TRADE_SYSTEM_STRATEGY_VERSION ||
-      DEFAULT_STRATEGY_VERSION
+        process.env.STRATEGY_VERSION ||
+        process.env.TRADE_SYSTEM_STRATEGY_VERSION ||
+        DEFAULT_STRATEGY_VERSION
     ).trim();
 
-    const keys = await discoverCandidateKeys(redis, strategyVersion);
+    const keys = await discoverKeys(redis, strategyVersion);
 
-    const inspected = [];
+    const results = [];
+
     for (const key of keys) {
-      const result = await inspectAndMaybeFlushKey(redis, key, dryRun);
-      inspected.push(result);
+      const jsonResult = await resetStringJsonKey(redis, key, dryRun);
+      results.push(jsonResult);
+
+      if (!jsonResult.touched) {
+        const deleteResult = await deleteDedicatedOpenKeys(redis, key, dryRun);
+        if (deleteResult.touched) results.push(deleteResult);
+      }
     }
 
-    const touched = inspected.filter((item) => item.touched);
-    const openBefore = touched.reduce((sum, item) => sum + item.openBefore, 0);
-    const openAfter = touched.reduce((sum, item) => sum + item.openAfter, 0);
+    const touched = results.filter((item) => item.touched);
 
     send(res, 200, {
       ok: true,
@@ -430,19 +482,15 @@ export default async function handler(req, res) {
       strategyVersion,
       keysScanned: keys.length,
       touchedKeys: touched.length,
-      openBefore,
-      openAfter,
       durationMs: Date.now() - startedAt,
       touched: touched.map((item) => ({
         key: item.key,
-        openBefore: item.openBefore,
-        openAfter: item.openAfter,
         reason: item.reason,
-        changes: item.changes,
+        changes: item.changes.slice(0, 100),
       })),
-      skippedSample: inspected
+      skippedSample: results
         .filter((item) => !item.touched)
-        .slice(0, 20)
+        .slice(0, 30)
         .map((item) => ({
           key: item.key,
           reason: item.reason,
@@ -452,7 +500,6 @@ export default async function handler(req, res) {
     send(res, 500, {
       ok: false,
       error: String(error?.message || error),
-      stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
     });
   }
 }
