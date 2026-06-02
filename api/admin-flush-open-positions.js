@@ -1,589 +1,458 @@
-// api/admin-flush-open-positions.js
+const DEFAULT_STRATEGY_VERSION = 'TS_V12_8_WEEKLY_MICRO_ROTATION_CLEAN';
 
-const STRATEGY_VERSION =
-  process.env.TRADE_SYSTEM_STRATEGY_VERSION ||
-  process.env.STRATEGY_VERSION ||
-  'TS_V12_8_WEEKLY_MICRO_ROTATION_CLEAN';
-
-const ADMIN_SECRET = process.env.TS_ADMIN_SECRET;
-const FLUSH_ENABLED = process.env.TS_ADMIN_FLUSH_ENABLED === 'true';
-
-const MODULE_CANDIDATES = [
-  '../lib/tradesystem/tradesSystem.js',
-  '../lib/tradesystem/jsonStoreAdapter.js',
-  '../lib/tradesystem/positionManager.js',
-  '../lib/tradesystem/portfolio.js',
-  '../lib/tradesystem/db.js',
-  '../lib/db.js',
+const REDIS_URL_KEYS = [
+  'KV_REST_API_URL',
+  'UPSTASH_REDIS_REST_URL',
+  'REDIS_REST_API_URL',
 ];
 
-const LOAD_EXPORT_NAMES = [
-  'loadTradeSystemState',
-  'loadTradeSystemDurableState',
-  'loadDurableTradeSystemState',
-  'loadDurableState',
-  'loadRuntimeState',
-  'loadTradeState',
-  'loadState',
-  'loadSplitState',
-  'durableLoadSplit',
-  'loadDurableSplit',
+const REDIS_TOKEN_KEYS = [
+  'KV_REST_API_TOKEN',
+  'UPSTASH_REDIS_REST_TOKEN',
+  'REDIS_REST_API_TOKEN',
 ];
 
-const SAVE_EXPORT_NAMES = [
-  'saveTradeSystemState',
-  'saveTradeSystemDurableState',
-  'saveDurableTradeSystemState',
-  'saveDurableState',
-  'saveRuntimeState',
-  'saveTradeState',
-  'saveState',
-  'saveSplitState',
-  'durableSaveSplit',
-  'saveDurableSplit',
-];
+const POSITION_CONTAINER_KEYS = new Set([
+  'openpositions',
+  'activepositions',
+  'runtimeopenpositions',
+  'virtualopenpositions',
+  'paperopenpositions',
+]);
 
-function parseBody(req) {
-  if (!req.body) return {};
-
-  if (typeof req.body === 'object') {
-    return req.body;
-  }
-
-  try {
-    return JSON.parse(req.body);
-  } catch {
-    return {};
-  }
-}
-
-function asArray(value) {
-  if (!value) return [];
-
-  if (Array.isArray(value)) {
-    return value.filter(Boolean);
-  }
-
-  if (value instanceof Map) {
-    return [...value.values()].filter(Boolean);
-  }
-
-  if (typeof value === 'object') {
-    return Object.values(value).filter(Boolean);
-  }
-
-  return [];
-}
-
-function emptyLike(value) {
-  if (Array.isArray(value)) return [];
-  if (value instanceof Map) return new Map();
-  if (value && typeof value === 'object') return {};
-  return [];
-}
-
-function uniqByTradeIdentity(rows) {
-  const seen = new Set();
-  const out = [];
-
-  for (const row of rows) {
-    const symbol = String(row?.symbol || '').toUpperCase();
-    const side = String(row?.side || '').toLowerCase();
-    const id =
-      row?.tradeId ||
-      row?.positionId ||
-      row?.entryId ||
-      row?.id ||
-      `${symbol}:${side}:${row?.openedAt || row?.entryTs || row?.ts || ''}:${row?.entry || row?.entryPrice || ''}`;
-
-    if (!symbol) continue;
-    if (seen.has(id)) continue;
-
-    seen.add(id);
-    out.push(row);
-  }
-
-  return out;
-}
-
-function getSymbol(row) {
-  return String(row?.symbol || row?.baseSymbol || '').toUpperCase();
-}
-
-function normalizeSide(side) {
-  const s = String(side || '').toLowerCase();
-
-  if (s === 'short') return 'bear';
-  if (s === 'sell') return 'bear';
-  if (s === 'bear') return 'bear';
-
-  if (s === 'long') return 'bull';
-  if (s === 'buy') return 'bull';
-  if (s === 'bull') return 'bull';
-
-  return s || null;
-}
-
-function getEntryPrice(pos) {
-  return Number(
-    pos?.entry ??
-      pos?.entryPrice ??
-      pos?.avgEntry ??
-      pos?.avgEntryPrice ??
-      pos?.openPrice ??
-      pos?.price ??
-      0
-  );
-}
-
-function getClosePrice(pos) {
-  const entry = getEntryPrice(pos);
-
-  return Number(
-    pos?.currentPrice ??
-      pos?.markPrice ??
-      pos?.lastPrice ??
-      pos?.closePrice ??
-      pos?.exitPrice ??
-      entry
-  );
-}
-
-function calcR(pos, closePrice) {
-  const side = normalizeSide(pos?.side);
-  const entry = getEntryPrice(pos);
-  const sl = Number(pos?.sl ?? pos?.stopLoss ?? pos?.stop ?? 0);
-
-  if (!side || !entry || !sl || !closePrice) return 0;
-
-  const risk = Math.abs(entry - sl);
-  if (!risk) return 0;
-
-  if (side === 'bear') {
-    return Number(((entry - closePrice) / risk).toFixed(4));
-  }
-
-  return Number(((closePrice - entry) / risk).toFixed(4));
-}
-
-function buildManualExit(pos, index, now, reason) {
-  const symbol = getSymbol(pos);
-  const side = normalizeSide(pos?.side);
-  const entry = getEntryPrice(pos);
-  const closePrice = getClosePrice(pos);
-  const pnlR = calcR(pos, closePrice);
-
-  return {
-    ...pos,
-
-    id: `manual_flush_exit_${symbol}_${side}_${now}_${index}`,
-    tradeId:
-      pos?.tradeId ||
-      pos?.positionId ||
-      pos?.entryId ||
-      `manual_flush_trade_${symbol}_${side}_${now}_${index}`,
-
-    type: 'exit',
-    action: 'EXIT',
-    eventType: 'EXIT',
-
-    symbol,
-    side,
-
-    entry,
-    entryPrice: entry,
-
-    exit: closePrice,
-    exitPrice: closePrice,
-    closePrice,
-
-    r: pnlR,
-    pnlR,
-    finalR: pnlR,
-
-    reason,
-    exitReason: reason,
-    closeReason: reason,
-    outcome: 'MANUAL_FLUSH',
-
-    openedAt: pos?.openedAt ?? pos?.entryTs ?? pos?.ts ?? null,
-    closedAt: now,
-    exitTs: now,
-    ts: now,
-
-    manualFlush: true,
-    forceClosed: true,
-    forceExit: true,
-
-    // Belangrijk: deze flush mag micro-learning / weekly rotation NIET trainen.
-    learnEligible: false,
-    analysisEligible: false,
-    microLearningEligible: false,
-    rotationLearningEligible: false,
-
-    excludeFromLearning: true,
-    excludeFromAnalysis: true,
-    excludeFromMicroLearning: true,
-    excludeFromRotationLearning: true,
-
-    excludedReason: reason,
-    source: 'VERCEL_ADMIN_FLUSH_OPEN_POSITIONS',
-  };
-}
-
-function collectOpenPositions(state) {
-  const direct = asArray(state?.openPositions);
-  const memory = asArray(state?.memory).filter((row) => {
-    const action = String(row?.action || row?.type || '').toLowerCase();
-    return action !== 'exit' && getSymbol(row);
-  });
-
-  const active = asArray(state?.activePositions);
-  const positionsBySymbol = asArray(state?.positionsBySymbol);
-  const openBySymbol = asArray(state?.openBySymbol);
-
-  return uniqByTradeIdentity([
-    ...direct,
-    ...memory,
-    ...active,
-    ...positionsBySymbol,
-    ...openBySymbol,
-  ]);
-}
-
-function clearOpenContainers(state) {
-  const keys = [
-    'openPositions',
-    'memory',
-    'activePositions',
-    'positionsBySymbol',
-    'openBySymbol',
-    'openPositionBySymbol',
-    'openPositionsBySymbol',
-    'symbolOpenMap',
-    'activeBySymbol',
-  ];
-
-  for (const key of keys) {
-    if (state[key] !== undefined) {
-      state[key] = emptyLike(state[key]);
-    }
-  }
-}
-
-function pruneRecentEntriesForClosedSymbols(state, closedSymbols) {
-  if (!Array.isArray(state.recentEntries)) return;
-
-  state.recentEntries = state.recentEntries.filter((row) => {
-    const symbol = getSymbol(row);
-    return !closedSymbols.has(symbol);
-  });
-}
-
-function pruneSymbolMapsForClosedSymbols(state, closedSymbols) {
-  const mapKeys = [
-    'reentryCooldowns',
-    'symbolCooldowns',
-    'cooldownsBySymbol',
-    'lastEntryBySymbol',
-    'lastSignalBySymbol',
-    'lastTradeBySymbol',
-    'entryLocksBySymbol',
-    'symbolLocks',
-  ];
-
-  for (const key of mapKeys) {
-    const value = state[key];
-
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      continue;
-    }
-
-    for (const symbol of closedSymbols) {
-      delete value[symbol];
-      delete value[symbol.toLowerCase()];
-      delete value[`${symbol}USDT`];
-      delete value[`${symbol}_USDT`];
-    }
-  }
-}
-
-async function importCandidateModules() {
-  const modules = [];
-  const errors = [];
-
-  for (const path of MODULE_CANDIDATES) {
-    try {
-      const mod = await import(path);
-      modules.push({
-        path,
-        mod,
-      });
-    } catch (error) {
-      errors.push({
-        path,
-        error: error?.message || String(error),
-      });
-    }
-  }
-
-  return {
-    modules,
-    errors,
-  };
-}
-
-function flattenExports(entry) {
-  const out = {};
-
-  for (const [key, value] of Object.entries(entry.mod || {})) {
-    out[key] = value;
-  }
-
-  if (entry.mod?.default && typeof entry.mod.default === 'object') {
-    for (const [key, value] of Object.entries(entry.mod.default)) {
-      out[key] = value;
-    }
-  }
-
-  return out;
-}
-
-function pickFunction(modules, names) {
-  for (const entry of modules) {
-    const exports = flattenExports(entry);
-
-    for (const name of names) {
-      if (typeof exports[name] === 'function') {
-        return {
-          name,
-          path: entry.path,
-          fn: exports[name],
-        };
-      }
-    }
+function getEnvValue(names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value && String(value).trim()) return String(value).trim();
   }
 
   return null;
 }
 
-function listExports(modules) {
-  return modules.map((entry) => {
-    const exports = flattenExports(entry);
+function send(res, status, payload) {
+  res.status(status).json(payload);
+}
 
-    return {
-      path: entry.path,
-      exports: Object.keys(exports).sort(),
-    };
+function isEnabled() {
+  const value = String(process.env.TS_ADMIN_FLUSH_ENABLED || '').toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function getExpectedSecret() {
+  return (
+    process.env.TS_ADMIN_SECRET ||
+    process.env.ADMIN_SECRET ||
+    process.env.FLUSH_ADMIN_SECRET ||
+    ''
+  ).trim();
+}
+
+function getProvidedSecret(req, body) {
+  return String(
+    req.headers['x-admin-secret'] ||
+    req.headers['x-ts-admin-secret'] ||
+    body?.secret ||
+    body?.adminSecret ||
+    req.query?.secret ||
+    ''
+  ).trim();
+}
+
+async function readBody(req) {
+  if (req.body && typeof req.body === 'object') return req.body;
+
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+
+  return await new Promise((resolve) => {
+    let raw = '';
+
+    req.on('data', (chunk) => {
+      raw += chunk;
+    });
+
+    req.on('end', () => {
+      if (!raw) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        resolve({});
+      }
+    });
+
+    req.on('error', () => resolve({}));
   });
 }
 
-async function callLoad(loadFn) {
-  const attempts = [
-    [{ strategyVersion: STRATEGY_VERSION, source: 'VERCEL_ADMIN_FLUSH_LOAD' }],
-    [STRATEGY_VERSION],
-    [],
-  ];
+function safeParseJson(value) {
+  if (typeof value !== 'string') return null;
 
-  let lastError = null;
-
-  for (const args of attempts) {
-    try {
-      const result = await loadFn(...args);
-      if (result && typeof result === 'object') return result;
-    } catch (error) {
-      lastError = error;
-    }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
   }
-
-  throw lastError || new Error('LOAD_FAILED');
 }
 
-async function callSave(saveFn, state, reason) {
-  const runId = `admin_flush_${Date.now()}`;
+function countContainer(value) {
+  if (Array.isArray(value)) return value.length;
 
-  const attempts = [
-    [
-      state,
-      {
-        strategyVersion: STRATEGY_VERSION,
-        runId,
-        reason,
-        source: 'VERCEL_ADMIN_FLUSH_OPEN_POSITIONS',
-      },
-    ],
-    [state, STRATEGY_VERSION],
-    [state],
-  ];
+  if (value && typeof value === 'object') {
+    return Object.keys(value).length;
+  }
 
-  let lastError = null;
+  return 0;
+}
 
-  for (const args of attempts) {
-    try {
-      return await saveFn(...args);
-    } catch (error) {
-      lastError = error;
+function emptyLike(value) {
+  if (Array.isArray(value)) return [];
+
+  if (value && typeof value === 'object') return {};
+
+  return [];
+}
+
+function mutateOpenPositionContainers(node, path = []) {
+  const changes = [];
+
+  if (!node || typeof node !== 'object') return changes;
+
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i += 1) {
+      changes.push(...mutateOpenPositionContainers(node[i], path.concat(String(i))));
+    }
+
+    return changes;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    const normalizedKey = key.toLowerCase();
+
+    if (POSITION_CONTAINER_KEYS.has(normalizedKey)) {
+      const before = countContainer(value);
+
+      node[key] = emptyLike(value);
+
+      changes.push({
+        path: path.concat(key).join('.'),
+        key,
+        before,
+        after: 0,
+      });
+
+      continue;
+    }
+
+    if (value && typeof value === 'object') {
+      changes.push(...mutateOpenPositionContainers(value, path.concat(key)));
     }
   }
 
-  throw lastError || new Error('SAVE_FAILED');
+  return changes;
+}
+
+async function redisCommand(redis, args) {
+  const response = await fetch(redis.url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${redis.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(args),
+  });
+
+  const text = await response.text();
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`REDIS_NON_JSON_RESPONSE:${response.status}:${text.slice(0, 200)}`);
+  }
+
+  if (!response.ok || data?.error) {
+    throw new Error(`REDIS_ERROR:${response.status}:${data?.error || text.slice(0, 200)}`);
+  }
+
+  return data.result;
+}
+
+async function scanPattern(redis, pattern, maxKeys = 5000) {
+  const found = [];
+  let cursor = '0';
+
+  do {
+    const result = await redisCommand(redis, [
+      'SCAN',
+      cursor,
+      'MATCH',
+      pattern,
+      'COUNT',
+      '250',
+    ]);
+
+    if (!Array.isArray(result) || result.length < 2) break;
+
+    cursor = String(result[0] || '0');
+
+    const keys = Array.isArray(result[1]) ? result[1] : [];
+    for (const key of keys) {
+      found.push(String(key));
+      if (found.length >= maxKeys) return found;
+    }
+  } while (cursor !== '0');
+
+  return found;
+}
+
+async function discoverCandidateKeys(redis, strategyVersion) {
+  const patterns = [
+    `${strategyVersion}*`,
+    `*${strategyVersion}*`,
+    `tradeSystem:*`,
+    `tradesystem:*`,
+    `trade-system:*`,
+    `*runtime*`,
+    `*durable*`,
+    `*open*position*`,
+  ];
+
+  const keys = new Set();
+
+  for (const pattern of patterns) {
+    const scanned = await scanPattern(redis, pattern);
+
+    for (const key of scanned) {
+      keys.add(key);
+    }
+  }
+
+  return [...keys];
+}
+
+async function getRedisString(redis, key) {
+  try {
+    const type = await redisCommand(redis, ['TYPE', key]);
+
+    if (type && type !== 'string') {
+      return {
+        ok: false,
+        skipped: true,
+        reason: `NON_STRING_TYPE:${type}`,
+        value: null,
+      };
+    }
+
+    const value = await redisCommand(redis, ['GET', key]);
+
+    if (typeof value !== 'string') {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'EMPTY_OR_NON_STRING_VALUE',
+        value: null,
+      };
+    }
+
+    return {
+      ok: true,
+      skipped: false,
+      reason: null,
+      value,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: String(error?.message || error),
+      value: null,
+    };
+  }
+}
+
+async function inspectAndMaybeFlushKey(redis, key, dryRun) {
+  const loaded = await getRedisString(redis, key);
+
+  if (!loaded.ok) {
+    return {
+      key,
+      touched: false,
+      skipped: true,
+      reason: loaded.reason,
+      openBefore: 0,
+      openAfter: 0,
+      changes: [],
+    };
+  }
+
+  const parsed = safeParseJson(loaded.value);
+
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      key,
+      touched: false,
+      skipped: true,
+      reason: 'NOT_JSON_OBJECT',
+      openBefore: 0,
+      openAfter: 0,
+      changes: [],
+    };
+  }
+
+  const changes = mutateOpenPositionContainers(parsed);
+  const openBefore = changes.reduce((sum, change) => sum + change.before, 0);
+
+  if (!changes.length || openBefore <= 0) {
+    return {
+      key,
+      touched: false,
+      skipped: false,
+      reason: 'NO_OPEN_POSITION_CONTAINER_WITH_ROWS',
+      openBefore: 0,
+      openAfter: 0,
+      changes,
+    };
+  }
+
+  if (!dryRun) {
+    await redisCommand(redis, ['SET', key, JSON.stringify(parsed)]);
+  }
+
+  return {
+    key,
+    touched: true,
+    skipped: false,
+    reason: dryRun ? 'DRY_RUN_MATCHED' : 'FLUSHED',
+    openBefore,
+    openAfter: 0,
+    changes,
+  };
 }
 
 export default async function handler(req, res) {
   const startedAt = Date.now();
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({
-      ok: false,
-      error: 'METHOD_NOT_ALLOWED',
-      expected: 'POST',
-    });
-  }
+  try {
+    if (req.method !== 'POST') {
+      send(res, 405, {
+        ok: false,
+        error: 'METHOD_NOT_ALLOWED',
+        expected: 'POST',
+      });
+      return;
+    }
 
-  if (!FLUSH_ENABLED) {
-    return res.status(403).json({
-      ok: false,
-      error: 'ADMIN_FLUSH_DISABLED',
-      fix: 'Set TS_ADMIN_FLUSH_ENABLED=true in Vercel env and redeploy.',
-    });
-  }
+    if (!isEnabled()) {
+      send(res, 403, {
+        ok: false,
+        error: 'ADMIN_FLUSH_DISABLED',
+        requiredEnv: 'TS_ADMIN_FLUSH_ENABLED=true',
+      });
+      return;
+    }
 
-  const secret = req.headers['x-admin-secret'];
+    const body = await readBody(req);
 
-  if (!ADMIN_SECRET || secret !== ADMIN_SECRET) {
-    return res.status(401).json({
-      ok: false,
-      error: 'UNAUTHORIZED',
-    });
-  }
+    const expectedSecret = getExpectedSecret();
+    const providedSecret = getProvidedSecret(req, body);
 
-  const body = parseBody(req);
-  const dryRun = body.dryRun !== false;
-  const reason = body.reason || 'MANUAL_FLUSH_CLEAR_CAP';
-  const pruneRecentEntries = body.pruneRecentEntries !== false;
+    if (!expectedSecret) {
+      send(res, 500, {
+        ok: false,
+        error: 'ADMIN_SECRET_ENV_MISSING',
+        acceptedEnvNames: [
+          'TS_ADMIN_SECRET',
+          'ADMIN_SECRET',
+          'FLUSH_ADMIN_SECRET',
+        ],
+      });
+      return;
+    }
 
-  const imported = await importCandidateModules();
+    if (!providedSecret || providedSecret !== expectedSecret) {
+      send(res, 401, {
+        ok: false,
+        error: 'UNAUTHORIZED',
+      });
+      return;
+    }
 
-  const load = pickFunction(imported.modules, LOAD_EXPORT_NAMES);
-  const save = pickFunction(imported.modules, SAVE_EXPORT_NAMES);
+    const redisUrl = getEnvValue(REDIS_URL_KEYS);
+    const redisToken = getEnvValue(REDIS_TOKEN_KEYS);
 
-  if (!load || !save) {
-    return res.status(500).json({
-      ok: false,
-      error: 'DURABLE_STATE_LOAD_SAVE_EXPORT_NOT_FOUND',
-      strategyVersion: STRATEGY_VERSION,
-      foundModules: listExports(imported.modules),
-      importErrors: imported.errors,
-      expectedLoadNames: LOAD_EXPORT_NAMES,
-      expectedSaveNames: SAVE_EXPORT_NAMES,
-    });
-  }
+    if (!redisUrl || !redisToken) {
+      send(res, 500, {
+        ok: false,
+        error: 'REDIS_ENV_MISSING',
+        requiredOneOfUrl: REDIS_URL_KEYS,
+        requiredOneOfToken: REDIS_TOKEN_KEYS,
+      });
+      return;
+    }
 
-  const state = await callLoad(load.fn);
-  const openPositions = collectOpenPositions(state);
-  const now = Date.now();
+    const redis = {
+      url: redisUrl.replace(/\/+$/, ''),
+      token: redisToken,
+    };
 
-  const manualExits = openPositions.map((pos, index) =>
-    buildManualExit(pos, index, now, reason)
-  );
+    const dryRun = body?.dryRun !== false;
+    const strategyVersion = String(
+      body?.strategyVersion ||
+      process.env.STRATEGY_VERSION ||
+      process.env.TRADE_SYSTEM_STRATEGY_VERSION ||
+      DEFAULT_STRATEGY_VERSION
+    ).trim();
 
-  const closedSymbols = new Set(
-    openPositions.map((pos) => getSymbol(pos)).filter(Boolean)
-  );
+    const keys = await discoverCandidateKeys(redis, strategyVersion);
 
-  if (dryRun) {
-    return res.status(200).json({
+    const inspected = [];
+    for (const key of keys) {
+      const result = await inspectAndMaybeFlushKey(redis, key, dryRun);
+      inspected.push(result);
+    }
+
+    const touched = inspected.filter((item) => item.touched);
+    const openBefore = touched.reduce((sum, item) => sum + item.openBefore, 0);
+    const openAfter = touched.reduce((sum, item) => sum + item.openAfter, 0);
+
+    send(res, 200, {
       ok: true,
-      dryRun: true,
-      strategyVersion: STRATEGY_VERSION,
-
-      loader: {
-        name: load.name,
-        path: load.path,
-      },
-
-      saver: {
-        name: save.name,
-        path: save.path,
-      },
-
-      openBefore: openPositions.length,
-      exitsToAppend: manualExits.length,
-      symbolsToClear: [...closedSymbols].slice(0, 50),
-      symbolCount: closedSymbols.size,
-
-      currentCounts: {
-        entries: asArray(state.entries).length,
-        exits: asArray(state.exits).length,
-        closedTrades: asArray(state.closedTrades).length,
-        recentEntries: asArray(state.recentEntries).length,
-        memory: asArray(state.memory).length,
-      },
-
-      reason,
+      dryRun,
+      strategyVersion,
+      keysScanned: keys.length,
+      touchedKeys: touched.length,
+      openBefore,
+      openAfter,
       durationMs: Date.now() - startedAt,
+      touched: touched.map((item) => ({
+        key: item.key,
+        openBefore: item.openBefore,
+        openAfter: item.openAfter,
+        reason: item.reason,
+        changes: item.changes,
+      })),
+      skippedSample: inspected
+        .filter((item) => !item.touched)
+        .slice(0, 20)
+        .map((item) => ({
+          key: item.key,
+          reason: item.reason,
+        })),
+    });
+  } catch (error) {
+    send(res, 500, {
+      ok: false,
+      error: String(error?.message || error),
+      stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
     });
   }
-
-  state.exits = [...asArray(state.exits), ...manualExits];
-
-  // Niet standaard toevoegen aan closedTrades.
-  // Reden: dit zijn administratieve exits, geen echte performance samples.
-  // De exits zijn genoeg om entries - exits te neutraliseren.
-  if (body.includeClosedTrades === true) {
-    state.closedTrades = [...asArray(state.closedTrades), ...manualExits];
-  }
-
-  clearOpenContainers(state);
-
-  if (pruneRecentEntries) {
-    pruneRecentEntriesForClosedSymbols(state, closedSymbols);
-  }
-
-  pruneSymbolMapsForClosedSymbols(state, closedSymbols);
-
-  state.lastManualFlush = {
-    at: now,
-    reason,
-    source: 'VERCEL_ADMIN_FLUSH_OPEN_POSITIONS',
-    openBefore: openPositions.length,
-    exitsCreated: manualExits.length,
-    symbolsCleared: closedSymbols.size,
-    includeClosedTrades: body.includeClosedTrades === true,
-    pruneRecentEntries,
-  };
-
-  await callSave(save.fn, state, reason);
-
-  return res.status(200).json({
-    ok: true,
-    dryRun: false,
-    strategyVersion: STRATEGY_VERSION,
-
-    loader: {
-      name: load.name,
-      path: load.path,
-    },
-
-    saver: {
-      name: save.name,
-      path: save.path,
-    },
-
-    openBefore: openPositions.length,
-    openAfter: collectOpenPositions(state).length,
-    exitsCreated: manualExits.length,
-    symbolsCleared: closedSymbols.size,
-
-    countsAfterMutation: {
-      entries: asArray(state.entries).length,
-      exits: asArray(state.exits).length,
-      closedTrades: asArray(state.closedTrades).length,
-      recentEntries: asArray(state.recentEntries).length,
-      memory: asArray(state.memory).length,
-    },
-
-    reason,
-    durationMs: Date.now() - startedAt,
-  });
 }
