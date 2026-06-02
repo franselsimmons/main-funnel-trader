@@ -1,4 +1,5 @@
 const DEFAULT_STRATEGY_VERSION = 'TS_V12_8_WEEKLY_MICRO_ROTATION_CLEAN';
+const DEFAULT_ANALYZE_KEY = 'tradesystem:analyze:store:v3:events';
 
 const REDIS_URL_KEYS = [
   'KV_REST_API_URL',
@@ -12,39 +13,8 @@ const REDIS_TOKEN_KEYS = [
   'REDIS_REST_API_TOKEN',
 ];
 
-const NUKE_FIELD_NAMES = new Set([
-  'openpositions',
-  'openposition',
-  'activepositions',
-  'activeposition',
-  'runtimeopenpositions',
-  'virtualopenpositions',
-  'paperopenpositions',
-  'currentpositions',
-  'runningpositions',
-  'holdingpositions',
-  'holds',
-  'holding',
-]);
-
-const ZERO_COUNTER_NAMES = new Set([
-  'memory',
-  'openpositions',
-  'opencount',
-  'openpositioncount',
-  'openpositionscount',
-  'activeopenpositions',
-  'totalopenpositions',
-  'runningpositions',
-  'holdingpositions',
-]);
-
 function send(res, status, payload) {
   res.status(status).json(payload);
-}
-
-function normalizeKey(key) {
-  return String(key || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 }
 
 function getEnv(names) {
@@ -156,61 +126,213 @@ function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function replacementFor(value, key) {
-  const normalized = normalizeKey(key);
-
-  if (ZERO_COUNTER_NAMES.has(normalized)) return 0;
-  if (Array.isArray(value)) return [];
-  if (isObject(value)) return {};
-  if (typeof value === 'number') return 0;
-  if (typeof value === 'boolean') return false;
-
-  return null;
+function normalize(value) {
+  return String(value || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 }
 
-function hardResetOpenState(node, path = []) {
+function isHistoryOrLearningKey(key) {
+  const lower = String(key || '').toLowerCase();
+
+  return (
+    lower.includes(':closed_trades:') ||
+    lower.includes(':shadow_outcomes:') ||
+    lower.includes(':feature_store:') ||
+    lower.includes(':recent_entries') ||
+    lower.includes(':learning') ||
+    lower.includes(':rotation') ||
+    lower.includes(':micro')
+  );
+}
+
+function isDedicatedOpenKey(key) {
+  const lower = normalize(key);
+
+  return (
+    lower.includes('openposition') ||
+    lower.includes('openpositions') ||
+    lower.includes('activeposition') ||
+    lower.includes('activepositions') ||
+    lower.includes('runningposition') ||
+    lower.includes('holdingposition') ||
+    lower.includes('portfolioopen') ||
+    lower.endsWith('memory')
+  );
+}
+
+function isPositionLike(row) {
+  if (!isObject(row)) return false;
+
+  const hasSymbol = typeof row.symbol === 'string' && row.symbol.length > 0;
+  const hasSide = typeof row.side === 'string' && row.side.length > 0;
+  const hasEntry =
+    Number.isFinite(Number(row.entry)) ||
+    Number.isFinite(Number(row.entryPrice)) ||
+    Number.isFinite(Number(row.openPrice));
+
+  if (!hasSymbol || !hasSide || !hasEntry) return false;
+
+  const action = String(row.action || '').toUpperCase();
+  const reason = String(row.reason || '').toUpperCase();
+  const stage = String(row.scannerStage || row.stage || '').toLowerCase();
+
+  if (action === 'HOLD') return true;
+  if (reason === 'RUNNING') return true;
+  if (reason === 'HOLD_RUNNING') return true;
+  if (stage === 'open_position') return true;
+  if (row.closed === false) return true;
+  if (!row.closedAt && !row.exit && !row.exitPrice && !row.realizedR) return true;
+
+  return false;
+}
+
+function isExitLike(row) {
+  if (!isObject(row)) return false;
+
+  const action = String(row.action || row.analyzeLifecycle || '').toUpperCase();
+
+  return (
+    action === 'EXIT' ||
+    row.closed === true ||
+    Boolean(row.closedAt) ||
+    Number.isFinite(Number(row.exit)) ||
+    Number.isFinite(Number(row.exitPrice))
+  );
+}
+
+function isEntryLike(row) {
+  if (!isObject(row)) return false;
+
+  const action = String(row.action || row.analyzeLifecycle || '').toUpperCase();
+
+  return (
+    action === 'ENTRY' ||
+    action === 'OPEN' ||
+    action === 'HOLD' ||
+    isPositionLike(row)
+  );
+}
+
+function getTradeKey(row) {
+  if (!isObject(row)) return null;
+
+  if (row.tradeId) return `id:${row.tradeId}`;
+
+  const symbol = String(row.symbol || '').toUpperCase();
+  const side = String(row.side || '').toUpperCase();
+
+  if (!symbol || !side) return null;
+
+  return `sym:${symbol}:${side}`;
+}
+
+function shouldResetArrayByName(path, key) {
+  const p = normalize(`${path}.${key}`);
+
+  return (
+    p.includes('openpositions') ||
+    p.includes('activepositions') ||
+    p.includes('runningpositions') ||
+    p.includes('holdingpositions') ||
+    p.includes('portfolio.positions') ||
+    p.includes('runtime.positions') ||
+    p.includes('state.positions') ||
+    p.includes('paper.positions') ||
+    p.includes('sim.positions')
+  );
+}
+
+function shouldResetObjectByName(path, key) {
+  const p = normalize(`${path}.${key}`);
+
+  return (
+    p.includes('openpositions') ||
+    p.includes('activepositions') ||
+    p.includes('runningpositions') ||
+    p.includes('holdingpositions') ||
+    p.includes('openpositionmap') ||
+    p.includes('positionmap') ||
+    p.endsWith('positions')
+  );
+}
+
+function resetOpenStateDeep(node, path = '') {
   const changes = [];
 
   if (!node || typeof node !== 'object') return changes;
 
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i += 1) {
-      changes.push(...hardResetOpenState(node[i], path.concat(String(i))));
+      changes.push(...resetOpenStateDeep(node[i], `${path}.${i}`));
     }
 
     return changes;
   }
 
   for (const [key, value] of Object.entries(node)) {
-    const normalized = normalizeKey(key);
-    const currentPath = path.concat(key).join('.');
+    const fullPath = path ? `${path}.${key}` : key;
+    const normalizedKey = normalize(key);
 
-    const shouldNuke =
-      NUKE_FIELD_NAMES.has(normalized) ||
-      ZERO_COUNTER_NAMES.has(normalized);
-
-    if (shouldNuke) {
-      const nextValue = replacementFor(value, key);
-
-      node[key] = nextValue;
-
+    if (
+      normalizedKey === 'opencount' ||
+      normalizedKey === 'openpositioncount' ||
+      normalizedKey === 'openpositionscount' ||
+      normalizedKey === 'activeopenpositions' ||
+      normalizedKey === 'totalopenpositions' ||
+      normalizedKey === 'runningpositionscount' ||
+      normalizedKey === 'holdingpositionscount'
+    ) {
+      node[key] = 0;
       changes.push({
-        path: currentPath,
-        key,
-        beforeType: Array.isArray(value) ? 'array' : typeof value,
-        beforeSize: Array.isArray(value)
-          ? value.length
-          : isObject(value)
-            ? Object.keys(value).length
-            : value,
-        after: nextValue,
+        path: fullPath,
+        action: 'ZERO_COUNTER',
       });
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      const positionLikeCount = value.filter(isPositionLike).length;
+      const shouldReset =
+        shouldResetArrayByName(path, key) ||
+        (value.length > 0 && positionLikeCount > 0 && positionLikeCount / value.length >= 0.5);
+
+      if (shouldReset) {
+        node[key] = [];
+        changes.push({
+          path: fullPath,
+          action: 'RESET_ARRAY',
+          beforeLength: value.length,
+          positionLikeCount,
+        });
+        continue;
+      }
+
+      for (let i = 0; i < value.length; i += 1) {
+        changes.push(...resetOpenStateDeep(value[i], `${fullPath}.${i}`));
+      }
 
       continue;
     }
 
-    if (value && typeof value === 'object') {
-      changes.push(...hardResetOpenState(value, path.concat(key)));
+    if (isObject(value)) {
+      const values = Object.values(value);
+      const positionLikeCount = values.filter(isPositionLike).length;
+
+      const shouldReset =
+        shouldResetObjectByName(path, key) ||
+        (values.length > 0 && positionLikeCount > 0 && positionLikeCount / values.length >= 0.5);
+
+      if (shouldReset) {
+        node[key] = {};
+        changes.push({
+          path: fullPath,
+          action: 'RESET_OBJECT',
+          beforeKeys: values.length,
+          positionLikeCount,
+        });
+        continue;
+      }
+
+      changes.push(...resetOpenStateDeep(value, fullPath));
     }
   }
 
@@ -240,21 +362,25 @@ async function scanKeys(redis, pattern) {
   return keys;
 }
 
-async function discoverKeys(redis, strategyVersion) {
+async function discoverRuntimeKeys(redis, strategyVersion) {
   const keys = new Set([
-    `${strategyVersion}:runtime:core`,
     `${strategyVersion}:runtime`,
+    `${strategyVersion}:runtime:core`,
     `${strategyVersion}:runtime:memory`,
     `${strategyVersion}:runtime:openPositions`,
     `${strategyVersion}:runtime:open_positions`,
     `${strategyVersion}:runtime:activePositions`,
     `${strategyVersion}:runtime:active_positions`,
+    `${strategyVersion}:runtime:positions`,
+    `${strategyVersion}:runtime:portfolio`,
   ]);
 
   const patterns = [
     `${strategyVersion}:runtime:*`,
-    `*${strategyVersion}*open*`,
+    `*${strategyVersion}*runtime*`,
     `*${strategyVersion}*position*`,
+    `*${strategyVersion}*open*`,
+    `*${strategyVersion}*portfolio*`,
     `*${strategyVersion}*memory*`,
     `*${strategyVersion}*core*`,
   ];
@@ -267,22 +393,8 @@ async function discoverKeys(redis, strategyVersion) {
   return [...keys];
 }
 
-function shouldSkipWholeKey(key) {
-  const lower = String(key || '').toLowerCase();
-
-  if (lower.includes(':closed_trades:')) return true;
-  if (lower.includes(':shadow_outcomes:')) return true;
-  if (lower.includes(':feature_store:')) return true;
-  if (lower.includes(':recent_entries')) return true;
-  if (lower.includes(':micro')) return true;
-  if (lower.includes(':learning')) return true;
-  if (lower.includes(':rotation')) return true;
-
-  return false;
-}
-
-async function resetStringJsonKey(redis, key, dryRun) {
-  if (shouldSkipWholeKey(key)) {
+async function resetRuntimeJsonKey(redis, key, dryRun) {
+  if (isHistoryOrLearningKey(key)) {
     return {
       key,
       touched: false,
@@ -292,6 +404,26 @@ async function resetStringJsonKey(redis, key, dryRun) {
   }
 
   const type = await redisCommand(redis, ['TYPE', key]);
+
+  if (type === 'none') {
+    return {
+      key,
+      touched: false,
+      reason: 'KEY_NOT_FOUND',
+      changes: [],
+    };
+  }
+
+  if (isDedicatedOpenKey(key)) {
+    if (!dryRun) await redisCommand(redis, ['DEL', key]);
+
+    return {
+      key,
+      touched: true,
+      reason: dryRun ? 'DRY_RUN_DELETE_DEDICATED_OPEN_KEY' : 'DELETED_DEDICATED_OPEN_KEY',
+      changes: [{ path: key, action: 'DEL' }],
+    };
+  }
 
   if (type !== 'string') {
     return {
@@ -324,13 +456,13 @@ async function resetStringJsonKey(redis, key, dryRun) {
     };
   }
 
-  const changes = hardResetOpenState(parsed);
+  const changes = resetOpenStateDeep(parsed);
 
   if (changes.length === 0) {
     return {
       key,
       touched: false,
-      reason: 'NO_OPEN_FIELDS_FOUND',
+      reason: 'NO_OPEN_RUNTIME_STATE_FOUND',
       changes: [],
     };
   }
@@ -342,53 +474,120 @@ async function resetStringJsonKey(redis, key, dryRun) {
   return {
     key,
     touched: true,
-    reason: dryRun ? 'DRY_RUN_RESET_MATCH' : 'RESET_DONE',
+    reason: dryRun ? 'DRY_RUN_RUNTIME_RESET_MATCH' : 'RUNTIME_RESET_DONE',
     changes,
   };
 }
 
-async function deleteDedicatedOpenKeys(redis, key, dryRun) {
-  const normalized = normalizeKey(key);
+async function resetAnalyzeStoreOpenEntries(redis, analyzeKey, dryRun) {
+  const type = await redisCommand(redis, ['TYPE', analyzeKey]);
 
-  const isDedicatedOpenKey =
-    normalized.includes('openpositions') ||
-    normalized.includes('openposition') ||
-    normalized.includes('activepositions') ||
-    normalized.includes('activeposition') ||
-    normalized.endsWith('memory');
-
-  if (!isDedicatedOpenKey) {
+  if (type === 'none') {
     return {
-      key,
+      key: analyzeKey,
       touched: false,
-      reason: 'NOT_DEDICATED_OPEN_KEY',
-      changes: [],
+      reason: 'ANALYZE_KEY_NOT_FOUND',
+      before: 0,
+      after: 0,
+      removed: 0,
     };
   }
 
-  if (shouldSkipWholeKey(key)) {
+  if (type !== 'list') {
     return {
-      key,
+      key: analyzeKey,
       touched: false,
-      reason: 'SKIPPED_HISTORY_OR_LEARNING_KEY',
-      changes: [],
+      reason: `ANALYZE_KEY_NOT_LIST:${type}`,
+      before: 0,
+      after: 0,
+      removed: 0,
+    };
+  }
+
+  const rawItems = await redisCommand(redis, ['LRANGE', analyzeKey, '0', '-1']);
+  const items = Array.isArray(rawItems) ? rawItems : [];
+
+  const parsedRows = items.map((raw, index) => ({
+    index,
+    raw,
+    parsed: tryJsonParse(raw),
+  }));
+
+  const closedKeys = new Set();
+
+  for (const item of parsedRows) {
+    const row = item.parsed;
+    if (!row || !isExitLike(row)) continue;
+
+    const key = getTradeKey(row);
+    if (key) closedKeys.add(key);
+  }
+
+  const keep = [];
+  const removed = [];
+
+  for (const item of parsedRows) {
+    const row = item.parsed;
+
+    if (!row || !isEntryLike(row)) {
+      keep.push(item.raw);
+      continue;
+    }
+
+    const key = getTradeKey(row);
+
+    if (!key) {
+      keep.push(item.raw);
+      continue;
+    }
+
+    if (closedKeys.has(key) || isExitLike(row)) {
+      keep.push(item.raw);
+      continue;
+    }
+
+    removed.push({
+      index: item.index,
+      key,
+      symbol: row.symbol || null,
+      side: row.side || null,
+      action: row.action || row.analyzeLifecycle || null,
+      reason: row.reason || null,
+    });
+  }
+
+  if (removed.length === 0) {
+    return {
+      key: analyzeKey,
+      touched: false,
+      reason: 'NO_OPEN_ANALYZE_ENTRIES_FOUND',
+      before: items.length,
+      after: keep.length,
+      removed: 0,
     };
   }
 
   if (!dryRun) {
-    await redisCommand(redis, ['DEL', key]);
+    await redisCommand(redis, ['DEL', analyzeKey]);
+
+    if (keep.length > 0) {
+      const chunkSize = 250;
+
+      for (let i = 0; i < keep.length; i += chunkSize) {
+        const chunk = keep.slice(i, i + chunkSize);
+        await redisCommand(redis, ['RPUSH', analyzeKey, ...chunk]);
+      }
+    }
   }
 
   return {
-    key,
+    key: analyzeKey,
     touched: true,
-    reason: dryRun ? 'DRY_RUN_DELETE_DEDICATED_KEY' : 'DELETED_DEDICATED_KEY',
-    changes: [
-      {
-        path: key,
-        action: 'DEL',
-      },
-    ],
+    reason: dryRun ? 'DRY_RUN_ANALYZE_OPEN_ENTRIES_REMOVED' : 'ANALYZE_OPEN_ENTRIES_REMOVED',
+    before: items.length,
+    after: keep.length,
+    removed: removed.length,
+    removedSample: removed.slice(0, 50),
   };
 }
 
@@ -460,37 +659,39 @@ export default async function handler(req, res) {
         DEFAULT_STRATEGY_VERSION
     ).trim();
 
-    const keys = await discoverKeys(redis, strategyVersion);
+    const analyzeKey = String(body?.analyzeKey || DEFAULT_ANALYZE_KEY).trim();
 
-    const results = [];
+    const runtimeKeys = await discoverRuntimeKeys(redis, strategyVersion);
 
-    for (const key of keys) {
-      const jsonResult = await resetStringJsonKey(redis, key, dryRun);
-      results.push(jsonResult);
+    const runtimeResults = [];
 
-      if (!jsonResult.touched) {
-        const deleteResult = await deleteDedicatedOpenKeys(redis, key, dryRun);
-        if (deleteResult.touched) results.push(deleteResult);
-      }
+    for (const key of runtimeKeys) {
+      const result = await resetRuntimeJsonKey(redis, key, dryRun);
+      runtimeResults.push(result);
     }
 
-    const touched = results.filter((item) => item.touched);
+    const analyzeResult = await resetAnalyzeStoreOpenEntries(redis, analyzeKey, dryRun);
+
+    const touchedRuntime = runtimeResults.filter((item) => item.touched);
 
     send(res, 200, {
       ok: true,
       dryRun,
       strategyVersion,
-      keysScanned: keys.length,
-      touchedKeys: touched.length,
+      analyzeKey,
+      runtimeKeysScanned: runtimeKeys.length,
+      runtimeTouchedKeys: touchedRuntime.length,
+      analyzeTouched: analyzeResult.touched,
       durationMs: Date.now() - startedAt,
-      touched: touched.map((item) => ({
+      runtimeTouched: touchedRuntime.map((item) => ({
         key: item.key,
         reason: item.reason,
         changes: item.changes.slice(0, 100),
       })),
-      skippedSample: results
+      analyzeResult,
+      skippedSample: runtimeResults
         .filter((item) => !item.touched)
-        .slice(0, 30)
+        .slice(0, 40)
         .map((item) => ({
           key: item.key,
           reason: item.reason,
@@ -500,6 +701,7 @@ export default async function handler(req, res) {
     send(res, 500, {
       ok: false,
       error: String(error?.message || error),
+      stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
     });
   }
 }
