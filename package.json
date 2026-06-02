@@ -11,6 +11,7 @@
     "rotation:dry": "node scripts/runWeeklyRotation.js --dry-run --force",
     "rotation:run": "node scripts/runWeeklyRotation.js",
     "rotation:force": "node scripts/runWeeklyRotation.js --force",
+    "rotation:status": "node scripts/showRotationStatus.js",
     "rotation:cron": "node scripts/startWeeklyRotationCron.js"
   },
   "dependencies": {
