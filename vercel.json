@@ -7,6 +7,10 @@
     {
       "path": "/api/trade-funnel?notify=true&store=true",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron?job=weekly-rotation",
+      "schedule": "0 21 * * 0"
     }
   ],
   "rewrites": [
