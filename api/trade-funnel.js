@@ -1,3 +1,5 @@
+// API/tradefunnel
+
 import { getLatestScan, setLatestScan } from "../lib/scanStore.js";
 import { processTrades } from "../lib/tradeSystem.js";
 import {
@@ -10,7 +12,7 @@ import {
   createAnalyzeFamilies,
 } from "../lib/analyze/familyEngine.js";
 
-const TRADE_FUNNEL_ROUTE_VERSION = "trade-funnel-trace-v2";
+const TRADE_FUNNEL_ROUTE_VERSION = "trade-funnel-trace-v3-canonical-micro";
 
 console.log("TRADE_FUNNEL_MODULE_LOADED:", JSON.stringify({
   version: TRADE_FUNNEL_ROUTE_VERSION,
@@ -26,6 +28,17 @@ const DURABLE_SAVE_TOO_LARGE = "TRADE_SYSTEM_DURABLE_SAVE_TOO_LARGE";
 
 const REDIS_SET_TOO_LARGE = "REDIS_SET_ABORTED_TOO_LARGE";
 const REDIS_PAYLOAD_TOO_LARGE = "REDIS_PAYLOAD_TOO_LARGE";
+
+const DEFAULT_MICRO_FAMILY_SCHEMA_VERSION = "MF_V4_ANALYZE";
+
+const MICRO_FAMILY_SCHEMA_VERSION =
+  process.env.MICRO_FAMILY_SCHEMA_VERSION ||
+  DEFAULT_MICRO_FAMILY_SCHEMA_VERSION;
+
+const ANALYZE_FAMILY_ID_RE = /^(LONG|SHORT)_([1-9]|[1-4][0-9]|50)$/;
+
+const CORE_MICRO_ID_RE =
+  /^MICRO_(LONG|SHORT)_((?:LONG|SHORT)_(?:[1-9]|[1-4][0-9]|50))_([A-Z0-9_]+)_([A-Z0-9]+)$/;
 
 const TRADE_FUNNEL_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_MIN_SCORE", 45);
 const TRADE_FUNNEL_ALMOST_MIN_SCORE = readNumberEnv("TRADE_FUNNEL_ALMOST_MIN_SCORE", 45);
@@ -218,6 +231,14 @@ function safeObject(value) {
     : {};
 }
 
+function flattenValues(values = []) {
+  return values.flat(Infinity).filter(value => value !== undefined && value !== null);
+}
+
+function unique(values = []) {
+  return Array.from(new Set(flattenValues(values).filter(Boolean)));
+}
+
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -284,6 +305,294 @@ function normalizeText(value) {
   return String(value || "").toUpperCase().trim();
 }
 
+function cleanToken(value, fallback = "") {
+  const raw = String(value ?? "").trim();
+
+  if (!raw) return fallback;
+
+  return (
+    raw
+      .replace(/\[object object\]/gi, "")
+      .replace(/\{.*?\}/g, "")
+      .replace(/[^A-Z0-9.%+-]+/gi, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .toUpperCase() || fallback
+  );
+}
+
+function analyzerHashString(value) {
+  const text = String(value || "");
+  let hash = 2166136261;
+
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash +=
+      (hash << 1) +
+      (hash << 4) +
+      (hash << 7) +
+      (hash << 8) +
+      (hash << 24);
+  }
+
+  return Math.abs(hash >>> 0).toString(36).toUpperCase();
+}
+
+// ================= CANONICAL FAMILY HELPERS =================
+
+function extractParentFamilyIdFromMicroId(raw) {
+  const token = cleanToken(raw);
+
+  if (!token.startsWith("MICRO_")) return null;
+
+  const match = token.match(
+    /^MICRO_(LONG|SHORT)_((?:LONG|SHORT)_(?:[1-9]|[1-4][0-9]|50))_/
+  );
+
+  const parentFamilyId = match?.[2] || null;
+
+  return ANALYZE_FAMILY_ID_RE.test(parentFamilyId || "")
+    ? parentFamilyId
+    : null;
+}
+
+function normalizeAnalyzeFamilyId(raw) {
+  const token = cleanToken(raw);
+
+  if (ANALYZE_FAMILY_ID_RE.test(token)) {
+    return token;
+  }
+
+  return extractParentFamilyIdFromMicroId(token);
+}
+
+function buildCoreMicroFamilyId(familyId) {
+  const analyzeFamilyId = normalizeAnalyzeFamilyId(familyId);
+
+  if (!analyzeFamilyId) return null;
+
+  const side = analyzeFamilyId.startsWith("LONG_") ? "LONG" : "SHORT";
+  const definition = `${MICRO_FAMILY_SCHEMA_VERSION} | ${analyzeFamilyId}`;
+  const hash = analyzerHashString(definition).slice(0, 8);
+
+  return `MICRO_${side}_${analyzeFamilyId}_${MICRO_FAMILY_SCHEMA_VERSION}_${hash}`;
+}
+
+function isCoreMicroFamilyId(raw) {
+  const token = cleanToken(raw);
+
+  return Boolean(
+    token &&
+      CORE_MICRO_ID_RE.test(token) &&
+      token.includes(`_${MICRO_FAMILY_SCHEMA_VERSION}_`)
+  );
+}
+
+function normalizeMicroFamilyId(raw) {
+  const token = cleanToken(raw);
+
+  if (!token) return null;
+
+  if (isCoreMicroFamilyId(token)) {
+    return token;
+  }
+
+  const parentFromMicro = extractParentFamilyIdFromMicroId(token);
+  if (parentFromMicro) {
+    return buildCoreMicroFamilyId(parentFromMicro);
+  }
+
+  const parentFamilyId = normalizeAnalyzeFamilyId(token);
+  if (parentFamilyId) {
+    return buildCoreMicroFamilyId(parentFamilyId);
+  }
+
+  return null;
+}
+
+function normalizeFamilyNumber(value) {
+  const n = Number(value);
+
+  if (Number.isInteger(n) && n >= 1 && n <= 50) {
+    return n;
+  }
+
+  const token = cleanToken(value);
+  const match = token.match(/(?:LONG|SHORT)?_?([1-9]|[1-4][0-9]|50)$/);
+
+  if (!match) return null;
+
+  const parsed = Number(match[1]);
+
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 50
+    ? parsed
+    : null;
+}
+
+function inferAnalyzeFamilyIdFromParts(source = {}, sideOverride = null) {
+  const side =
+    normalizeAnalyzeSide(sideOverride) ||
+    normalizeAnalyzeSide(source.tradeSide) ||
+    normalizeAnalyzeSide(source.rotationSide) ||
+    normalizeAnalyzeSide(source.side) ||
+    normalizeAnalyzeSide(source.direction) ||
+    normalizeAnalyzeSide(source.signalSide) ||
+    normalizeAnalyzeSide(source.bias);
+
+  if (!side) return null;
+
+  const familyNumber = normalizeFamilyNumber(
+    source.familyNumber ??
+      source.analyzeFamilyNumber ??
+      source.analysisFamilyNumber ??
+      source.parentFamilyNumber ??
+      source.familyIndex ??
+      source.analyzeFamilyIndex ??
+      source.analysisFamilyIndex ??
+      source.familyRank ??
+      source.rank ??
+      source.index
+  );
+
+  if (!familyNumber) return null;
+
+  return `${side}_${familyNumber}`;
+}
+
+function buildCanonicalFamilyBundle({
+  familyId = null,
+  microFamilyId = null,
+  side = null,
+  event = {},
+  snapshot = {},
+} = {}) {
+  const row = safeObject(event);
+  const snap = safeObject(snapshot);
+
+  const analyzeCandidates = [
+    familyId,
+
+    row.parentFamilyId,
+    row.familyId,
+    row.analyzeFamilyId,
+    row.analysisFamilyId,
+    row.analyzerParentFamilyId,
+
+    snap.parentFamilyId,
+    snap.familyId,
+    snap.analyzeFamilyId,
+    snap.analysisFamilyId,
+    snap.analyzerParentFamilyId,
+
+    row.filterSnapshot?.parentFamilyId,
+    row.filterSnapshot?.familyId,
+    row.filterSnapshot?.analyzeFamilyId,
+    row.filterSnapshot?.analysisFamilyId,
+    row.filterSnapshot?.analyzerParentFamilyId,
+
+    row.rotationCandidate?.parentFamilyId,
+    row.rotationCandidate?.familyId,
+    row.rotationCandidate?.analyzeFamilyId,
+    row.rotationCandidate?.analysisFamilyId,
+    row.rotationCandidate?.analyzerParentFamilyId,
+
+    row.familyIds,
+    row.families,
+    snap.familyIds,
+    snap.families,
+
+    microFamilyId,
+    row.microFamilyId,
+    row.rotationMicroFamilyId,
+    row.analyzerMicroFamilyId,
+    snap.microFamilyId,
+    snap.rotationMicroFamilyId,
+    snap.analyzerMicroFamilyId,
+
+    inferAnalyzeFamilyIdFromParts(row, side),
+    inferAnalyzeFamilyIdFromParts(snap, side),
+  ];
+
+  const analyzeFamilyIds = unique(
+    flattenValues(analyzeCandidates)
+      .map(normalizeAnalyzeFamilyId)
+      .filter(Boolean)
+  );
+
+  const parentFamilyId = analyzeFamilyIds[0] || null;
+
+  const microCandidates = [
+    microFamilyId,
+
+    row.microFamilyId,
+    row.microFamily,
+    row.rotationMicroFamilyId,
+    row.analyzerMicroFamilyId,
+    row.scannerMicroFamilyId,
+
+    snap.microFamilyId,
+    snap.microFamily,
+    snap.rotationMicroFamilyId,
+    snap.analyzerMicroFamilyId,
+    snap.scannerMicroFamilyId,
+
+    row.filterSnapshot?.microFamilyId,
+    row.filterSnapshot?.microFamily,
+    row.filterSnapshot?.rotationMicroFamilyId,
+    row.filterSnapshot?.analyzerMicroFamilyId,
+
+    row.rotationCandidate?.microFamilyId,
+    row.rotationCandidate?.microFamily,
+    row.rotationCandidate?.rotationMicroFamilyId,
+    row.rotationCandidate?.analyzerMicroFamilyId,
+
+    row.microFamilyIds,
+    row.microFamilies,
+    snap.microFamilyIds,
+    snap.microFamilies,
+
+    parentFamilyId ? buildCoreMicroFamilyId(parentFamilyId) : null,
+  ];
+
+  const microFamilyIds = unique(
+    flattenValues(microCandidates)
+      .map(normalizeMicroFamilyId)
+      .filter(Boolean)
+  );
+
+  const primaryMicroFamilyId = microFamilyIds[0] || null;
+  const finalParentFamilyId =
+    parentFamilyId ||
+    normalizeAnalyzeFamilyId(extractParentFamilyIdFromMicroId(primaryMicroFamilyId));
+
+  const finalFamilyIds = finalParentFamilyId
+    ? unique([finalParentFamilyId, ...analyzeFamilyIds])
+    : [];
+
+  const finalMicroFamilyIds = primaryMicroFamilyId
+    ? unique([primaryMicroFamilyId, ...microFamilyIds])
+    : [];
+
+  return {
+    microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
+
+    parentFamilyId: finalParentFamilyId || null,
+    familyId: finalParentFamilyId || null,
+    analyzeFamilyId: finalParentFamilyId || null,
+    analysisFamilyId: finalParentFamilyId || null,
+    analyzerParentFamilyId: finalParentFamilyId || null,
+    familyIds: finalFamilyIds,
+    families: finalFamilyIds,
+
+    microFamilyId: primaryMicroFamilyId || null,
+    microFamily: primaryMicroFamilyId || null,
+    rotationMicroFamilyId: primaryMicroFamilyId || null,
+    analyzerMicroFamilyId: primaryMicroFamilyId || null,
+    microFamilyIds: finalMicroFamilyIds,
+    microFamilies: finalMicroFamilyIds,
+  };
+}
+
 // ================= RANK HELPERS =================
 
 function stageRank(stage) {
@@ -339,6 +648,10 @@ function normalizeAnalyzeSide(value) {
 
   if (String(value || "").toUpperCase() === "LONG") return "LONG";
   if (String(value || "").toUpperCase() === "SHORT") return "SHORT";
+  if (String(value || "").toUpperCase().startsWith("LONG_")) return "LONG";
+  if (String(value || "").toUpperCase().startsWith("SHORT_")) return "SHORT";
+  if (String(value || "").toUpperCase().startsWith("MICRO_LONG_")) return "LONG";
+  if (String(value || "").toUpperCase().startsWith("MICRO_SHORT_")) return "SHORT";
 
   return "";
 }
@@ -414,6 +727,74 @@ function getActionCandidates(action) {
     .filter(Boolean);
 }
 
+function getPrimaryLifecycleText(action) {
+  return normalizeText(
+    action?.analyzeLifecycle ||
+      action?.analyzeAction ||
+      action?.lifecycleAction ||
+      action?.tradeAction ||
+      action?.action
+  );
+}
+
+function isExitText(value) {
+  return (
+    value === "EXIT" ||
+    value === "CLOSE" ||
+    value === "CLOSED" ||
+    value === "TP" ||
+    value === "SL" ||
+    value === "STOP" ||
+    value === "STOP_LOSS" ||
+    value === "TAKE_PROFIT" ||
+    value === "BE_SL" ||
+    value.includes("EXIT") ||
+    value.includes("CLOSE") ||
+    value.includes("TAKE_PROFIT") ||
+    value.includes("STOP_LOSS")
+  );
+}
+
+function isEntryText(value) {
+  return (
+    value === "ENTRY" ||
+    value === "OPEN" ||
+    value === "OPENED" ||
+    value === "ENTER" ||
+    value === "FILLED" ||
+    value === "PLACE_ORDER" ||
+    value === "OPEN_LONG" ||
+    value === "OPEN_SHORT" ||
+    value === "LONG_ENTRY" ||
+    value === "SHORT_ENTRY" ||
+    value.includes("ENTRY") ||
+    value.includes("OPEN_POSITION")
+  );
+}
+
+function isWaitText(value) {
+  return (
+    value === "WAIT" ||
+    value === "HOLD" ||
+    value === "RUNNING" ||
+    value === "NO_TRADE" ||
+    value === "SKIP" ||
+    value === "IGNORE" ||
+    value.includes("WAIT") ||
+    value.includes("HOLD") ||
+    value.includes("RUNNING") ||
+    value.includes("REJECT")
+  );
+}
+
+function hasExplicitExitAction(action) {
+  return getActionCandidates(action).some(isExitText);
+}
+
+function hasExplicitEntryAction(action) {
+  return getActionCandidates(action).some(isEntryText);
+}
+
 function hasExitFields(action) {
   return (
     action?.closed === true ||
@@ -441,70 +822,27 @@ function hasEntryFields(action) {
     action?.sl !== undefined ||
     action?.tp !== undefined ||
     action?.rr !== undefined ||
-    action?.baseRR !== undefined
+    action?.baseRR !== undefined ||
+    action?.familyId ||
+    action?.microFamilyId ||
+    action?.analyzeFamilyId ||
+    action?.analysisFamilyId ||
+    action?.filterSnapshot?.familyId ||
+    action?.filterSnapshot?.microFamilyId
   );
 }
 
 function getLifecycleAction(action) {
-  const candidates = getActionCandidates(action);
+  const primary = getPrimaryLifecycleText(action);
 
-  for (const value of candidates) {
-    if (
-      value === "EXIT" ||
-      value === "CLOSE" ||
-      value === "CLOSED" ||
-      value === "TP" ||
-      value === "SL" ||
-      value === "STOP" ||
-      value === "STOP_LOSS" ||
-      value === "TAKE_PROFIT" ||
-      value.includes("EXIT") ||
-      value.includes("CLOSE") ||
-      value.includes("TAKE_PROFIT") ||
-      value.includes("STOP_LOSS")
-    ) {
-      return "EXIT";
-    }
-  }
+  if (isEntryText(primary)) return "ENTRY";
+  if (isExitText(primary)) return "EXIT";
+  if (isWaitText(primary)) return "";
+
+  if (hasExplicitEntryAction(action)) return "ENTRY";
+  if (hasExplicitExitAction(action)) return "EXIT";
 
   if (hasExitFields(action)) return "EXIT";
-
-  for (const value of candidates) {
-    if (
-      value === "WAIT" ||
-      value === "HOLD" ||
-      value === "RUNNING" ||
-      value === "NO_TRADE" ||
-      value === "SKIP" ||
-      value === "IGNORE" ||
-      value.includes("WAIT") ||
-      value.includes("HOLD") ||
-      value.includes("RUNNING") ||
-      value.includes("REJECT")
-    ) {
-      return "";
-    }
-  }
-
-  for (const value of candidates) {
-    if (
-      value === "ENTRY" ||
-      value === "OPEN" ||
-      value === "OPENED" ||
-      value === "ENTER" ||
-      value === "FILLED" ||
-      value === "PLACE_ORDER" ||
-      value === "OPEN_LONG" ||
-      value === "OPEN_SHORT" ||
-      value === "LONG_ENTRY" ||
-      value === "SHORT_ENTRY" ||
-      value.includes("ENTRY") ||
-      value.includes("OPEN_POSITION")
-    ) {
-      return "ENTRY";
-    }
-  }
-
   if (hasEntryFields(action)) return "ENTRY";
 
   return "";
@@ -673,6 +1011,23 @@ function buildBaseFilterSnapshot(action) {
     ...safeObject(action?.filterValues),
     ...safeObject(action?.analysisFilters),
 
+    microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
+
+    parentFamilyId: action?.parentFamilyId,
+    familyId: action?.familyId,
+    analyzeFamilyId: action?.analyzeFamilyId,
+    analysisFamilyId: action?.analysisFamilyId,
+    analyzerParentFamilyId: action?.analyzerParentFamilyId,
+    familyIds: action?.familyIds,
+    families: action?.families,
+
+    microFamilyId: action?.microFamilyId,
+    microFamily: action?.microFamily,
+    rotationMicroFamilyId: action?.rotationMicroFamilyId,
+    analyzerMicroFamilyId: action?.analyzerMicroFamilyId,
+    microFamilyIds: action?.microFamilyIds,
+    microFamilies: action?.microFamilies,
+
     setupClass: action?.setupClass,
     grade: action?.grade,
 
@@ -695,6 +1050,7 @@ function buildBaseFilterSnapshot(action) {
     rsi: action?.rsi,
     rsiHTF: action?.rsiHTF,
     rsiZone: action?.rsiZone,
+    rsiEdge: action?.rsiEdge,
     tfScore: action?.tfScore,
     tfStrength: action?.tfStrength,
     tfAlignment: action?.tfAlignment,
@@ -730,13 +1086,20 @@ function buildAnalyzeFamilySnapshot(event) {
       analyzeLifecycle: "ENTRY",
     });
 
-    if (!classified?.familyId) return null;
+    const familyId = normalizeAnalyzeFamilyId(classified?.familyId || classified?.id);
 
-    const family = FAMILY_BY_ID.get(classified.familyId);
+    if (!familyId) return null;
+
+    const family = FAMILY_BY_ID.get(familyId);
+    const bundle = buildCanonicalFamilyBundle({
+      familyId,
+      side: classified.side,
+      event,
+    });
 
     return {
-      familyId: classified.familyId,
-      analyzeFamilyId: classified.familyId,
+      ...bundle,
+
       side: classified.side,
       index: classified.index,
       qualityIndex: classified.qualityIndex,
@@ -813,6 +1176,7 @@ function buildSyntheticEntryEvent(candidate, latest, index = 0) {
     rsi: candidate.rsi,
     rsiHTF: candidate.rsiHTF,
     rsiZone: candidate.rsiZone,
+    rsiEdge: candidate.rsiEdge,
 
     obBias: candidate.obBias,
     spreadPct: candidate.spreadPct,
@@ -841,7 +1205,18 @@ function buildSyntheticEntryEvent(candidate, latest, index = 0) {
     filterSnapshot: baseSnapshot,
   });
 
-  const familyId = familySnapshot?.familyId || null;
+  const familyBundle = buildCanonicalFamilyBundle({
+    familyId: familySnapshot?.familyId,
+    microFamilyId: familySnapshot?.microFamilyId,
+    side: analyzeSide,
+    event: base,
+    snapshot: {
+      ...baseSnapshot,
+      ...safeObject(familySnapshot),
+    },
+  });
+
+  const familyId = familyBundle.familyId || null;
   const tradeId = buildSyntheticTradeId({
     symbol,
     analyzeSide,
@@ -850,19 +1225,16 @@ function buildSyntheticEntryEvent(candidate, latest, index = 0) {
 
   return cleanObject({
     ...base,
+    ...familyBundle,
 
     tradeId,
-    familyId,
-    analyzeFamilyId: familyId,
-    analysisFamilyId: familyId,
 
     closed: false,
 
     filterSnapshot: cleanObject({
       ...baseSnapshot,
-      ...familySnapshot,
-      familyId,
-      analyzeFamilyId: familyId,
+      ...safeObject(familySnapshot),
+      ...familyBundle,
     }),
   });
 }
@@ -1095,13 +1467,24 @@ function buildSyntheticExitForOpenEntry(record, latestPriceRow, now = Date.now()
   }
 
   const snapshot = safeObject(record.filterSnapshot);
-  const familyId =
-    record.familyId ||
-    record.analyzeFamilyId ||
-    record.analysisFamilyId ||
-    snapshot.familyId ||
-    snapshot.analyzeFamilyId ||
-    null;
+  const familyBundle = buildCanonicalFamilyBundle({
+    familyId:
+      record.familyId ||
+      record.analyzeFamilyId ||
+      record.analysisFamilyId ||
+      snapshot.familyId ||
+      snapshot.analyzeFamilyId ||
+      null,
+    microFamilyId:
+      record.microFamilyId ||
+      record.rotationMicroFamilyId ||
+      record.analyzerMicroFamilyId ||
+      snapshot.microFamilyId ||
+      null,
+    side: analyzeSide,
+    event: record,
+    snapshot,
+  });
 
   return cleanObject({
     tradeId,
@@ -1133,9 +1516,7 @@ function buildSyntheticExitForOpenEntry(record, latestPriceRow, now = Date.now()
 
     exitReason,
 
-    familyId: familyId ? String(familyId).toUpperCase() : null,
-    analyzeFamilyId: familyId ? String(familyId).toUpperCase() : null,
-    analysisFamilyId: familyId ? String(familyId).toUpperCase() : null,
+    ...familyBundle,
 
     rr,
     baseRR: record.baseRR ?? record.rr ?? rr,
@@ -1153,6 +1534,7 @@ function buildSyntheticExitForOpenEntry(record, latestPriceRow, now = Date.now()
     rsi: record.rsi,
     rsiHTF: record.rsiHTF,
     rsiZone: record.rsiZone,
+    rsiEdge: record.rsiEdge,
 
     obBias: record.obBias,
     spreadPct: record.spreadPct,
@@ -1175,8 +1557,7 @@ function buildSyntheticExitForOpenEntry(record, latestPriceRow, now = Date.now()
 
     filterSnapshot: cleanObject({
       ...snapshot,
-      familyId: familyId ? String(familyId).toUpperCase() : snapshot.familyId,
-      analyzeFamilyId: familyId ? String(familyId).toUpperCase() : snapshot.analyzeFamilyId,
+      ...familyBundle,
     }),
   });
 }
@@ -1261,7 +1642,13 @@ function buildCandidateIndex(candidates, latest) {
     if (!symbol || !side) continue;
 
     const syntheticEntry = buildSyntheticEntryEvent(candidate, latest, 0);
-    const tradeId = syntheticEntry?.tradeId || null;
+    const tradeId =
+      syntheticEntry?.tradeId ||
+      buildSyntheticTradeId({
+        symbol,
+        analyzeSide: normalizeAnalyzeSide(candidate.side),
+        familyId: syntheticEntry?.familyId || "UNKNOWN",
+      });
 
     map.set(`${symbol}_${side}`, {
       candidate,
@@ -1297,13 +1684,6 @@ function enrichTradeAction(action, latest, candidateIndex, index = 0) {
       candidate.symbol ||
       ""
   ).toUpperCase().trim();
-
-  sideToScannerSide(
-    action.side ||
-      action.direction ||
-      action.tradeSide ||
-      candidate.side
-  );
 
   const analyzeSide = normalizeAnalyzeSide(
     action.side ||
@@ -1366,50 +1746,78 @@ function enrichTradeAction(action, latest, candidateIndex, index = 0) {
   const baseSnapshot = buildBaseFilterSnapshot(enriched);
 
   if (lifecycle === "ENTRY") {
-    const familySnapshot = buildAnalyzeFamilySnapshot({
-      ...enriched,
-      filterSnapshot: baseSnapshot,
-    });
-
-    const familyId =
+    const existingFamilyId = normalizeAnalyzeFamilyId(
       enriched.familyId ||
-      enriched.analyzeFamilyId ||
-      enriched.analysisFamilyId ||
-      familySnapshot?.familyId ||
-      null;
+        enriched.analyzeFamilyId ||
+        enriched.analysisFamilyId ||
+        baseSnapshot.familyId ||
+        baseSnapshot.analyzeFamilyId
+    );
+
+    const familySnapshot = existingFamilyId
+      ? {
+          ...buildCanonicalFamilyBundle({
+            familyId: existingFamilyId,
+            side: analyzeSide,
+            event: enriched,
+            snapshot: baseSnapshot,
+          }),
+          source: "EXISTING_FAMILY_ID",
+          frozenAt: Date.now(),
+        }
+      : buildAnalyzeFamilySnapshot({
+          ...enriched,
+          filterSnapshot: baseSnapshot,
+        });
+
+    const familyBundle = buildCanonicalFamilyBundle({
+      familyId: familySnapshot?.familyId,
+      microFamilyId: familySnapshot?.microFamilyId,
+      side: analyzeSide,
+      event: enriched,
+      snapshot: {
+        ...baseSnapshot,
+        ...safeObject(familySnapshot),
+      },
+    });
 
     return cleanObject({
       ...enriched,
-      familyId,
-      analyzeFamilyId: familyId,
-      analysisFamilyId: familyId,
+      ...familyBundle,
       filterSnapshot: cleanObject({
         ...baseSnapshot,
-        ...familySnapshot,
-        familyId,
-        analyzeFamilyId: familyId,
+        ...safeObject(familySnapshot),
+        ...familyBundle,
       }),
     });
   }
 
   if (lifecycle === "EXIT") {
-    const familyId =
-      enriched.familyId ||
-      enriched.analyzeFamilyId ||
-      enriched.analysisFamilyId ||
-      baseSnapshot.familyId ||
-      baseSnapshot.analyzeFamilyId ||
-      null;
+    const familyBundle = buildCanonicalFamilyBundle({
+      familyId:
+        enriched.familyId ||
+        enriched.analyzeFamilyId ||
+        enriched.analysisFamilyId ||
+        baseSnapshot.familyId ||
+        baseSnapshot.analyzeFamilyId ||
+        null,
+      microFamilyId:
+        enriched.microFamilyId ||
+        enriched.rotationMicroFamilyId ||
+        enriched.analyzerMicroFamilyId ||
+        baseSnapshot.microFamilyId ||
+        null,
+      side: analyzeSide,
+      event: enriched,
+      snapshot: baseSnapshot,
+    });
 
     return cleanObject({
       ...enriched,
-      familyId,
-      analyzeFamilyId: familyId,
-      analysisFamilyId: familyId,
+      ...familyBundle,
       filterSnapshot: cleanObject({
         ...baseSnapshot,
-        familyId,
-        analyzeFamilyId: familyId,
+        ...familyBundle,
       }),
     });
   }
@@ -1504,36 +1912,52 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
   const baseSnapshot = buildBaseFilterSnapshot(action);
 
   if (lifecycleAction === "EXIT") {
-    return cleanObject({
-      ...base,
-      filterSnapshot: baseSnapshot,
+    const familyBundle = buildCanonicalFamilyBundle({
       familyId:
         action.familyId ||
         action.analyzeFamilyId ||
         action.analysisFamilyId ||
         action.filterSnapshot?.familyId ||
+        action.filterSnapshot?.analyzeFamilyId ||
         null,
-      analyzeFamilyId:
-        action.analyzeFamilyId ||
-        action.familyId ||
-        action.analysisFamilyId ||
-        action.filterSnapshot?.familyId ||
+      microFamilyId:
+        action.microFamilyId ||
+        action.rotationMicroFamilyId ||
+        action.analyzerMicroFamilyId ||
+        action.filterSnapshot?.microFamilyId ||
         null,
+      side,
+      event: action,
+      snapshot: baseSnapshot,
+    });
+
+    return cleanObject({
+      ...base,
+      ...familyBundle,
+      filterSnapshot: cleanObject({
+        ...baseSnapshot,
+        ...familyBundle,
+      }),
     });
   }
 
-  const existingFamilyId =
+  const existingFamilyId = normalizeAnalyzeFamilyId(
     action.familyId ||
-    action.analyzeFamilyId ||
-    action.analysisFamilyId ||
-    baseSnapshot.familyId ||
-    baseSnapshot.analyzeFamilyId ||
-    null;
+      action.analyzeFamilyId ||
+      action.analysisFamilyId ||
+      baseSnapshot.familyId ||
+      baseSnapshot.analyzeFamilyId ||
+      null
+  );
 
   const familySnapshot = existingFamilyId
     ? {
-        familyId: String(existingFamilyId).toUpperCase(),
-        analyzeFamilyId: String(existingFamilyId).toUpperCase(),
+        ...buildCanonicalFamilyBundle({
+          familyId: existingFamilyId,
+          side,
+          event: base,
+          snapshot: baseSnapshot,
+        }),
         frozenAt: Date.now(),
         source: "EXISTING_FAMILY_ID",
       }
@@ -1542,20 +1966,24 @@ function normalizeAnalyzeEvent(action, latest, context = {}, index = 0) {
         filterSnapshot: baseSnapshot,
       });
 
-  const familyId = familySnapshot?.familyId || null;
+  const familyBundle = buildCanonicalFamilyBundle({
+    familyId: familySnapshot?.familyId,
+    microFamilyId: familySnapshot?.microFamilyId,
+    side,
+    event: base,
+    snapshot: {
+      ...baseSnapshot,
+      ...safeObject(familySnapshot),
+    },
+  });
 
   return cleanObject({
     ...base,
-
-    familyId,
-    analyzeFamilyId: familyId,
-    analysisFamilyId: familyId,
-
+    ...familyBundle,
     filterSnapshot: cleanObject({
       ...baseSnapshot,
-      ...familySnapshot,
-      familyId,
-      analyzeFamilyId: familyId,
+      ...safeObject(familySnapshot),
+      ...familyBundle,
     }),
   });
 }
@@ -1641,6 +2069,8 @@ async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
     acceptedExits: stats.acceptedExits,
     rejected: stats.rejected,
     rejectCounts: stats.rejectCounts,
+    withMicroFamilyId: events.filter(event => Boolean(event.microFamilyId)).length,
+    withParentFamilyId: events.filter(event => Boolean(event.familyId)).length,
   });
 
   if (!events.length) {
@@ -1661,6 +2091,7 @@ async function appendTradesToAnalyzer(eventsToAppend, latest, context = {}) {
         btc: latest?.btc || null,
         regime: latest?.regime || null,
         market: latest?.market || null,
+        microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
         ...context,
       }),
       ANALYZE_APPEND_TIMEOUT_MS,
@@ -1838,12 +2269,62 @@ function compactAction(action) {
     reason: action.reason,
     exitReason: action.exitReason,
 
+    parentFamilyId:
+      action.parentFamilyId ||
+      action.familyId ||
+      action.analyzeFamilyId ||
+      action.analysisFamilyId ||
+      action.filterSnapshot?.parentFamilyId ||
+      action.filterSnapshot?.familyId ||
+      null,
+
     familyId:
       action.familyId ||
       action.analyzeFamilyId ||
       action.analysisFamilyId ||
       action.filterSnapshot?.familyId ||
       null,
+
+    analyzeFamilyId:
+      action.analyzeFamilyId ||
+      action.familyId ||
+      action.analysisFamilyId ||
+      action.filterSnapshot?.analyzeFamilyId ||
+      null,
+
+    analysisFamilyId:
+      action.analysisFamilyId ||
+      action.familyId ||
+      action.analyzeFamilyId ||
+      action.filterSnapshot?.analysisFamilyId ||
+      null,
+
+    familyIds: action.familyIds || action.filterSnapshot?.familyIds || [],
+
+    microFamilyId:
+      action.microFamilyId ||
+      action.rotationMicroFamilyId ||
+      action.analyzerMicroFamilyId ||
+      action.filterSnapshot?.microFamilyId ||
+      null,
+
+    rotationMicroFamilyId:
+      action.rotationMicroFamilyId ||
+      action.microFamilyId ||
+      action.filterSnapshot?.rotationMicroFamilyId ||
+      null,
+
+    analyzerMicroFamilyId:
+      action.analyzerMicroFamilyId ||
+      action.microFamilyId ||
+      action.filterSnapshot?.analyzerMicroFamilyId ||
+      null,
+
+    microFamilyIds: action.microFamilyIds || action.filterSnapshot?.microFamilyIds || [],
+    microFamilySchemaVersion:
+      action.microFamilySchemaVersion ||
+      action.filterSnapshot?.microFamilySchemaVersion ||
+      MICRO_FAMILY_SCHEMA_VERSION,
 
     syntheticAnalyzeEntry: action.syntheticAnalyzeEntry,
     syntheticAnalyzeExit: action.syntheticAnalyzeExit,
@@ -1882,6 +2363,7 @@ function compactAction(action) {
     rsi: action.rsi,
     rsiHTF: action.rsiHTF,
     rsiZone: action.rsiZone,
+    rsiEdge: action.rsiEdge,
 
     stage: action.stage,
     scannerStage: action.scannerStage,
@@ -1914,6 +2396,7 @@ function compactResponse(data) {
     error: data?.error || null,
 
     traceVersion: data?.traceVersion || TRADE_FUNNEL_ROUTE_VERSION,
+    microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
     durationMs: data?.durationMs ?? null,
 
     updatedAt: data?.updatedAt || Date.now(),
@@ -2012,6 +2495,7 @@ export async function runTradeFunnel(options = {}) {
       tradeFunnelUpdatedAt: Date.now(),
       updatedAt: Date.now(),
       traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
+      microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
       durationMs: Date.now() - startedAt,
     };
   }
@@ -2051,6 +2535,7 @@ export async function runTradeFunnel(options = {}) {
       tradeFunnelUpdatedAt: Date.now(),
       updatedAt: Date.now(),
       traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
+      microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
       durationMs: Date.now() - startedAt,
     };
   }
@@ -2105,6 +2590,8 @@ export async function runTradeFunnel(options = {}) {
     enrichedTradeActions: enrichedTradeActions.length,
     entries: enrichedTradeActions.filter(a => String(a?.action).toUpperCase() === "ENTRY").length,
     exits: enrichedTradeActions.filter(a => String(a?.action).toUpperCase() === "EXIT").length,
+    withMicroFamilyId: enrichedTradeActions.filter(a => Boolean(a?.microFamilyId)).length,
+    withParentFamilyId: enrichedTradeActions.filter(a => Boolean(a?.familyId)).length,
   });
 
   const analyzeEvents = [
@@ -2118,6 +2605,8 @@ export async function runTradeFunnel(options = {}) {
     syntheticEntries: syntheticEntries.events.length,
     syntheticExits: syntheticExits.events.length,
     realActions: enrichedTradeActions.length,
+    withMicroFamilyId: analyzeEvents.filter(event => Boolean(event?.microFamilyId)).length,
+    withParentFamilyId: analyzeEvents.filter(event => Boolean(event?.familyId)).length,
   });
 
   const analyzeAppendResult = store
@@ -2171,6 +2660,7 @@ export async function runTradeFunnel(options = {}) {
       null,
 
     traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
+    microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
 
     trades: enrichedTradeActions,
     tradeSystemResult: updatedResult,
@@ -2314,6 +2804,7 @@ export default async function handler(req, res) {
         ? {
             ...data,
             traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
+            microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
             httpStatus: 200,
             durationMs: data?.durationMs ?? Date.now() - startedAt,
           }
@@ -2347,6 +2838,7 @@ export default async function handler(req, res) {
           : "TRADE_FUNNEL_API_ERROR",
       error: error?.message || "trade_funnel_api_error",
       traceVersion: TRADE_FUNNEL_ROUTE_VERSION,
+      microFamilySchemaVersion: MICRO_FAMILY_SCHEMA_VERSION,
       notify,
       store,
       httpStatus: 200,
