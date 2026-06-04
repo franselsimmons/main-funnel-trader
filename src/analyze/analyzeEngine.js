@@ -25,7 +25,10 @@ import {
 import { applyCosts } from '../trade/costModel.js';
 
 const WEEK_MICROS_CODEC = 'ANALYZE_WEEK_MICROS_GZIP_V1';
+const WEEK_MICRO_ROW_CODEC = 'ANALYZE_WEEK_MICRO_ROW_GZIP_V1';
+
 const DEFAULT_MAX_REDIS_SET_BYTES = 9_500_000;
+const DEFAULT_MAX_ROW_SET_BYTES = 250_000;
 
 function now() {
   return Date.now();
@@ -60,6 +63,26 @@ function getWeekStorageConfig() {
     maxRedisSetBytes: Math.max(
       500_000,
       Math.floor(safeNumber(CONFIG.redis?.maxRequestBytes, DEFAULT_MAX_REDIS_SET_BYTES))
+    ),
+
+    maxRowSetBytes: Math.max(
+      50_000,
+      Math.floor(safeNumber(CONFIG.analyze?.maxMicroRowSetBytes, DEFAULT_MAX_ROW_SET_BYTES))
+    ),
+
+    weekMicrosTtlSec: Math.max(
+      60 * 60,
+      Math.floor(safeNumber(CONFIG.analyze?.weekMicrosTtlSec, 60 * 60 * 24 * 21))
+    ),
+
+    weekMetaTtlSec: Math.max(
+      60 * 60,
+      Math.floor(safeNumber(CONFIG.analyze?.weekMetaTtlSec, 60 * 60 * 24 * 90))
+    ),
+
+    storageConcurrency: Math.max(
+      1,
+      Math.min(20, Math.floor(safeNumber(CONFIG.analyze?.storageConcurrency, 8)))
     ),
 
     maxExamplesPerMicro: Math.max(
@@ -97,6 +120,43 @@ function getWeekStorageConfig() {
       Math.floor(safeNumber(CONFIG.analyze?.maxStoredStringLength, 480))
     )
   };
+}
+
+function getWeekMicrosBaseKey(weekKey) {
+  return KEYS.analyze.weekMicros(weekKey);
+}
+
+function getWeekMicrosIndexKey(weekKey) {
+  return `${getWeekMicrosBaseKey(weekKey)}:INDEX`;
+}
+
+function getWeekMicroRowKey(weekKey, microFamilyId) {
+  return `${getWeekMicrosBaseKey(weekKey)}:ROW:${microFamilyId}`;
+}
+
+async function mapLimit(items = [], concurrency = 8, worker) {
+  const rows = Array.isArray(items) ? items : [];
+  const limit = Math.max(1, Math.floor(Number(concurrency) || 1));
+  const results = new Array(rows.length);
+
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < rows.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(rows[index], index);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(limit, rows.length) },
+      () => runWorker()
+    )
+  );
+
+  return results;
 }
 
 function normalizeStatsSide(side, classified = {}) {
@@ -265,6 +325,39 @@ function compactRecentOutcomes(outcomes = [], maxItems = 8) {
     .filter(Boolean);
 }
 
+function removeKnownBulkyFields(row = {}) {
+  const clean = { ...row };
+
+  const bulkyKeys = [
+    'raw',
+    'payload',
+    'debug',
+    'request',
+    'response',
+    'stack',
+    'html',
+    'candles',
+    'candles15m',
+    'candles1h',
+    'candles4h',
+    'candles1d',
+    'orderBook',
+    'rawOrderBook',
+    'bids',
+    'asks',
+    'ticks',
+    'prices',
+    'history',
+    'marketData'
+  ];
+
+  for (const key of bulkyKeys) {
+    delete clean[key];
+  }
+
+  return clean;
+}
+
 function enrichWithMicroFamily(row = {}) {
   const classified = classifyMicroFamily(row);
   const macro = classifyMacroFamily(row);
@@ -369,20 +462,24 @@ function enrichWithMicroFamily(row = {}) {
   };
 }
 
-function compactMicroForStorage(row = {}) {
+function compactMicroForStorage(row = {}, aggressive = false) {
   const cfg = getWeekStorageConfig();
-  const refreshed = refreshStats(row);
+  const refreshed = refreshStats(removeKnownBulkyFields(row));
+
+  const maxStringLength = aggressive
+    ? Math.max(80, Math.floor(cfg.maxStringLength / 2))
+    : cfg.maxStringLength;
 
   const definitionParts = compactDefinitionParts(
     refreshed.definitionParts,
-    cfg.maxDefinitionPartsPerMicro,
-    cfg.maxStringLength
+    aggressive ? 32 : cfg.maxDefinitionPartsPerMicro,
+    maxStringLength
   );
 
   const parentDefinitionParts = compactDefinitionParts(
     refreshed.parentDefinitionParts,
-    cfg.maxParentDefinitionPartsPerMicro,
-    cfg.maxStringLength
+    aggressive ? 24 : cfg.maxParentDefinitionPartsPerMicro,
+    maxStringLength
   );
 
   return {
@@ -391,29 +488,143 @@ function compactMicroForStorage(row = {}) {
     definitionParts,
     definition: definitionParts.length
       ? definitionParts.join(' | ')
-      : truncateString(refreshed.definition || '', cfg.maxStringLength * 4),
+      : truncateString(refreshed.definition || '', maxStringLength * 4),
 
     parentDefinitionParts,
     parentDefinition: parentDefinitionParts.length
       ? parentDefinitionParts.join(' | ')
-      : truncateString(refreshed.parentDefinition || '', cfg.maxStringLength * 4),
+      : truncateString(refreshed.parentDefinition || '', maxStringLength * 4),
 
-    counters: compactCounters(
-      refreshed.counters,
-      cfg.maxCounterKeysPerMicro,
-      cfg.maxCounterValuesPerCounter
-    ),
+    counters: aggressive
+      ? {}
+      : compactCounters(
+        refreshed.counters,
+        cfg.maxCounterKeysPerMicro,
+        cfg.maxCounterValuesPerCounter
+      ),
 
     examples: compactExamples(
       refreshed.examples,
-      cfg.maxExamplesPerMicro,
-      cfg.maxStringLength
+      aggressive ? Math.min(3, cfg.maxExamplesPerMicro) : cfg.maxExamplesPerMicro,
+      maxStringLength
     ),
 
     recentOutcomes: compactRecentOutcomes(
       refreshed.recentOutcomes,
-      cfg.maxRecentOutcomesPerMicro
+      aggressive ? Math.min(3, cfg.maxRecentOutcomesPerMicro) : cfg.maxRecentOutcomesPerMicro
     )
+  };
+}
+
+function getMinimalMicroForStorage(row = {}) {
+  const refreshed = refreshStats(removeKnownBulkyFields(row));
+
+  return {
+    microFamilyId: refreshed.microFamilyId,
+    familyId: refreshed.familyId,
+    side: refreshed.side,
+    tradeSide: refreshed.tradeSide,
+
+    schema: refreshed.schema,
+    microFamilySchema: refreshed.microFamilySchema,
+    version: refreshed.version,
+
+    macroFamilyId: refreshed.macroFamilyId,
+    parentMacroFamilyId: refreshed.parentMacroFamilyId,
+    parentMicroFamilyId: refreshed.parentMicroFamilyId,
+
+    definitionParts: compactDefinitionParts(refreshed.definitionParts, 24, 180),
+    definition: truncateString(refreshed.definition || '', 800),
+
+    parentDefinitionParts: compactDefinitionParts(refreshed.parentDefinitionParts, 18, 180),
+    parentDefinition: truncateString(refreshed.parentDefinition || '', 800),
+
+    assetClass: refreshed.assetClass,
+
+    obRelation: refreshed.obRelation,
+    btcRelation: refreshed.btcRelation,
+    btcState: refreshed.btcState,
+
+    flow: refreshed.flow,
+    flowCoarse: refreshed.flowCoarse,
+
+    regime: refreshed.regime,
+    regimeCoarse: refreshed.regimeCoarse,
+
+    scannerReason: refreshed.scannerReason,
+    scannerReasonCoarse: refreshed.scannerReasonCoarse,
+
+    rsiZone: refreshed.rsiZone,
+    rsiCoarse: refreshed.rsiCoarse,
+    spreadBps: refreshed.spreadBps,
+
+    seen: safeNumber(refreshed.seen, 0),
+    observations: safeNumber(refreshed.observations, 0),
+
+    completed: safeNumber(refreshed.completed, 0),
+    realCompleted: safeNumber(refreshed.realCompleted, 0),
+    shadowCompleted: safeNumber(refreshed.shadowCompleted, 0),
+
+    wins: safeNumber(refreshed.wins, 0),
+    losses: safeNumber(refreshed.losses, 0),
+    flats: safeNumber(refreshed.flats, 0),
+
+    realWins: safeNumber(refreshed.realWins, 0),
+    realLosses: safeNumber(refreshed.realLosses, 0),
+    realFlats: safeNumber(refreshed.realFlats, 0),
+
+    shadowWins: safeNumber(refreshed.shadowWins, 0),
+    shadowLosses: safeNumber(refreshed.shadowLosses, 0),
+    shadowFlats: safeNumber(refreshed.shadowFlats, 0),
+
+    winrate: safeNumber(refreshed.winrate, 0),
+    bayesianWinrate: safeNumber(refreshed.bayesianWinrate, 0),
+    wilsonLowerBound: safeNumber(refreshed.wilsonLowerBound, 0),
+    fairWinrate: safeNumber(refreshed.fairWinrate, 0),
+
+    totalR: safeNumber(refreshed.totalR, 0),
+    realTotalR: safeNumber(refreshed.realTotalR, 0),
+    shadowTotalR: safeNumber(refreshed.shadowTotalR, 0),
+
+    avgR: safeNumber(refreshed.avgR, 0),
+    avgWinR: safeNumber(refreshed.avgWinR, 0),
+    avgLossR: safeNumber(refreshed.avgLossR, 0),
+
+    profitFactor: safeNumber(refreshed.profitFactor, 0),
+
+    directSLCount: safeNumber(refreshed.directSLCount, 0),
+    directSLPct: safeNumber(refreshed.directSLPct, 0),
+
+    nearTpCount: safeNumber(refreshed.nearTpCount, 0),
+    nearTpPct: safeNumber(refreshed.nearTpPct, 0),
+
+    reachedHalfRCount: safeNumber(refreshed.reachedHalfRCount, 0),
+    reachedOneRCount: safeNumber(refreshed.reachedOneRCount, 0),
+    reachedHalfRPct: safeNumber(refreshed.reachedHalfRPct, 0),
+    reachedOneRPct: safeNumber(refreshed.reachedOneRPct, 0),
+
+    beWouldExitCount: safeNumber(refreshed.beWouldExitCount, 0),
+    beWouldExitPct: safeNumber(refreshed.beWouldExitPct, 0),
+
+    gaveBackAfterHalfRCount: safeNumber(refreshed.gaveBackAfterHalfRCount, 0),
+    gaveBackAfterOneRCount: safeNumber(refreshed.gaveBackAfterOneRCount, 0),
+    gaveBackAfterHalfRPct: safeNumber(refreshed.gaveBackAfterHalfRPct, 0),
+    gaveBackAfterOneRPct: safeNumber(refreshed.gaveBackAfterOneRPct, 0),
+
+    nearTpThenLossCount: safeNumber(refreshed.nearTpThenLossCount, 0),
+    nearTpThenLossPct: safeNumber(refreshed.nearTpThenLossPct, 0),
+
+    totalCostR: safeNumber(refreshed.totalCostR, 0),
+    avgCostR: safeNumber(refreshed.avgCostR, 0),
+
+    sampleReliability: safeNumber(refreshed.sampleReliability, 0),
+    balancedScore: safeNumber(refreshed.balancedScore, 0),
+
+    examples: compactExamples(refreshed.examples, 2, 120),
+    recentOutcomes: compactRecentOutcomes(refreshed.recentOutcomes, 2),
+
+    createdAt: refreshed.createdAt || null,
+    updatedAt: refreshed.updatedAt || now()
   };
 }
 
@@ -490,7 +701,17 @@ function normalizeMicros(micros = {}) {
   return Object.fromEntries(
     Object.entries(micros || {})
       .filter(([id, row]) => id && row)
-      .map(([id, row]) => [id, compactMicroForStorage(row)])
+      .map(([id, row]) => {
+        const microFamilyId = row.microFamilyId || id;
+
+        return [
+          microFamilyId,
+          compactMicroForStorage({
+            ...row,
+            microFamilyId
+          })
+        ];
+      })
   );
 }
 
@@ -505,20 +726,24 @@ function maybeParseJson(value) {
   }
 }
 
-function decodeWeekMicrosPayload(payload) {
+function decodeCompressedBase64(data) {
+  const buffer = Buffer.from(data, 'base64');
+  const json = gunzipSync(buffer).toString('utf8');
+
+  return JSON.parse(json);
+}
+
+function decodeStoragePayload(payload) {
   const parsed = maybeParseJson(payload);
 
   if (!parsed) return {};
 
   if (
     typeof parsed === 'object' &&
-    parsed.codec === WEEK_MICROS_CODEC &&
+    [WEEK_MICROS_CODEC, WEEK_MICRO_ROW_CODEC].includes(parsed.codec) &&
     typeof parsed.data === 'string'
   ) {
-    const buffer = Buffer.from(parsed.data, 'base64');
-    const json = gunzipSync(buffer).toString('utf8');
-
-    return JSON.parse(json);
+    return decodeCompressedBase64(parsed.data);
   }
 
   if (
@@ -527,33 +752,35 @@ function decodeWeekMicrosPayload(payload) {
     parsed.codec === 'gzip-base64' &&
     typeof parsed.data === 'string'
   ) {
-    const buffer = Buffer.from(parsed.data, 'base64');
-    const json = gunzipSync(buffer).toString('utf8');
-
-    return JSON.parse(json);
+    return decodeCompressedBase64(parsed.data);
   }
 
   if (typeof parsed === 'object') {
     return parsed;
   }
 
-  throw new Error('WEEK_MICROS_PAYLOAD_UNREADABLE');
+  throw new Error('STORAGE_PAYLOAD_UNREADABLE');
 }
 
-function encodeWeekMicrosPayload(micros = {}) {
+function encodeStoragePayload(value = {}, {
+  codec,
+  maxBytes,
+  count,
+  extraMeta = {}
+} = {}) {
   const cfg = getWeekStorageConfig();
   const schemaMeta = getAnalyzeSchemaMeta();
 
-  const json = JSON.stringify(micros || {});
+  const json = JSON.stringify(value || {});
   const rawBytes = Buffer.byteLength(json, 'utf8');
 
   if (!cfg.compressionEnabled) {
-    if (rawBytes > cfg.maxRedisSetBytes) {
-      const error = new Error('WEEK_MICROS_RAW_PAYLOAD_TOO_LARGE');
+    if (rawBytes > maxBytes) {
+      const error = new Error('STORAGE_RAW_PAYLOAD_TOO_LARGE');
       error.details = {
         rawBytes,
-        maxRedisSetBytes: cfg.maxRedisSetBytes,
-        count: Object.keys(micros || {}).length
+        maxBytes,
+        count
       };
       throw error;
     }
@@ -565,7 +792,8 @@ function encodeWeekMicrosPayload(micros = {}) {
         codec: 'json',
         rawBytes,
         payloadBytes: rawBytes,
-        count: Object.keys(micros || {}).length
+        count,
+        ...extraMeta
       }
     };
   }
@@ -575,13 +803,13 @@ function encodeWeekMicrosPayload(micros = {}) {
   });
 
   const wrapper = {
-    codec: WEEK_MICROS_CODEC,
+    codec,
     compressed: true,
 
     rawBytes,
     compressedBytes: compressed.length,
 
-    count: Object.keys(micros || {}).length,
+    count,
 
     schema: schemaMeta.schema,
     macroSchema: schemaMeta.macroSchema,
@@ -589,20 +817,23 @@ function encodeWeekMicrosPayload(micros = {}) {
     strategyVersion: schemaMeta.strategyVersion,
 
     encodedAt: now(),
-    data: compressed.toString('base64')
+    data: compressed.toString('base64'),
+
+    ...extraMeta
   };
 
   const payload = JSON.stringify(wrapper);
   const payloadBytes = Buffer.byteLength(payload, 'utf8');
 
-  if (payloadBytes > cfg.maxRedisSetBytes) {
-    const error = new Error('WEEK_MICROS_COMPRESSED_PAYLOAD_TOO_LARGE');
+  if (payloadBytes > maxBytes) {
+    const error = new Error('STORAGE_COMPRESSED_PAYLOAD_TOO_LARGE');
     error.details = {
       rawBytes,
       compressedBytes: compressed.length,
       payloadBytes,
-      maxRedisSetBytes: cfg.maxRedisSetBytes,
-      count: wrapper.count
+      maxBytes,
+      count,
+      codec
     };
     throw error;
   }
@@ -611,32 +842,233 @@ function encodeWeekMicrosPayload(micros = {}) {
     payload,
     meta: {
       compressed: true,
-      codec: WEEK_MICROS_CODEC,
+      codec,
       rawBytes,
       compressedBytes: compressed.length,
       payloadBytes,
-      count: wrapper.count
+      count,
+      ...extraMeta
     }
   };
 }
 
-async function getRawRedisValue(redis, key) {
+function encodeMicroRowPayload(row = {}) {
+  const cfg = getWeekStorageConfig();
+
+  try {
+    return encodeStoragePayload(row, {
+      codec: WEEK_MICRO_ROW_CODEC,
+      maxBytes: cfg.maxRowSetBytes,
+      count: 1,
+      extraMeta: {
+        microFamilyId: row.microFamilyId || null,
+        rowMode: 'compact'
+      }
+    });
+  } catch (firstError) {
+    const aggressive = compactMicroForStorage(row, true);
+
+    try {
+      return encodeStoragePayload(aggressive, {
+        codec: WEEK_MICRO_ROW_CODEC,
+        maxBytes: cfg.maxRowSetBytes,
+        count: 1,
+        extraMeta: {
+          microFamilyId: row.microFamilyId || null,
+          rowMode: 'aggressive'
+        }
+      });
+    } catch {
+      const minimal = getMinimalMicroForStorage(row);
+
+      return encodeStoragePayload(minimal, {
+        codec: WEEK_MICRO_ROW_CODEC,
+        maxBytes: cfg.maxRowSetBytes,
+        count: 1,
+        extraMeta: {
+          microFamilyId: row.microFamilyId || null,
+          rowMode: 'minimal',
+          previousError: firstError?.message || null
+        }
+      });
+    }
+  }
+}
+
+function encodeLegacyWeekMicrosPayload(micros = {}) {
+  const cfg = getWeekStorageConfig();
+
+  return encodeStoragePayload(micros, {
+    codec: WEEK_MICROS_CODEC,
+    maxBytes: cfg.maxRedisSetBytes,
+    count: Object.keys(micros || {}).length,
+    extraMeta: {
+      storageMode: 'legacy-single-key'
+    }
+  });
+}
+
+async function getRawRedisValue(redis, key, fallback = null) {
   const direct = await redis.get(key).catch(() => undefined);
 
-  if (direct !== undefined) return direct;
+  if (direct !== undefined && direct !== null) return direct;
 
-  return getJson(redis, key, {});
+  return getJson(redis, key, fallback);
+}
+
+async function readWeekMicrosSharded(redis, weekKey) {
+  const index = await getJson(
+    redis,
+    getWeekMicrosIndexKey(weekKey),
+    null
+  ).catch(() => null);
+
+  if (!index || !Array.isArray(index.ids)) {
+    return null;
+  }
+
+  const ids = index.ids.filter(Boolean);
+
+  if (!ids.length) return {};
+
+  const cfg = getWeekStorageConfig();
+
+  const entries = await mapLimit(
+    ids,
+    cfg.storageConcurrency,
+    async (id) => {
+      const raw = await getRawRedisValue(
+        redis,
+        getWeekMicroRowKey(weekKey, id),
+        null
+      ).catch(() => null);
+
+      if (!raw) return null;
+
+      const row = decodeStoragePayload(raw);
+
+      if (!row) return null;
+
+      return [
+        row.microFamilyId || id,
+        row
+      ];
+    }
+  );
+
+  return Object.fromEntries(entries.filter(Boolean));
+}
+
+async function saveWeekMicrosSharded(redis, weekKey, micros) {
+  const cfg = getWeekStorageConfig();
+
+  const ids = Object.keys(micros || {})
+    .filter(Boolean)
+    .sort();
+
+  const rowMeta = await mapLimit(
+    ids,
+    cfg.storageConcurrency,
+    async (id) => {
+      const row = {
+        ...micros[id],
+        microFamilyId: micros[id]?.microFamilyId || id
+      };
+
+      const encoded = encodeMicroRowPayload(row);
+
+      await redis.set(
+        getWeekMicroRowKey(weekKey, id),
+        encoded.payload,
+        {
+          ex: cfg.weekMicrosTtlSec
+        }
+      );
+
+      return {
+        id,
+        bytes: encoded.meta.payloadBytes,
+        rawBytes: encoded.meta.rawBytes,
+        compressedBytes: encoded.meta.compressedBytes || 0,
+        rowMode: encoded.meta.rowMode || 'json'
+      };
+    }
+  );
+
+  const totalPayloadBytes = rowMeta.reduce(
+    (sum, row) => sum + safeNumber(row.bytes, 0),
+    0
+  );
+
+  const totalRawBytes = rowMeta.reduce(
+    (sum, row) => sum + safeNumber(row.rawBytes, 0),
+    0
+  );
+
+  const maxRowBytes = rowMeta.reduce(
+    (max, row) => Math.max(max, safeNumber(row.bytes, 0)),
+    0
+  );
+
+  const schemaMeta = getAnalyzeSchemaMeta();
+
+  await setJson(
+    redis,
+    getWeekMicrosIndexKey(weekKey),
+    {
+      weekKey,
+      ids,
+      count: ids.length,
+
+      storageMode: 'SHARDED_COMPRESSED_ROWS',
+      codec: WEEK_MICRO_ROW_CODEC,
+
+      totalPayloadBytes,
+      totalRawBytes,
+      maxRowBytes,
+
+      updatedAt: now(),
+
+      schema: schemaMeta.schema,
+      macroSchema: schemaMeta.macroSchema,
+      microSchema: schemaMeta.microSchema,
+      strategyVersion: schemaMeta.strategyVersion
+    },
+    {
+      ex: cfg.weekMicrosTtlSec
+    }
+  );
+
+  // Oude single-key storage verwijderen. Die veroorzaakte de Upstash 10MB SET.
+  await redis.del(getWeekMicrosBaseKey(weekKey)).catch(() => null);
+
+  return {
+    ids,
+    rowMeta,
+    totalPayloadBytes,
+    totalRawBytes,
+    maxRowBytes
+  };
 }
 
 export async function getWeekMicros(weekKey = getIsoWeekKey()) {
   const redis = getDurableRedis();
-  const key = KEYS.analyze.weekMicros(weekKey);
 
-  const raw = await getRawRedisValue(redis, key);
+  const sharded = await readWeekMicrosSharded(redis, weekKey);
+
+  if (sharded !== null) {
+    return normalizeMicros(sharded || {});
+  }
+
+  const raw = await getRawRedisValue(
+    redis,
+    getWeekMicrosBaseKey(weekKey),
+    null
+  );
 
   if (!raw) return {};
 
-  const decoded = decodeWeekMicrosPayload(raw);
+  const decoded = decodeStoragePayload(raw);
 
   return normalizeMicros(decoded || {});
 }
@@ -647,14 +1079,39 @@ export async function saveWeekMicros(weekKey, micros) {
   }
 
   const redis = getDurableRedis();
+  const cfg = getWeekStorageConfig();
   const clean = normalizeMicros(micros);
   const schemaMeta = getAnalyzeSchemaMeta();
-  const encoded = encodeWeekMicrosPayload(clean);
 
-  await redis.set(
-    KEYS.analyze.weekMicros(weekKey),
-    encoded.payload
-  );
+  let storage;
+
+  try {
+    storage = await saveWeekMicrosSharded(
+      redis,
+      weekKey,
+      clean
+    );
+  } catch (error) {
+    // Fallback alleen voor extreme edge-cases. In normale flow blijft dit uit.
+    const legacy = encodeLegacyWeekMicrosPayload(clean);
+
+    await redis.set(
+      getWeekMicrosBaseKey(weekKey),
+      legacy.payload,
+      {
+        ex: cfg.weekMicrosTtlSec
+      }
+    );
+
+    storage = {
+      ids: Object.keys(clean),
+      fallbackToLegacy: true,
+      fallbackReason: error?.message || String(error),
+      totalPayloadBytes: legacy.meta.payloadBytes,
+      totalRawBytes: legacy.meta.rawBytes,
+      maxRowBytes: 0
+    };
+  }
 
   await setJson(
     redis,
@@ -669,7 +1126,29 @@ export async function saveWeekMicros(weekKey, micros) {
       microSchema: schemaMeta.microSchema,
       strategyVersion: schemaMeta.strategyVersion,
 
-      storage: encoded.meta
+      storage: {
+        storageMode: storage.fallbackToLegacy
+          ? 'LEGACY_COMPRESSED_SINGLE_KEY_FALLBACK'
+          : 'SHARDED_COMPRESSED_ROWS',
+
+        codec: storage.fallbackToLegacy
+          ? WEEK_MICROS_CODEC
+          : WEEK_MICRO_ROW_CODEC,
+
+        count: storage.ids.length,
+
+        totalPayloadBytes: storage.totalPayloadBytes,
+        totalRawBytes: storage.totalRawBytes,
+        maxRowBytes: storage.maxRowBytes,
+
+        fallbackToLegacy: Boolean(storage.fallbackToLegacy),
+        fallbackReason: storage.fallbackReason || null,
+
+        ttlSec: cfg.weekMicrosTtlSec
+      }
+    },
+    {
+      ex: cfg.weekMetaTtlSec
     }
   );
 
