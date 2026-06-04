@@ -18,11 +18,13 @@ const bool = (value, fallback = false) => {
 
 const num = (value, fallback) => {
   const n = Number(value);
+
   return Number.isFinite(n) ? n : fallback;
 };
 
 const int = (value, fallback) => {
   const n = Number(value);
+
   return Number.isInteger(n) ? n : fallback;
 };
 
@@ -30,16 +32,22 @@ const str = (value, fallback = '') => {
   if (value === undefined || value === null) return fallback;
 
   const normalized = String(value).trim();
+
   return normalized || fallback;
 };
 
 export const CONFIG = Object.freeze({
-  strategyVersion: str(env.STRATEGY_VERSION, 'CLEAN_MF_TS_V1'),
+  strategyVersion: str(env.STRATEGY_VERSION, 'CLEAN_MF_TS_V2'),
 
   app: {
     name: str(env.APP_NAME, 'Micro-Family Trading Admin'),
     baseUrl: str(env.APP_BASE_URL, env.VERCEL_URL ? `https://${env.VERCEL_URL}` : ''),
     adminPath: str(env.ADMIN_PATH, '/admin.html')
+  },
+
+  redis: {
+    // Upstash/Vercel safe ceiling. Analyze gebruikt nu sharded rows, maar dit blijft fallback-limiet.
+    maxRequestBytes: int(env.REDIS_MAX_REQUEST_BYTES, 9_500_000)
   },
 
   bitget: {
@@ -49,37 +57,44 @@ export const CONFIG = Object.freeze({
   },
 
   scanner: {
-    // Universe cap after ticker volume filter.
-    // Bitget raw tickers are all fetched; this controls how many symbols get candle analysis.
-    maxSymbols: int(env.SCANNER_MAX_SYMBOLS, 200),
+    // Breder universum voor micro-family learning.
+    // TradeSystem beslist later pas of iets live-entry waardig is.
+    maxSymbols: int(env.SCANNER_MAX_SYMBOLS, 300),
 
-    // Candle-fetch concurrency for scanner. Main bottleneck = candles, not tickers.
-    dataConcurrency: int(env.SCANNER_DATA_CONCURRENCY, 8),
+    // Max candidates die snapshot bewaart voor TradeSystem/Analyze.
+    maxCandidates: int(env.SCANNER_MAX_CANDIDATES, 300),
+    analyzeMaxCandidates: int(env.SCANNER_ANALYZE_MAX_CANDIDATES, 300),
 
-    minQuoteVolume24h: num(env.SCANNER_MIN_QUOTE_VOLUME_24H, 5_000_000),
-    minAbsChange1h: num(env.SCANNER_MIN_ABS_CHANGE_1H, 0.35),
-    minAbsChange24h: num(env.SCANNER_MIN_ABS_CHANGE_24H, 1.00),
+    // Candle-fetch concurrency. Niet te hoog zetten op Vercel/Bitget.
+    dataConcurrency: int(env.SCANNER_DATA_CONCURRENCY, 12),
+
+    // Breder dan oude settings zodat Analyze meer flow krijgt.
+    minQuoteVolume24h: num(env.SCANNER_MIN_QUOTE_VOLUME_24H, 1_500_000),
+    minAbsChange1h: num(env.SCANNER_MIN_ABS_CHANGE_1H, 0.12),
+    minAbsChange24h: num(env.SCANNER_MIN_ABS_CHANGE_24H, 0.35),
 
     snapshotTtlSec: int(env.SCANNER_SNAPSHOT_TTL_SEC, 30 * 60),
-    candleLimit: int(env.SCANNER_CANDLE_LIMIT, 80),
+    candleLimit: int(env.SCANNER_CANDLE_LIMIT, 100),
     fakeBreakoutLookback: int(env.SCANNER_FAKE_BREAKOUT_LOOKBACK, 24),
 
-    // Higher because 200 symbols can need materially longer than the old 80-symbol run.
-    lockTtlSec: int(env.SCANNER_LOCK_TTL_SEC, 420)
+    // Groter door 300-symbol universe.
+    lockTtlSec: int(env.SCANNER_LOCK_TTL_SEC, 540)
   },
 
   trade: {
     lockTtlSec: int(env.TRADE_LOCK_TTL_SEC, 180),
 
-    // More scanner candidates now possible because scanner universe increased 80 -> 200.
-    maxCandidatesPerSnapshot: int(env.TRADE_MAX_CANDIDATES_PER_SNAPSHOT, 120),
+    // Belangrijk: TradeSystem verwerkt veel scanner rows richting Analyze.
+    maxCandidatesPerSnapshot: int(env.TRADE_MAX_CANDIDATES_PER_SNAPSHOT, 300),
+    analyzeMaxCandidatesPerSnapshot: int(env.TRADE_ANALYZE_MAX_CANDIDATES_PER_SNAPSHOT, 300),
+    maxAnalyzeCandidatesPerSnapshot: int(env.TRADE_MAX_ANALYZE_CANDIDATES_PER_SNAPSHOT, 300),
 
-    // Scanner draait elke 5 min. Entries op snapshots ouder dan 8 min worden geskipt.
-    // Open positions blijven wel gemonitord.
+    // Scanner draait typisch elke paar minuten. Ouder dan dit = geen nieuwe entries,
+    // maar open/shadow posities worden nog gemonitord.
     maxSnapshotAgeSec: int(env.TRADE_MAX_SNAPSHOT_AGE_SEC, 8 * 60),
 
-    // Live validation uses orderbook + funding + 15m candles + 1h candles.
-    dataConcurrency: int(env.TRADE_DATA_CONCURRENCY, 6),
+    // Live validation: orderbook + funding + 15m + 1h candles.
+    dataConcurrency: int(env.TRADE_DATA_CONCURRENCY, 8),
 
     maxOpenPositions: int(env.TRADE_MAX_OPEN_POSITIONS, 30),
     maxOpenSameSide: int(env.TRADE_MAX_OPEN_SAME_SIDE, 15),
@@ -90,8 +105,17 @@ export const CONFIG = Object.freeze({
     defaultRR: num(env.TRADE_DEFAULT_RR, 1.50),
 
     // Decimal ratio. 0.0015 = 0.15%.
-    // Oude 0.015 was 1.5% en veel te ruim voor futures execution.
     maxSpreadPct: num(env.TRADE_MAX_SPREAD_PCT, 0.0015),
+
+    // Live-entry gates. Analyze/shadow mag breed meten; echte entry blijft streng.
+    requireScannerGateForLiveEntries: bool(env.TRADE_REQUIRE_SCANNER_GATE_FOR_LIVE_ENTRIES, true),
+    blockDiscoveryOnlyLiveEntries: bool(env.TRADE_BLOCK_DISCOVERY_ONLY_LIVE_ENTRIES, true),
+    allowFakeBreakoutLiveEntries: bool(env.TRADE_ALLOW_FAKE_BREAKOUT_LIVE_ENTRIES, false),
+    allowLowConfidenceLiveEntries: bool(env.TRADE_ALLOW_LOW_CONFIDENCE_LIVE_ENTRIES, false),
+    minLiveScannerScore: num(env.TRADE_MIN_LIVE_SCANNER_SCORE, 0),
+
+    // Veilig: alleen echte MF_V2 true micros live traden.
+    allowLegacyMacroLiveEntries: bool(env.TRADE_ALLOW_LEGACY_MACRO_LIVE_ENTRIES, false),
 
     candleTtlSec: int(env.TRADE_CANDLE_CACHE_TTL_SEC, 90),
     orderbookTtlSec: int(env.TRADE_ORDERBOOK_CACHE_TTL_SEC, 12),
@@ -99,7 +123,11 @@ export const CONFIG = Object.freeze({
   },
 
   analyze: {
-    schema: str(env.MICRO_FAMILY_SCHEMA, 'MF_V1'),
+    // Macro = oude bucket. True micro = strakke execution fingerprint.
+    schema: str(env.ANALYZE_SCHEMA || env.MICRO_FAMILY_SCHEMA, 'MF_V2'),
+    legacySchema: str(env.ANALYZE_LEGACY_SCHEMA, 'MF_V1'),
+    macroSchema: str(env.ANALYZE_MACRO_SCHEMA, 'MF_V1'),
+    microSchema: str(env.ANALYZE_MICRO_SCHEMA, 'MF_V2'),
 
     shadowEnabled: bool(env.ANALYZE_SHADOW_ENABLED, true),
     shadowHorizonMin: int(env.ANALYZE_SHADOW_HORIZON_MIN, 6 * 60),
@@ -111,15 +139,46 @@ export const CONFIG = Object.freeze({
     maxShadowMonitorsPerRun: int(env.ANALYZE_MAX_SHADOW_MONITORS_PER_RUN, 80),
 
     freezeLockTtlSec: int(env.ANALYZE_FREEZE_LOCK_TTL_SEC, 600),
-    activateLockTtlSec: int(env.ANALYZE_ACTIVATE_LOCK_TTL_SEC, 600)
+    activateLockTtlSec: int(env.ANALYZE_ACTIVATE_LOCK_TTL_SEC, 600),
+
+    // Sharded compressed week storage.
+    weekMicrosCompressionEnabled: bool(env.ANALYZE_WEEK_MICROS_COMPRESSION_ENABLED, true),
+    weekMicrosCompressionLevel: int(env.ANALYZE_WEEK_MICROS_COMPRESSION_LEVEL, 6),
+    maxMicroRowSetBytes: int(env.ANALYZE_MAX_MICRO_ROW_SET_BYTES, 250_000),
+
+    // TTL voorkomt memory-growth door oude weken.
+    weekMicrosTtlSec: int(env.ANALYZE_WEEK_MICROS_TTL_SEC, 21 * 24 * 3600),
+    weekMetaTtlSec: int(env.ANALYZE_WEEK_META_TTL_SEC, 90 * 24 * 3600),
+
+    storageConcurrency: int(env.ANALYZE_STORAGE_CONCURRENCY, 8),
+
+    // Compact storage per micro-family.
+    maxExamplesPerMicro: int(env.ANALYZE_MAX_EXAMPLES_PER_MICRO, 8),
+    maxRecentOutcomesPerMicro: int(env.ANALYZE_MAX_RECENT_OUTCOMES_PER_MICRO, 8),
+    maxDefinitionPartsPerMicro: int(env.ANALYZE_MAX_DEFINITION_PARTS_PER_MICRO, 64),
+    maxParentDefinitionPartsPerMicro: int(env.ANALYZE_MAX_PARENT_DEFINITION_PARTS_PER_MICRO, 48),
+    maxCounterKeysPerMicro: int(env.ANALYZE_MAX_COUNTER_KEYS_PER_MICRO, 18),
+    maxCounterValuesPerCounter: int(env.ANALYZE_MAX_COUNTER_VALUES_PER_COUNTER, 24),
+    maxStoredStringLength: int(env.ANALYZE_MAX_STORED_STRING_LENGTH, 480)
   },
 
   rotation: {
     mode: str(env.ROTATION_MODE, 'balanced'),
-    topNPerSide: int(env.ROTATION_TOP_N_PER_SIDE, 10),
+    topNPerSide: int(env.ROTATION_TOP_N_PER_SIDE, 1),
 
-    // Minimum weighted completed trades per micro-family before it can enter rotation.
-    minWeightedCompleted: num(env.ROTATION_MIN_WEIGHTED_COMPLETED, 5),
+    // Nu bewust laag: systeem moet al met weinig proof kunnen testen,
+    // maar score blijft Bayesian/Wilson gestraft bij kleine sample.
+    minWeightedCompleted: num(env.ROTATION_MIN_WEIGHTED_COMPLETED, 0.35),
+
+    // Max per macro voorkomt dat 1 oude macro-bucket alle slots claimt.
+    maxPerMacroFamily: int(env.ROTATION_MAX_PER_MACRO_FAMILY, 1),
+
+    // Geen legacy macro live fallback. Alleen true micros.
+    allowLegacyMacroActivation: bool(env.ROTATION_ALLOW_LEGACY_MACRO_ACTIVATION, false),
+
+    // Handmatig onbekende MF_V2 IDs toestaan voor admin workflow.
+    allowManualUnknownTrueMicroIds: bool(env.ROTATION_ALLOW_MANUAL_UNKNOWN_TRUE_MICRO_IDS, true),
+    allowManualBelowMinCompleted: bool(env.ROTATION_ALLOW_MANUAL_BELOW_MIN_COMPLETED, true),
 
     priorTrades: num(env.ROTATION_PRIOR_TRADES, 24),
     priorWinrate: num(env.ROTATION_PRIOR_WINRATE, 0.50),
@@ -153,8 +212,7 @@ export const CONFIG = Object.freeze({
   },
 
   manage: {
-    // Phase 1: false = only measure counterfactual BE/trailing behavior.
-    // Later true only when Analyze proves it improves net R.
+    // Phase 1: false = alleen counterfactual BE/trailing meten.
     applyLive: bool(env.MANAGE_APPLY_LIVE, false),
 
     beArmR: num(env.MANAGE_BE_ARM_R, 0.70),
