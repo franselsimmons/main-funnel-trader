@@ -19,6 +19,25 @@ function now() {
   return Date.now();
 }
 
+function tradeConfig() {
+  return {
+    minRR: safeNumber(CONFIG.trade?.minRR, 0.5),
+    defaultRR: safeNumber(CONFIG.trade?.defaultRR, 1.5),
+    maxSpreadPct: safeNumber(CONFIG.trade?.maxSpreadPct, 0.015)
+  };
+}
+
+function fallbackSpreadPct() {
+  return safeNumber(CONFIG.cost?.fallbackSpreadPct, 0.0008);
+}
+
+function scoreInput(candidate = {}) {
+  return safeNumber(
+    candidate.scannerScore ?? candidate.moveScore,
+    0
+  );
+}
+
 function roundPrice(value) {
   const n = safeNumber(value, 0);
 
@@ -63,14 +82,23 @@ function btcRelation(side, btcState) {
   return 'BTC_AGAINST';
 }
 
-function directionalReward({ entry, tp, side }) {
+function directionalReward({
+  entry,
+  tp,
+  side
+} = {}) {
   if (isLong(side)) return tp - entry;
   if (isShort(side)) return entry - tp;
 
   return 0;
 }
 
-function directionalMoveScore({ side, rsiZone, rsiSlope, rsiHTF }) {
+function directionalMoveScore({
+  side,
+  rsiZone,
+  rsiSlope,
+  rsiHTF
+} = {}) {
   const zone = String(rsiZone || 'MID').toUpperCase();
   const slope = safeNumber(rsiSlope, 0);
   const htf = safeNumber(rsiHTF, 50);
@@ -83,7 +111,9 @@ function directionalMoveScore({ side, rsiZone, rsiSlope, rsiHTF }) {
     if (slope > 0) score += 5;
     if (htf >= 45 && htf <= 68) score += 5;
     if (htf > 74) score -= 6;
-  } else if (isShort(side)) {
+  }
+
+  if (isShort(side)) {
     if (zone.startsWith('UPPER')) score += 10;
     if (zone === 'MID') score += 5;
     if (slope < 0) score += 5;
@@ -95,13 +125,14 @@ function directionalMoveScore({ side, rsiZone, rsiSlope, rsiHTF }) {
 }
 
 function spreadQualityScore(spreadPct) {
+  const cfg = tradeConfig();
   const spread = safeNumber(spreadPct, 0);
 
   if (spread <= 0) return -4;
   if (spread <= 0.0004) return 8;
   if (spread <= 0.0008) return 5;
   if (spread <= 0.0015) return 1;
-  if (spread <= CONFIG.trade.maxSpreadPct) return -4;
+  if (spread <= cfg.maxSpreadPct) return -4;
 
   return -12;
 }
@@ -119,12 +150,13 @@ function depthQualityScore(depthUsd) {
 }
 
 function rrScore(rr) {
+  const cfg = tradeConfig();
   const r = safeNumber(rr, 0);
 
   if (r >= 2.0) return 12;
   if (r >= 1.5) return 10;
   if (r >= 1.0) return 6;
-  if (r >= CONFIG.trade.minRR) return 2;
+  if (r >= cfg.minRR) return 2;
 
   return -12;
 }
@@ -161,6 +193,7 @@ export function buildRiskGeometry({
   ob,
   candles15m
 } = {}) {
+  const cfg = tradeConfig();
   const tradeSide = sideToTradeSide(candidate?.side);
 
   if (tradeSide === 'UNKNOWN') return null;
@@ -170,7 +203,7 @@ export function buildRiskGeometry({
   if (entry <= 0) return null;
 
   const atrPct = calculateAtrPct(candles15m, 14);
-  const spreadPct = safeNumber(ob?.spreadPct, CONFIG.cost?.fallbackSpreadPct || 0.0008);
+  const spreadPct = safeNumber(ob?.spreadPct, fallbackSpreadPct());
 
   const rawRiskPct = Math.max(
     0.005,
@@ -179,7 +212,7 @@ export function buildRiskGeometry({
   );
 
   const riskPct = clamp(rawRiskPct, 0.004, 0.025);
-  const rewardPct = riskPct * CONFIG.trade.defaultRR;
+  const rewardPct = riskPct * cfg.defaultRR;
 
   const sl = tradeSide === 'LONG'
     ? entry * (1 - riskPct)
@@ -207,6 +240,7 @@ export function buildRiskGeometry({
 
     slSource: 'ATR_SPREAD_FALLBACK',
     tpSource: 'DEFAULT_RR_TARGET',
+    riskRewardSource: 'ATR_SPREAD_DEFAULT_RR',
 
     atrPct: round6(atrPct),
     spreadPct: round6(spreadPct),
@@ -225,6 +259,10 @@ export function buildLiveMetrics({
   regime,
   risk
 } = {}) {
+  if (!candidate || !risk) {
+    return null;
+  }
+
   const rsi = calculateRsi(candles15m, 14) ?? 50;
   const rsiHTF = calculateRsi(candles1h, 14) ?? rsi;
   const rsiZone = getRsiZone(rsi);
@@ -240,9 +278,11 @@ export function buildLiveMetrics({
   const obRelation = getObRelation(candidate?.side, ob?.bias);
   const relationToBtc = btcRelation(candidate?.side, btcState);
 
+  const baseScore = scoreInput(candidate);
+
   let confluence = 0;
 
-  confluence += clamp(candidate?.scannerScore || candidate?.moveScore, 0, 100) * 0.30;
+  confluence += clamp(baseScore, 0, 100) * 0.30;
   confluence += flow === 'TREND' ? 18 : flow === 'IMPULSE' ? 15 : flow === 'BUILDING' ? 10 : 2;
   confluence += obRelation === 'WITH' ? 15 : obRelation === 'NEUTRAL' ? 4 : -12;
   confluence += relationToBtc === 'BTC_WITH' ? 8 : relationToBtc === 'BTC_NEUTRAL' ? 2 : -8;
@@ -258,7 +298,7 @@ export function buildLiveMetrics({
 
   let sniperScore = 0;
 
-  sniperScore += clamp(candidate?.moveScore || candidate?.scannerScore, 0, 100) * 0.32;
+  sniperScore += clamp(baseScore, 0, 100) * 0.32;
   sniperScore += obRelation === 'WITH' ? 18 : obRelation === 'NEUTRAL' ? 6 : -15;
   sniperScore += relationToBtc === 'BTC_WITH' ? 8 : relationToBtc === 'BTC_NEUTRAL' ? 2 : -8;
   sniperScore += flow === 'TREND' ? 18 : flow === 'IMPULSE' ? 15 : flow === 'BUILDING' ? 10 : 2;
@@ -302,13 +342,17 @@ export function buildLiveMetrics({
     btcRelation: relationToBtc,
     regime,
 
-    entry: risk?.entry,
-    sl: risk?.sl,
-    tp: risk?.tp,
-    riskPct: risk?.riskPct,
+    entry: risk.entry,
+    sl: risk.sl,
+    tp: risk.tp,
 
-    slSource: risk?.slSource,
-    tpSource: risk?.tpSource,
+    atrPct: risk.atrPct,
+    riskPct: risk.riskPct,
+    rewardPct: risk.rewardPct,
+
+    slSource: risk.slSource,
+    tpSource: risk.tpSource,
+    riskRewardSource: risk.riskRewardSource,
 
     ts: now()
   };
@@ -317,6 +361,7 @@ export function buildLiveMetrics({
 export function isValidRiskGeometry(risk, side) {
   if (!risk) return false;
 
+  const cfg = tradeConfig();
   const tradeSide = sideToTradeSide(side);
 
   if (tradeSide === 'UNKNOWN') return false;
@@ -337,7 +382,7 @@ export function isValidRiskGeometry(risk, side) {
     side: tradeSide
   });
 
-  if (rr < CONFIG.trade.minRR) return false;
+  if (rr < cfg.minRR) return false;
 
   if (safeNumber(risk.riskPct, 0) <= 0) return false;
 
