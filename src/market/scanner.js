@@ -23,28 +23,135 @@ import {
   fetchCandles
 } from './bitgetClient.js';
 
+const DEFAULT_ANALYZE_SYMBOLS = 300;
+const DEFAULT_MAX_CANDIDATES = 300;
+const DEFAULT_MIN_QUOTE_VOLUME_24H = 50_000;
+const DEFAULT_SOFT_MIN_QUOTE_VOLUME_24H = 10_000;
+
+function cfgNumber(pathValue, fallback) {
+  const value = safeNumber(pathValue, fallback);
+
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function cfgBoolean(pathValue, fallback = false) {
+  if (pathValue === undefined || pathValue === null) return fallback;
+
+  return Boolean(pathValue);
+}
+
 function scannerConcurrency() {
   const value =
     CONFIG.scanner?.dataConcurrency ||
     CONFIG.trade?.dataConcurrency ||
-    5;
+    8;
 
   const n = Number(value);
 
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5;
+  if (!Number.isFinite(n) || n <= 0) return 8;
+
+  return Math.max(1, Math.min(20, Math.floor(n)));
 }
 
-function inferSide({ change1h, change24h }) {
+function scannerMaxSymbols() {
+  const configured = cfgNumber(CONFIG.scanner?.maxSymbols, 0);
+  const analyzeMax = cfgNumber(
+    CONFIG.scanner?.analyzeMaxSymbols ??
+    CONFIG.scanner?.maxAnalyzeSymbols ??
+    CONFIG.scanner?.maxUniverseSymbols,
+    DEFAULT_ANALYZE_SYMBOLS
+  );
+
+  return Math.max(1, Math.floor(Math.max(configured, analyzeMax)));
+}
+
+function scannerMaxCandidates() {
+  const configured = cfgNumber(CONFIG.scanner?.maxCandidates, 0);
+  const analyzeMax = cfgNumber(
+    CONFIG.scanner?.analyzeMaxCandidates ??
+    CONFIG.scanner?.maxAnalyzeCandidates,
+    DEFAULT_MAX_CANDIDATES
+  );
+
+  return Math.max(1, Math.floor(Math.max(configured, analyzeMax)));
+}
+
+function minQuoteVolume24h() {
+  return Math.max(
+    0,
+    cfgNumber(CONFIG.scanner?.minQuoteVolume24h, DEFAULT_MIN_QUOTE_VOLUME_24H)
+  );
+}
+
+function softMinQuoteVolume24h() {
+  return Math.max(
+    0,
+    cfgNumber(CONFIG.scanner?.softMinQuoteVolume24h, DEFAULT_SOFT_MIN_QUOTE_VOLUME_24H)
+  );
+}
+
+function minAbsChange1h() {
+  return Math.max(
+    0,
+    cfgNumber(CONFIG.scanner?.minAbsChange1h, 0.15)
+  );
+}
+
+function minAbsChange24h() {
+  return Math.max(
+    0,
+    cfgNumber(CONFIG.scanner?.minAbsChange24h, 0.8)
+  );
+}
+
+function strictScannerFiltersEnabled() {
+  return cfgBoolean(CONFIG.scanner?.strictFilters, false);
+}
+
+function blockFakeBreakoutEnabled() {
+  return cfgBoolean(CONFIG.scanner?.blockFakeBreakout, false);
+}
+
+function blockNoDirectionEnabled() {
+  return cfgBoolean(CONFIG.scanner?.blockNoDirection, false);
+}
+
+function blockSmallMoveEnabled() {
+  return cfgBoolean(CONFIG.scanner?.blockSmallMove, false);
+}
+
+function inferSide({ change1h, change24h, btcState }) {
   const ch1 = safeNumber(change1h, 0);
   const ch24 = safeNumber(change24h, 0);
+  const min24 = minAbsChange24h();
 
   if (ch1 > 0 && ch24 > -0.5) return 'bull';
   if (ch1 < 0 && ch24 < 0.5) return 'bear';
 
-  if (ch24 > CONFIG.scanner.minAbsChange24h) return 'bull';
-  if (ch24 < -CONFIG.scanner.minAbsChange24h) return 'bear';
+  if (ch24 > min24) return 'bull';
+  if (ch24 < -min24) return 'bear';
 
-  return null;
+  if (ch1 > 0) return 'bull';
+  if (ch1 < 0) return 'bear';
+
+  const state = String(btcState || '').toUpperCase();
+
+  if (state.includes('BULL')) return 'bull';
+  if (state.includes('BEAR')) return 'bear';
+
+  return 'neutral';
+}
+
+function sideConfidence({ side, change1h, change24h }) {
+  if (!['bull', 'bear'].includes(side)) return 'LOW';
+
+  const ch1 = Math.abs(safeNumber(change1h, 0));
+  const ch24 = Math.abs(safeNumber(change24h, 0));
+
+  if (ch1 >= minAbsChange1h() * 2 || ch24 >= minAbsChange24h() * 2) return 'HIGH';
+  if (ch1 >= minAbsChange1h() || ch24 >= minAbsChange24h()) return 'MID';
+
+  return 'LOW';
 }
 
 function calcChangePct(first, last) {
@@ -73,10 +180,12 @@ function calcScannerScore({
   volume24h,
   volumeExpansion,
   fakeBreakoutRisk,
+  fakeBreakout,
   pullbackConfirmed,
   sweepConfirmed,
   retestConfirmed,
-  breakoutType
+  breakoutType,
+  sideConfidenceLevel
 }) {
   let score = 0;
 
@@ -84,6 +193,7 @@ function calcScannerScore({
   score += Math.min(22, Math.abs(safeNumber(change24h, 0)) * 2.7);
   score += Math.min(20, Math.log10(Math.max(10, safeNumber(volume24h, 0))) * 2.0);
 
+  if (safeNumber(volumeExpansion, 1) >= 1.15) score += 3;
   if (safeNumber(volumeExpansion, 1) >= 1.25) score += 6;
   if (safeNumber(volumeExpansion, 1) >= 1.75) score += 4;
 
@@ -92,18 +202,30 @@ function calcScannerScore({
   if (sweepConfirmed) score += 3;
   if (breakoutType === 'VALID_BREAKOUT') score += 4;
 
-  if (fakeBreakoutRisk) score -= 12;
+  if (sideConfidenceLevel === 'HIGH') score += 5;
+  if (sideConfidenceLevel === 'MID') score += 2;
+  if (sideConfidenceLevel === 'LOW') score -= 3;
+
+  if (fakeBreakoutRisk) score -= 8;
+  if (fakeBreakout) score -= 7;
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-function scannerReasonFrom({ fake, volumeExpansion }) {
+function scannerReasonFrom({
+  fake,
+  volumeExpansion,
+  passesMoveFilter,
+  sideConfidenceLevel
+}) {
   if (fake?.pullbackConfirmed && fake?.retestConfirmed) return 'MOMENTUM_PULLBACK_RETEST';
   if (fake?.pullbackConfirmed) return 'MOMENTUM_PULLBACK';
   if (fake?.breakoutType === 'VALID_BREAKOUT') return 'VALID_BREAKOUT';
   if (volumeExpansion >= 1.5) return 'VOLUME_EXPANSION';
+  if (passesMoveFilter) return 'MOMENTUM_EXPANSION';
+  if (sideConfidenceLevel === 'LOW') return 'WEAK_DIRECTION_ANALYZE_ONLY';
 
-  return 'MOMENTUM_EXPANSION';
+  return 'ANALYZE_DISCOVERY';
 }
 
 function cleanFakeResult(fake = {}) {
@@ -122,7 +244,13 @@ function isTradableTicker(ticker) {
   if (!ticker?.symbol) return false;
   if (!ticker?.baseSymbol) return false;
   if (safeNumber(ticker.price, 0) <= 0) return false;
-  if (safeNumber(ticker.volume24h, 0) < CONFIG.scanner.minQuoteVolume24h) return false;
+
+  const volume24h = safeNumber(ticker.volume24h, 0);
+  const hardMinVolume = strictScannerFiltersEnabled()
+    ? minQuoteVolume24h()
+    : softMinQuoteVolume24h();
+
+  if (volume24h < hardMinVolume) return false;
 
   return true;
 }
@@ -157,7 +285,7 @@ function buildTickerUniverse(rawTickers) {
       .filter(isTradableTicker)
   )
     .sort((a, b) => safeNumber(b.volume24h, 0) - safeNumber(a.volume24h, 0))
-    .slice(0, CONFIG.scanner.maxSymbols);
+    .slice(0, scannerMaxSymbols());
 }
 
 function createCandleCache() {
@@ -165,11 +293,12 @@ function createCandleCache() {
 
   return async function getCandles(symbol, timeframe = '15m', limit = CONFIG.scanner.candleLimit) {
     const contractSymbol = normalizeContractSymbol(symbol);
-    const key = `${contractSymbol}:${timeframe}:${limit}`;
+    const candleLimit = Math.max(30, Math.floor(safeNumber(limit, CONFIG.scanner.candleLimit || 80)));
+    const key = `${contractSymbol}:${timeframe}:${candleLimit}`;
 
     if (cache.has(key)) return cache.get(key);
 
-    const promise = fetchCandles(contractSymbol, timeframe, limit).catch(() => []);
+    const promise = fetchCandles(contractSymbol, timeframe, candleLimit).catch(() => []);
     cache.set(key, promise);
 
     return promise;
@@ -218,11 +347,59 @@ async function buildBtcContext({ universe, getCandles }) {
   };
 }
 
+function buildGateFlags({
+  change1h,
+  change24h,
+  fake,
+  side,
+  volume24h
+}) {
+  const passesMoveFilter =
+    Math.abs(change1h) >= minAbsChange1h() ||
+    Math.abs(change24h) >= minAbsChange24h();
+
+  const passesVolumeFilter = safeNumber(volume24h, 0) >= minQuoteVolume24h();
+  const hasDirectionalSide = ['bull', 'bear'].includes(side);
+
+  const hardBlockedByDirection =
+    blockNoDirectionEnabled() &&
+    !hasDirectionalSide;
+
+  const hardBlockedByMove =
+    blockSmallMoveEnabled() &&
+    !passesMoveFilter;
+
+  const hardBlockedByFake =
+    blockFakeBreakoutEnabled() &&
+    Boolean(fake.fakeBreakout);
+
+  const hardBlocked =
+    hardBlockedByDirection ||
+    hardBlockedByMove ||
+    hardBlockedByFake;
+
+  return {
+    passesMoveFilter,
+    passesVolumeFilter,
+    hasDirectionalSide,
+
+    hardBlocked,
+    hardBlockedByDirection,
+    hardBlockedByMove,
+    hardBlockedByFake,
+
+    scannerGatePassed: !hardBlocked && passesMoveFilter && hasDirectionalSide && !fake.fakeBreakout,
+    analyzeEligible: !hardBlocked,
+    tradeDiscoveryOnly: !passesMoveFilter || !hasDirectionalSide || fake.fakeBreakout
+  };
+}
+
 async function analyzeTickerCandidate({
   ticker,
   snapshotId,
   startedAt,
   btcState,
+  regime,
   getCandles
 }) {
   const contractSymbol = normalizeContractSymbol(ticker.contractSymbol || ticker.symbol);
@@ -250,25 +427,11 @@ async function analyzeTickerCandidate({
 
   const change1h = calcOneHourChange(candles15m);
   const change24h = safeNumber(ticker.change24h, 0);
-  const side = inferSide({ change1h, change24h });
-
-  if (!side) {
-    return {
-      candidate: null,
-      skippedReason: 'NO_DIRECTION'
-    };
-  }
-
-  const passesMoveFilter =
-    Math.abs(change1h) >= CONFIG.scanner.minAbsChange1h ||
-    Math.abs(change24h) >= CONFIG.scanner.minAbsChange24h;
-
-  if (!passesMoveFilter) {
-    return {
-      candidate: null,
-      skippedReason: 'MOVE_TOO_SMALL'
-    };
-  }
+  const side = inferSide({
+    change1h,
+    change24h,
+    btcState
+  });
 
   const fakeRaw = detectFakeBreakout({
     side,
@@ -279,20 +442,38 @@ async function analyzeTickerCandidate({
 
   const fake = cleanFakeResult(fakeRaw);
 
-  if (fake.fakeBreakout) {
+  const gates = buildGateFlags({
+    change1h,
+    change24h,
+    fake,
+    side,
+    volume24h: ticker.volume24h
+  });
+
+  if (gates.hardBlocked) {
     return {
       candidate: null,
-      skippedReason: 'FAKE_BREAKOUT'
+      skippedReason: gates.hardBlockedByDirection
+        ? 'NO_DIRECTION'
+        : gates.hardBlockedByMove
+          ? 'MOVE_TOO_SMALL'
+          : 'FAKE_BREAKOUT'
     };
   }
 
   const volumeExpansion = calcVolumeExpansion(candles15m, 20);
+  const sideConfidenceLevel = sideConfidence({
+    side,
+    change1h,
+    change24h
+  });
 
   const scannerScore = calcScannerScore({
     change1h,
     change24h,
     volume24h: ticker.volume24h,
     volumeExpansion,
+    sideConfidenceLevel,
     ...fake
   });
 
@@ -318,11 +499,19 @@ async function analyzeTickerCandidate({
       volume24h: safeNumber(ticker.volume24h, 0),
       volumeExpansion: Number(volumeExpansion.toFixed(3)),
 
+      btcState,
+      regime,
+
+      sideConfidence: sideConfidenceLevel,
+
       ...fake,
+      ...gates,
 
       scannerReason: scannerReasonFrom({
         fake,
-        volumeExpansion
+        volumeExpansion,
+        passesMoveFilter: gates.passesMoveFilter,
+        sideConfidenceLevel
       }),
 
       scannerTs: startedAt
@@ -339,6 +528,18 @@ function countSkipped(results) {
 
     return acc;
   }, {});
+}
+
+function sortCandidates(candidates = []) {
+  return [...candidates].sort((a, b) => {
+    const gateDelta = Number(Boolean(b.scannerGatePassed)) - Number(Boolean(a.scannerGatePassed));
+    if (gateDelta !== 0) return gateDelta;
+
+    const scoreDelta = safeNumber(b.scannerScore, 0) - safeNumber(a.scannerScore, 0);
+    if (scoreDelta !== 0) return scoreDelta;
+
+    return safeNumber(b.volume24h, 0) - safeNumber(a.volume24h, 0);
+  });
 }
 
 export async function runScanner() {
@@ -364,14 +565,20 @@ export async function runScanner() {
       snapshotId,
       startedAt,
       btcState: btcContext.btcState,
+      regime: btcContext.regime,
       getCandles
     })
   );
 
-  const cleanCandidates = results
+  const allCandidates = results
     .map((row) => row?.candidate)
-    .filter(Boolean)
-    .sort((a, b) => b.scannerScore - a.scannerScore);
+    .filter(Boolean);
+
+  const cleanCandidates = sortCandidates(allCandidates)
+    .slice(0, scannerMaxCandidates());
+
+  const scannerGateCandidates = cleanCandidates.filter((candidate) => candidate.scannerGatePassed);
+  const analyzeOnlyCandidates = cleanCandidates.filter((candidate) => candidate.tradeDiscoveryOnly);
 
   const completedAt = Date.now();
 
@@ -393,9 +600,24 @@ export async function runScanner() {
     filteredUniverse: universe.length,
 
     candidatesCount: cleanCandidates.length,
+    scannerGateCandidatesCount: scannerGateCandidates.length,
+    analyzeOnlyCandidatesCount: analyzeOnlyCandidates.length,
+
+    maxSymbols: scannerMaxSymbols(),
+    maxCandidates: scannerMaxCandidates(),
+
+    strictFilters: strictScannerFiltersEnabled(),
+    blockFakeBreakout: blockFakeBreakoutEnabled(),
+    blockNoDirection: blockNoDirectionEnabled(),
+    blockSmallMove: blockSmallMoveEnabled(),
+
     skippedCounts: countSkipped(results),
 
     topSymbols: cleanCandidates
+      .slice(0, 20)
+      .map((candidate) => candidate.symbol),
+
+    scannerGateSymbols: scannerGateCandidates
       .slice(0, 20)
       .map((candidate) => candidate.symbol),
 
@@ -423,15 +645,22 @@ export async function runScanner() {
       durationMs: snapshot.durationMs,
 
       candidatesCount: cleanCandidates.length,
+      scannerGateCandidatesCount: scannerGateCandidates.length,
+      analyzeOnlyCandidatesCount: analyzeOnlyCandidates.length,
 
       btcState: btcContext.btcState,
       regime: btcContext.regime,
 
       rawCount: snapshot.rawCount,
       filteredUniverse: snapshot.filteredUniverse,
+      maxSymbols: snapshot.maxSymbols,
+      maxCandidates: snapshot.maxCandidates,
+
+      strictFilters: snapshot.strictFilters,
       skippedCounts: snapshot.skippedCounts,
 
-      topSymbols: snapshot.topSymbols
+      topSymbols: snapshot.topSymbols,
+      scannerGateSymbols: snapshot.scannerGateSymbols
     },
     {
       ex: CONFIG.scanner.snapshotTtlSec
