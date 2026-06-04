@@ -72,7 +72,12 @@ function normalizeMicros(micros = {}) {
 
 export async function getWeekMicros(weekKey = getIsoWeekKey()) {
   const redis = getDurableRedis();
-  return await getJson(redis, KEYS.analyze.weekMicros(weekKey), {});
+
+  return await getJson(
+    redis,
+    KEYS.analyze.weekMicros(weekKey),
+    {}
+  );
 }
 
 export async function saveWeekMicros(weekKey, micros) {
@@ -83,15 +88,23 @@ export async function saveWeekMicros(weekKey, micros) {
   const redis = getDurableRedis();
   const clean = normalizeMicros(micros);
 
-  await setJson(redis, KEYS.analyze.weekMicros(weekKey), clean);
+  await setJson(
+    redis,
+    KEYS.analyze.weekMicros(weekKey),
+    clean
+  );
 
-  await setJson(redis, KEYS.analyze.weekMeta(weekKey), {
-    weekKey,
-    updatedAt: now(),
-    microFamilies: Object.keys(clean).length,
-    schema: CONFIG.analyze.schema,
-    strategyVersion: CONFIG.strategyVersion
-  });
+  await setJson(
+    redis,
+    KEYS.analyze.weekMeta(weekKey),
+    {
+      weekKey,
+      updatedAt: now(),
+      microFamilies: Object.keys(clean).length,
+      schema: CONFIG.analyze.schema,
+      strategyVersion: CONFIG.strategyVersion
+    }
+  );
 
   return clean;
 }
@@ -100,7 +113,9 @@ export async function analyzeCandidatesBatch(
   metricsRows = [],
   { weekKey = getIsoWeekKey() } = {}
 ) {
-  const rows = Array.isArray(metricsRows) ? metricsRows.filter(Boolean) : [];
+  const rows = Array.isArray(metricsRows)
+    ? metricsRows.filter(Boolean)
+    : [];
 
   if (rows.length === 0) {
     return [];
@@ -124,7 +139,11 @@ export async function analyzeCandidatesBatch(
       ex: CONFIG.analyze.obsDedupeTtlSec
     });
 
-    const micro = getOrCreateMicro(micros, classified, metrics.side);
+    const micro = getOrCreateMicro(
+      micros,
+      classified,
+      metrics.side
+    );
 
     if (firstObservation) {
       updateObservation(micro, {
@@ -172,11 +191,21 @@ export async function recordOutcome(
 
     row = {
       ...row,
+
       familyId: row.familyId || classified.familyId,
       microFamilyId: row.microFamilyId || classified.microFamilyId,
-      definitionParts: row.definitionParts || classified.definitionParts,
+
+      definitionParts: Array.isArray(row.definitionParts) && row.definitionParts.length
+        ? row.definitionParts
+        : classified.definitionParts,
+
       definition: row.definition || classified.definition,
-      obRelation: row.obRelation || classified.obRelation
+
+      obRelation: row.obRelation || classified.obRelation,
+      btcRelation: row.btcRelation || classified.btcRelation,
+      flow: row.flow || classified.flow,
+      regime: row.regime || classified.regime,
+      scannerReason: row.scannerReason || classified.scannerReason
     };
   }
 
@@ -273,6 +302,7 @@ export async function createShadowPosition(metrics = {}) {
     beArmed: false,
     beWouldExit: false,
     beExitR: 0,
+
     gaveBackAfterHalfR: false,
     gaveBackAfterOneR: false,
     nearTpThenLoss: false
@@ -313,9 +343,17 @@ function inferDirectToSL({ position, exitReason }) {
   const mfeR = safeNumber(position.mfeR, 0);
   const maeR = safeNumber(position.maeR, 0);
 
+  const stoppedOut = [
+    'SL',
+    'HIT_SL',
+    'STOP',
+    'STOP_LOSS',
+    'STOPLOSS'
+  ].includes(reason);
+
   return Boolean(position.directToSL) ||
     (
-      reason === 'SL' &&
+      stoppedOut &&
       mfeR < 0.25 &&
       maeR <= -0.8
     );
@@ -370,6 +408,12 @@ export function buildOutcomeFromPosition({
     familyId: position.familyId,
     microFamilyId: position.microFamilyId,
     definitionParts: position.definitionParts || [],
+
+    obRelation: position.obRelation || null,
+    btcRelation: position.btcRelation || null,
+    flow: position.flow || null,
+    regime: position.regime || null,
+    scannerReason: position.scannerReason || null,
 
     entry,
     exit,
