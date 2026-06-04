@@ -42,6 +42,8 @@ function parseJson(text) {
 async function readBody(req) {
   if (req.body) {
     if (typeof req.body === 'string') return parseJson(req.body);
+    if (Buffer.isBuffer(req.body)) return parseJson(req.body.toString('utf8'));
+
     return req.body;
   }
 
@@ -53,6 +55,15 @@ async function readBody(req) {
 
   const text = Buffer.concat(chunks).toString('utf8');
   return parseJson(text);
+}
+
+function isConfirmed(body) {
+  return (
+    body.confirm === true ||
+    body.confirmed === true ||
+    body.confirm === CONFIRM_TEXT ||
+    body.confirmed === CONFIRM_TEXT
+  );
 }
 
 async function acquireLock(redis, key, token) {
@@ -68,12 +79,12 @@ async function releaseLock(redis, key, token) {
   try {
     const current = await redis.get(key);
 
-    if (current === token) {
-      await redis.del(key);
-      return true;
+    if (current !== token) {
+      return false;
     }
 
-    return false;
+    await redis.del(key);
+    return true;
   } catch {
     return false;
   }
@@ -127,21 +138,17 @@ async function releaseLocks(redis, keys, token) {
   return released;
 }
 
-function isConfirmed(body) {
-  return (
-    body.confirm === true ||
-    body.confirmed === true ||
-    body.confirm === CONFIRM_TEXT ||
-    body.confirmed === CONFIRM_TEXT
-  );
+async function delKey(redis, key) {
+  if (!key) return 0;
+  return redis.del(key);
 }
 
 async function deleteRotationKeys(redis) {
   const deleted = {};
 
-  deleted.activeRotation = await redis.del(KEYS.analyze.activeRotation);
-  deleted.nextRotation = await redis.del(KEYS.analyze.nextRotation);
-  deleted.rotationValidFrom = await redis.del(KEYS.analyze.rotationValidFrom);
+  deleted.activeRotation = await delKey(redis, KEYS.analyze?.activeRotation);
+  deleted.nextRotation = await delKey(redis, KEYS.analyze?.nextRotation);
+  deleted.rotationValidFrom = await delKey(redis, KEYS.analyze?.rotationValidFrom);
 
   return deleted;
 }
@@ -198,7 +205,10 @@ export default async function handler(req, res) {
         observations: true,
         outcomes: true,
         openPositions: true,
-        scannerSnapshots: true
+        scannerSnapshots: true,
+        tradeMemory: true,
+        resetLogs: true,
+        discordLogs: true
       },
       resetAt: Date.now()
     };
