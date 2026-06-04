@@ -15,8 +15,35 @@ function hasFlag(name) {
   return process.argv.includes(`--${name}`);
 }
 
+function getResultWeekKey(result, fallback = null) {
+  return (
+    result?.weekKey ||
+    result?.activeRotation?.activeWeekKey ||
+    result?.activeRotation?.sourceWeekKey ||
+    fallback ||
+    null
+  );
+}
+
+function getResultRotationId(result) {
+  return (
+    result?.rotationId ||
+    result?.activeRotation?.rotationId ||
+    null
+  );
+}
+
+function getActivatedCount(result) {
+  return (
+    result?.activeRotation?.microFamilyIds?.length ||
+    result?.microFamilyIds?.length ||
+    0
+  );
+}
+
 async function main() {
   const startedAt = Date.now();
+  const argv = process.argv.slice(2);
 
   const options = {
     force: hasFlag('force'),
@@ -24,13 +51,16 @@ async function main() {
   };
 
   try {
-    const result = await activateNextRotation(options);
+    const result = await activateNextRotation();
 
     console.log(JSON.stringify({
       ok: result?.ok !== false,
       source: 'CLI_ACTIVATE_NEXT_ROTATION',
-      force: options.force,
-      weekKey: options.weekKey || result?.weekKey || result?.activeRotation?.activeWeekKey || null,
+      argv,
+      requested: options,
+      weekKey: getResultWeekKey(result, options.weekKey || null),
+      rotationId: getResultRotationId(result),
+      activatedMicroFamilies: getActivatedCount(result),
       durationMs: Date.now() - startedAt,
       result
     }, null, 2));
@@ -40,8 +70,8 @@ async function main() {
     console.error(JSON.stringify({
       ok: false,
       source: 'CLI_ACTIVATE_NEXT_ROTATION',
-      force: options.force,
-      weekKey: options.weekKey || null,
+      argv,
+      requested: options,
       error: error?.message || String(error),
       stack: error?.stack,
       durationMs: Date.now() - startedAt
