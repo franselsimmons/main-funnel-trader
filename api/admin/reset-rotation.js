@@ -7,7 +7,7 @@ import {
   getDurableRedis,
   pushJsonLog
 } from '../../src/redis.js';
-import { sendResetReport } from '../../src/discord/src/discord.js';
+import { sendResetReport } from '../../src/discord/discord.js';
 
 const CONFIRM_TEXT = 'RESET_ROTATION';
 const LOCK_TTL_SEC = 180;
@@ -50,14 +50,15 @@ async function readBody(req) {
   const chunks = [];
 
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
   const text = Buffer.concat(chunks).toString('utf8');
+
   return parseJson(text);
 }
 
-function isConfirmed(body) {
+function isConfirmed(body = {}) {
   return (
     body.confirm === true ||
     body.confirmed === true ||
@@ -84,6 +85,7 @@ async function releaseLock(redis, key, token) {
     }
 
     await redis.del(key);
+
     return true;
   } catch {
     return false;
@@ -93,7 +95,11 @@ async function releaseLock(redis, key, token) {
 async function acquireResetRotationLocks(redis, token) {
   const acquired = [];
 
-  const resetAcquired = await acquireLock(redis, LOCK_KEYS.resetRotation, token);
+  const resetAcquired = await acquireLock(
+    redis,
+    LOCK_KEYS.resetRotation,
+    token
+  );
 
   if (!resetAcquired) {
     return {
@@ -105,7 +111,11 @@ async function acquireResetRotationLocks(redis, token) {
 
   acquired.push(LOCK_KEYS.resetRotation);
 
-  const tradeAcquired = await acquireLock(redis, LOCK_KEYS.trade, token);
+  const tradeAcquired = await acquireLock(
+    redis,
+    LOCK_KEYS.trade,
+    token
+  );
 
   if (!tradeAcquired) {
     return {
@@ -140,15 +150,27 @@ async function releaseLocks(redis, keys, token) {
 
 async function delKey(redis, key) {
   if (!key) return 0;
+
   return redis.del(key);
 }
 
 async function deleteRotationKeys(redis) {
   const deleted = {};
 
-  deleted.activeRotation = await delKey(redis, KEYS.analyze?.activeRotation);
-  deleted.nextRotation = await delKey(redis, KEYS.analyze?.nextRotation);
-  deleted.rotationValidFrom = await delKey(redis, KEYS.analyze?.rotationValidFrom);
+  deleted.activeRotation = await delKey(
+    redis,
+    KEYS.analyze?.activeRotation
+  );
+
+  deleted.nextRotation = await delKey(
+    redis,
+    KEYS.analyze?.nextRotation
+  );
+
+  deleted.rotationValidFrom = await delKey(
+    redis,
+    KEYS.analyze?.rotationValidFrom
+  );
 
   return deleted;
 }
@@ -198,7 +220,9 @@ export default async function handler(req, res) {
     const report = {
       ok: true,
       type: 'RESET_ROTATION',
+
       deleted,
+
       preserved: {
         learning: true,
         weeklyStats: true,
@@ -210,6 +234,7 @@ export default async function handler(req, res) {
         resetLogs: true,
         discordLogs: true
       },
+
       resetAt: Date.now()
     };
 
@@ -229,7 +254,9 @@ export default async function handler(req, res) {
     return res.status(status).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   } finally {
     if (redis && acquiredLocks.length > 0) {
