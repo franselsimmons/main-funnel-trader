@@ -11,13 +11,24 @@ import {
   getIsoWeekKey,
   getPreviousIsoWeekKey
 } from '../../src/utils.js';
-import { getOpenPositions } from '../../src/trade/src/positionEngine.js';
-import { getWeekMicros } from '../../src/analyze/src/analyzeEngine.js';
-import { getRotationDashboard } from '../../src/analyze/src/rotationEngine.js';
+import { getOpenPositions } from '../../src/trade/positionEngine.js';
+import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
+import { getRotationDashboard } from '../../src/analyze/rotationEngine.js';
+
+function methodNotAllowed(res) {
+  res.setHeader('Allow', 'GET');
+
+  return res.status(405).json({
+    ok: false,
+    error: 'METHOD_NOT_ALLOWED',
+    allowed: ['GET']
+  });
+}
 
 function countMapOrArray(value) {
   if (Array.isArray(value)) return value.length;
   if (value && typeof value === 'object') return Object.keys(value).length;
+
   return 0;
 }
 
@@ -54,15 +65,25 @@ async function safeRead(label, fn, fallback) {
   }
 }
 
+function unwrap(result, fallback) {
+  if (result?.__error) return fallback;
+  return result ?? fallback;
+}
+
+function collectWarnings(results = []) {
+  return results
+    .filter((item) => item?.__error)
+    .map((item) => ({
+      source: item.label,
+      error: item.message
+    }));
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
 
   if (req.method !== 'GET') {
-    return res.status(405).json({
-      ok: false,
-      error: 'METHOD_NOT_ALLOWED',
-      allowed: ['GET']
-    });
+    return methodNotAllowed(res);
   }
 
   try {
@@ -81,24 +102,77 @@ export default async function handler(req, res) {
       rotationResult,
       discordLogsResult
     ] = await Promise.all([
-      safeRead('latestScan', () => getJson(volatile, KEYS.scan.latest, null), null),
-      safeRead('tradeMeta', () => getJson(durable, KEYS.trade.runMeta, null), null),
-      safeRead('openPositions', () => getOpenPositions(), []),
-      safeRead('currentWeekMicros', () => getWeekMicros(weekKey), {}),
-      safeRead('previousWeekMicros', () => getWeekMicros(previousWeekKey), {}),
-      safeRead('rotationDashboard', () => getRotationDashboard(), { active: null, next: null }),
-      safeRead('discordLogs', () => readJsonLogs(durable, KEYS.discord.logList, 10), [])
+      safeRead(
+        'latestScan',
+        () => getJson(volatile, KEYS.scan.latest, null),
+        null
+      ),
+      safeRead(
+        'tradeMeta',
+        () => getJson(durable, KEYS.trade.runMeta, null),
+        null
+      ),
+      safeRead(
+        'openPositions',
+        () => getOpenPositions(),
+        []
+      ),
+      safeRead(
+        'currentWeekMicros',
+        () => getWeekMicros(weekKey),
+        {}
+      ),
+      safeRead(
+        'previousWeekMicros',
+        () => getWeekMicros(previousWeekKey),
+        {}
+      ),
+      safeRead(
+        'rotationDashboard',
+        () => getRotationDashboard(),
+        {
+          active: null,
+          next: null,
+          validFrom: null,
+          activeRows: [],
+          nextRows: [],
+          activeCount: 0,
+          nextCount: 0
+        }
+      ),
+      safeRead(
+        'discordLogs',
+        () => readJsonLogs(durable, KEYS.discord.logList, 10),
+        []
+      )
     ]);
 
-    const latestScan = latestScanResult?.__error ? null : normalizeLatestScan(latestScanResult);
-    const tradeMeta = tradeMetaResult?.__error ? null : tradeMetaResult;
-    const positions = positionsResult?.__error || !Array.isArray(positionsResult) ? [] : positionsResult;
-    const micros = microsResult?.__error ? {} : microsResult;
-    const prevMicros = prevMicrosResult?.__error ? {} : prevMicrosResult;
-    const rotation = rotationResult?.__error ? { active: null, next: null } : rotationResult;
-    const discordLogs = discordLogsResult?.__error || !Array.isArray(discordLogsResult) ? [] : discordLogsResult;
+    const latestScan = normalizeLatestScan(
+      unwrap(latestScanResult, null)
+    );
 
-    const warnings = [
+    const tradeMeta = unwrap(tradeMetaResult, null);
+
+    const positionsRaw = unwrap(positionsResult, []);
+    const positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+
+    const micros = unwrap(microsResult, {});
+    const prevMicros = unwrap(prevMicrosResult, {});
+
+    const rotation = unwrap(rotationResult, {
+      active: null,
+      next: null,
+      validFrom: null,
+      activeRows: [],
+      nextRows: [],
+      activeCount: 0,
+      nextCount: 0
+    });
+
+    const discordLogsRaw = unwrap(discordLogsResult, []);
+    const discordLogs = Array.isArray(discordLogsRaw) ? discordLogsRaw : [];
+
+    const warnings = collectWarnings([
       latestScanResult,
       tradeMetaResult,
       positionsResult,
@@ -106,12 +180,7 @@ export default async function handler(req, res) {
       prevMicrosResult,
       rotationResult,
       discordLogsResult
-    ]
-      .filter((item) => item?.__error)
-      .map((item) => ({
-        source: item.label,
-        error: item.message
-      }));
+    ]);
 
     return res.status(200).json({
       ok: true,
@@ -130,6 +199,20 @@ export default async function handler(req, res) {
 
       activeRotation: rotation?.active || null,
       nextRotation: rotation?.next || null,
+      rotationValidFrom: rotation?.validFrom || null,
+
+      activeRotationCount:
+        rotation?.activeCount ??
+        rotation?.active?.microFamilyIds?.length ??
+        0,
+
+      nextRotationCount:
+        rotation?.nextCount ??
+        rotation?.next?.microFamilyIds?.length ??
+        0,
+
+      activeRows: rotation?.activeRows || [],
+      nextRows: rotation?.nextRows || [],
 
       discordLogs,
 
@@ -141,7 +224,9 @@ export default async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
