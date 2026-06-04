@@ -4,13 +4,65 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import { getVolatileRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
-import { runScanner } from '../../src/market/scanner.js';
+import { runScanner } from '../../src/market/src/scanner.js';
+
+function methodNotAllowed(res) {
+  res.setHeader('Allow', 'GET, POST');
+
+  return res.status(405).json({
+    ok: false,
+    error: 'METHOD_NOT_ALLOWED',
+    allowed: ['GET', 'POST']
+  });
+}
+
+function isAllowedMethod(method) {
+  return method === 'GET' || method === 'POST';
+}
+
+function getLockTtlSec() {
+  return Number(CONFIG.scanner?.lockTtlSec || 240);
+}
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+
+  const startedAt = Date.now();
+
   try {
-    const result = await withRedisLock(getVolatileRedis(), KEYS.scan.lock, CONFIG.scanner.lockTtlSec, runScanner);
-    res.status(200).json(result);
+    if (!isAllowedMethod(req.method)) {
+      return methodNotAllowed(res);
+    }
+
+    const redis = getVolatileRedis();
+    const lockKey = KEYS.scan?.lock || 'SCAN:LOCK';
+    const lockTtlSec = getLockTtlSec();
+
+    const result = await withRedisLock(
+      redis,
+      lockKey,
+      lockTtlSec,
+      async () => runScanner()
+    );
+
+    return res.status(200).json({
+      ok: result?.ok !== false,
+      source: req.query?.force === 'true' ? 'ADMIN_MANUAL_RUN' : 'CRON_OR_API_RUN',
+      durationMs: Date.now() - startedAt,
+      result
+    });
   } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
+    const status =
+      error?.reason === 'LOCK_NOT_ACQUIRED' ||
+      error?.message === 'LOCK_NOT_ACQUIRED'
+        ? 409
+        : 500;
+
+    return res.status(status).json({
+      ok: false,
+      error: error?.message || String(error),
+      durationMs: Date.now() - startedAt,
+      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+    });
   }
 }
