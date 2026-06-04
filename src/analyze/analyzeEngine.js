@@ -1,5 +1,6 @@
 // ================= FILE: src/analyze/analyzeEngine.js =================
 
+import { gzipSync, gunzipSync } from 'zlib';
 import { CONFIG } from '../config.js';
 import { KEYS } from '../keys.js';
 import { getDurableRedis, getJson, setJson } from '../redis.js';
@@ -23,6 +24,9 @@ import {
 } from './scoring.js';
 import { applyCosts } from '../trade/costModel.js';
 
+const WEEK_MICROS_CODEC = 'ANALYZE_WEEK_MICROS_GZIP_V1';
+const DEFAULT_MAX_REDIS_SET_BYTES = 9_500_000;
+
 function now() {
   return Date.now();
 }
@@ -41,6 +45,57 @@ function getAnalyzeSchemaMeta() {
     macroSchema: CONFIG?.analyze?.macroSchema || CONFIG?.analyze?.schema || 'MF_V1',
     microSchema: CONFIG?.analyze?.microSchema || 'MF_V2',
     strategyVersion: CONFIG.strategyVersion
+  };
+}
+
+function getWeekStorageConfig() {
+  return {
+    compressionEnabled: CONFIG.analyze?.weekMicrosCompressionEnabled !== false,
+
+    compressionLevel: Math.max(
+      1,
+      Math.min(9, Math.floor(safeNumber(CONFIG.analyze?.weekMicrosCompressionLevel, 6)))
+    ),
+
+    maxRedisSetBytes: Math.max(
+      500_000,
+      Math.floor(safeNumber(CONFIG.redis?.maxRequestBytes, DEFAULT_MAX_REDIS_SET_BYTES))
+    ),
+
+    maxExamplesPerMicro: Math.max(
+      0,
+      Math.floor(safeNumber(CONFIG.analyze?.maxExamplesPerMicro, 8))
+    ),
+
+    maxRecentOutcomesPerMicro: Math.max(
+      0,
+      Math.floor(safeNumber(CONFIG.analyze?.maxRecentOutcomesPerMicro, 8))
+    ),
+
+    maxDefinitionPartsPerMicro: Math.max(
+      4,
+      Math.floor(safeNumber(CONFIG.analyze?.maxDefinitionPartsPerMicro, 64))
+    ),
+
+    maxParentDefinitionPartsPerMicro: Math.max(
+      4,
+      Math.floor(safeNumber(CONFIG.analyze?.maxParentDefinitionPartsPerMicro, 48))
+    ),
+
+    maxCounterKeysPerMicro: Math.max(
+      4,
+      Math.floor(safeNumber(CONFIG.analyze?.maxCounterKeysPerMicro, 18))
+    ),
+
+    maxCounterValuesPerCounter: Math.max(
+      4,
+      Math.floor(safeNumber(CONFIG.analyze?.maxCounterValuesPerCounter, 24))
+    ),
+
+    maxStringLength: Math.max(
+      80,
+      Math.floor(safeNumber(CONFIG.analyze?.maxStoredStringLength, 480))
+    )
   };
 }
 
@@ -67,6 +122,147 @@ function shouldReclassifyAsTrueMicro(row = {}) {
   if (isMicroFamilyV2Id(row.microFamilyId)) return false;
 
   return !row.parentMacroFamilyId && !row.macroFamilyId;
+}
+
+function truncateString(value, maxLength = 480) {
+  const text = String(value ?? '');
+
+  if (text.length <= maxLength) return text;
+
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function compactDefinitionParts(parts = [], maxItems = 64, maxStringLength = 480) {
+  if (!Array.isArray(parts)) return [];
+
+  return parts
+    .slice(0, maxItems)
+    .map((part) => truncateString(part, maxStringLength))
+    .filter(Boolean);
+}
+
+function compactCounterValues(counter = {}, maxValues = 24) {
+  if (!counter || typeof counter !== 'object') return {};
+
+  return Object.fromEntries(
+    Object.entries(counter)
+      .sort((a, b) => safeNumber(b[1], 0) - safeNumber(a[1], 0))
+      .slice(0, maxValues)
+      .map(([key, value]) => [
+        truncateString(key, 160),
+        safeNumber(value, 0)
+      ])
+  );
+}
+
+function compactCounters(counters = {}, maxKeys = 18, maxValues = 24) {
+  if (!counters || typeof counters !== 'object') return {};
+
+  return Object.fromEntries(
+    Object.entries(counters)
+      .slice(0, maxKeys)
+      .map(([key, value]) => [
+        truncateString(key, 160),
+        compactCounterValues(value, maxValues)
+      ])
+  );
+}
+
+function compactExample(example, maxStringLength = 480) {
+  if (typeof example === 'string') {
+    return truncateString(example, maxStringLength);
+  }
+
+  if (!example || typeof example !== 'object') {
+    return example ?? null;
+  }
+
+  return {
+    symbol: example.symbol || example.baseSymbol || example.contractSymbol || null,
+    side: example.side || null,
+    rsiZone: example.rsiZone || null,
+    rsiCoarse: example.rsiCoarse || null,
+    flow: example.flow || null,
+    flowCoarse: example.flowCoarse || null,
+    obRelation: example.obRelation || null,
+    btcRelation: example.btcRelation || null,
+    btcState: example.btcState || null,
+    regime: example.regime || null,
+    scannerReason: example.scannerReason || null,
+    scannerReasonCoarse: example.scannerReasonCoarse || null,
+    ts: safeNumber(example.ts || example.createdAt, null)
+  };
+}
+
+function compactExamples(examples = [], maxItems = 8, maxStringLength = 480) {
+  if (!Array.isArray(examples) || maxItems <= 0) return [];
+
+  return examples
+    .slice(-maxItems)
+    .map((example) => compactExample(example, maxStringLength))
+    .filter((example) => example !== null && example !== undefined);
+}
+
+function compactOutcome(outcome = {}) {
+  if (!outcome || typeof outcome !== 'object') return null;
+
+  return {
+    source: outcome.source || null,
+
+    tradeId: outcome.tradeId || null,
+    shadowId: outcome.shadowId || outcome.id || null,
+
+    symbol: outcome.symbol || outcome.baseSymbol || outcome.contractSymbol || null,
+    contractSymbol: outcome.contractSymbol || null,
+    side: outcome.side || null,
+    tradeSide: outcome.tradeSide || sideToTradeSide(outcome.side),
+
+    exitReason: outcome.exitReason || outcome.reason || null,
+
+    exitR: safeNumber(outcome.exitR ?? outcome.netR, 0),
+    netR: safeNumber(outcome.netR ?? outcome.exitR, 0),
+    grossR: safeNumber(outcome.grossR, 0),
+
+    pnlPct: safeNumber(outcome.pnlPct ?? outcome.netPnlPct, 0),
+    netPnlPct: safeNumber(outcome.netPnlPct ?? outcome.pnlPct, 0),
+    grossPnlPct: safeNumber(outcome.grossPnlPct, 0),
+
+    costR: safeNumber(outcome.costR, 0),
+    costPct: safeNumber(outcome.costPct, 0),
+
+    mfeR: safeNumber(outcome.mfeR, 0),
+    maeR: safeNumber(outcome.maeR, 0),
+
+    directToSL: Boolean(outcome.directToSL),
+    nearTpSeen: Boolean(outcome.nearTpSeen),
+    reachedHalfR: Boolean(outcome.reachedHalfR),
+    reachedOneR: Boolean(outcome.reachedOneR),
+
+    beArmed: Boolean(outcome.beArmed),
+    beWouldExit: Boolean(outcome.beWouldExit),
+    beExitR: safeNumber(outcome.beExitR, 0),
+
+    gaveBackAfterHalfR: Boolean(outcome.gaveBackAfterHalfR),
+    gaveBackAfterOneR: Boolean(outcome.gaveBackAfterOneR),
+    nearTpThenLoss: Boolean(outcome.nearTpThenLoss),
+
+    ts: safeNumber(
+      outcome.ts ||
+      outcome.closedAt ||
+      outcome.completedAt ||
+      outcome.updatedAt,
+      now()
+    )
+  };
+}
+
+function compactRecentOutcomes(outcomes = [], maxItems = 8) {
+  if (!Array.isArray(outcomes) || maxItems <= 0) return [];
+
+  return outcomes
+    .slice(-maxItems)
+    .map(compactOutcome)
+    .filter(Boolean);
 }
 
 function enrichWithMicroFamily(row = {}) {
@@ -173,6 +369,54 @@ function enrichWithMicroFamily(row = {}) {
   };
 }
 
+function compactMicroForStorage(row = {}) {
+  const cfg = getWeekStorageConfig();
+  const refreshed = refreshStats(row);
+
+  const definitionParts = compactDefinitionParts(
+    refreshed.definitionParts,
+    cfg.maxDefinitionPartsPerMicro,
+    cfg.maxStringLength
+  );
+
+  const parentDefinitionParts = compactDefinitionParts(
+    refreshed.parentDefinitionParts,
+    cfg.maxParentDefinitionPartsPerMicro,
+    cfg.maxStringLength
+  );
+
+  return {
+    ...refreshed,
+
+    definitionParts,
+    definition: definitionParts.length
+      ? definitionParts.join(' | ')
+      : truncateString(refreshed.definition || '', cfg.maxStringLength * 4),
+
+    parentDefinitionParts,
+    parentDefinition: parentDefinitionParts.length
+      ? parentDefinitionParts.join(' | ')
+      : truncateString(refreshed.parentDefinition || '', cfg.maxStringLength * 4),
+
+    counters: compactCounters(
+      refreshed.counters,
+      cfg.maxCounterKeysPerMicro,
+      cfg.maxCounterValuesPerCounter
+    ),
+
+    examples: compactExamples(
+      refreshed.examples,
+      cfg.maxExamplesPerMicro,
+      cfg.maxStringLength
+    ),
+
+    recentOutcomes: compactRecentOutcomes(
+      refreshed.recentOutcomes,
+      cfg.maxRecentOutcomesPerMicro
+    )
+  };
+}
+
 function getOrCreateMicro(micros, classified, side) {
   const microFamilyId = classified.microFamilyId;
   const familyId = classified.familyId;
@@ -246,18 +490,155 @@ function normalizeMicros(micros = {}) {
   return Object.fromEntries(
     Object.entries(micros || {})
       .filter(([id, row]) => id && row)
-      .map(([id, row]) => [id, refreshStats(row)])
+      .map(([id, row]) => [id, compactMicroForStorage(row)])
   );
+}
+
+function maybeParseJson(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function decodeWeekMicrosPayload(payload) {
+  const parsed = maybeParseJson(payload);
+
+  if (!parsed) return {};
+
+  if (
+    typeof parsed === 'object' &&
+    parsed.codec === WEEK_MICROS_CODEC &&
+    typeof parsed.data === 'string'
+  ) {
+    const buffer = Buffer.from(parsed.data, 'base64');
+    const json = gunzipSync(buffer).toString('utf8');
+
+    return JSON.parse(json);
+  }
+
+  if (
+    typeof parsed === 'object' &&
+    parsed.__compressed === true &&
+    parsed.codec === 'gzip-base64' &&
+    typeof parsed.data === 'string'
+  ) {
+    const buffer = Buffer.from(parsed.data, 'base64');
+    const json = gunzipSync(buffer).toString('utf8');
+
+    return JSON.parse(json);
+  }
+
+  if (typeof parsed === 'object') {
+    return parsed;
+  }
+
+  throw new Error('WEEK_MICROS_PAYLOAD_UNREADABLE');
+}
+
+function encodeWeekMicrosPayload(micros = {}) {
+  const cfg = getWeekStorageConfig();
+  const schemaMeta = getAnalyzeSchemaMeta();
+
+  const json = JSON.stringify(micros || {});
+  const rawBytes = Buffer.byteLength(json, 'utf8');
+
+  if (!cfg.compressionEnabled) {
+    if (rawBytes > cfg.maxRedisSetBytes) {
+      const error = new Error('WEEK_MICROS_RAW_PAYLOAD_TOO_LARGE');
+      error.details = {
+        rawBytes,
+        maxRedisSetBytes: cfg.maxRedisSetBytes,
+        count: Object.keys(micros || {}).length
+      };
+      throw error;
+    }
+
+    return {
+      payload: json,
+      meta: {
+        compressed: false,
+        codec: 'json',
+        rawBytes,
+        payloadBytes: rawBytes,
+        count: Object.keys(micros || {}).length
+      }
+    };
+  }
+
+  const compressed = gzipSync(Buffer.from(json, 'utf8'), {
+    level: cfg.compressionLevel
+  });
+
+  const wrapper = {
+    codec: WEEK_MICROS_CODEC,
+    compressed: true,
+
+    rawBytes,
+    compressedBytes: compressed.length,
+
+    count: Object.keys(micros || {}).length,
+
+    schema: schemaMeta.schema,
+    macroSchema: schemaMeta.macroSchema,
+    microSchema: schemaMeta.microSchema,
+    strategyVersion: schemaMeta.strategyVersion,
+
+    encodedAt: now(),
+    data: compressed.toString('base64')
+  };
+
+  const payload = JSON.stringify(wrapper);
+  const payloadBytes = Buffer.byteLength(payload, 'utf8');
+
+  if (payloadBytes > cfg.maxRedisSetBytes) {
+    const error = new Error('WEEK_MICROS_COMPRESSED_PAYLOAD_TOO_LARGE');
+    error.details = {
+      rawBytes,
+      compressedBytes: compressed.length,
+      payloadBytes,
+      maxRedisSetBytes: cfg.maxRedisSetBytes,
+      count: wrapper.count
+    };
+    throw error;
+  }
+
+  return {
+    payload,
+    meta: {
+      compressed: true,
+      codec: WEEK_MICROS_CODEC,
+      rawBytes,
+      compressedBytes: compressed.length,
+      payloadBytes,
+      count: wrapper.count
+    }
+  };
+}
+
+async function getRawRedisValue(redis, key) {
+  const direct = await redis.get(key).catch(() => undefined);
+
+  if (direct !== undefined) return direct;
+
+  return getJson(redis, key, {});
 }
 
 export async function getWeekMicros(weekKey = getIsoWeekKey()) {
   const redis = getDurableRedis();
+  const key = KEYS.analyze.weekMicros(weekKey);
 
-  return await getJson(
-    redis,
-    KEYS.analyze.weekMicros(weekKey),
-    {}
-  );
+  const raw = await getRawRedisValue(redis, key);
+
+  if (!raw) return {};
+
+  const decoded = decodeWeekMicrosPayload(raw);
+
+  return normalizeMicros(decoded || {});
 }
 
 export async function saveWeekMicros(weekKey, micros) {
@@ -268,11 +649,11 @@ export async function saveWeekMicros(weekKey, micros) {
   const redis = getDurableRedis();
   const clean = normalizeMicros(micros);
   const schemaMeta = getAnalyzeSchemaMeta();
+  const encoded = encodeWeekMicrosPayload(clean);
 
-  await setJson(
-    redis,
+  await redis.set(
     KEYS.analyze.weekMicros(weekKey),
-    clean
+    encoded.payload
   );
 
   await setJson(
@@ -282,10 +663,13 @@ export async function saveWeekMicros(weekKey, micros) {
       weekKey,
       updatedAt: now(),
       microFamilies: Object.keys(clean).length,
+
       schema: schemaMeta.schema,
       macroSchema: schemaMeta.macroSchema,
       microSchema: schemaMeta.microSchema,
-      strategyVersion: schemaMeta.strategyVersion
+      strategyVersion: schemaMeta.strategyVersion,
+
+      storage: encoded.meta
     }
   );
 
