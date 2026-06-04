@@ -2,6 +2,17 @@
 
 import { KEYS } from '../../src/keys.js';
 import { getVolatileRedis, getJson } from '../../src/redis.js';
+import { sideToTradeSide, safeNumber } from '../../src/utils.js';
+
+function methodNotAllowed(res) {
+  res.setHeader('Allow', 'GET');
+
+  return res.status(405).json({
+    ok: false,
+    error: 'METHOD_NOT_ALLOWED',
+    allowed: ['GET']
+  });
+}
 
 function extractSnapshotId(latest) {
   if (!latest) return null;
@@ -23,18 +34,54 @@ function extractSnapshotId(latest) {
   return null;
 }
 
-function hasSnapshotShape(value) {
+function hasFullSnapshotShape(value) {
   return Boolean(
     value &&
     typeof value === 'object' &&
-    (
-      Array.isArray(value.candidates) ||
-      value.createdAt ||
-      value.snapshotId ||
-      value.btcState ||
-      value.regime
-    )
+    Array.isArray(value.candidates)
   );
+}
+
+function countCandidatesBySide(candidates = []) {
+  let longCandidates = 0;
+  let shortCandidates = 0;
+  let unknownSideCandidates = 0;
+
+  for (const candidate of candidates) {
+    const tradeSide = sideToTradeSide(candidate?.side);
+
+    if (tradeSide === 'LONG') {
+      longCandidates += 1;
+      continue;
+    }
+
+    if (tradeSide === 'SHORT') {
+      shortCandidates += 1;
+      continue;
+    }
+
+    unknownSideCandidates += 1;
+  }
+
+  return {
+    longCandidates,
+    shortCandidates,
+    unknownSideCandidates,
+
+    // Backwards-compatible namen voor admin.html.
+    bullCandidates: longCandidates,
+    bearCandidates: shortCandidates
+  };
+}
+
+function averageScannerScore(candidates = []) {
+  if (!candidates.length) return 0;
+
+  const total = candidates.reduce((sum, candidate) => {
+    return sum + safeNumber(candidate?.scannerScore ?? candidate?.moveScore, 0);
+  }, 0);
+
+  return Number((total / candidates.length).toFixed(2));
 }
 
 function normalizeSnapshot(snapshot, fallbackId = null) {
@@ -46,7 +93,13 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
     ? snapshot.candidates
     : [];
 
-  const createdAt = Number(snapshot.createdAt || snapshot.ts || snapshot.scannerTs || 0);
+  const createdAt = safeNumber(
+    snapshot.createdAt ||
+    snapshot.ts ||
+    snapshot.scannerTs,
+    0
+  );
+
   const snapshotAgeSec = createdAt > 0
     ? Math.max(0, Math.floor((Date.now() - createdAt) / 1000))
     : null;
@@ -55,21 +108,11 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
   const fakeBreakouts = candidates.filter((candidate) => candidate.fakeBreakout);
   const fakeRiskCandidates = candidates.filter((candidate) => candidate.fakeBreakoutRisk);
 
-  const bullCandidates = candidates.filter((candidate) => {
-    const side = String(candidate.side || '').toLowerCase();
-    return side === 'bull' || side === 'long' || side === 'buy';
-  });
+  const sideCounts = countCandidatesBySide(candidates);
 
-  const bearCandidates = candidates.filter((candidate) => {
-    const side = String(candidate.side || '').toLowerCase();
-    return side === 'bear' || side === 'short' || side === 'sell';
-  });
-
-  const avgScannerScore = candidates.length
-    ? candidates.reduce((sum, candidate) => {
-        return sum + Number(candidate.scannerScore ?? candidate.moveScore ?? 0);
-      }, 0) / candidates.length
-    : 0;
+  const topSymbols = Array.isArray(snapshot.topSymbols)
+    ? snapshot.topSymbols
+    : candidates.slice(0, 20).map((candidate) => candidate.symbol).filter(Boolean);
 
   return {
     ...snapshot,
@@ -79,14 +122,15 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
     candidates,
     candidatesCount: candidates.length,
 
+    topSymbols,
+
     stats: {
       candidates: candidates.length,
       cleanCandidates: cleanCandidates.length,
       fakeBreakouts: fakeBreakouts.length,
       fakeRiskCandidates: fakeRiskCandidates.length,
-      bullCandidates: bullCandidates.length,
-      bearCandidates: bearCandidates.length,
-      avgScannerScore
+      ...sideCounts,
+      avgScannerScore: averageScannerScore(candidates)
     },
 
     snapshotAgeSec,
@@ -98,7 +142,7 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
 async function loadSnapshot(redis, latest) {
   const snapshotId = extractSnapshotId(latest);
 
-  if (hasSnapshotShape(latest) && Array.isArray(latest.candidates)) {
+  if (hasFullSnapshotShape(latest)) {
     return {
       snapshot: normalizeSnapshot(latest, snapshotId),
       snapshotSource: 'SCAN:LATEST_FULL_SNAPSHOT',
@@ -114,7 +158,11 @@ async function loadSnapshot(redis, latest) {
     };
   }
 
-  const snapshot = await getJson(redis, KEYS.scan.snapshot(snapshotId), null);
+  const snapshot = await getJson(
+    redis,
+    KEYS.scan.snapshot(snapshotId),
+    null
+  );
 
   return {
     snapshot: normalizeSnapshot(snapshot, snapshotId),
@@ -123,15 +171,26 @@ async function loadSnapshot(redis, latest) {
   };
 }
 
+function emptyStats() {
+  return {
+    candidates: 0,
+    cleanCandidates: 0,
+    fakeBreakouts: 0,
+    fakeRiskCandidates: 0,
+    longCandidates: 0,
+    shortCandidates: 0,
+    unknownSideCandidates: 0,
+    bullCandidates: 0,
+    bearCandidates: 0,
+    avgScannerScore: 0
+  };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
 
   if (req.method !== 'GET') {
-    return res.status(405).json({
-      ok: false,
-      error: 'METHOD_NOT_ALLOWED',
-      allowed: ['GET']
-    });
+    return methodNotAllowed(res);
   }
 
   try {
@@ -159,15 +218,7 @@ export default async function handler(req, res) {
       snapshotSource,
 
       candidatesCount: candidates.length,
-      stats: snapshot?.stats || {
-        candidates: 0,
-        cleanCandidates: 0,
-        fakeBreakouts: 0,
-        fakeRiskCandidates: 0,
-        bullCandidates: 0,
-        bearCandidates: 0,
-        avgScannerScore: 0
-      },
+      stats: snapshot?.stats || emptyStats(),
 
       serverTs: Date.now()
     });
@@ -175,7 +226,9 @@ export default async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
