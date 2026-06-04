@@ -4,7 +4,7 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import { getDurableRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
-import { freezeWeeklyRotation } from '../../src/analyze/src/rotationEngine.js';
+import { freezeWeeklyRotation } from '../../src/analyze/rotationEngine.js';
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET, POST');
@@ -37,24 +37,38 @@ async function readBody(req) {
 
   if (req.body) {
     if (typeof req.body === 'string') return parseJson(req.body);
+    if (Buffer.isBuffer(req.body)) return parseJson(req.body.toString('utf8'));
+
     return req.body;
   }
 
   const chunks = [];
 
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
   const text = Buffer.concat(chunks).toString('utf8');
+
   return parseJson(text);
 }
 
-function getFreezeLockTtlSec() {
-  return Number(CONFIG.analyze?.freezeLockTtlSec || 300);
+function isTrue(value) {
+  return (
+    value === true ||
+    value === 'true' ||
+    value === 1 ||
+    value === '1'
+  );
 }
 
-function getRotationMode(req, body) {
+function getFreezeLockTtlSec() {
+  const ttl = Number(CONFIG.analyze?.freezeLockTtlSec || 600);
+
+  return Number.isFinite(ttl) && ttl > 0 ? ttl : 600;
+}
+
+function getRotationMode(req, body = {}) {
   return (
     body.mode ||
     req.query?.mode ||
@@ -63,12 +77,46 @@ function getRotationMode(req, body) {
   );
 }
 
-function getWeekKey(req, body) {
+function getWeekKey(req, body = {}) {
   return body.weekKey || req.query?.weekKey || undefined;
 }
 
+function isManualRun(req, body = {}) {
+  return (
+    isTrue(req.query?.force) ||
+    isTrue(body.force)
+  );
+}
+
+function unwrapFreezePayload(lockResult) {
+  return lockResult?.result || null;
+}
+
+function responseWeekKey(lockResult, fallbackWeekKey = null) {
+  const payload = unwrapFreezePayload(lockResult);
+
+  return (
+    payload?.weekKey ||
+    payload?.rotation?.sourceWeekKey ||
+    fallbackWeekKey ||
+    null
+  );
+}
+
+function responseRotationId(lockResult) {
+  const payload = unwrapFreezePayload(lockResult);
+
+  return (
+    payload?.rotationId ||
+    payload?.rotation?.rotationId ||
+    null
+  );
+}
+
 function errorStatus(error) {
-  if (error?.statusCode) return error.statusCode;
+  if (Number.isFinite(error?.statusCode)) {
+    return error.statusCode;
+  }
 
   if (
     error?.reason === 'LOCK_NOT_ACQUIRED' ||
@@ -94,7 +142,7 @@ export default async function handler(req, res) {
     const body = await readBody(req);
 
     const redis = getDurableRedis();
-    const lockKey = KEYS.analyze?.freezeLock || 'ANALYZE:FREEZE:LOCK';
+    const lockKey = KEYS.analyze?.freezeLock || 'ANALYZE:WEEKLY_FREEZE_LOCK';
     const lockTtlSec = getFreezeLockTtlSec();
 
     const weekKey = getWeekKey(req, body);
@@ -112,12 +160,18 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       ok: result?.ok !== false,
-      source: req.query?.force === 'true' || body.force === true
+      skipped: Boolean(result?.skipped),
+
+      source: isManualRun(req, body)
         ? 'ADMIN_MANUAL_FREEZE'
         : 'CRON_OR_API_FREEZE',
-      weekKey: result?.weekKey || weekKey || null,
+
+      weekKey: responseWeekKey(result, weekKey),
       mode,
+      rotationId: responseRotationId(result),
+
       durationMs: Date.now() - startedAt,
+
       result
     });
   } catch (error) {
@@ -125,7 +179,9 @@ export default async function handler(req, res) {
       ok: false,
       error: error?.message || String(error),
       durationMs: Date.now() - startedAt,
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
