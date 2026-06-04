@@ -25,6 +25,23 @@ function now() {
   return Date.now();
 }
 
+function tradeConfig() {
+  return {
+    dataConcurrency: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.dataConcurrency, 5))),
+    positionTimeStopMin: safeNumber(CONFIG.trade?.positionTimeStopMin, 12 * 60)
+  };
+}
+
+function manageConfig() {
+  return {
+    applyLive: CONFIG.manage?.applyLive === true,
+    beArmR: safeNumber(CONFIG.manage?.beArmR, 0.70),
+    beLockR: safeNumber(CONFIG.manage?.beLockR, 0.05),
+    trailArmR: safeNumber(CONFIG.manage?.trailArmR, 1.00),
+    trailLockR: safeNumber(CONFIG.manage?.trailLockR, 0.35)
+  };
+}
+
 function round4(value) {
   return Number(safeNumber(value, 0).toFixed(4));
 }
@@ -56,7 +73,12 @@ function isShort(side) {
   return sideToTradeSide(side) === 'SHORT';
 }
 
-function calcStopFromR({ entry, initialSl, side, stopR }) {
+function calcStopFromR({
+  entry,
+  initialSl,
+  side,
+  stopR
+} = {}) {
   const e = safeNumber(entry, 0);
   const sl = safeNumber(initialSl, 0);
   const r = safeNumber(stopR, 0);
@@ -73,7 +95,11 @@ function calcStopFromR({ entry, initialSl, side, stopR }) {
   return 0;
 }
 
-function shouldTightenStop({ side, currentSl, nextSl }) {
+function shouldTightenStop({
+  side,
+  currentSl,
+  nextSl
+} = {}) {
   const current = safeNumber(currentSl, 0);
   const next = safeNumber(nextSl, 0);
 
@@ -86,7 +112,9 @@ function shouldTightenStop({ side, currentSl, nextSl }) {
 }
 
 function applyLiveStopManagement(position) {
-  if (!CONFIG.manage.applyLive) return position;
+  const cfg = manageConfig();
+
+  if (!cfg.applyLive) return position;
 
   const entry = safeNumber(position.entry, 0);
   const initialSl = safeNumber(position.initialSl || position.sl, 0);
@@ -98,15 +126,15 @@ function applyLiveStopManagement(position) {
   let nextStopR = null;
   let source = null;
 
-  if (currentR >= CONFIG.manage.beArmR) {
-    nextStopR = CONFIG.manage.beLockR;
+  if (currentR >= cfg.beArmR) {
+    nextStopR = cfg.beLockR;
     source = 'BE';
   }
 
-  if (currentR >= CONFIG.manage.trailArmR) {
+  if (currentR >= cfg.trailArmR) {
     nextStopR = Math.max(
-      safeNumber(nextStopR, CONFIG.manage.beLockR),
-      CONFIG.manage.trailLockR
+      safeNumber(nextStopR, cfg.beLockR),
+      cfg.trailLockR
     );
     source = 'TRAIL';
   }
@@ -144,7 +172,13 @@ function applyLiveStopManagement(position) {
   return position;
 }
 
-function detectExit({ position, price, timestamp }) {
+function detectExit({
+  position,
+  price,
+  timestamp
+} = {}) {
+  const cfg = tradeConfig();
+
   const current = safeNumber(price, 0);
   const tp = safeNumber(position.tp, 0);
   const sl = safeNumber(position.sl, 0);
@@ -177,7 +211,7 @@ function detectExit({ position, price, timestamp }) {
 
   const expired =
     openedAt > 0 &&
-    timestamp - openedAt >= CONFIG.trade.positionTimeStopMin * 60 * 1000;
+    timestamp - openedAt >= cfg.positionTimeStopMin * 60 * 1000;
 
   if (hitTP) {
     return {
@@ -234,7 +268,10 @@ export async function getOpenPositions() {
 
   return rows
     .filter(Boolean)
-    .sort((a, b) => safeNumber(a.openedAt || a.createdAt, 0) - safeNumber(b.openedAt || b.createdAt, 0));
+    .sort((a, b) => {
+      return safeNumber(a.openedAt || a.createdAt, 0) -
+        safeNumber(b.openedAt || b.createdAt, 0);
+    });
 }
 
 export async function getOpenPosition(symbol) {
@@ -282,6 +319,8 @@ export async function deleteOpenPosition(symbol) {
 }
 
 export function updatePathMetrics(position, price) {
+  const cfg = manageConfig();
+
   const current = safeNumber(price, 0);
   const entry = safeNumber(position.entry, 0);
   const initialSl = safeNumber(position.initialSl || position.sl, 0);
@@ -345,12 +384,12 @@ export function updatePathMetrics(position, price) {
   if (tpProgress >= 0.8) position.nearTpSeen = true;
 
   // Counterfactual BE logic. Always measured, even when live management is off.
-  if (position.mfeR >= CONFIG.manage.beArmR) {
+  if (position.mfeR >= cfg.beArmR) {
     position.beArmed = true;
 
-    if (currentR <= CONFIG.manage.beLockR && !position.beWouldExit) {
+    if (currentR <= cfg.beLockR && !position.beWouldExit) {
       position.beWouldExit = true;
-      position.beExitR = CONFIG.manage.beLockR;
+      position.beExitR = cfg.beLockR;
       position.beWouldExitAt = now();
     }
   }
@@ -360,7 +399,7 @@ export function updatePathMetrics(position, price) {
     position.gaveBackAfterHalfR = true;
   }
 
-  if (position.reachedOneR && currentR < CONFIG.manage.trailLockR) {
+  if (position.reachedOneR && currentR < cfg.trailLockR) {
     position.gaveBackAfterOneR = true;
   }
 
@@ -368,7 +407,6 @@ export function updatePathMetrics(position, price) {
     position.nearTpThenLoss = true;
   }
 
-  // Optional live management. Default false in config.
   applyLiveStopManagement(position);
 
   position.updatedAt = now();
@@ -405,6 +443,9 @@ export function buildOpenPositionFromEntry(entry) {
     favorableTicks: 0,
     adverseTicks: 0,
 
+    priceFetchFailures: 0,
+    lastPriceFetchFailedAt: null,
+
     reachedHalfR: false,
     reachedOneR: false,
     nearTpSeen: false,
@@ -424,18 +465,36 @@ export function buildOpenPositionFromEntry(entry) {
   };
 }
 
-async function monitorOnePosition({ position, priceFetcher, timestamp }) {
-  const fetchSymbol = position.contractSymbol || position.symbol;
+async function markPriceFetchFailed(position) {
+  position.priceFetchFailures = safeNumber(position.priceFetchFailures, 0) + 1;
+  position.lastPriceFetchFailedAt = now();
+  position.updatedAt = now();
 
+  await saveOpenPosition(position);
+
+  return position;
+}
+
+async function monitorOnePosition({
+  position,
+  priceFetcher,
+  timestamp
+}) {
+  const fetchSymbol = position.contractSymbol || position.symbol;
   const price = await priceFetcher(fetchSymbol).catch(() => 0);
 
   if (!price) {
+    await markPriceFetchFailed(position);
+
     return {
       type: 'NO_PRICE',
       position,
       outcome: null
     };
   }
+
+  position.priceFetchFailures = 0;
+  position.lastPriceFetchFailedAt = null;
 
   updatePathMetrics(position, price);
 
@@ -486,11 +545,12 @@ export async function monitorOpenPositions({ priceFetcher }) {
 
   if (!positions.length) return [];
 
+  const cfg = tradeConfig();
   const timestamp = now();
 
   const results = await mapConcurrent(
     positions,
-    CONFIG.trade.dataConcurrency || 5,
+    cfg.dataConcurrency,
     async (position) => monitorOnePosition({
       position,
       priceFetcher,
