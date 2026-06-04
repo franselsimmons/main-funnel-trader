@@ -3,7 +3,11 @@
 import { CONFIG } from '../config.js';
 import { KEYS } from '../keys.js';
 import { getDurableRedis, pushJsonLog } from '../redis.js';
-import { normalizeBaseSymbol, safeNumber, sideToTradeSide } from '../utils.js';
+import {
+  normalizeBaseSymbol,
+  safeNumber,
+  sideToTradeSide
+} from '../utils.js';
 
 const DISCORD_LIMITS = {
   fieldName: 256,
@@ -16,6 +20,22 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function discordConfig() {
+  return {
+    enabled: CONFIG.discord?.enabled !== false,
+    webhookUrl: CONFIG.discord?.webhookUrl || '',
+    timeoutMs: Math.max(500, safeNumber(CONFIG.discord?.timeoutMs, 2500)),
+    logLimit: Math.max(1, Math.floor(safeNumber(CONFIG.discord?.logLimit, 250)))
+  };
+}
+
+function rotationConfig() {
+  return {
+    minWeightedCompleted: safeNumber(CONFIG.rotation?.minWeightedCompleted, 5),
+    topNPerSide: safeNumber(CONFIG.rotation?.topNPerSide, 10)
+  };
+}
+
 function truncate(value, max = 1024) {
   const text = String(value ?? '');
 
@@ -26,11 +46,11 @@ function truncate(value, max = 1024) {
 
 function field(name, value, inline = false) {
   const cleanName = truncate(name || 'Field', DISCORD_LIMITS.fieldName);
-  const cleanValue = truncate(value || 'NA', DISCORD_LIMITS.fieldValue);
+  const cleanValue = truncate(value ?? 'NA', DISCORD_LIMITS.fieldValue);
 
   return {
     name: cleanName,
-    value: cleanValue,
+    value: cleanValue || 'NA',
     inline
   };
 }
@@ -102,11 +122,30 @@ function coinLogoUrl(symbol) {
 
   if (!base) return null;
 
-  return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${base}.svg`;
+  return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${base}.png`;
+}
+
+function getBaseAppUrl() {
+  const explicit =
+    CONFIG.app?.baseUrl ||
+    process.env.APP_BASE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.PUBLIC_APP_URL ||
+    '';
+
+  if (explicit) {
+    return String(explicit).replace(/\/+$/g, '');
+  }
+
+  if (process.env.VERCEL_URL) {
+    return `https://${String(process.env.VERCEL_URL).replace(/\/+$/g, '')}`;
+  }
+
+  return '';
 }
 
 function adminUrl(path = '') {
-  const baseUrl = String(CONFIG.app?.baseUrl || '').replace(/\/+$/g, '');
+  const baseUrl = getBaseAppUrl();
 
   if (!baseUrl) return null;
 
@@ -150,7 +189,9 @@ function compactPayload(payload = {}) {
 }
 
 async function postDiscord(content) {
-  if (!CONFIG.discord.enabled || !CONFIG.discord.webhookUrl) {
+  const cfg = discordConfig();
+
+  if (!cfg.enabled || !cfg.webhookUrl) {
     return {
       ok: true,
       skipped: true,
@@ -159,10 +200,10 @@ async function postDiscord(content) {
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONFIG.discord.timeoutMs);
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
 
   try {
-    const response = await fetch(CONFIG.discord.webhookUrl, {
+    const response = await fetch(cfg.webhookUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json'
@@ -192,6 +233,7 @@ async function postDiscord(content) {
 
 async function logDiscord(type, payload, result) {
   try {
+    const cfg = discordConfig();
     const redis = getDurableRedis();
 
     await pushJsonLog(
@@ -203,7 +245,7 @@ async function logDiscord(type, payload, result) {
         result,
         ts: Date.now()
       },
-      CONFIG.discord.logLimit
+      cfg.logLimit
     );
   } catch {
     // Discord logging mag trade execution nooit blokkeren.
@@ -387,6 +429,8 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
     rotationInput.nextRotation ||
     rotationInput;
 
+  const cfg = rotationConfig();
+
   const microFamilies = Array.isArray(rotation.microFamilies)
     ? rotation.microFamilies
     : [];
@@ -426,8 +470,8 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
             [
               `eligible=${rotation.eligibleCount ?? 'NA'}`,
               `ranked=${rotation.rankedCount ?? 'NA'}`,
-              `minCompleted=${rotation.minWeightedCompleted ?? CONFIG.rotation.minWeightedCompleted}`,
-              `topNPerSide=${rotation.topNPerSide ?? CONFIG.rotation.topNPerSide}`,
+              `minCompleted=${rotation.minWeightedCompleted ?? cfg.minWeightedCompleted}`,
+              `topNPerSide=${rotation.topNPerSide ?? cfg.topNPerSide}`,
               `empty=${Boolean(rotation.empty)}`
             ].join('\n'),
             true
