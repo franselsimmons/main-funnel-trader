@@ -8,7 +8,7 @@ import {
   delPattern,
   pushJsonLog
 } from '../../src/redis.js';
-import { sendResetReport } from '../../src/discord/src/discord.js';
+import { sendResetReport } from '../../src/discord/discord.js';
 
 const CONFIRM_TEXT = 'RESET_LEARNING';
 const LOCK_TTL_SEC = 180;
@@ -49,10 +49,11 @@ async function readBody(req) {
   const chunks = [];
 
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
   const text = Buffer.concat(chunks).toString('utf8');
+
   return parseJson(text);
 }
 
@@ -81,6 +82,7 @@ async function releaseLock(redis, key, token) {
     }
 
     await redis.del(key);
+
     return true;
   } catch {
     return false;
@@ -90,7 +92,11 @@ async function releaseLock(redis, key, token) {
 async function acquireResetLearningLocks(redis, token) {
   const acquired = [];
 
-  const resetAcquired = await acquireLock(redis, LOCK_KEYS.resetLearning, token);
+  const resetAcquired = await acquireLock(
+    redis,
+    LOCK_KEYS.resetLearning,
+    token
+  );
 
   if (!resetAcquired) {
     return {
@@ -102,7 +108,11 @@ async function acquireResetLearningLocks(redis, token) {
 
   acquired.push(LOCK_KEYS.resetLearning);
 
-  const tradeAcquired = await acquireLock(redis, LOCK_KEYS.trade, token);
+  const tradeAcquired = await acquireLock(
+    redis,
+    LOCK_KEYS.trade,
+    token
+  );
 
   if (!tradeAcquired) {
     return {
@@ -137,22 +147,48 @@ async function releaseLocks(redis, keys, token) {
 
 async function delKey(redis, key) {
   if (!key) return 0;
+
   return redis.del(key);
 }
 
 async function runLearningDeleteSteps(redis) {
   const deleted = {};
 
-  deleted.weeks = await delPattern(redis, 'ANALYZE:WEEK:*', 10000);
-  deleted.microStats = await delPattern(redis, 'ANALYZE:MICRO:*', 10000);
-  deleted.observationDedupe = await delPattern(redis, 'ANALYZE:OBS:LAST:*', 10000);
-  deleted.shadow = await delPattern(redis, 'ANALYZE:SHADOW:*', 10000);
+  deleted.weeks = await delPattern(
+    redis,
+    'ANALYZE:WEEK:*',
+    10000
+  );
 
-  // Belangrijk:
+  deleted.microStats = await delPattern(
+    redis,
+    'ANALYZE:MICRO:*',
+    10000
+  );
+
+  deleted.observationDedupe = await delPattern(
+    redis,
+    'ANALYZE:OBS:LAST:*',
+    10000
+  );
+
+  deleted.shadow = await delPattern(
+    redis,
+    'ANALYZE:SHADOW:*',
+    10000
+  );
+
   // Active rotation blijft staan, zodat TradeSystem niet direct zonder gate draait.
   // Next rotation moet weg, want die is gebaseerd op learning-data die nu verwijderd is.
-  deleted.nextRotation = await delKey(redis, KEYS.analyze?.nextRotation);
-  deleted.rotationValidFrom = await delKey(redis, KEYS.analyze?.rotationValidFrom);
+  deleted.nextRotation = await delKey(
+    redis,
+    KEYS.analyze?.nextRotation
+  );
+
+  deleted.rotationValidFrom = await delKey(
+    redis,
+    KEYS.analyze?.rotationValidFrom
+  );
 
   return deleted;
 }
@@ -161,6 +197,7 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
 
   const token = randomUUID();
+  let redis = null;
   let acquiredLocks = [];
 
   try {
@@ -179,7 +216,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const redis = getDurableRedis();
+    redis = getDurableRedis();
 
     const lockResult = await acquireResetLearningLocks(redis, token);
     acquiredLocks = lockResult.acquired || [];
@@ -201,7 +238,9 @@ export default async function handler(req, res) {
     const report = {
       ok: true,
       type: 'RESET_LEARNING',
+
       deleted,
+
       preserved: {
         activeRotation: true,
         openPositions: true,
@@ -210,6 +249,7 @@ export default async function handler(req, res) {
         resetLogs: true,
         discordLogs: true
       },
+
       resetAt: Date.now()
     };
 
@@ -229,11 +269,13 @@ export default async function handler(req, res) {
     return res.status(status).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   } finally {
-    if (acquiredLocks.length > 0) {
-      await releaseLocks(getDurableRedis(), acquiredLocks, token);
+    if (redis && acquiredLocks.length > 0) {
+      await releaseLocks(redis, acquiredLocks, token);
     }
   }
 }
