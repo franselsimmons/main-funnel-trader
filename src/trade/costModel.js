@@ -44,10 +44,6 @@ function round6(value) {
   return Number(safeNumber(value, 0).toFixed(6));
 }
 
-// Realistic fill price given side, leg and spread.
-// LONG  entry = buy ask,  exit = sell bid.
-// SHORT entry = sell bid, exit = buy ask.
-// Fill is always modeled against us.
 export function modelFillPrice({
   midPrice,
   side,
@@ -78,8 +74,6 @@ export function modelFillPrice({
     : mid * (1 - adverse);
 }
 
-// Total round-trip cost as decimal fraction of notional.
-// Example: 0.0018 = 0.18%.
 export function roundTripCostRatio(entrySpreadPct, exitSpreadPct) {
   const cfg = costConfig();
 
@@ -102,10 +96,6 @@ export function roundTripCostPct(entrySpreadPct, exitSpreadPct) {
   return roundTripCostRatio(entrySpreadPct, exitSpreadPct);
 }
 
-// Convert gross directional move into net outcome.
-// grossMovePct = decimal directional move, already side-adjusted.
-// Example: +0.01 = +1% favorable.
-// riskPct = decimal |entry - SL| / entry. Example: 0.006 = 0.6% = 1R.
 export function applyCosts({
   grossMovePct,
   riskPct,
@@ -131,7 +121,6 @@ export function applyCosts({
   const netR = grossR - costR;
 
   return {
-    // Decimal ratios.
     feeRatio: round6(feeRatio),
     slippageRatio: round6(slippageRatio),
     costRatio: round6(costRatio),
@@ -139,14 +128,12 @@ export function applyCosts({
     netMovePct: round6(netMovePct),
     breakEvenMovePct: round6(costRatio),
 
-    // Percent values for reports/UI.
     feePct: round4(feeRatio * 100),
     slippagePct: round4(slippageRatio * 100),
     costPct: round4(costRatio * 100),
     grossPnlPct: round4(grossPnlPct),
     netPnlPct: round4(netPnlPct),
 
-    // R values for Analyze.
     grossR: round4(grossR),
     costR: round4(costR),
     netR: round4(netR)
