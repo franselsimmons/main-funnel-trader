@@ -10,8 +10,8 @@ import {
   delPattern,
   pushJsonLog
 } from '../../src/redis.js';
-import { getOpenPositions } from '../../src/trade/src/positionEngine.js';
-import { sendResetReport } from '../../src/discord/src/discord.js';
+import { getOpenPositions } from '../../src/trade/positionEngine.js';
+import { sendResetReport } from '../../src/discord/discord.js';
 
 const LOCK_TTL_SEC = 300;
 
@@ -52,15 +52,21 @@ async function readBody(req) {
   const chunks = [];
 
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
   const text = Buffer.concat(chunks).toString('utf8');
+
   return parseJson(text);
 }
 
 function isTrue(value) {
-  return value === true || value === 'true' || value === 1 || value === '1';
+  return (
+    value === true ||
+    value === 'true' ||
+    value === 1 ||
+    value === '1'
+  );
 }
 
 function isConfirmed(body, requiredText) {
@@ -72,6 +78,7 @@ function isConfirmed(body, requiredText) {
 
 async function delKey(redis, key) {
   if (!key) return 0;
+
   return redis.del(key);
 }
 
@@ -93,6 +100,7 @@ async function releaseLock(redis, key, token) {
     }
 
     await redis.del(key);
+
     return true;
   } catch {
     return false;
@@ -102,7 +110,11 @@ async function releaseLock(redis, key, token) {
 async function acquireResetLocks({ durable, volatile, token }) {
   const acquired = [];
 
-  const adminAcquired = await acquireLock(durable, LOCK_KEYS.admin, token);
+  const adminAcquired = await acquireLock(
+    durable,
+    LOCK_KEYS.admin,
+    token
+  );
 
   if (!adminAcquired) {
     return {
@@ -117,7 +129,11 @@ async function acquireResetLocks({ durable, volatile, token }) {
     key: LOCK_KEYS.admin
   });
 
-  const scannerAcquired = await acquireLock(volatile, LOCK_KEYS.scanner, token);
+  const scannerAcquired = await acquireLock(
+    volatile,
+    LOCK_KEYS.scanner,
+    token
+  );
 
   if (!scannerAcquired) {
     return {
@@ -132,7 +148,11 @@ async function acquireResetLocks({ durable, volatile, token }) {
     key: LOCK_KEYS.scanner
   });
 
-  const tradeAcquired = await acquireLock(durable, LOCK_KEYS.trade, token);
+  const tradeAcquired = await acquireLock(
+    durable,
+    LOCK_KEYS.trade,
+    token
+  );
 
   if (!tradeAcquired) {
     return {
@@ -168,34 +188,103 @@ async function releaseResetLocks(acquired, token) {
   return released;
 }
 
+function openPositionSymbols(openPositions = []) {
+  return openPositions
+    .map((position) => (
+      position.symbol ||
+      position.baseSymbol ||
+      position.contractSymbol ||
+      null
+    ))
+    .filter(Boolean);
+}
+
 async function runDeleteSteps({ durable, volatile }) {
   const deleted = {};
 
-  // Scanner volatile data
-  deleted.scanSnapshots = await delPattern(volatile, 'SCAN:SNAPSHOT:*', 10000);
-  deleted.scanLatest = await delKey(volatile, KEYS.scan?.latest);
+  // Scanner volatile data.
+  deleted.scanSnapshots = await delPattern(
+    volatile,
+    'SCAN:SNAPSHOT:*',
+    10000
+  );
 
-  // Trade durable data
-  deleted.tradeOpen = await delPattern(durable, 'TRADE:OPEN:*', 10000);
-  deleted.tradeLastProcessed = await delKey(durable, KEYS.trade?.lastProcessedSnapshot);
-  deleted.tradeMeta = await delKey(durable, KEYS.trade?.runMeta);
+  deleted.scanLatest = await delKey(
+    volatile,
+    KEYS.scan?.latest
+  );
 
-  // Circuit breakers
-  deleted.circuitPaused = await delPattern(durable, 'CIRCUIT:PAUSED:*', 10000);
+  // Trade durable data.
+  deleted.tradeOpen = await delPattern(
+    durable,
+    'TRADE:OPEN:*',
+    10000
+  );
 
-  // Analyze learning data
-  deleted.analyzeWeeks = await delPattern(durable, 'ANALYZE:WEEK:*', 10000);
-  deleted.analyzeMicros = await delPattern(durable, 'ANALYZE:MICRO:*', 10000);
-  deleted.analyzeObsLast = await delPattern(durable, 'ANALYZE:OBS:LAST:*', 10000);
-  deleted.analyzeShadow = await delPattern(durable, 'ANALYZE:SHADOW:*', 10000);
+  deleted.tradeLastProcessed = await delKey(
+    durable,
+    KEYS.trade?.lastProcessedSnapshot
+  );
 
-  // Rotation
-  deleted.activeRotation = await delKey(durable, KEYS.analyze?.activeRotation);
-  deleted.nextRotation = await delKey(durable, KEYS.analyze?.nextRotation);
-  deleted.rotationValidFrom = await delKey(durable, KEYS.analyze?.rotationValidFrom);
+  deleted.tradeMeta = await delKey(
+    durable,
+    KEYS.trade?.runMeta
+  );
 
-  // Volatile live cache
-  deleted.liveCache = await delPattern(volatile, 'LIVE:CACHE:*', 10000);
+  // Circuit breakers.
+  deleted.circuitPaused = await delPattern(
+    durable,
+    'CIRCUIT:PAUSED:*',
+    10000
+  );
+
+  // Analyze learning data.
+  deleted.analyzeWeeks = await delPattern(
+    durable,
+    'ANALYZE:WEEK:*',
+    10000
+  );
+
+  deleted.analyzeMicros = await delPattern(
+    durable,
+    'ANALYZE:MICRO:*',
+    10000
+  );
+
+  deleted.analyzeObsLast = await delPattern(
+    durable,
+    'ANALYZE:OBS:LAST:*',
+    10000
+  );
+
+  deleted.analyzeShadow = await delPattern(
+    durable,
+    'ANALYZE:SHADOW:*',
+    10000
+  );
+
+  // Rotation.
+  deleted.activeRotation = await delKey(
+    durable,
+    KEYS.analyze?.activeRotation
+  );
+
+  deleted.nextRotation = await delKey(
+    durable,
+    KEYS.analyze?.nextRotation
+  );
+
+  deleted.rotationValidFrom = await delKey(
+    durable,
+    KEYS.analyze?.rotationValidFrom
+  );
+
+  // Volatile live cache.
+  deleted.liveCache = await delPattern(
+    volatile,
+    'LIVE:CACHE:*',
+    10000
+  );
 
   return deleted;
 }
@@ -262,9 +351,7 @@ export default async function handler(req, res) {
         blocked: true,
         reason: 'OPEN_POSITIONS_EXIST',
         count: openPositions.length,
-        symbols: openPositions
-          .map((position) => position.symbol)
-          .filter(Boolean)
+        symbols: openPositionSymbols(openPositions)
       });
     }
 
@@ -276,16 +363,19 @@ export default async function handler(req, res) {
     const report = {
       ok: true,
       type: 'FACTORY_RESET',
+
       force,
+
       openPositionsCount: openPositions.length,
-      openPositionSymbols: openPositions
-        .map((position) => position.symbol)
-        .filter(Boolean),
+      openPositionSymbols: openPositionSymbols(openPositions),
+
       deleted,
+
       preserved: {
         resetLogs: true,
         discordLogs: true
       },
+
       resetAt: Date.now()
     };
 
@@ -305,7 +395,9 @@ export default async function handler(req, res) {
     return res.status(status).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   } finally {
     if (acquiredLocks.length > 0) {
