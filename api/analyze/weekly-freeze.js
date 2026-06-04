@@ -4,7 +4,15 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import { getDurableRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
+import {
+  getIsoWeekKey,
+  getNextIsoWeekKey
+} from '../../src/utils.js';
 import { freezeWeeklyRotation } from '../../src/analyze/rotationEngine.js';
+
+function now() {
+  return Date.now();
+}
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET, POST');
@@ -57,44 +65,114 @@ function isTrue(value) {
   return (
     value === true ||
     value === 'true' ||
+    value === 'TRUE' ||
     value === 1 ||
-    value === '1'
+    value === '1' ||
+    value === 'yes' ||
+    value === 'YES'
   );
+}
+
+function firstValue(value) {
+  if (Array.isArray(value)) return value[0];
+
+  return value;
+}
+
+function query(req = {}) {
+  return req.query || {};
+}
+
+function getParam(req, body, key, fallback = undefined) {
+  const q = query(req);
+
+  const bodyValue = firstValue(body?.[key]);
+  const queryValue = firstValue(q?.[key]);
+
+  if (bodyValue !== undefined && bodyValue !== null && bodyValue !== '') {
+    return bodyValue;
+  }
+
+  if (queryValue !== undefined && queryValue !== null && queryValue !== '') {
+    return queryValue;
+  }
+
+  return fallback;
 }
 
 function getFreezeLockTtlSec() {
   const ttl = Number(CONFIG.analyze?.freezeLockTtlSec || 600);
 
-  return Number.isFinite(ttl) && ttl > 0 ? ttl : 600;
+  return Number.isFinite(ttl) && ttl > 0
+    ? ttl
+    : 600;
 }
 
 function getRotationMode(req, body = {}) {
-  return (
-    body.mode ||
-    req.query?.mode ||
-    CONFIG.rotation?.mode ||
-    'balanced'
-  );
+  return String(
+    getParam(
+      req,
+      body,
+      'mode',
+      CONFIG.rotation?.mode || 'balanced'
+    ) || 'balanced'
+  ).trim();
 }
 
 function getWeekKey(req, body = {}) {
-  return body.weekKey || req.query?.weekKey || undefined;
+  return String(
+    getParam(
+      req,
+      body,
+      'weekKey',
+      getIsoWeekKey()
+    ) || getIsoWeekKey()
+  ).trim();
+}
+
+function getActiveWeekKey(req, body = {}) {
+  const explicit =
+    getParam(req, body, 'activeWeekKey', null) ||
+    getParam(req, body, 'nextWeekKey', null);
+
+  if (explicit) {
+    return String(explicit).trim();
+  }
+
+  return getNextIsoWeekKey();
 }
 
 function isManualRun(req, body = {}) {
   return (
-    isTrue(req.query?.force) ||
-    isTrue(body.force)
+    isTrue(getParam(req, body, 'force', false)) ||
+    isTrue(getParam(req, body, 'manual', false)) ||
+    Boolean(getParam(req, body, 'weekKey', null)) ||
+    Boolean(getParam(req, body, 'activeWeekKey', null)) ||
+    Boolean(getParam(req, body, 'nextWeekKey', null)) ||
+    Boolean(getParam(req, body, 'mode', null))
   );
 }
 
-function unwrapFreezePayload(lockResult) {
-  return lockResult?.result || null;
+function unwrapLockResult(lockResult) {
+  if (
+    lockResult &&
+    typeof lockResult === 'object' &&
+    Object.prototype.hasOwnProperty.call(lockResult, 'result')
+  ) {
+    return lockResult.result;
+  }
+
+  return lockResult || null;
 }
 
-function responseWeekKey(lockResult, fallbackWeekKey = null) {
-  const payload = unwrapFreezePayload(lockResult);
+function payloadOk(lockResult, payload) {
+  if (lockResult?.ok === false) return false;
+  if (payload?.ok === false) return false;
 
+  return true;
+}
+
+function responseWeekKey(payload, fallbackWeekKey = null) {
   return (
     payload?.weekKey ||
     payload?.rotation?.sourceWeekKey ||
@@ -103,14 +181,59 @@ function responseWeekKey(lockResult, fallbackWeekKey = null) {
   );
 }
 
-function responseRotationId(lockResult) {
-  const payload = unwrapFreezePayload(lockResult);
+function responseActiveWeekKey(payload, fallbackActiveWeekKey = null) {
+  return (
+    payload?.activeWeekKey ||
+    payload?.rotation?.activeWeekKey ||
+    fallbackActiveWeekKey ||
+    null
+  );
+}
 
+function responseRotationId(payload) {
   return (
     payload?.rotationId ||
     payload?.rotation?.rotationId ||
     null
   );
+}
+
+function responseSelectedCount(payload) {
+  return (
+    payload?.selectedMicroFamilies ||
+    payload?.rotation?.microFamilyIds?.length ||
+    payload?.rotation?.microFamilies?.length ||
+    0
+  );
+}
+
+function responseEligibleCount(payload) {
+  return (
+    payload?.rotation?.eligibleCount ||
+    0
+  );
+}
+
+function responseRankedCount(payload) {
+  return (
+    payload?.rotation?.rankedCount ||
+    0
+  );
+}
+
+function responseEmptyReason(payload) {
+  return (
+    payload?.rotation?.emptyReason ||
+    payload?.emptyReason ||
+    payload?.reason ||
+    null
+  );
+}
+
+function responseMicroFamilyIds(payload) {
+  return Array.isArray(payload?.rotation?.microFamilyIds)
+    ? payload.rotation.microFamilyIds
+    : [];
 }
 
 function errorStatus(error) {
@@ -129,10 +252,25 @@ function errorStatus(error) {
   return 500;
 }
 
+async function runFreeze({
+  req,
+  body
+}) {
+  const weekKey = getWeekKey(req, body);
+  const activeWeekKey = getActiveWeekKey(req, body);
+  const mode = getRotationMode(req, body);
+
+  return freezeWeeklyRotation({
+    weekKey,
+    activeWeekKey,
+    mode
+  });
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
 
-  const startedAt = Date.now();
+  const startedAt = now();
 
   try {
     if (!isAllowedMethod(req.method)) {
@@ -146,39 +284,60 @@ export default async function handler(req, res) {
     const lockTtlSec = getFreezeLockTtlSec();
 
     const weekKey = getWeekKey(req, body);
+    const activeWeekKey = getActiveWeekKey(req, body);
     const mode = getRotationMode(req, body);
 
-    const result = await withRedisLock(
+    const lockResult = await withRedisLock(
       redis,
       lockKey,
       lockTtlSec,
-      async () => freezeWeeklyRotation({
-        weekKey,
-        mode
+      async () => runFreeze({
+        req,
+        body
       })
     );
 
+    const payload = unwrapLockResult(lockResult);
+
     return res.status(200).json({
-      ok: result?.ok !== false,
-      skipped: Boolean(result?.skipped),
+      ok: payloadOk(lockResult, payload),
+      skipped: Boolean(lockResult?.skipped || payload?.skipped),
 
       source: isManualRun(req, body)
         ? 'ADMIN_MANUAL_FREEZE'
         : 'CRON_OR_API_FREEZE',
 
-      weekKey: responseWeekKey(result, weekKey),
+      type: payload?.type || 'NEXT_ROTATION_READY',
+
+      weekKey: responseWeekKey(payload, weekKey),
+      activeWeekKey: responseActiveWeekKey(payload, activeWeekKey),
       mode,
-      rotationId: responseRotationId(result),
 
-      durationMs: Date.now() - startedAt,
+      rotationId: responseRotationId(payload),
 
-      result
+      selectedMicroFamilies: responseSelectedCount(payload),
+      eligibleCount: responseEligibleCount(payload),
+      rankedCount: responseRankedCount(payload),
+
+      empty: Boolean(payload?.rotation?.empty),
+      emptyReason: responseEmptyReason(payload),
+
+      microFamilyIds: responseMicroFamilyIds(payload),
+
+      durationMs: now() - startedAt,
+
+      result: payload,
+      lock: {
+        ok: lockResult?.ok !== false,
+        skipped: Boolean(lockResult?.skipped),
+        reason: lockResult?.reason || null
+      }
     });
   } catch (error) {
     return res.status(errorStatus(error)).json({
       ok: false,
       error: error?.message || String(error),
-      durationMs: Date.now() - startedAt,
+      durationMs: now() - startedAt,
       stack: process.env.NODE_ENV === 'production'
         ? undefined
         : error?.stack
