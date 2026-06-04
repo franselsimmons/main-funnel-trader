@@ -32,12 +32,6 @@ function shadowWeight() {
   return clamp(weight, 0, 1);
 }
 
-function sourceWeight(source) {
-  return String(source || 'REAL').toUpperCase() === 'SHADOW'
-    ? shadowWeight()
-    : 1;
-}
-
 function priorTrades() {
   return Math.max(0, rotationNumber('priorTrades', DEFAULT_PRIOR_TRADES));
 }
@@ -87,23 +81,17 @@ function positive(value) {
   return Math.max(0, safeNumber(value, 0));
 }
 
-function hasNonZeroBucket(stats = {}, keys = []) {
-  return keys.some((key) => Math.abs(safeNumber(stats[key], 0)) > 0);
-}
-
-function hasOutcomeBuckets(stats = {}) {
-  return hasNonZeroBucket(stats, [
-    'realCompleted',
-    'shadowCompleted',
-    'realWins',
-    'realLosses',
-    'realFlats',
-    'shadowWins',
-    'shadowLosses',
-    'shadowFlats',
-    'realTotalR',
-    'shadowTotalR'
-  ]);
+function hasSourceBuckets(stats = {}) {
+  return (
+    safeNumber(stats.realCompleted, 0) > 0 ||
+    safeNumber(stats.shadowCompleted, 0) > 0 ||
+    safeNumber(stats.realWins, 0) > 0 ||
+    safeNumber(stats.realLosses, 0) > 0 ||
+    safeNumber(stats.realFlats, 0) > 0 ||
+    safeNumber(stats.shadowWins, 0) > 0 ||
+    safeNumber(stats.shadowLosses, 0) > 0 ||
+    safeNumber(stats.shadowFlats, 0) > 0
+  );
 }
 
 function actualOutcomeCounts(stats = {}) {
@@ -129,7 +117,6 @@ function actualOutcomeCounts(stats = {}) {
     };
   }
 
-  // Backward fallback for old stored rows without real/shadow buckets.
   const weightedWins = safeNumber(stats.wins, 0);
   const weightedLosses = safeNumber(stats.losses, 0);
   const weightedFlats = safeNumber(stats.flats, 0);
@@ -165,37 +152,33 @@ function actualOutcomeCounts(stats = {}) {
 }
 
 function weightedOutcomeCounts(stats = {}) {
-  if (!hasOutcomeBuckets(stats)) {
-    const wins = safeNumber(stats.wins, 0);
-    const losses = safeNumber(stats.losses, 0);
-    const flats = safeNumber(stats.flats, 0);
-    const completed = safeNumber(stats.completed, wins + losses + flats);
+  const weight = shadowWeight();
+
+  if (hasSourceBuckets(stats)) {
+    const realWins = safeNumber(stats.realWins, 0);
+    const realLosses = safeNumber(stats.realLosses, 0);
+    const realFlats = safeNumber(stats.realFlats, 0);
+
+    const shadowWins = safeNumber(stats.shadowWins, 0);
+    const shadowLosses = safeNumber(stats.shadowLosses, 0);
+    const shadowFlats = safeNumber(stats.shadowFlats, 0);
+
+    const wins = realWins + shadowWins * weight;
+    const losses = realLosses + shadowLosses * weight;
+    const flats = realFlats + shadowFlats * weight;
 
     return {
       wins,
       losses,
       flats,
-      completed
+      completed: wins + losses + flats
     };
   }
 
-  const sw = shadowWeight();
-
-  const wins =
-    safeNumber(stats.realWins, 0) +
-    safeNumber(stats.shadowWins, 0) * sw;
-
-  const losses =
-    safeNumber(stats.realLosses, 0) +
-    safeNumber(stats.shadowLosses, 0) * sw;
-
-  const flats =
-    safeNumber(stats.realFlats, 0) +
-    safeNumber(stats.shadowFlats, 0) * sw;
-
-  const completed =
-    safeNumber(stats.realCompleted, 0) +
-    safeNumber(stats.shadowCompleted, 0) * sw;
+  const wins = safeNumber(stats.wins, 0);
+  const losses = safeNumber(stats.losses, 0);
+  const flats = safeNumber(stats.flats, 0);
+  const completed = safeNumber(stats.completed, wins + losses + flats);
 
   return {
     wins,
@@ -205,70 +188,8 @@ function weightedOutcomeCounts(stats = {}) {
   };
 }
 
-function weightedTotalR(stats = {}) {
-  if (!hasOutcomeBuckets(stats)) {
-    return safeNumber(stats.totalR, 0);
-  }
-
-  return (
-    safeNumber(stats.realTotalR, 0) +
-    safeNumber(stats.shadowTotalR, 0) * shadowWeight()
-  );
-}
-
-function weightedTotalPnlPct(stats = {}) {
-  const hasBuckets = hasNonZeroBucket(stats, [
-    'realTotalPnlPct',
-    'shadowTotalPnlPct'
-  ]);
-
-  if (!hasBuckets) {
-    return safeNumber(stats.totalPnlPct, 0);
-  }
-
-  return (
-    safeNumber(stats.realTotalPnlPct, 0) +
-    safeNumber(stats.shadowTotalPnlPct, 0) * shadowWeight()
-  );
-}
-
-function weightedTotalCostR(stats = {}) {
-  const hasBuckets = hasNonZeroBucket(stats, [
-    'realTotalCostR',
-    'shadowTotalCostR'
-  ]);
-
-  if (!hasBuckets) {
-    return safeNumber(stats.totalCostR, 0);
-  }
-
-  return (
-    safeNumber(stats.realTotalCostR, 0) +
-    safeNumber(stats.shadowTotalCostR, 0) * shadowWeight()
-  );
-}
-
-function weightedGrossBuckets(stats = {}) {
-  const hasBuckets = hasNonZeroBucket(stats, [
-    'realGrossWinR',
-    'realGrossLossR',
-    'shadowGrossWinR',
-    'shadowGrossLossR'
-  ]);
-
-  if (!hasBuckets) return null;
-
-  const sw = shadowWeight();
-
-  return {
-    grossWinR:
-      safeNumber(stats.realGrossWinR, 0) +
-      safeNumber(stats.shadowGrossWinR, 0) * sw,
-
-    grossLossR:
-      safeNumber(stats.realGrossLossR, 0) +
-      safeNumber(stats.shadowGrossLossR, 0) * sw
-  };
+function weightedCompletedCount(stats = {}) {
+  return weightedOutcomeCounts(stats).completed;
 }
 
 function sampleReliability(completed) {
@@ -341,10 +262,8 @@ export function createMicroStats({
     realTotalCostR: 0,
     shadowTotalCostR: 0,
 
-    // Backward-compatible names. These represent positive/negative NET R buckets.
     grossWinR: 0,
     grossLossR: 0,
-
     realGrossWinR: 0,
     realGrossLossR: 0,
     shadowGrossWinR: 0,
@@ -357,6 +276,7 @@ export function createMicroStats({
     avgRScore: 0,
 
     avgPnlPct: 0,
+    avgCostR: 0,
 
     directSLCount: 0,
     nearTpCount: 0,
@@ -368,15 +288,12 @@ export function createMicroStats({
     gaveBackAfterOneRCount: 0,
     nearTpThenLossCount: 0,
 
-    avgCostR: 0,
-
     winrate: 0,
     bayesianWinrate: 0,
     wilsonLowerBound: 0,
     fairWinrate: 0,
     sampleAdjustedWinrate: 0,
 
-    // Dashboard aliases. Keep these equal to canonical fields.
     sampleRawWinrate: 0,
     sampleBayesianWinrate: 0,
     sampleWilsonLowerBound: 0,
@@ -425,8 +342,17 @@ function ensureStatsShape(stats = {}) {
 
   stats.definition ||= stats.definitionParts.join(' | ');
 
+  stats.seen = safeNumber(stats.seen, 0);
+  stats.observations = safeNumber(stats.observations, 0);
+
   stats.realCompleted = safeNumber(stats.realCompleted, 0);
   stats.shadowCompleted = safeNumber(stats.shadowCompleted, 0);
+  stats.completed = safeNumber(stats.completed, 0);
+  stats.winrateSample = safeNumber(stats.winrateSample, 0);
+
+  stats.wins = safeNumber(stats.wins, 0);
+  stats.losses = safeNumber(stats.losses, 0);
+  stats.flats = safeNumber(stats.flats, 0);
 
   stats.realWins = safeNumber(stats.realWins, 0);
   stats.realLosses = safeNumber(stats.realLosses, 0);
@@ -436,38 +362,44 @@ function ensureStatsShape(stats = {}) {
   stats.shadowLosses = safeNumber(stats.shadowLosses, 0);
   stats.shadowFlats = safeNumber(stats.shadowFlats, 0);
 
+  stats.totalR = safeNumber(stats.totalR, 0);
   stats.realTotalR = safeNumber(stats.realTotalR, 0);
   stats.shadowTotalR = safeNumber(stats.shadowTotalR, 0);
 
+  stats.totalPnlPct = safeNumber(stats.totalPnlPct, 0);
   stats.realTotalPnlPct = safeNumber(stats.realTotalPnlPct, 0);
   stats.shadowTotalPnlPct = safeNumber(stats.shadowTotalPnlPct, 0);
 
+  stats.totalCostR = safeNumber(stats.totalCostR, 0);
   stats.realTotalCostR = safeNumber(stats.realTotalCostR, 0);
   stats.shadowTotalCostR = safeNumber(stats.shadowTotalCostR, 0);
 
+  stats.grossWinR = safeNumber(stats.grossWinR, 0);
+  stats.grossLossR = safeNumber(stats.grossLossR, 0);
   stats.realGrossWinR = safeNumber(stats.realGrossWinR, 0);
   stats.realGrossLossR = safeNumber(stats.realGrossLossR, 0);
   stats.shadowGrossWinR = safeNumber(stats.shadowGrossWinR, 0);
   stats.shadowGrossLossR = safeNumber(stats.shadowGrossLossR, 0);
 
-  stats.grossWinR = safeNumber(stats.grossWinR, 0);
-  stats.grossLossR = safeNumber(stats.grossLossR, 0);
-
-  stats.totalR = safeNumber(stats.totalR, 0);
-  stats.totalPnlPct = safeNumber(stats.totalPnlPct, 0);
-  stats.totalCostR = safeNumber(stats.totalCostR, 0);
-
-  stats.winrateSample = safeNumber(stats.winrateSample, 0);
   stats.sampleAdjustedWinrate = safeNumber(stats.sampleAdjustedWinrate, 0);
   stats.sampleAdjustedAvgR = safeNumber(stats.sampleAdjustedAvgR, 0);
   stats.avgRScore = safeNumber(stats.avgRScore, 0);
+  stats.dashboardBalancedScore = safeNumber(stats.dashboardBalancedScore, 0);
 
   stats.sampleRawWinrate = safeNumber(stats.sampleRawWinrate, 0);
   stats.sampleBayesianWinrate = safeNumber(stats.sampleBayesianWinrate, 0);
   stats.sampleWilsonLowerBound = safeNumber(stats.sampleWilsonLowerBound, 0);
   stats.sampleReliabilityOld = safeNumber(stats.sampleReliabilityOld, 0);
 
-  stats.dashboardBalancedScore = safeNumber(stats.dashboardBalancedScore, 0);
+  stats.directSLCount = safeNumber(stats.directSLCount, 0);
+  stats.nearTpCount = safeNumber(stats.nearTpCount, 0);
+  stats.reachedHalfRCount = safeNumber(stats.reachedHalfRCount, 0);
+  stats.reachedOneRCount = safeNumber(stats.reachedOneRCount, 0);
+
+  stats.beWouldExitCount = safeNumber(stats.beWouldExitCount, 0);
+  stats.gaveBackAfterHalfRCount = safeNumber(stats.gaveBackAfterHalfRCount, 0);
+  stats.gaveBackAfterOneRCount = safeNumber(stats.gaveBackAfterOneRCount, 0);
+  stats.nearTpThenLossCount = safeNumber(stats.nearTpThenLossCount, 0);
 
   stats.createdAt ||= now();
   stats.updatedAt ||= now();
@@ -478,8 +410,8 @@ function ensureStatsShape(stats = {}) {
 export function updateObservation(stats, row = {}) {
   ensureStatsShape(stats);
 
-  stats.seen = safeNumber(stats.seen, 0) + 1;
-  stats.observations = safeNumber(stats.observations, 0) + 1;
+  stats.seen += 1;
+  stats.observations += 1;
 
   inc(stats.counters.rsiZone, row.rsiZone);
   inc(stats.counters.flow, row.flow);
@@ -510,7 +442,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
 
   const src = String(source || row.source || 'REAL').toUpperCase();
   const isShadow = src === 'SHADOW';
-  const weight = sourceWeight(src);
+  const weight = isShadow ? shadowWeight() : 1;
 
   const exitR = safeNumber(row.exitR ?? row.netR, 0);
   const pnlPct = safeNumber(row.pnlPct ?? row.netPnlPct, 0);
@@ -521,71 +453,72 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
   const flat = !win && !loss;
 
   if (isShadow) {
-    stats.shadowCompleted = safeNumber(stats.shadowCompleted, 0) + 1;
-    stats.shadowTotalR = safeNumber(stats.shadowTotalR, 0) + exitR;
-    stats.shadowTotalPnlPct = safeNumber(stats.shadowTotalPnlPct, 0) + pnlPct;
-    stats.shadowTotalCostR = safeNumber(stats.shadowTotalCostR, 0) + costR;
+    stats.shadowCompleted += 1;
+    stats.shadowTotalR += exitR;
+    stats.shadowTotalPnlPct += pnlPct;
+    stats.shadowTotalCostR += costR;
 
     if (win) {
-      stats.shadowWins = safeNumber(stats.shadowWins, 0) + 1;
-      stats.shadowGrossWinR = safeNumber(stats.shadowGrossWinR, 0) + exitR;
+      stats.shadowWins += 1;
+      stats.shadowGrossWinR += exitR;
     }
 
     if (loss) {
-      stats.shadowLosses = safeNumber(stats.shadowLosses, 0) + 1;
-      stats.shadowGrossLossR = safeNumber(stats.shadowGrossLossR, 0) + Math.abs(exitR);
+      stats.shadowLosses += 1;
+      stats.shadowGrossLossR += Math.abs(exitR);
     }
 
-    if (flat) stats.shadowFlats = safeNumber(stats.shadowFlats, 0) + 1;
+    if (flat) {
+      stats.shadowFlats += 1;
+    }
   } else {
-    stats.realCompleted = safeNumber(stats.realCompleted, 0) + 1;
-    stats.realTotalR = safeNumber(stats.realTotalR, 0) + exitR;
-    stats.realTotalPnlPct = safeNumber(stats.realTotalPnlPct, 0) + pnlPct;
-    stats.realTotalCostR = safeNumber(stats.realTotalCostR, 0) + costR;
+    stats.realCompleted += 1;
+    stats.realTotalR += exitR;
+    stats.realTotalPnlPct += pnlPct;
+    stats.realTotalCostR += costR;
 
     if (win) {
-      stats.realWins = safeNumber(stats.realWins, 0) + 1;
-      stats.realGrossWinR = safeNumber(stats.realGrossWinR, 0) + exitR;
+      stats.realWins += 1;
+      stats.realGrossWinR += exitR;
     }
 
     if (loss) {
-      stats.realLosses = safeNumber(stats.realLosses, 0) + 1;
-      stats.realGrossLossR = safeNumber(stats.realGrossLossR, 0) + Math.abs(exitR);
+      stats.realLosses += 1;
+      stats.realGrossLossR += Math.abs(exitR);
     }
 
-    if (flat) stats.realFlats = safeNumber(stats.realFlats, 0) + 1;
+    if (flat) {
+      stats.realFlats += 1;
+    }
   }
 
-  const weightedCounts = weightedOutcomeCounts(stats);
+  stats.completed = weightedCompletedCount(stats);
 
-  stats.completed = weightedCounts.completed;
-  stats.wins = weightedCounts.wins;
-  stats.losses = weightedCounts.losses;
-  stats.flats = weightedCounts.flats;
+  stats.wins += win ? weight : 0;
+  stats.losses += loss ? weight : 0;
+  stats.flats += flat ? weight : 0;
 
-  stats.totalR = weightedTotalR(stats);
-  stats.totalPnlPct = weightedTotalPnlPct(stats);
-  stats.totalCostR = weightedTotalCostR(stats);
+  stats.totalR += exitR * weight;
+  stats.totalPnlPct += pnlPct * weight;
+  stats.totalCostR += costR * weight;
 
-  const grossBuckets = weightedGrossBuckets(stats);
-
-  if (grossBuckets) {
-    stats.grossWinR = grossBuckets.grossWinR;
-    stats.grossLossR = grossBuckets.grossLossR;
-  } else {
-    if (win) stats.grossWinR = safeNumber(stats.grossWinR, 0) + exitR * weight;
-    if (loss) stats.grossLossR = safeNumber(stats.grossLossR, 0) + Math.abs(exitR) * weight;
+  if (win) {
+    stats.grossWinR += exitR * weight;
   }
 
-  if (row.directToSL) stats.directSLCount = safeNumber(stats.directSLCount, 0) + weight;
-  if (row.nearTpSeen) stats.nearTpCount = safeNumber(stats.nearTpCount, 0) + weight;
-  if (row.reachedHalfR) stats.reachedHalfRCount = safeNumber(stats.reachedHalfRCount, 0) + weight;
-  if (row.reachedOneR) stats.reachedOneRCount = safeNumber(stats.reachedOneRCount, 0) + weight;
+  if (loss) {
+    stats.grossLossR += Math.abs(exitR) * weight;
+  }
 
-  if (row.beWouldExit) stats.beWouldExitCount = safeNumber(stats.beWouldExitCount, 0) + weight;
-  if (row.gaveBackAfterHalfR) stats.gaveBackAfterHalfRCount = safeNumber(stats.gaveBackAfterHalfRCount, 0) + weight;
-  if (row.gaveBackAfterOneR) stats.gaveBackAfterOneRCount = safeNumber(stats.gaveBackAfterOneRCount, 0) + weight;
-  if (row.nearTpThenLoss) stats.nearTpThenLossCount = safeNumber(stats.nearTpThenLossCount, 0) + weight;
+  if (row.directToSL) stats.directSLCount += weight;
+  if (row.nearTpSeen) stats.nearTpCount += weight;
+  if (row.reachedHalfR) stats.reachedHalfRCount += weight;
+  if (row.reachedOneR) stats.reachedOneRCount += weight;
+
+  if (row.beWouldExit) stats.beWouldExitCount += weight;
+  if (row.gaveBackAfterHalfR) stats.gaveBackAfterHalfRCount += weight;
+  if (row.gaveBackAfterOneR) stats.gaveBackAfterOneRCount += weight;
+  if (row.nearTpThenLoss) stats.nearTpThenLossCount += weight;
 
   stats.recentOutcomes.push({
     source: src,
@@ -651,7 +584,6 @@ export function bayesianWinrate(wins, completed) {
 
   const priorN = priorTrades();
   const priorW = priorN * priorWinrate();
-
   const denominator = n + priorN;
 
   return denominator > 0
@@ -664,22 +596,115 @@ function fallbackGrossFromRecent(stats) {
     ? stats.recentOutcomes
     : [];
 
-  const grossWinR = outcomes
-    .filter((row) => safeNumber(row.exitR, 0) > 0)
-    .reduce((sum, row) => {
-      return sum + safeNumber(row.exitR, 0) * sourceWeight(row.source);
-    }, 0);
+  return outcomes.reduce(
+    (acc, row) => {
+      const src = String(row.source || 'REAL').toUpperCase();
+      const weight = src === 'SHADOW' ? shadowWeight() : 1;
+      const exitR = safeNumber(row.exitR ?? row.netR, 0);
 
-  const grossLossR = outcomes
-    .filter((row) => safeNumber(row.exitR, 0) < 0)
-    .reduce((sum, row) => {
-      return sum + Math.abs(safeNumber(row.exitR, 0)) * sourceWeight(row.source);
-    }, 0);
+      if (exitR > 0) {
+        acc.grossWinR += exitR * weight;
+      }
 
-  return {
-    grossWinR,
-    grossLossR
+      if (exitR < 0) {
+        acc.grossLossR += Math.abs(exitR) * weight;
+      }
+
+      return acc;
+    },
+    {
+      grossWinR: 0,
+      grossLossR: 0
+    }
+  );
+}
+
+function fallbackSourceMetricsFromRecent(stats) {
+  const outcomes = Array.isArray(stats.recentOutcomes)
+    ? stats.recentOutcomes
+    : [];
+
+  return outcomes.reduce(
+    (acc, row) => {
+      const src = String(row.source || 'REAL').toUpperCase();
+      const isShadow = src === 'SHADOW';
+
+      const exitR = safeNumber(row.exitR ?? row.netR, 0);
+      const pnlPct = safeNumber(row.pnlPct ?? row.netPnlPct, 0);
+      const costR = safeNumber(row.costR, 0);
+
+      const prefix = isShadow ? 'shadow' : 'real';
+
+      acc[`${prefix}TotalPnlPct`] += pnlPct;
+      acc[`${prefix}TotalCostR`] += costR;
+
+      if (exitR > 0) {
+        acc[`${prefix}GrossWinR`] += exitR;
+      }
+
+      if (exitR < 0) {
+        acc[`${prefix}GrossLossR`] += Math.abs(exitR);
+      }
+
+      return acc;
+    },
+    {
+      realTotalPnlPct: 0,
+      shadowTotalPnlPct: 0,
+      realTotalCostR: 0,
+      shadowTotalCostR: 0,
+      realGrossWinR: 0,
+      realGrossLossR: 0,
+      shadowGrossWinR: 0,
+      shadowGrossLossR: 0
+    }
+  );
+}
+
+function sourceMetric(stats, fallback, key) {
+  const current = safeNumber(stats[key], 0);
+
+  if (current !== 0) return current;
+
+  return safeNumber(fallback[key], 0);
+}
+
+function buildSourceMetrics(stats) {
+  const fallback = fallbackSourceMetricsFromRecent(stats);
+
+  const metrics = {
+    realTotalPnlPct: sourceMetric(stats, fallback, 'realTotalPnlPct'),
+    shadowTotalPnlPct: sourceMetric(stats, fallback, 'shadowTotalPnlPct'),
+
+    realTotalCostR: sourceMetric(stats, fallback, 'realTotalCostR'),
+    shadowTotalCostR: sourceMetric(stats, fallback, 'shadowTotalCostR'),
+
+    realGrossWinR: sourceMetric(stats, fallback, 'realGrossWinR'),
+    realGrossLossR: sourceMetric(stats, fallback, 'realGrossLossR'),
+
+    shadowGrossWinR: sourceMetric(stats, fallback, 'shadowGrossWinR'),
+    shadowGrossLossR: sourceMetric(stats, fallback, 'shadowGrossLossR')
   };
+
+  if (
+    metrics.realGrossWinR === 0 &&
+    safeNumber(stats.realWins, 0) > 0 &&
+    safeNumber(stats.realLosses, 0) === 0 &&
+    safeNumber(stats.realTotalR, 0) > 0
+  ) {
+    metrics.realGrossWinR = safeNumber(stats.realTotalR, 0);
+  }
+
+  if (
+    metrics.shadowGrossWinR === 0 &&
+    safeNumber(stats.shadowWins, 0) > 0 &&
+    safeNumber(stats.shadowLosses, 0) === 0 &&
+    safeNumber(stats.shadowTotalR, 0) > 0
+  ) {
+    metrics.shadowGrossWinR = safeNumber(stats.shadowTotalR, 0);
+  }
+
+  return metrics;
 }
 
 function buildBalancedScore({
@@ -697,7 +722,6 @@ function buildBalancedScore({
 }) {
   const pfNorm = clamp(profitFactor, 0, 10) / 10;
 
-  // Log scaling prevents 1 extreme TP from dominating stable high-sample families.
   const totalRComponent = Math.log1p(positive(totalR)) * 12;
   const avgRComponent = Math.log1p(positive(avgR)) * 8;
 
@@ -747,37 +771,16 @@ function buildAvgRScore({
   );
 }
 
-export function normalizeMicroFamilyDashboardRow(row = {}, rank = null) {
-  const fairWinrate = safeNumber(row.fairWinrate, 0);
-  const balancedScore = safeNumber(row.balancedScore, 0);
-
-  return {
-    ...row,
-
-    rank: rank ?? row.rank,
-
-    sampleAdjustedWinrate: fairWinrate,
-    sampleRawWinrate: safeNumber(row.winrate, 0),
-    sampleBayesianWinrate: safeNumber(row.bayesianWinrate, 0),
-    sampleWilsonLowerBound: safeNumber(row.wilsonLowerBound, 0),
-    sampleReliabilityOld: safeNumber(row.sampleReliability, 0),
-
-    dashboardBalancedScore: balancedScore,
-    avgRScore: safeNumber(row.avgRScore, 0)
-  };
-}
-
 export function refreshStats(stats) {
   ensureStatsShape(stats);
 
   const weightedCounts = weightedOutcomeCounts(stats);
+
   const weightedCompleted = safeNumber(weightedCounts.completed, 0);
   const weightedWins = safeNumber(weightedCounts.wins, 0);
   const weightedLosses = safeNumber(weightedCounts.losses, 0);
-
-  const totalR = weightedTotalR(stats);
-  const totalPnlPct = weightedTotalPnlPct(stats);
-  const totalCostR = weightedTotalCostR(stats);
+  const weightedFlats = safeNumber(weightedCounts.flats, 0);
+  const totalR = safeNumber(stats.totalR, 0);
 
   const actualCounts = actualOutcomeCounts(stats);
   const winrateSample = safeNumber(actualCounts.completed, 0);
@@ -799,26 +802,21 @@ export function refreshStats(stats) {
   const reliability = sampleReliability(winrateSample);
 
   const fallbackGross = fallbackGrossFromRecent(stats);
-  const grossBuckets = weightedGrossBuckets(stats);
 
-  const grossWinR = grossBuckets
-    ? grossBuckets.grossWinR
-    : safeNumber(stats.grossWinR, 0) > 0
-      ? safeNumber(stats.grossWinR, 0)
-      : fallbackGross.grossWinR;
+  const grossWinR = safeNumber(stats.grossWinR, 0) > 0
+    ? safeNumber(stats.grossWinR, 0)
+    : fallbackGross.grossWinR;
 
-  const grossLossR = grossBuckets
-    ? grossBuckets.grossLossR
-    : safeNumber(stats.grossLossR, 0) > 0
-      ? safeNumber(stats.grossLossR, 0)
-      : fallbackGross.grossLossR;
+  const grossLossR = safeNumber(stats.grossLossR, 0) > 0
+    ? safeNumber(stats.grossLossR, 0)
+    : fallbackGross.grossLossR;
 
   const avgR = weightedCompleted > 0
     ? totalR / weightedCompleted
     : 0;
 
   const avgPnlPct = weightedCompleted > 0
-    ? totalPnlPct / weightedCompleted
+    ? safeNumber(stats.totalPnlPct, 0) / weightedCompleted
     : 0;
 
   const avgWinR = weightedWins > 0
@@ -867,7 +865,7 @@ export function refreshStats(stats) {
     : 0;
 
   const avgCostR = weightedCompleted > 0
-    ? totalCostR / weightedCompleted
+    ? safeNumber(stats.totalCostR, 0) / weightedCompleted
     : 0;
 
   const sampleAdjustedAvgRValue = sampleAdjustedAvgR(avgR, reliability);
@@ -900,27 +898,38 @@ export function refreshStats(stats) {
     avgCostR
   });
 
+  const sourceMetrics = buildSourceMetrics(stats);
+
   Object.assign(stats, {
     completed: round4(weightedCompleted),
     winrateSample: round4(winrateSample),
 
-    wins: round4(weightedCounts.wins),
-    losses: round4(weightedCounts.losses),
-    flats: round4(weightedCounts.flats),
-
-    totalR: round4(totalR),
-    totalPnlPct: round4(totalPnlPct),
-    totalCostR: round4(totalCostR),
+    wins: round4(weightedWins),
+    losses: round4(weightedLosses),
+    flats: round4(weightedFlats),
 
     grossWinR: round4(grossWinR),
     grossLossR: round4(grossLossR),
+
+    realTotalPnlPct: round4(sourceMetrics.realTotalPnlPct),
+    shadowTotalPnlPct: round4(sourceMetrics.shadowTotalPnlPct),
+
+    realTotalCostR: round4(sourceMetrics.realTotalCostR),
+    shadowTotalCostR: round4(sourceMetrics.shadowTotalCostR),
+
+    realGrossWinR: round4(sourceMetrics.realGrossWinR),
+    realGrossLossR: round4(sourceMetrics.realGrossLossR),
+
+    shadowGrossWinR: round4(sourceMetrics.shadowGrossWinR),
+    shadowGrossLossR: round4(sourceMetrics.shadowGrossLossR),
 
     winrate: round4(rawWinrate),
     bayesianWinrate: round4(bayes),
     wilsonLowerBound: round4(wilson),
     fairWinrate: round4(fair),
-    sampleAdjustedWinrate: round4(fair),
 
+    // Canonical dashboard aliases. Geen oude dashboard-formules meer.
+    sampleAdjustedWinrate: round4(fair),
     sampleRawWinrate: round4(rawWinrate),
     sampleBayesianWinrate: round4(bayes),
     sampleWilsonLowerBound: round4(wilson),
@@ -932,6 +941,7 @@ export function refreshStats(stats) {
     avgPnlPct: round4(avgPnlPct),
     avgWinR: round4(avgWinR),
     avgLossR: round4(avgLossR),
+
     sampleAdjustedAvgR: round4(sampleAdjustedAvgRValue),
     avgRScore: round4(avgRScore),
 
@@ -949,6 +959,8 @@ export function refreshStats(stats) {
 
     avgCostR: round4(avgCostR),
     balancedScore: round4(balancedScore),
+
+    // Canonical dashboard score alias.
     dashboardBalancedScore: round4(balancedScore),
 
     updatedAt: now()
@@ -957,38 +969,74 @@ export function refreshStats(stats) {
   return stats;
 }
 
+export function normalizeDashboardMicro(row = {}, rank = null) {
+  const refreshed = refreshStats(row);
+
+  return {
+    ...refreshed,
+
+    rank: rank ?? refreshed.rank,
+
+    sampleAdjustedWinrate: refreshed.fairWinrate,
+    sampleRawWinrate: refreshed.winrate,
+    sampleBayesianWinrate: refreshed.bayesianWinrate,
+    sampleWilsonLowerBound: refreshed.wilsonLowerBound,
+    sampleReliabilityOld: refreshed.sampleReliability,
+
+    dashboardBalancedScore: refreshed.balancedScore
+  };
+}
+
+export function normalizeDashboardSummary(summary = {}) {
+  return {
+    ...summary,
+    bestBalanced: summary.bestBalanced
+      ? normalizeDashboardMicro(summary.bestBalanced)
+      : null,
+    bestTotalR: summary.bestTotalR
+      ? normalizeDashboardMicro(summary.bestTotalR)
+      : null,
+    bestWinrate: summary.bestWinrate
+      ? normalizeDashboardMicro(summary.bestWinrate)
+      : null,
+    lowestDirectSL: summary.lowestDirectSL
+      ? normalizeDashboardMicro(summary.lowestDirectSL)
+      : null
+  };
+}
+
 function sortById(a, b) {
   return String(a.microFamilyId || '').localeCompare(String(b.microFamilyId || ''));
 }
 
 function compareWinrate(a, b) {
   return (
-    safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
-    safeNumber(b.wilsonLowerBound, 0) - safeNumber(a.wilsonLowerBound, 0) ||
-    safeNumber(b.bayesianWinrate, 0) - safeNumber(a.bayesianWinrate, 0) ||
-    safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
-    safeNumber(b.winrate, 0) - safeNumber(a.winrate, 0) ||
-    safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
-    safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    b.fairWinrate - a.fairWinrate ||
+    b.wilsonLowerBound - a.wilsonLowerBound ||
+    b.bayesianWinrate - a.bayesianWinrate ||
+    b.winrateSample - a.winrateSample ||
+    b.winrate - a.winrate ||
+    b.totalR - a.totalR ||
+    b.avgR - a.avgR ||
     sortById(a, b)
   );
 }
 
 function compareAvgR(a, b) {
   return (
-    safeNumber(b.avgRScore, 0) - safeNumber(a.avgRScore, 0) ||
-    safeNumber(b.sampleAdjustedAvgR, 0) - safeNumber(a.sampleAdjustedAvgR, 0) ||
-    safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
-    safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
-    safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
-    safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    b.avgRScore - a.avgRScore ||
+    b.sampleAdjustedAvgR - a.sampleAdjustedAvgR ||
+    b.winrateSample - a.winrateSample ||
+    b.fairWinrate - a.fairWinrate ||
+    b.totalR - a.totalR ||
+    b.avgR - a.avgR ||
     sortById(a, b)
   );
 }
 
 function compareBalanced(a, b) {
   return (
-    safeNumber(b.balancedScore, 0) - safeNumber(a.balancedScore, 0) ||
+    b.balancedScore - a.balancedScore ||
     compareWinrate(a, b)
   );
 }
@@ -1005,7 +1053,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
     if (mode === 'totalR') {
       return (
-        safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
+        b.totalR - a.totalR ||
         compareWinrate(a, b)
       );
     }
@@ -1016,16 +1064,16 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
     if (mode === 'directSL') {
       return (
-        safeNumber(a.directSLPct, 0) - safeNumber(b.directSLPct, 0) ||
-        safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
+        a.directSLPct - b.directSLPct ||
+        b.winrateSample - a.winrateSample ||
         compareBalanced(a, b)
       );
     }
 
     if (mode === 'observed') {
       return (
-        safeNumber(b.seen, 0) - safeNumber(a.seen, 0) ||
-        safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
+        b.seen - a.seen ||
+        b.winrateSample - a.winrateSample ||
         compareBalanced(a, b)
       );
     }
@@ -1033,7 +1081,5 @@ export function rankMicros(micros = {}, mode = 'balanced') {
     return compareBalanced(a, b);
   });
 
-  return sorted.map((row, index) => {
-    return normalizeMicroFamilyDashboardRow(row, index + 1);
-  });
+  return sorted.map((row, index) => normalizeDashboardMicro(row, index + 1));
 }
