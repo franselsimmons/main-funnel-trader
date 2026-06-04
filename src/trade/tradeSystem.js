@@ -53,6 +53,35 @@ function now() {
   return Date.now();
 }
 
+function tradeConfig() {
+  return {
+    maxCandidatesPerSnapshot: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.maxCandidatesPerSnapshot, 80))),
+    maxSnapshotAgeSec: safeNumber(CONFIG.trade?.maxSnapshotAgeSec, 8 * 60),
+    dataConcurrency: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.dataConcurrency, 5))),
+    maxOpenPositions: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.maxOpenPositions, 30))),
+    maxOpenSameSide: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.maxOpenSameSide, 15))),
+    maxSpreadPct: safeNumber(CONFIG.trade?.maxSpreadPct, 0.015),
+    candleTtlSec: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.candleTtlSec, 90))),
+    orderbookTtlSec: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.orderbookTtlSec, 12))),
+    fundingTtlSec: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.fundingTtlSec, 120)))
+  };
+}
+
+function analyzeConfig() {
+  return {
+    shadowEnabled: CONFIG.analyze?.shadowEnabled !== false,
+    shadowHorizonMin: safeNumber(CONFIG.analyze?.shadowHorizonMin, 6 * 60),
+    maxShadowMonitorsPerRun: Math.max(1, Math.floor(safeNumber(CONFIG.analyze?.maxShadowMonitorsPerRun, 80)))
+  };
+}
+
+function sizingConfig() {
+  return {
+    enabled: CONFIG.sizing?.enabled !== false,
+    baseRiskPct: safeNumber(CONFIG.sizing?.baseRiskPct, 0.0025)
+  };
+}
+
 function actionCounts(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
@@ -121,6 +150,8 @@ async function cachedVolatile(key, ttlSec, fn) {
 }
 
 async function fetchLiveCandidateData(candidate) {
+  const cfg = tradeConfig();
+
   const normalized = normalizeCandidate(candidate);
   const symbol = normalized.contractSymbol;
 
@@ -143,25 +174,25 @@ async function fetchLiveCandidateData(candidate) {
   const [rawOrderBook, funding, candles15m, candles1h] = await Promise.all([
     cachedVolatile(
       KEYS.live.cache(symbol, 'ob'),
-      CONFIG.trade.orderbookTtlSec,
+      cfg.orderbookTtlSec,
       () => fetchOrderBook(symbol)
     ).catch(() => null),
 
     cachedVolatile(
       KEYS.live.cache(symbol, 'funding'),
-      CONFIG.trade.fundingTtlSec,
+      cfg.fundingTtlSec,
       () => fetchFunding(symbol)
     ).catch(() => ({ rate: 0, fetchFailed: true })),
 
     cachedVolatile(
       KEYS.live.cache(symbol, 'c15'),
-      CONFIG.trade.candleTtlSec,
+      cfg.candleTtlSec,
       () => fetchCandles(symbol, '15m', 100)
     ).catch(() => []),
 
     cachedVolatile(
       KEYS.live.cache(symbol, 'c1h'),
-      CONFIG.trade.candleTtlSec,
+      cfg.candleTtlSec,
       () => fetchCandles(symbol, '1h', 100)
     ).catch(() => [])
   ]);
@@ -178,13 +209,14 @@ async function fetchLiveCandidateData(candidate) {
 }
 
 async function fetchMidPrice(symbol) {
+  const cfg = tradeConfig();
   const contractSymbol = normalizeContractSymbol(symbol);
 
   if (!contractSymbol) return 0;
 
   const rawOrderBook = await cachedVolatile(
     KEYS.live.cache(contractSymbol, 'ob'),
-    CONFIG.trade.orderbookTtlSec,
+    cfg.orderbookTtlSec,
     () => fetchOrderBook(contractSymbol)
   ).catch(() => null);
 
@@ -212,15 +244,17 @@ function getWeeklyStats(activeRotation, microFamilyId) {
 }
 
 function validateExposure(openPositions, side) {
+  const cfg = tradeConfig();
+
   const rows = Array.isArray(openPositions) ? openPositions : [];
   const tradeSide = sideToTradeSide(side);
 
-  if (rows.length >= CONFIG.trade.maxOpenPositions) {
+  if (rows.length >= cfg.maxOpenPositions) {
     return {
       ok: false,
       reason: 'MAX_OPEN_POSITIONS',
       count: rows.length,
-      cap: CONFIG.trade.maxOpenPositions
+      cap: cfg.maxOpenPositions
     };
   }
 
@@ -228,13 +262,13 @@ function validateExposure(openPositions, side) {
     sideToTradeSide(position.side) === tradeSide
   )).length;
 
-  if (sameSide >= CONFIG.trade.maxOpenSameSide) {
+  if (sameSide >= cfg.maxOpenSameSide) {
     return {
       ok: false,
       reason: 'MAX_OPEN_SAME_SIDE',
       side: tradeSide,
       count: sameSide,
-      cap: CONFIG.trade.maxOpenSameSide
+      cap: cfg.maxOpenSameSide
     };
   }
 
@@ -279,6 +313,8 @@ function detectShadowExit(shadow, price) {
 }
 
 async function monitorOneShadowPosition(redis, key) {
+  const cfg = analyzeConfig();
+
   const shadow = await getJson(redis, key, null);
 
   if (!shadow || shadow.status !== 'OPEN') {
@@ -302,7 +338,7 @@ async function monitorOneShadowPosition(redis, key) {
       key,
       shadow,
       {
-        ex: Math.ceil(CONFIG.analyze.shadowHorizonMin * 60 * 1.2)
+        ex: Math.ceil(cfg.shadowHorizonMin * 60 * 1.2)
       }
     );
 
@@ -326,21 +362,23 @@ async function monitorOneShadowPosition(redis, key) {
 }
 
 async function monitorShadowPositions() {
-  if (!CONFIG.analyze.shadowEnabled) return [];
+  const cfg = analyzeConfig();
+
+  if (!cfg.shadowEnabled) return [];
 
   const redis = getDurableRedis();
 
   const keys = await getKeys(
     redis,
     KEYS.analyze.shadowOpenPattern,
-    CONFIG.analyze.maxShadowMonitorsPerRun
+    cfg.maxShadowMonitorsPerRun
   );
 
   if (!keys.length) return [];
 
   const results = await mapConcurrent(
     keys,
-    CONFIG.trade.dataConcurrency || 5,
+    tradeConfig().dataConcurrency,
     (key) => monitorOneShadowPosition(redis, key)
   );
 
@@ -348,6 +386,7 @@ async function monitorShadowPositions() {
 }
 
 async function processCandidate(candidate) {
+  const cfg = tradeConfig();
   const normalized = normalizeCandidate(candidate);
 
   if (!normalized.symbol || !normalized.contractSymbol) {
@@ -369,11 +408,11 @@ async function processCandidate(candidate) {
     };
   }
 
-  if (safeNumber(data.ob.spreadPct, 0) > CONFIG.trade.maxSpreadPct) {
+  if (safeNumber(data.ob.spreadPct, 0) > cfg.maxSpreadPct) {
     return {
       action: waitAction(normalized, 'SPREAD_TOO_WIDE', {
         spreadPct: data.ob.spreadPct,
-        maxSpreadPct: CONFIG.trade.maxSpreadPct
+        maxSpreadPct: cfg.maxSpreadPct
       }),
       metrics: null
     };
@@ -412,10 +451,32 @@ async function processCandidate(candidate) {
     risk
   });
 
+  if (!metrics) {
+    return {
+      action: waitAction(normalized, 'LIVE_METRICS_FAILED'),
+      metrics: null
+    };
+  }
+
   return {
     action: null,
     metrics
   };
+}
+
+async function safeProcessCandidate(candidate) {
+  try {
+    return await processCandidate(candidate);
+  } catch (error) {
+    const normalized = normalizeCandidate(candidate);
+
+    return {
+      action: waitAction(normalized, 'CANDIDATE_PROCESS_ERROR', {
+        error: error?.message || String(error)
+      }),
+      metrics: null
+    };
+  }
 }
 
 async function saveRunMeta(result) {
@@ -424,6 +485,7 @@ async function saveRunMeta(result) {
   const completedAt = now();
 
   const finalResult = {
+    ok: true,
     ...result,
     completedAt,
     durationMs: completedAt - safeNumber(result.startedAt, completedAt),
@@ -440,6 +502,9 @@ async function saveRunMeta(result) {
 }
 
 export async function runTradeSystem(options = {}) {
+  const cfg = tradeConfig();
+  const sizing = sizingConfig();
+
   const durableRedis = getDurableRedis();
 
   const runId = randomId('trade_run');
@@ -468,7 +533,7 @@ export async function runTradeSystem(options = {}) {
 
   const snapshotAgeSec = (now() - safeNumber(snapshot.createdAt, 0)) / 1000;
 
-  if (snapshotAgeSec > CONFIG.trade.maxSnapshotAgeSec) {
+  if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
     return saveRunMeta({
       runId,
       startedAt,
@@ -507,7 +572,7 @@ export async function runTradeSystem(options = {}) {
   const activeSet = new Set(activeRotation?.microFamilyIds || []);
 
   const candidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
-    .slice(0, CONFIG.trade.maxCandidatesPerSnapshot)
+    .slice(0, cfg.maxCandidatesPerSnapshot)
     .map((candidate) => ({
       ...candidate,
       btcState: snapshot.btcState,
@@ -516,8 +581,8 @@ export async function runTradeSystem(options = {}) {
 
   const processed = await mapConcurrent(
     candidates,
-    CONFIG.trade.dataConcurrency,
-    processCandidate
+    cfg.dataConcurrency,
+    safeProcessCandidate
   );
 
   const earlyActions = processed
@@ -585,9 +650,9 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
-    const riskFraction = CONFIG.sizing.enabled
+    const riskFraction = sizing.enabled
       ? riskFractionForEntry({ weeklyStats })
-      : CONFIG.sizing.baseRiskPct;
+      : sizing.baseRiskPct;
 
     const riskCaps = checkRiskCaps({
       openPositions,
