@@ -11,6 +11,7 @@ async function main() {
     console.log(JSON.stringify({
       ok: result?.ok !== false,
       source: 'CLI_RUN_SCANNER',
+      argv: process.argv.slice(2),
       durationMs: Date.now() - startedAt,
       result
     }, null, 2));
@@ -20,6 +21,7 @@ async function main() {
     console.error(JSON.stringify({
       ok: false,
       source: 'CLI_RUN_SCANNER',
+      argv: process.argv.slice(2),
       error: error?.message || String(error),
       stack: error?.stack,
       durationMs: Date.now() - startedAt
