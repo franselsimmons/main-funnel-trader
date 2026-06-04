@@ -21,6 +21,7 @@ function now() {
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [])
+      .flatMap((value) => Array.isArray(value) ? value : [value])
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -87,8 +88,20 @@ function allowManualBelowMinCompleted() {
   return Boolean(CONFIG.rotation?.allowManualBelowMinCompleted);
 }
 
+function allowSoftRotationFallback() {
+  return CONFIG.rotation?.allowSoftRotationFallback !== false;
+}
+
 function rowId(row = {}) {
   return String(row.microFamilyId || row.id || '').toUpperCase();
+}
+
+function idLooksLikeMicroFamily(id = '') {
+  return String(id || '').toUpperCase().startsWith('MICRO_');
+}
+
+function idLooksLikeSimpleMacroFamily(id = '') {
+  return /^(LONG|SHORT)_\d+$/i.test(String(id || '').trim());
 }
 
 function hasSchemaInId(id, schema) {
@@ -127,6 +140,14 @@ function rowSchema(row = {}) {
   );
 }
 
+function hasParentMacro(row = {}) {
+  return Boolean(
+    row.parentMacroFamilyId ||
+    row.parentMicroFamilyId ||
+    row.macroFamilyId
+  );
+}
+
 export function isTrueMicroFamily(row = {}) {
   const { microSchema, macroSchema } = schemaMeta();
 
@@ -135,21 +156,27 @@ export function isTrueMicroFamily(row = {}) {
   const version = String(row.version || '').toUpperCase();
 
   if (!row || !id) return false;
+  if (row.isLegacyMacro === true) return false;
+  if (row.trueMicro === true || row.isTrueMicro === true) return true;
   if (version.includes('MACRO')) return false;
+
+  // Belangrijk:
+  // MF_V1 kan in jouw data al een echte true micro zijn.
+  // De oude macro bucket is dan meestal SHORT_15 / LONG_33,
+  // terwijl true micro IDs met MICRO_ beginnen.
+  if (idLooksLikeMicroFamily(id)) return true;
 
   if (schema === microSchema) return true;
   if (hasSchemaInId(id, microSchema)) return true;
   if (definitionHasSchema(row, microSchema)) return true;
 
+  if (hasParentMacro(row) && !idLooksLikeSimpleMacroFamily(id)) return true;
+
   if (schema === macroSchema) return false;
   if (hasSchemaInId(id, macroSchema)) return false;
   if (definitionHasSchema(row, macroSchema)) return false;
 
-  return Boolean(
-    row.parentMacroFamilyId ||
-    row.parentMicroFamilyId ||
-    row.macroFamilyId
-  );
+  return false;
 }
 
 export function isLegacyMacroFamily(row = {}) {
@@ -162,7 +189,9 @@ export function isLegacyMacroFamily(row = {}) {
   if (!row || !id) return false;
   if (isTrueMicroFamily(row)) return false;
 
+  if (row.isLegacyMacro === true) return true;
   if (version.includes('MACRO')) return true;
+  if (idLooksLikeSimpleMacroFamily(id)) return true;
   if (schema === macroSchema) return true;
   if (hasSchemaInId(id, macroSchema)) return true;
   if (definitionHasSchema(row, macroSchema)) return true;
@@ -171,22 +200,32 @@ export function isLegacyMacroFamily(row = {}) {
 }
 
 function isKnownTrueMicroId(id = '') {
-  const { microSchema, macroSchema } = schemaMeta();
   const value = String(id || '').toUpperCase();
 
   if (!value) return false;
-  if (hasSchemaInId(value, macroSchema)) return false;
 
-  return hasSchemaInId(value, microSchema);
+  return idLooksLikeMicroFamily(value);
 }
 
 function parentMacroFamilyId(row = {}) {
-  return String(
+  const direct = String(
     row.parentMacroFamilyId ||
     row.parentMicroFamilyId ||
     row.macroFamilyId ||
     ''
   ).trim();
+
+  if (direct) return direct;
+
+  const familyId = String(row.familyId || '').trim();
+
+  if (familyId) return familyId;
+
+  const id = String(row.microFamilyId || row.id || '').trim();
+
+  if (idLooksLikeSimpleMacroFamily(id)) return id;
+
+  return '';
 }
 
 function microSide(row = {}) {
@@ -199,7 +238,12 @@ function microSide(row = {}) {
   if (familyId.startsWith('LONG_')) return 'LONG';
   if (familyId.startsWith('SHORT_')) return 'SHORT';
 
-  const microId = String(row.microFamilyId || '').toUpperCase();
+  const macroId = String(parentMacroFamilyId(row) || '').toUpperCase();
+
+  if (macroId.startsWith('LONG_')) return 'LONG';
+  if (macroId.startsWith('SHORT_')) return 'SHORT';
+
+  const microId = String(row.microFamilyId || row.id || '').toUpperCase();
 
   if (microId.includes('MICRO_LONG_')) return 'LONG';
   if (microId.includes('MICRO_SHORT_')) return 'SHORT';
@@ -220,10 +264,31 @@ function isEligible(row = {}) {
   return safeNumber(row.completed, 0) >= minWeightedCompleted();
 }
 
+function isSoftEligible(row = {}) {
+  if (!allowSoftRotationFallback()) return false;
+  if (!isTrueMicroFamily(row)) return false;
+  if (!['LONG', 'SHORT'].includes(microSide(row))) return false;
+
+  const completed = safeNumber(row.completed, 0);
+  const balancedScore = safeNumber(
+    row.balancedScore ?? row.dashboardBalancedScore,
+    0
+  );
+
+  if (completed <= 0) return false;
+  if (balancedScore <= 0) return false;
+
+  return (
+    safeNumber(row.avgR, 0) > 0 ||
+    safeNumber(row.totalR, 0) > 0 ||
+    safeNumber(row.fairWinrate, 0) > 0
+  );
+}
+
 function isManualEligible(row = {}) {
   if (allowManualBelowMinCompleted()) return true;
 
-  return isEligible(row);
+  return isEligible(row) || isSoftEligible(row);
 }
 
 function compactRotationRow(row = {}, rank = 0) {
@@ -338,7 +403,7 @@ function compactRotationRow(row = {}, rank = 0) {
   };
 }
 
-function selectTopPerSide(ranked, topN) {
+function selectTopPerSide(ranked, topN, existing = []) {
   const safeTopN = Math.max(1, Number(topN) || 10);
   const macroCap = maxPerMacroFamily();
 
@@ -350,9 +415,30 @@ function selectTopPerSide(ranked, topN) {
   const countsByMacro = {};
   const selected = [];
 
+  for (const row of existing) {
+    const side = microSide(row);
+    const macroId = parentMacroFamilyId(row);
+
+    if (['LONG', 'SHORT'].includes(side)) {
+      countsBySide[side] += 1;
+    }
+
+    if (macroId) {
+      countsByMacro[macroId] = (countsByMacro[macroId] || 0) + 1;
+    }
+
+    selected.push(row);
+  }
+
+  const selectedIds = new Set(
+    selected.map((row) => row.microFamilyId).filter(Boolean)
+  );
+
   for (const row of ranked) {
+    const id = String(row.microFamilyId || '').trim();
     const side = microSide(row);
 
+    if (!id || selectedIds.has(id)) continue;
     if (!['LONG', 'SHORT'].includes(side)) continue;
     if (countsBySide[side] >= safeTopN) continue;
 
@@ -367,10 +453,55 @@ function selectTopPerSide(ranked, topN) {
     }
 
     countsBySide[side] += 1;
+    selectedIds.add(id);
     selected.push(row);
   }
 
   return selected;
+}
+
+function selectRotationCandidates(rankedCandidates = []) {
+  const hardEligible = rankedCandidates.filter(isEligible);
+  const softEligible = rankedCandidates.filter(isSoftEligible);
+
+  let selected = selectTopPerSide(
+    hardEligible,
+    topNPerSide()
+  );
+
+  const selectedSides = new Set(
+    selected.map((row) => microSide(row)).filter((side) => side !== 'UNKNOWN')
+  );
+
+  if (allowSoftRotationFallback()) {
+    const missingSideRows = softEligible.filter((row) => {
+      const side = microSide(row);
+
+      if (!['LONG', 'SHORT'].includes(side)) return false;
+
+      return !selectedSides.has(side);
+    });
+
+    selected = selectTopPerSide(
+      missingSideRows,
+      1,
+      selected
+    );
+  }
+
+  if (selected.length === 0 && allowSoftRotationFallback()) {
+    selected = selectTopPerSide(
+      softEligible,
+      topNPerSide()
+    );
+  }
+
+  return {
+    selected,
+    eligible: hardEligible,
+    softEligible,
+    usedSoftFallback: selected.some((row) => !isEligible(row))
+  };
 }
 
 function filterRankedRows(rows = [], filter = 'trueMicro') {
@@ -456,6 +587,10 @@ function countByPredicate(micros = {}, predicate) {
   return Object.values(micros || {}).filter(predicate).length;
 }
 
+function bestBySide(rows = [], side) {
+  return rows.find((row) => microSide(row) === side) || null;
+}
+
 function buildEmptyRotation({
   weekKey,
   activeWeekKey,
@@ -463,6 +598,7 @@ function buildEmptyRotation({
   micros,
   ranked,
   eligible,
+  softEligible = [],
   emptyReason = 'NO_TRUE_MICRO_FAMILIES_MET_MIN_WEIGHTED_COMPLETED'
 }) {
   const indexes = buildSelectionIndexes([]);
@@ -484,12 +620,14 @@ function buildEmptyRotation({
 
     trueMicroOnly: !allowLegacyMacroActivation(),
     usedLegacyFallback: false,
+    usedSoftFallback: false,
 
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
     maxPerMacroFamily: maxPerMacroFamily(),
 
     eligibleCount: eligible?.length || 0,
+    softEligibleCount: softEligible?.length || 0,
     rankedCount: ranked.length,
     microCount: Object.keys(micros || {}).length,
     trueMicroCount: countByPredicate(micros, isTrueMicroFamily),
@@ -497,6 +635,9 @@ function buildEmptyRotation({
 
     empty: true,
     emptyReason,
+
+    bestLong: null,
+    bestShort: null,
 
     microFamilyIds: indexes.microFamilyIds,
     macroFamilyIds: indexes.macroFamilyIds,
@@ -530,8 +671,12 @@ export async function buildRotationFromWeek({
     usedLegacyFallback = true;
   }
 
-  const eligible = rankedCandidates.filter(isEligible);
-  const selected = selectTopPerSide(eligible, topNPerSide());
+  const {
+    selected,
+    eligible,
+    softEligible,
+    usedSoftFallback
+  } = selectRotationCandidates(rankedCandidates);
 
   if (selected.length === 0) {
     return buildEmptyRotation({
@@ -541,6 +686,7 @@ export async function buildRotationFromWeek({
       micros,
       ranked: rankedCandidates,
       eligible,
+      softEligible,
       emptyReason: rankedTrueMicros.length === 0
         ? 'NO_TRUE_MICRO_FAMILIES_FOUND'
         : 'NO_TRUE_MICRO_FAMILIES_MET_MIN_WEIGHTED_COMPLETED'
@@ -570,12 +716,14 @@ export async function buildRotationFromWeek({
 
     trueMicroOnly: !usedLegacyFallback,
     usedLegacyFallback,
+    usedSoftFallback,
 
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
     maxPerMacroFamily: maxPerMacroFamily(),
 
     eligibleCount: eligible.length,
+    softEligibleCount: softEligible.length,
     rankedCount: rankedCandidates.length,
     allRankedCount: rankedAll.length,
     microCount: Object.keys(micros || {}).length,
@@ -584,6 +732,9 @@ export async function buildRotationFromWeek({
 
     empty: false,
     emptyReason: null,
+
+    bestLong: bestBySide(microFamilies, 'LONG'),
+    bestShort: bestBySide(microFamilies, 'SHORT'),
 
     microFamilyIds: indexes.microFamilyIds,
     macroFamilyIds: indexes.macroFamilyIds,
@@ -608,7 +759,6 @@ export async function freezeWeeklyRotation({
 
   const micros = await getWeekMicros(weekKey);
 
-  // Force refresh current week stats before building next rotation.
   await saveWeekMicros(weekKey, micros);
 
   const rotation = await buildRotationFromWeek({
@@ -634,8 +784,11 @@ export async function freezeWeeklyRotation({
       rotationId: rotation.rotationId,
       trueMicroOnly: rotation.trueMicroOnly,
       usedLegacyFallback: rotation.usedLegacyFallback,
+      usedSoftFallback: rotation.usedSoftFallback,
       selectedMicroFamilies: rotation.microFamilyIds.length,
-      selectedMacroFamilies: rotation.macroFamilyIds.length
+      selectedMacroFamilies: rotation.macroFamilyIds.length,
+      bestLong: rotation.bestLong?.microFamilyId || null,
+      bestShort: rotation.bestShort?.microFamilyId || null
     }
   );
 
@@ -655,6 +808,9 @@ export async function freezeWeeklyRotation({
     selectedMacroFamilies: rotation.macroFamilyIds.length,
     trueMicroOnly: rotation.trueMicroOnly,
     usedLegacyFallback: rotation.usedLegacyFallback,
+    usedSoftFallback: rotation.usedSoftFallback,
+    bestLong: rotation.bestLong,
+    bestShort: rotation.bestShort,
     rotation
   };
 }
@@ -669,7 +825,9 @@ function sanitizeActiveRotation(rotation = {}) {
 
     return {
       ...rotation,
-      ...indexes
+      ...indexes,
+      bestLong: rotation.bestLong || bestBySide(rows, 'LONG'),
+      bestShort: rotation.bestShort || bestBySide(rows, 'SHORT')
     };
   }
 
@@ -692,6 +850,9 @@ function sanitizeActiveRotation(rotation = {}) {
     activeMacroFamilyIds: indexes.activeMacroFamilyIds,
     microToMacroFamilyId: indexes.microToMacroFamilyId,
     macroToMicroFamilyIds: indexes.macroToMicroFamilyIds,
+
+    bestLong: bestBySide(trueRows, 'LONG'),
+    bestShort: bestBySide(trueRows, 'SHORT'),
 
     empty: trueRows.length === 0,
     emptyReason: trueRows.length === 0
@@ -739,7 +900,9 @@ export async function activateNextRotation() {
     rotationId: active.rotationId,
     activatedCount: active.microFamilyIds?.length || 0,
     activatedMacroCount: active.macroFamilyIds?.length || 0,
-    trueMicroOnly: active.trueMicroOnly
+    trueMicroOnly: active.trueMicroOnly,
+    bestLong: active.bestLong,
+    bestShort: active.bestShort
   };
 }
 
@@ -979,6 +1142,7 @@ export async function activateSelectedMicroFamilies({
 
     trueMicroOnly: !allowLegacyMacroActivation(),
     usedLegacyFallback: false,
+    usedSoftFallback: false,
 
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
@@ -992,6 +1156,9 @@ export async function activateSelectedMicroFamilies({
     requestedMicroFamilyIds: requestedIds,
     ignoredRequestedIds: ignoredIds,
     expandedFromMacro,
+
+    bestLong: bestBySide(microFamilies, 'LONG'),
+    bestShort: bestBySide(microFamilies, 'SHORT'),
 
     microFamilyIds: indexes.microFamilyIds,
     macroFamilyIds: indexes.macroFamilyIds,
@@ -1044,6 +1211,11 @@ export async function getRotationDashboard() {
     nextMicroToMacroFamilyId: next?.microToMacroFamilyId || {},
 
     activeMacroToMicroFamilyIds: active?.macroToMicroFamilyIds || {},
-    nextMacroToMicroFamilyIds: next?.macroToMicroFamilyIds || {}
+    nextMacroToMicroFamilyIds: next?.macroToMicroFamilyIds || {},
+
+    bestLong: active?.bestLong || null,
+    bestShort: active?.bestShort || null,
+    nextBestLong: next?.bestLong || null,
+    nextBestShort: next?.bestShort || null
   };
 }
