@@ -11,8 +11,15 @@ function round4(value) {
   return Number(safeNumber(value, 0).toFixed(4));
 }
 
+function shadowWeight() {
+  const weight = safeNumber(CONFIG.analyze?.shadowWeight, 0.35);
+
+  return clamp(weight, 0, 1);
+}
+
 function inc(obj, key, amount = 1) {
   const k = String(key || 'UNKNOWN').toUpperCase();
+
   obj[k] = safeNumber(obj[k], 0) + amount;
 }
 
@@ -33,6 +40,8 @@ export function createMicroStats({
   side,
   definitionParts = []
 } = {}) {
+  const ts = now();
+
   return {
     microFamilyId,
     familyId,
@@ -63,6 +72,7 @@ export function createMicroStats({
     realTotalR: 0,
     shadowTotalR: 0,
 
+    // Backward-compatible names. These represent positive/negative NET R buckets.
     grossWinR: 0,
     grossLossR: 0,
 
@@ -99,6 +109,7 @@ export function createMicroStats({
     nearTpPct: 0,
     reachedHalfRPct: 0,
     reachedOneRPct: 0,
+
     beWouldExitPct: 0,
     gaveBackAfterHalfRPct: 0,
     gaveBackAfterOneRPct: 0,
@@ -109,8 +120,8 @@ export function createMicroStats({
     examples: [],
     recentOutcomes: [],
 
-    createdAt: now(),
-    updatedAt: now()
+    createdAt: ts,
+    updatedAt: ts
   };
 }
 
@@ -123,12 +134,21 @@ function ensureStatsShape(stats = {}) {
   stats.counters.regime ||= {};
   stats.counters.scannerReason ||= {};
 
-  stats.examples ||= [];
-  stats.recentOutcomes ||= [];
+  stats.examples = Array.isArray(stats.examples) ? stats.examples : [];
+  stats.recentOutcomes = Array.isArray(stats.recentOutcomes) ? stats.recentOutcomes : [];
+
+  stats.definitionParts = Array.isArray(stats.definitionParts)
+    ? stats.definitionParts
+    : [];
+
+  stats.definition ||= stats.definitionParts.join(' | ');
 
   stats.grossWinR = safeNumber(stats.grossWinR, 0);
   stats.grossLossR = safeNumber(stats.grossLossR, 0);
   stats.totalCostR = safeNumber(stats.totalCostR, 0);
+
+  stats.createdAt ||= now();
+  stats.updatedAt ||= now();
 
   return stats;
 }
@@ -168,10 +188,10 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
 
   const src = String(source || row.source || 'REAL').toUpperCase();
   const isShadow = src === 'SHADOW';
-  const weight = isShadow ? CONFIG.analyze.shadowWeight : 1;
+  const weight = isShadow ? shadowWeight() : 1;
 
-  const exitR = safeNumber(row.exitR, 0);
-  const pnlPct = safeNumber(row.pnlPct, 0);
+  const exitR = safeNumber(row.exitR ?? row.netR, 0);
+  const pnlPct = safeNumber(row.pnlPct ?? row.netPnlPct, 0);
   const costR = safeNumber(row.costR, 0);
 
   const win = exitR > 0;
@@ -196,7 +216,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
 
   stats.completed =
     safeNumber(stats.realCompleted, 0) +
-    safeNumber(stats.shadowCompleted, 0) * CONFIG.analyze.shadowWeight;
+    safeNumber(stats.shadowCompleted, 0) * shadowWeight();
 
   stats.wins = safeNumber(stats.wins, 0) + (win ? weight : 0);
   stats.losses = safeNumber(stats.losses, 0) + (loss ? weight : 0);
@@ -205,6 +225,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
   stats.totalR = safeNumber(stats.totalR, 0) + exitR * weight;
   stats.totalPnlPct = safeNumber(stats.totalPnlPct, 0) + pnlPct * weight;
 
+  // Backward-compatible field names. These are positive/negative NET R buckets.
   if (win) {
     stats.grossWinR = safeNumber(stats.grossWinR, 0) + exitR * weight;
   }
@@ -229,16 +250,36 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
     source: src,
     symbol: row.symbol || null,
     side: row.side || null,
+
     exitReason: row.exitReason || null,
+
     exitR,
+    netR: safeNumber(row.netR ?? exitR, exitR),
+    grossR: safeNumber(row.grossR, 0),
+
     pnlPct,
+    netPnlPct: safeNumber(row.netPnlPct ?? pnlPct, pnlPct),
+    grossPnlPct: safeNumber(row.grossPnlPct, 0),
+
     costR,
+    costPct: safeNumber(row.costPct, 0),
+
     mfeR: safeNumber(row.mfeR, 0),
     maeR: safeNumber(row.maeR, 0),
+
     directToSL: Boolean(row.directToSL),
     nearTpSeen: Boolean(row.nearTpSeen),
     reachedHalfR: Boolean(row.reachedHalfR),
     reachedOneR: Boolean(row.reachedOneR),
+
+    beArmed: Boolean(row.beArmed),
+    beWouldExit: Boolean(row.beWouldExit),
+    beExitR: safeNumber(row.beExitR, 0),
+
+    gaveBackAfterHalfR: Boolean(row.gaveBackAfterHalfR),
+    gaveBackAfterOneR: Boolean(row.gaveBackAfterOneR),
+    nearTpThenLoss: Boolean(row.nearTpThenLoss),
+
     ts: row.closedAt || row.completedAt || now()
   });
 
@@ -279,7 +320,9 @@ export function bayesianWinrate(wins, completed) {
 }
 
 function fallbackGrossFromRecent(stats) {
-  const outcomes = Array.isArray(stats.recentOutcomes) ? stats.recentOutcomes : [];
+  const outcomes = Array.isArray(stats.recentOutcomes)
+    ? stats.recentOutcomes
+    : [];
 
   const grossWinR = outcomes
     .filter((row) => safeNumber(row.exitR, 0) > 0)
@@ -311,6 +354,7 @@ export function refreshStats(stats) {
   const fair = completed > 0 ? wilson * 0.75 + bayes * 0.25 : 0;
 
   const priorTrades = Math.max(0, safeNumber(CONFIG.rotation.priorTrades, 24));
+
   const sampleReliability = completed > 0
     ? completed / (completed + priorTrades)
     : 0;
@@ -354,12 +398,20 @@ export function refreshStats(stats) {
     ? safeNumber(stats.reachedOneRCount, 0) / completed
     : 0;
 
+  const gaveBackAfterHalfRPct = completed > 0
+    ? safeNumber(stats.gaveBackAfterHalfRCount, 0) / completed
+    : 0;
+
   const gaveBackAfterOneRPct = completed > 0
     ? safeNumber(stats.gaveBackAfterOneRCount, 0) / completed
     : 0;
 
   const nearTpThenLossPct = completed > 0
     ? safeNumber(stats.nearTpThenLossCount, 0) / completed
+    : 0;
+
+  const beWouldExitPct = completed > 0
+    ? safeNumber(stats.beWouldExitCount, 0) / completed
     : 0;
 
   const avgCostR = completed > 0
@@ -402,21 +454,15 @@ export function refreshStats(stats) {
     reachedHalfRPct: round4(reachedHalfRPct),
     reachedOneRPct: round4(reachedOneRPct),
 
-    gaveBackAfterHalfRPct: completed > 0
-      ? round4(safeNumber(stats.gaveBackAfterHalfRCount, 0) / completed)
-      : 0,
-
+    gaveBackAfterHalfRPct: round4(gaveBackAfterHalfRPct),
     gaveBackAfterOneRPct: round4(gaveBackAfterOneRPct),
     nearTpThenLossPct: round4(nearTpThenLossPct),
-
-    beWouldExitPct: completed > 0
-      ? round4(safeNumber(stats.beWouldExitCount, 0) / completed)
-      : 0,
+    beWouldExitPct: round4(beWouldExitPct),
 
     avgCostR: round4(avgCostR),
     balancedScore: round4(balancedScore),
 
-    updatedAt: stats.updatedAt || now()
+    updatedAt: now()
   });
 
   return stats;
