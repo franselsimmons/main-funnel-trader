@@ -27,9 +27,7 @@ function analyzeNumber(key, fallback) {
 }
 
 function shadowWeight() {
-  const weight = analyzeNumber('shadowWeight', 0.35);
-
-  return clamp(weight, 0, 1);
+  return clamp(analyzeNumber('shadowWeight', 0.35), 0, 1);
 }
 
 function priorTrades() {
@@ -104,7 +102,6 @@ function actualOutcomeCounts(stats = {}) {
     };
   }
 
-  // Backward fallback for old stored rows without real/shadow buckets.
   const weightedWins = safeNumber(stats.wins, 0);
   const weightedLosses = safeNumber(stats.losses, 0);
   const weightedFlats = safeNumber(stats.flats, 0);
@@ -212,7 +209,6 @@ export function createMicroStats({
     realTotalR: 0,
     shadowTotalR: 0,
 
-    // Backward-compatible names. These represent positive/negative NET R buckets.
     grossWinR: 0,
     grossLossR: 0,
 
@@ -298,6 +294,8 @@ function ensureStatsShape(stats = {}) {
   stats.sampleAdjustedWinrate = safeNumber(stats.sampleAdjustedWinrate, 0);
   stats.sampleAdjustedAvgR = safeNumber(stats.sampleAdjustedAvgR, 0);
   stats.avgRScore = safeNumber(stats.avgRScore, 0);
+
+  stats.balancedScore = safeNumber(stats.balancedScore, 0);
   stats.dashboardBalancedScore = safeNumber(stats.dashboardBalancedScore, 0);
 
   stats.createdAt ||= now();
@@ -367,7 +365,6 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
     if (flat) stats.realFlats = safeNumber(stats.realFlats, 0) + 1;
   }
 
-  // Weighted completed remains for R/PnL math.
   stats.completed = weightedCompletedCount(stats);
 
   stats.wins = safeNumber(stats.wins, 0) + (win ? weight : 0);
@@ -377,7 +374,6 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
   stats.totalR = safeNumber(stats.totalR, 0) + exitR * weight;
   stats.totalPnlPct = safeNumber(stats.totalPnlPct, 0) + pnlPct * weight;
 
-  // Backward-compatible field names. These are positive/negative NET R buckets.
   if (win) {
     stats.grossWinR = safeNumber(stats.grossWinR, 0) + exitR * weight;
   }
@@ -462,7 +458,6 @@ export function bayesianWinrate(wins, completed) {
 
   const priorN = priorTrades();
   const priorW = priorN * priorWinrate();
-
   const denominator = n + priorN;
 
   return denominator > 0
@@ -505,8 +500,6 @@ function buildBalancedScore({
   avgCostR
 }) {
   const pfNorm = clamp(profitFactor, 0, 10) / 10;
-
-  // Log scaling prevents 1 extreme TP from dominating stable high-sample families.
   const totalRComponent = Math.log1p(positive(totalR)) * 12;
   const avgRComponent = Math.log1p(positive(avgR)) * 8;
 
@@ -576,12 +569,12 @@ export function refreshStats(stats) {
 
   const bayes = bayesianWinrate(winrateSuccesses, winrateSample);
   const wilson = wilsonLowerBound(winrateSuccesses, winrateSample);
+
   const fair = winrateSample > 0
     ? wilson * 0.8 + bayes * 0.15 + rawWinrate * 0.05
     : 0;
 
   const reliability = sampleReliability(winrateSample);
-
   const fallbackGross = fallbackGrossFromRecent(stats);
 
   const grossWinR = safeNumber(stats.grossWinR, 0) > 0
@@ -714,6 +707,7 @@ export function refreshStats(stats) {
     beWouldExitPct: round4(beWouldExitPct),
 
     avgCostR: round4(avgCostR),
+
     balancedScore: round4(balancedScore),
     dashboardBalancedScore: round4(balancedScore),
 
@@ -760,27 +754,35 @@ function compareBalanced(a, b) {
 }
 
 export function rankMicros(micros = {}, mode = 'balanced') {
+  const selectedMode = String(mode || 'balanced').trim();
+
   const rows = Object.values(micros || {})
     .filter(Boolean)
-    .map((row) => refreshStats(row));
+    .map((row) => {
+      const refreshed = refreshStats(row);
+
+      refreshed.dashboardBalancedScore = refreshed.balancedScore;
+
+      return refreshed;
+    });
 
   const sorted = [...rows].sort((a, b) => {
-    if (mode === 'winrate') {
+    if (selectedMode === 'winrate') {
       return compareWinrate(a, b);
     }
 
-    if (mode === 'totalR') {
+    if (selectedMode === 'totalR') {
       return (
         b.totalR - a.totalR ||
         compareWinrate(a, b)
       );
     }
 
-    if (mode === 'avgR') {
+    if (selectedMode === 'avgR') {
       return compareAvgR(a, b);
     }
 
-    if (mode === 'directSL') {
+    if (selectedMode === 'directSL') {
       return (
         a.directSLPct - b.directSLPct ||
         b.winrateSample - a.winrateSample ||
@@ -788,7 +790,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
       );
     }
 
-    if (mode === 'observed') {
+    if (selectedMode === 'observed') {
       return (
         b.seen - a.seen ||
         b.winrateSample - a.winrateSample ||
@@ -801,6 +803,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
   return sorted.map((row, index) => ({
     ...row,
+    dashboardBalancedScore: row.balancedScore,
     rank: index + 1
   }));
 }
