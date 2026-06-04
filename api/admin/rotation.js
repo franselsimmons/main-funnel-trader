@@ -175,11 +175,12 @@ function getFamilyId(row = {}) {
 
 function getMacroFamilyId(row = {}) {
   return (
+    row.parentMacroFamilyId ||
     row.macroFamilyId ||
     row.parentMicroFamilyId ||
     row.parentFamilyId ||
     row.macroId ||
-    row.microFamilyId ||
+    row.familyId ||
     null
   );
 }
@@ -194,6 +195,7 @@ function getDefinitionParts(row = {}) {
 
 function getMacroDefinitionParts(row = {}) {
   if (Array.isArray(row.macroDefinitionParts)) return row.macroDefinitionParts;
+  if (Array.isArray(row.parentDefinitionParts)) return row.parentDefinitionParts;
 
   return [];
 }
@@ -219,6 +221,9 @@ function normalizeRotationRow(row = {}, index = 0) {
     microFamilyId,
     familyId: getFamilyId(row),
     macroFamilyId,
+
+    parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
+    parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
     side: normalizeDashboardSide({
       ...row,
@@ -265,7 +270,7 @@ function normalizeRotationRow(row = {}, index = 0) {
     definition: row.definition || '',
 
     macroDefinitionParts: getMacroDefinitionParts(row),
-    macroDefinition: row.macroDefinition || '',
+    macroDefinition: row.macroDefinition || row.parentDefinition || '',
 
     manualOnly: Boolean(row.manualOnly)
   };
@@ -279,6 +284,7 @@ function microIdsFromRotation(rotation = {}) {
   return normalizeFamilyIds(
     rotation.microFamilyIds,
     rotation.activeMicroFamilyIds,
+    rotation.trueMicroFamilyIds,
     rotation.ids,
     rows.map((row) => row?.microFamilyId)
   );
@@ -297,7 +303,6 @@ function macroIdsFromRotation(rotation = {}, microFamilyIds = []) {
 
   if (macroIds.length > 0) return macroIds;
 
-  // Migratiepad: oude microFamilyId wordt macroFamilyId.
   return normalizeFamilyIds(microFamilyIds);
 }
 
@@ -327,16 +332,30 @@ function normalizeRotation(rotation = {}, fallback = {}) {
     microFamilies.map((row) => row.macroFamilyId)
   );
 
+  const bestLong =
+    base.bestLong ||
+    microFamilies.find((row) => row.tradeSide === 'LONG') ||
+    null;
+
+  const bestShort =
+    base.bestShort ||
+    microFamilies.find((row) => row.tradeSide === 'SHORT') ||
+    null;
+
   return {
     ...base,
 
     microFamilyIds,
     activeMicroFamilyIds: microFamilyIds,
+    trueMicroFamilyIds: microFamilyIds,
 
     macroFamilyIds,
     activeMacroFamilyIds: macroFamilyIds,
 
     microFamilies,
+
+    bestLong,
+    bestShort,
 
     count: microFamilyIds.length || microFamilies.length,
     microCount: microFamilyIds.length || microFamilies.length,
@@ -396,7 +415,13 @@ function normalizeDashboard(dashboard = {}) {
     activeMacroFamilyIds: active.macroFamilyIds,
 
     nextMicroFamilyIds: next.microFamilyIds,
-    nextMacroFamilyIds: next.macroFamilyIds
+    nextMacroFamilyIds: next.macroFamilyIds,
+
+    bestLong: active.bestLong,
+    bestShort: active.bestShort,
+
+    nextBestLong: next.bestLong,
+    nextBestShort: next.bestShort
   };
 }
 
@@ -425,18 +450,17 @@ function selectedIdsFromBody(body = {}) {
   const explicitMicroIds = normalizeFamilyIds(
     body.microFamilyIds,
     body.activeMicroFamilyIds,
+    body.trueMicroFamilyIds,
     body.ids
   );
 
-  // Backwards compatible:
-  // oude admin stuurde microFamilyIds; die IDs zijn nu ook macroFamilyIds.
   const macroFamilyIds = explicitMacroIds.length
     ? explicitMacroIds
-    : explicitMicroIds;
+    : [];
 
   const microFamilyIds = explicitMicroIds.length
     ? explicitMicroIds
-    : explicitMacroIds;
+    : [];
 
   return {
     microFamilyIds,
@@ -459,13 +483,10 @@ function rowMatchesSelection(row, microSet, macroSet) {
 }
 
 function buildManualRow(id, index = 0, type = 'micro') {
-  const microFamilyId = type === 'macro'
-    ? id
-    : id;
-
+  const microFamilyId = id;
   const macroFamilyId = type === 'macro'
     ? id
-    : id;
+    : null;
 
   return normalizeRotationRow({
     rank: index + 1,
@@ -578,9 +599,12 @@ async function persistActiveRotation(active) {
 }
 
 async function activateBestBalanced(body) {
+  // Belangrijk:
+  // "Activate best balanced now" moet de huidige analyse-week pakken.
+  // Anders kijk je naar vorige week en activeer je vaak 0 families.
   const sourceWeekKey = firstValue(
     body.weekKey,
-    getPreviousIsoWeekKey()
+    getIsoWeekKey()
   );
 
   const activeWeekKey = firstValue(
@@ -627,14 +651,21 @@ async function activateBestBalanced(body) {
     activatedMacroCount: active.macroFamilyIds.length,
 
     activeMicroFamilyIds: active.microFamilyIds,
-    activeMacroFamilyIds: active.macroFamilyIds
+    activeMacroFamilyIds: active.macroFamilyIds,
+
+    bestLong: active.bestLong,
+    bestShort: active.bestShort,
+
+    empty: Boolean(active.empty),
+    emptyReason: active.emptyReason || null,
+    usedSoftFallback: Boolean(active.usedSoftFallback)
   };
 }
 
 async function activateSelected(body, forcedType = null) {
   const sourceWeekKey = firstValue(
     body.weekKey,
-    getPreviousIsoWeekKey()
+    getIsoWeekKey()
   );
 
   const activeWeekKey = firstValue(
@@ -644,13 +675,25 @@ async function activateSelected(body, forcedType = null) {
 
   const requested = selectedIdsFromBody(body);
 
-  const microFamilyIds = forcedType === 'macro'
-    ? []
-    : requested.microFamilyIds;
+  let microFamilyIds = requested.microFamilyIds;
+  let macroFamilyIds = requested.macroFamilyIds;
 
-  const macroFamilyIds = forcedType === 'micro'
-    ? requested.microFamilyIds
-    : requested.macroFamilyIds;
+  if (forcedType === 'micro') {
+    microFamilyIds = requested.microFamilyIds;
+    macroFamilyIds = [];
+  }
+
+  if (forcedType === 'macro') {
+    microFamilyIds = [];
+    macroFamilyIds = requested.macroFamilyIds.length
+      ? requested.macroFamilyIds
+      : requested.microFamilyIds;
+  }
+
+  if (forcedType === null && microFamilyIds.length === 0 && macroFamilyIds.length === 0) {
+    macroFamilyIds = requested.microFamilyIds;
+    microFamilyIds = requested.microFamilyIds;
+  }
 
   const hasMicroIds = microFamilyIds.length > 0;
   const hasMacroIds = macroFamilyIds.length > 0;
@@ -721,7 +764,10 @@ async function activateSelected(body, forcedType = null) {
     activatedMacroCount: active.macroFamilyIds.length,
 
     activeMicroFamilyIds: active.microFamilyIds,
-    activeMacroFamilyIds: active.macroFamilyIds
+    activeMacroFamilyIds: active.macroFamilyIds,
+
+    bestLong: active.bestLong,
+    bestShort: active.bestShort
   };
 }
 
