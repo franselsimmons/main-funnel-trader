@@ -15,7 +15,9 @@ const LOCK_TTL_SEC = 180;
 
 const LOCK_KEYS = {
   resetLearning: 'ADMIN:RESET_LEARNING:LOCK',
-  trade: KEYS.trade?.lock || 'TRADE:LOCK'
+  trade: KEYS.trade?.lock || 'TRADE:LOCK',
+  freeze: KEYS.analyze?.freezeLock || 'ANALYZE:WEEKLY_FREEZE_LOCK',
+  activate: KEYS.analyze?.activateLock || 'ANALYZE:ROTATION_ACTIVATE_LOCK'
 };
 
 function methodNotAllowed(res) {
@@ -42,7 +44,9 @@ function parseJson(text) {
 
 async function readBody(req) {
   if (req.body) {
-    if (typeof req.body === 'string') return parseJson(req.body);
+    if (typeof req.body === 'string') return parseJson(req.body.trim());
+    if (Buffer.isBuffer(req.body)) return parseJson(req.body.toString('utf8').trim());
+
     return req.body;
   }
 
@@ -52,7 +56,7 @@ async function readBody(req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  const text = Buffer.concat(chunks).toString('utf8');
+  const text = Buffer.concat(chunks).toString('utf8').trim();
 
   return parseJson(text);
 }
@@ -77,9 +81,7 @@ async function releaseLock(redis, key, token) {
   try {
     const current = await redis.get(key);
 
-    if (current !== token) {
-      return false;
-    }
+    if (current !== token) return false;
 
     await redis.del(key);
 
@@ -89,40 +91,58 @@ async function releaseLock(redis, key, token) {
   }
 }
 
+async function acquireOneLock({ redis, key, token, reason, acquired }) {
+  const ok = await acquireLock(redis, key, token);
+
+  if (!ok) {
+    return {
+      ok: false,
+      reason,
+      acquired
+    };
+  }
+
+  acquired.push(key);
+
+  return {
+    ok: true,
+    acquired
+  };
+}
+
 async function acquireResetLearningLocks(redis, token) {
   const acquired = [];
 
-  const resetAcquired = await acquireLock(
-    redis,
-    LOCK_KEYS.resetLearning,
-    token
-  );
+  const steps = [
+    {
+      key: LOCK_KEYS.resetLearning,
+      reason: 'RESET_LEARNING_ALREADY_RUNNING'
+    },
+    {
+      key: LOCK_KEYS.trade,
+      reason: 'TRADE_RUN_ACTIVE'
+    },
+    {
+      key: LOCK_KEYS.freeze,
+      reason: 'WEEKLY_FREEZE_ACTIVE'
+    },
+    {
+      key: LOCK_KEYS.activate,
+      reason: 'ROTATION_ACTIVATE_ACTIVE'
+    }
+  ];
 
-  if (!resetAcquired) {
-    return {
-      ok: false,
-      reason: 'RESET_LEARNING_ALREADY_RUNNING',
+  for (const step of steps) {
+    const result = await acquireOneLock({
+      redis,
+      key: step.key,
+      token,
+      reason: step.reason,
       acquired
-    };
+    });
+
+    if (!result.ok) return result;
   }
-
-  acquired.push(LOCK_KEYS.resetLearning);
-
-  const tradeAcquired = await acquireLock(
-    redis,
-    LOCK_KEYS.trade,
-    token
-  );
-
-  if (!tradeAcquired) {
-    return {
-      ok: false,
-      reason: 'TRADE_RUN_ACTIVE',
-      acquired
-    };
-  }
-
-  acquired.push(LOCK_KEYS.trade);
 
   return {
     ok: true,
