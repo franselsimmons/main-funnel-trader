@@ -1,9 +1,14 @@
 // ================= FILE: api/admin/micro-families.js =================
 
-import { getIsoWeekKey, getPreviousIsoWeekKey } from '../../src/utils.js';
-import { getWeekMicros } from '../../src/analyze/src/analyzeEngine.js';
-import { rankMicros } from '../../src/analyze/src/scoring.js';
-import { getActiveRotation } from '../../src/analyze/src/rotationEngine.js';
+import {
+  getIsoWeekKey,
+  getPreviousIsoWeekKey,
+  sideToTradeSide,
+  safeNumber
+} from '../../src/utils.js';
+import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
+import { rankMicros } from '../../src/analyze/scoring.js';
+import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 
 const VALID_MODES = new Set([
   'balanced',
@@ -14,9 +19,20 @@ const VALID_MODES = new Set([
   'observed'
 ]);
 
+function methodNotAllowed(res) {
+  res.setHeader('Allow', 'GET');
+
+  return res.status(405).json({
+    ok: false,
+    error: 'METHOD_NOT_ALLOWED',
+    allowed: ['GET']
+  });
+}
+
 function firstQueryValue(value, fallback = null) {
   if (Array.isArray(value)) return value[0] ?? fallback;
   if (value === undefined || value === null || value === '') return fallback;
+
   return value;
 }
 
@@ -29,22 +45,31 @@ function toSafeLimit(value, fallback = 200) {
   return Math.min(Math.floor(n), 1000);
 }
 
-function toNumber(value, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+function num(value, fallback = 0) {
+  return safeNumber(value, fallback);
 }
 
-function normalizeSide(side) {
-  const value = String(side || '').toLowerCase();
-
-  if (value === 'bull' || value === 'long' || value === 'buy') return 'bull';
-  if (value === 'bear' || value === 'short' || value === 'sell') return 'bear';
-
-  return value || 'unknown';
+function round(value, decimals = 4) {
+  return Number(num(value, 0).toFixed(decimals));
 }
 
-function normalizeMicroRow(row, index, activeSet) {
+function normalizeDashboardSide(side) {
+  const tradeSide = sideToTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
+
+  return 'unknown';
+}
+
+function normalizeMicroRow(row = {}, index = 0, activeSet = new Set()) {
   const microFamilyId = row.microFamilyId || row.id || row.key || null;
+  const fairWinrate = num(
+    row.fairWinrate ??
+    row.bayesianWinrate ??
+    row.wilsonLowerBound,
+    0
+  );
 
   return {
     ...row,
@@ -53,67 +78,144 @@ function normalizeMicroRow(row, index, activeSet) {
 
     microFamilyId,
     familyId: row.familyId || row.family || null,
-    side: normalizeSide(row.side),
+    side: normalizeDashboardSide(row.side),
 
     active: microFamilyId ? activeSet.has(microFamilyId) : false,
 
-    seen: toNumber(row.seen),
-    completed: toNumber(row.completed),
-    realCompleted: toNumber(row.realCompleted),
-    shadowCompleted: toNumber(row.shadowCompleted),
+    seen: num(row.seen, 0),
+    observations: num(row.observations, 0),
 
-    wins: toNumber(row.wins),
-    losses: toNumber(row.losses),
-    flats: toNumber(row.flats),
+    completed: round(row.completed, 4),
+    realCompleted: num(row.realCompleted, 0),
+    shadowCompleted: num(row.shadowCompleted, 0),
 
-    winrate: toNumber(row.winrate),
-    bayesianWinrate: toNumber(row.bayesianWinrate),
-    wilsonLowerBound: toNumber(row.wilsonLowerBound),
-    fairWinrate: toNumber(
-      row.fairWinrate ??
-      row.bayesianWinrate ??
-      row.wilsonLowerBound
-    ),
+    wins: round(row.wins, 4),
+    losses: round(row.losses, 4),
+    flats: round(row.flats, 4),
 
-    totalR: toNumber(row.totalR),
-    avgR: toNumber(row.avgR),
-    avgWinR: toNumber(row.avgWinR),
-    avgLossR: toNumber(row.avgLossR),
+    realWins: num(row.realWins, 0),
+    realLosses: num(row.realLosses, 0),
+    shadowWins: num(row.shadowWins, 0),
+    shadowLosses: num(row.shadowLosses, 0),
 
-    totalPnlPct: toNumber(row.totalPnlPct),
-    avgPnlPct: toNumber(row.avgPnlPct),
+    winrate: round(row.winrate, 4),
+    bayesianWinrate: round(row.bayesianWinrate, 4),
+    wilsonLowerBound: round(row.wilsonLowerBound, 4),
+    fairWinrate: round(fairWinrate, 4),
 
-    profitFactor: toNumber(row.profitFactor),
-    directSLPct: toNumber(row.directSLPct),
-    nearTpPct: toNumber(row.nearTpPct),
+    totalR: round(row.totalR, 4),
+    realTotalR: round(row.realTotalR, 4),
+    shadowTotalR: round(row.shadowTotalR, 4),
 
-    avgCostR: toNumber(row.avgCostR),
-    balancedScore: toNumber(row.balancedScore),
+    grossWinR: round(row.grossWinR, 4),
+    grossLossR: round(row.grossLossR, 4),
+
+    avgR: round(row.avgR, 4),
+    avgWinR: round(row.avgWinR, 4),
+    avgLossR: round(row.avgLossR, 4),
+
+    totalPnlPct: round(row.totalPnlPct, 4),
+    avgPnlPct: round(row.avgPnlPct, 4),
+
+    profitFactor: round(row.profitFactor, 4),
+
+    directSLCount: round(row.directSLCount, 4),
+    directSLPct: round(row.directSLPct, 4),
+
+    nearTpCount: round(row.nearTpCount, 4),
+    nearTpPct: round(row.nearTpPct, 4),
+
+    reachedHalfRCount: round(row.reachedHalfRCount, 4),
+    reachedOneRCount: round(row.reachedOneRCount, 4),
+    reachedHalfRPct: round(row.reachedHalfRPct, 4),
+    reachedOneRPct: round(row.reachedOneRPct, 4),
+
+    beWouldExitCount: round(row.beWouldExitCount, 4),
+    beWouldExitPct: round(row.beWouldExitPct, 4),
+
+    gaveBackAfterHalfRCount: round(row.gaveBackAfterHalfRCount, 4),
+    gaveBackAfterOneRCount: round(row.gaveBackAfterOneRCount, 4),
+    gaveBackAfterHalfRPct: round(row.gaveBackAfterHalfRPct, 4),
+    gaveBackAfterOneRPct: round(row.gaveBackAfterOneRPct, 4),
+
+    nearTpThenLossCount: round(row.nearTpThenLossCount, 4),
+    nearTpThenLossPct: round(row.nearTpThenLossPct, 4),
+
+    totalCostR: round(row.totalCostR, 4),
+    avgCostR: round(row.avgCostR, 4),
+
+    sampleReliability: round(row.sampleReliability, 4),
+    balancedScore: round(row.balancedScore, 4),
 
     definition: row.definition || null,
-    definitionParts: Array.isArray(row.definitionParts) ? row.definitionParts : []
+    definitionParts: Array.isArray(row.definitionParts) ? row.definitionParts : [],
+
+    counters: row.counters || {},
+    examples: Array.isArray(row.examples) ? row.examples : [],
+    recentOutcomes: Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [],
+
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function compactBestRow(row) {
+  if (!row) return null;
+
+  return {
+    microFamilyId: row.microFamilyId,
+    familyId: row.familyId,
+    side: row.side,
+    active: Boolean(row.active),
+
+    seen: row.seen,
+    completed: row.completed,
+    realCompleted: row.realCompleted,
+    shadowCompleted: row.shadowCompleted,
+
+    fairWinrate: row.fairWinrate,
+    winrate: row.winrate,
+
+    avgR: row.avgR,
+    totalR: row.totalR,
+    profitFactor: row.profitFactor,
+
+    directSLPct: row.directSLPct,
+    avgCostR: row.avgCostR,
+
+    balancedScore: row.balancedScore
   };
 }
 
 function buildSummary(rows, activeSet) {
-  const completedRows = rows.filter((row) => toNumber(row.completed) > 0);
-  const tradableRows = rows.filter((row) => toNumber(row.completed) >= 5);
+  const completedRows = rows.filter((row) => num(row.completed, 0) > 0);
+  const tradableRows = rows.filter((row) => num(row.completed, 0) >= 5);
   const activeRows = rows.filter((row) => activeSet.has(row.microFamilyId));
 
-  const totalR = rows.reduce((sum, row) => sum + toNumber(row.totalR), 0);
-  const totalSeen = rows.reduce((sum, row) => sum + toNumber(row.seen), 0);
-  const totalCompleted = rows.reduce((sum, row) => sum + toNumber(row.completed), 0);
+  const totalR = rows.reduce((sum, row) => sum + num(row.totalR, 0), 0);
+  const totalSeen = rows.reduce((sum, row) => sum + num(row.seen, 0), 0);
+  const totalCompleted = rows.reduce((sum, row) => sum + num(row.completed, 0), 0);
+  const totalCostR = rows.reduce((sum, row) => sum + num(row.totalCostR, 0), 0);
 
   const bestBalanced = [...rows].sort((a, b) => {
-    return toNumber(b.balancedScore) - toNumber(a.balancedScore);
+    return num(b.balancedScore, 0) - num(a.balancedScore, 0);
   })[0] || null;
 
   const bestTotalR = [...rows].sort((a, b) => {
-    return toNumber(b.totalR) - toNumber(a.totalR);
+    return num(b.totalR, 0) - num(a.totalR, 0);
   })[0] || null;
 
   const bestWinrate = [...rows].sort((a, b) => {
-    return toNumber(b.fairWinrate) - toNumber(a.fairWinrate);
+    return (
+      num(b.fairWinrate, 0) - num(a.fairWinrate, 0) ||
+      num(b.completed, 0) - num(a.completed, 0)
+    );
+  })[0] || null;
+
+  const lowestDirectSL = [...rows].sort((a, b) => {
+    return (
+      num(a.directSLPct, 0) - num(b.directSLPct, 0) ||
+      num(b.completed, 0) - num(a.completed, 0)
+    );
   })[0] || null;
 
   return {
@@ -121,52 +223,21 @@ function buildSummary(rows, activeSet) {
     activeRows: activeRows.length,
     activeIds: activeSet.size,
 
-    seen: totalSeen,
-    completed: totalCompleted,
+    seen: round(totalSeen, 4),
+    completed: round(totalCompleted, 4),
 
     completedMicroFamilies: completedRows.length,
     tradableMicroFamilies: tradableRows.length,
 
-    totalR,
+    totalR: round(totalR, 4),
+    totalCostR: round(totalCostR, 4),
+    avgR: totalCompleted > 0 ? round(totalR / totalCompleted, 4) : 0,
+    avgCostR: totalCompleted > 0 ? round(totalCostR / totalCompleted, 4) : 0,
 
-    bestBalanced: bestBalanced
-      ? {
-          microFamilyId: bestBalanced.microFamilyId,
-          familyId: bestBalanced.familyId,
-          side: bestBalanced.side,
-          balancedScore: bestBalanced.balancedScore,
-          completed: bestBalanced.completed,
-          fairWinrate: bestBalanced.fairWinrate,
-          avgR: bestBalanced.avgR,
-          totalR: bestBalanced.totalR
-        }
-      : null,
-
-    bestTotalR: bestTotalR
-      ? {
-          microFamilyId: bestTotalR.microFamilyId,
-          familyId: bestTotalR.familyId,
-          side: bestTotalR.side,
-          totalR: bestTotalR.totalR,
-          completed: bestTotalR.completed,
-          fairWinrate: bestTotalR.fairWinrate,
-          avgR: bestTotalR.avgR,
-          balancedScore: bestTotalR.balancedScore
-        }
-      : null,
-
-    bestWinrate: bestWinrate
-      ? {
-          microFamilyId: bestWinrate.microFamilyId,
-          familyId: bestWinrate.familyId,
-          side: bestWinrate.side,
-          fairWinrate: bestWinrate.fairWinrate,
-          completed: bestWinrate.completed,
-          avgR: bestWinrate.avgR,
-          totalR: bestWinrate.totalR,
-          balancedScore: bestWinrate.balancedScore
-        }
-      : null
+    bestBalanced: compactBestRow(bestBalanced),
+    bestTotalR: compactBestRow(bestTotalR),
+    bestWinrate: compactBestRow(bestWinrate),
+    lowestDirectSL: compactBestRow(lowestDirectSL)
   };
 }
 
@@ -185,6 +256,12 @@ function extractActiveIds(activeRotation) {
     return activeRotation.ids.filter(Boolean);
   }
 
+  if (Array.isArray(activeRotation.microFamilies)) {
+    return activeRotation.microFamilies
+      .map((row) => row.microFamilyId)
+      .filter(Boolean);
+  }
+
   return [];
 }
 
@@ -192,11 +269,7 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
 
   if (req.method !== 'GET') {
-    return res.status(405).json({
-      ok: false,
-      error: 'METHOD_NOT_ALLOWED',
-      allowed: ['GET']
-    });
+    return methodNotAllowed(res);
   }
 
   try {
@@ -205,8 +278,15 @@ export default async function handler(req, res) {
 
     const requestedWeekKey = firstQueryValue(req.query?.weekKey, currentWeekKey);
     const requestedMode = firstQueryValue(req.query?.mode, 'balanced');
-    const mode = VALID_MODES.has(requestedMode) ? requestedMode : 'balanced';
-    const limit = toSafeLimit(firstQueryValue(req.query?.limit, 200), 200);
+
+    const mode = VALID_MODES.has(requestedMode)
+      ? requestedMode
+      : 'balanced';
+
+    const limit = toSafeLimit(
+      firstQueryValue(req.query?.limit, 200),
+      200
+    );
 
     const [micros, activeRotation] = await Promise.all([
       getWeekMicros(requestedWeekKey),
@@ -217,6 +297,7 @@ export default async function handler(req, res) {
     const activeSet = new Set(activeMicroFamilyIds);
 
     const rankedRows = rankMicros(micros || {}, mode);
+
     const normalizedRows = rankedRows
       .slice(0, limit)
       .map((row, index) => normalizeMicroRow(row, index, activeSet));
@@ -251,7 +332,9 @@ export default async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
