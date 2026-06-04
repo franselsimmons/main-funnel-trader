@@ -21,10 +21,12 @@ function isAllowedMethod(method) {
 }
 
 function parseJson(text) {
-  if (!text) return {};
+  const raw = String(text || '').trim();
+
+  if (!raw) return {};
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(raw);
   } catch {
     const error = new Error('INVALID_JSON_BODY');
     error.statusCode = 400;
@@ -48,33 +50,141 @@ async function readBody(req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  const text = Buffer.concat(chunks).toString('utf8');
-
-  return parseJson(text);
+  return parseJson(Buffer.concat(chunks).toString('utf8'));
 }
 
-function getLockTtlSec() {
-  const ttl = Number(CONFIG.trade?.lockTtlSec || 180);
+function firstValue(value, fallback = null) {
+  if (Array.isArray(value)) return value[0] ?? fallback;
+  if (value === undefined || value === null || value === '') return fallback;
 
-  return Number.isFinite(ttl) && ttl > 0 ? ttl : 180;
+  return value;
 }
 
 function isTrue(value) {
   return (
     value === true ||
     value === 'true' ||
+    value === 'TRUE' ||
     value === 1 ||
-    value === '1'
+    value === '1' ||
+    value === 'yes' ||
+    value === 'YES'
   );
+}
+
+function getLockTtlSec() {
+  const ttl = Number(CONFIG.trade?.lockTtlSec || 180);
+
+  return Number.isFinite(ttl) && ttl > 0
+    ? Math.floor(ttl)
+    : 180;
 }
 
 function shouldForceProcessSnapshot(req, body = {}) {
   return (
-    isTrue(req.query?.force) ||
-    isTrue(req.query?.forceProcessSnapshot) ||
+    isTrue(firstValue(req.query?.force, false)) ||
+    isTrue(firstValue(req.query?.forceProcessSnapshot, false)) ||
     isTrue(body.force) ||
     isTrue(body.forceProcessSnapshot)
   );
+}
+
+function getRunSource(req, body = {}) {
+  const manual = (
+    isTrue(firstValue(req.query?.manual, false)) ||
+    isTrue(firstValue(req.query?.force, false)) ||
+    isTrue(firstValue(req.query?.forceProcessSnapshot, false)) ||
+    isTrue(body.manual) ||
+    isTrue(body.force) ||
+    isTrue(body.forceProcessSnapshot)
+  );
+
+  return manual
+    ? 'ADMIN_MANUAL_RUN'
+    : 'CRON_OR_API_RUN';
+}
+
+function unwrapLockResult(lockResult) {
+  return lockResult?.result || lockResult || null;
+}
+
+function responseOk(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  return (
+    lockResult?.ok !== false &&
+    payload?.ok !== false
+  );
+}
+
+function responseSkipped(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  return Boolean(
+    lockResult?.skipped ||
+    payload?.skippedNewEntries ||
+    payload?.skipped ||
+    false
+  );
+}
+
+function responseReason(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  return (
+    lockResult?.reason ||
+    payload?.reason ||
+    null
+  );
+}
+
+function responseRunId(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  return payload?.runId || null;
+}
+
+function responseSnapshotId(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  return payload?.snapshotId || null;
+}
+
+function responseActionCounts(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  return payload?.actionCounts || {};
+}
+
+function responseCounts(lockResult) {
+  const payload = unwrapLockResult(lockResult);
+
+  const actions = Array.isArray(payload?.actions)
+    ? payload.actions
+    : [];
+
+  const realExits = Array.isArray(payload?.realExits)
+    ? payload.realExits
+    : [];
+
+  const shadowExits = Array.isArray(payload?.shadowExits)
+    ? payload.shadowExits
+    : [];
+
+  return {
+    candidates: Number(payload?.candidates || 0),
+    liveRows: Number(payload?.liveRows || 0),
+
+    actions: actions.length || Number(payload?.actionsCount || 0),
+    entries: actions.filter((row) => row?.action === 'ENTRY').length,
+    waits: actions.filter((row) => row?.action === 'WAIT').length,
+
+    realExits: realExits.length || Number(payload?.realExitsCount || 0),
+    shadowExits: shadowExits.length || Number(payload?.shadowExitsCount || 0),
+
+    activeMicroFamilies: Number(payload?.activeMicroFamilies || 0),
+    activeMacroFamilies: Number(payload?.activeMacroFamilies || 0)
+  };
 }
 
 function resolveStatus(error) {
@@ -84,12 +194,19 @@ function resolveStatus(error) {
 
   if (
     error?.reason === 'LOCK_NOT_ACQUIRED' ||
-    error?.message === 'LOCK_NOT_ACQUIRED'
+    error?.message === 'LOCK_NOT_ACQUIRED' ||
+    error?.message?.includes?.('LOCK')
   ) {
     return 409;
   }
 
   return 500;
+}
+
+function buildRunOptions(req, body = {}) {
+  return {
+    forceProcessSnapshot: shouldForceProcessSnapshot(req, body)
+  };
 }
 
 export default async function handler(req, res) {
@@ -103,8 +220,7 @@ export default async function handler(req, res) {
     }
 
     const body = await readBody(req);
-
-    const forceProcessSnapshot = shouldForceProcessSnapshot(req, body);
+    const runOptions = buildRunOptions(req, body);
 
     const redis = getDurableRedis();
     const lockKey = KEYS.trade?.lock || 'TRADE:LOCK';
@@ -114,20 +230,37 @@ export default async function handler(req, res) {
       redis,
       lockKey,
       lockTtlSec,
-      async () => runTradeSystem({ forceProcessSnapshot })
+      async () => runTradeSystem(runOptions)
     );
 
+    const payload = unwrapLockResult(result);
+
     return res.status(200).json({
-      ok: result?.ok !== false,
-      source: forceProcessSnapshot ? 'ADMIN_MANUAL_RUN' : 'CRON_OR_API_RUN',
-      forceProcessSnapshot,
+      ok: responseOk(result),
+      skipped: responseSkipped(result),
+      reason: responseReason(result),
+
+      source: getRunSource(req, body),
+
+      forceProcessSnapshot: runOptions.forceProcessSnapshot,
+
+      runId: responseRunId(result),
+      snapshotId: responseSnapshotId(result),
+
+      actionCounts: responseActionCounts(result),
+      counts: responseCounts(result),
+
+      activeRotationId: payload?.activeRotationId || null,
+      activeMicroFamilies: Number(payload?.activeMicroFamilies || 0),
+      activeMacroFamilies: Number(payload?.activeMacroFamilies || 0),
+
       durationMs: Date.now() - startedAt,
+
+      run: payload,
       result
     });
   } catch (error) {
-    const status = resolveStatus(error);
-
-    return res.status(status).json({
+    return res.status(resolveStatus(error)).json({
       ok: false,
       error: error?.message || String(error),
       durationMs: Date.now() - startedAt,
