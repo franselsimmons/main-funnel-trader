@@ -1,0 +1,19 @@
+{
+  "_fileTitle": "package.json",
+  "name": "clean-micro-trading-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scanner:run": "node scripts/runScanner.js",
+    "trade:run": "node scripts/runTradeSystem.js",
+    "analyze:freeze": "node scripts/freezeWeekly.js",
+    "analyze:activate": "node scripts/activateRotation.js"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.34.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
