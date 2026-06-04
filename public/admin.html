@@ -103,7 +103,7 @@
     }
 
     input[type="search"] {
-      min-width: 280px;
+      min-width: 320px;
     }
 
     header {
@@ -502,6 +502,28 @@
       max-width: 140px;
     }
 
+    .id-stack {
+      display: grid;
+      gap: 4px;
+      min-width: 360px;
+    }
+
+    .id-stack code {
+      display: inline-block;
+      max-width: 520px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: middle;
+    }
+
+    .id-label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
@@ -546,6 +568,11 @@
       color: #5b21b6;
     }
 
+    .pill.dark {
+      background: #0f172a;
+      color: white;
+    }
+
     .score-bar {
       height: 8px;
       background: #e2e8f0;
@@ -575,7 +602,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1100px;
+      min-width: 1250px;
       background: white;
     }
 
@@ -620,7 +647,7 @@
       border-radius: 16px;
       max-height: 520px;
       overflow: auto;
-      margin: 0;
+      margin: 0 0 10px;
       font-size: 12px;
       line-height: 1.48;
     }
@@ -630,7 +657,7 @@
       right: 0;
       top: 0;
       bottom: 0;
-      width: min(780px, 94vw);
+      width: min(860px, 94vw);
       background: white;
       border-left: 1px solid var(--border);
       box-shadow: -12px 0 42px rgba(15, 23, 42, 0.18);
@@ -719,6 +746,10 @@
       .coin-stats {
         grid-template-columns: repeat(2, 1fr);
       }
+
+      .id-stack {
+        min-width: 260px;
+      }
     }
   </style>
 </head>
@@ -731,7 +762,7 @@
           <div class="brand-logo">MF</div>
           <div>
             <strong>Micro-Family Trading Admin</strong>
-            <div class="brand-subtitle">Scanner → TradeSystem → Analyze → Active Rotation → Discord</div>
+            <div class="brand-subtitle">Scanner → TradeSystem → Analyze → Macro/Micro Rotation → Discord</div>
           </div>
         </div>
       </div>
@@ -790,6 +821,8 @@
       microDetail: "/api/admin/micro-family",
       runScanner: "/api/scanner/run?force=true",
       runTrade: "/api/trade/run?force=true",
+      weeklyFreeze: "/api/analyze/weekly-freeze?force=true",
+      activateNextRotation: "/api/analyze/activate-rotation?force=true",
       resetLearning: "/api/admin/reset-learning",
       resetRotation: "/api/admin/reset-rotation",
       factoryReset: "/api/admin/factory-reset"
@@ -822,6 +855,7 @@
       FIL: "Filecoin",
       RUNE: "THORChain",
       FET: "Fetch.ai",
+      RENDER: "Render",
       RNDR: "Render",
       PEPE: "Pepe",
       SHIB: "Shiba Inu",
@@ -1172,6 +1206,105 @@
       return `<div class="score-bar"><span style="--w:${n.toFixed(1)}%"></span></div>`;
     }
 
+    function uniqueStrings(values = []) {
+      return [...new Set(
+        (Array.isArray(values) ? values : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )];
+    }
+
+    function microId(row = {}) {
+      return row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || "";
+    }
+
+    function macroId(row = {}) {
+      return (
+        row?.macroFamilyId ||
+        row?.parentMicroFamilyId ||
+        row?.legacyMicroFamilyId ||
+        row?.coarseMicroFamilyId ||
+        row?.familyMacroId ||
+        row?.familyId ||
+        ""
+      );
+    }
+
+    function familyId(row = {}) {
+      return row?.familyId || row?.family || "";
+    }
+
+    function extractIdsFromRotation(rotation = {}) {
+      return uniqueStrings(
+        rotation?.microFamilyIds ||
+        rotation?.activeMicroFamilyIds ||
+        rotation?.ids ||
+        (
+          Array.isArray(rotation?.microFamilies)
+            ? rotation.microFamilies.map((row) => microId(row))
+            : []
+        )
+      );
+    }
+
+    function extractMacroIdsFromRotation(rotation = {}) {
+      return uniqueStrings(
+        rotation?.macroFamilyIds ||
+        rotation?.activeMacroFamilyIds ||
+        rotation?.macroIds ||
+        (
+          Array.isArray(rotation?.microFamilies)
+            ? rotation.microFamilies.map((row) => macroId(row))
+            : []
+        )
+      );
+    }
+
+    function activeIdsFromState() {
+      return extractIdsFromRotation(
+        state.micros?.activeRotation ||
+        state.rotation?.active ||
+        state.rotation?.activeRotation ||
+        state.overview?.activeRotation ||
+        {}
+      );
+    }
+
+    function activeMacroIdsFromState() {
+      return extractMacroIdsFromRotation(
+        state.micros?.activeRotation ||
+        state.rotation?.active ||
+        state.rotation?.activeRotation ||
+        state.overview?.activeRotation ||
+        {}
+      );
+    }
+
+    function idStack(row) {
+      const micro = microId(row);
+      const macro = macroId(row);
+      const family = familyId(row);
+
+      return `
+        <div class="id-stack">
+          <div>
+            <span class="id-label">True micro</span>
+            <button type="button" class="small" data-open-micro="${escapeAttr(micro)}">
+              <code>${escapeHtml(micro || "NO_MICRO_ID")}</code>
+            </button>
+          </div>
+          <div>
+            <span class="id-label">Macro</span>
+            <code>${escapeHtml(macro || "NO_MACRO_ID")}</code>
+          </div>
+          <div>
+            <span class="id-label">Family</span>
+            <code>${escapeHtml(family || "NO_FAMILY")}</code>
+          </div>
+        </div>
+      `;
+    }
+
     function coinCard(row) {
       const side = sideClass(row.side);
       const symbol = baseSymbol(row);
@@ -1277,7 +1410,7 @@
           </div>
 
           <div class="coin-foot">
-            <code>${escapeHtml(row.microFamilyId || "NO_MICRO")}</code>
+            <code>${escapeHtml(microId(row) || "NO_MICRO")}</code>
           </div>
         </article>
       `;
@@ -1314,21 +1447,6 @@
       URL.revokeObjectURL(url);
     }
 
-    function activeIdsFromState() {
-      return (
-        state.micros?.activeMicroFamilyIds ||
-        state.micros?.activeRotation?.microFamilyIds ||
-        state.rotation?.active?.microFamilyIds ||
-        state.rotation?.activeRotation?.microFamilyIds ||
-        state.overview?.activeRotation?.microFamilyIds ||
-        []
-      ).filter(Boolean);
-    }
-
-    function microId(row) {
-      return row?.microFamilyId || row?.id || "";
-    }
-
     function filterMicroRows(rows = []) {
       const search = state.microSearch.trim().toLowerCase();
 
@@ -1339,33 +1457,42 @@
       });
     }
 
-    function microRowsTable(rows, activeIdsInput = []) {
+    function microRowsTable(rows, activeIdsInput = [], activeMacroIdsInput = []) {
       const activeIds = activeIdsInput instanceof Set
         ? activeIdsInput
         : new Set(activeIdsInput || []);
 
+      const activeMacroIds = activeMacroIdsInput instanceof Set
+        ? activeMacroIdsInput
+        : new Set(activeMacroIdsInput || []);
+
       return table(rows, [
         { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
         { label: "Active", render: (row) => {
-          const isActive = Boolean(row.active) || activeIds.has(microId(row));
-          return `<span class="pill ${isActive ? "active" : ""}">${isActive ? "ACTIVE" : "off"}</span>`;
+          const microActive = activeIds.has(microId(row));
+          const macroActive = activeMacroIds.has(macroId(row));
+          const isActive = Boolean(row.active) || microActive || macroActive;
+          const label = microActive ? "MICRO" : macroActive ? "MACRO" : isActive ? "ACTIVE" : "off";
+
+          return `<span class="pill ${isActive ? "active" : ""}">${escapeHtml(label)}</span>`;
         }},
-        { label: "MicroFamily", render: (row) => {
-          const id = microId(row);
-          return `<button type="button" class="small" data-open-micro="${escapeAttr(id)}"><code>${escapeHtml(id)}</code></button>`;
-        }},
-        { label: "Family", key: "familyId" },
+        { label: "IDs", render: idStack },
         { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
         { label: "Seen", render: (row) => fmtInt(row.seen) },
         { label: "Completed", render: (row) => fmt(row.completed, 2) },
+        { label: "Sample", render: (row) => fmt(row.winrateSample ?? row.completed, 2) },
         { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
         { label: "Winrate", render: (row) => fmtPctRatio(row.winrate) },
         { label: "Net AvgR", render: (row) => fmt(row.avgR, 3) },
         { label: "Net TotalR", render: (row) => fmt(row.totalR, 3) },
         { label: "PF", render: (row) => fmt(row.profitFactor, 2) },
         { label: "DirectSL", render: (row) => fmtPctRatio(row.directSLPct) },
-        { label: "Balanced", render: (row) => `<strong>${fmt(row.balancedScore, 2)}</strong>` },
-        { label: "Copy", render: (row) => `<button type="button" class="small" data-copy-micro="${escapeAttr(microId(row))}">Copy</button>` }
+        { label: "CostR", render: (row) => fmt(row.avgCostR, 3) },
+        { label: "Balanced", render: (row) => `<strong>${fmt(row.dashboardBalancedScore ?? row.balancedScore, 2)}</strong>` },
+        { label: "Copy", render: (row) => `
+          <button type="button" class="small" data-copy-micro="${escapeAttr(microId(row))}">Micro</button>
+          <button type="button" class="small" data-copy-macro="${escapeAttr(macroId(row))}">Macro</button>
+        ` }
       ]);
     }
 
@@ -1377,6 +1504,10 @@
       document.querySelectorAll("[data-copy-micro]").forEach((btn) => {
         btn.addEventListener("click", () => copyText(btn.dataset.copyMicro, "MicroFamilyId gekopieerd."));
       });
+
+      document.querySelectorAll("[data-copy-macro]").forEach((btn) => {
+        btn.addEventListener("click", () => copyText(btn.dataset.copyMacro, "MacroFamilyId gekopieerd."));
+      });
     }
 
     function renderMicrosTableOnly(filteredRows) {
@@ -1386,11 +1517,17 @@
 
       const activeIds = new Set(
         state.micros?.activeMicroFamilyIds ||
-        state.micros?.activeRotation?.microFamilyIds ||
+        extractIdsFromRotation(state.micros?.activeRotation || {}) ||
         activeIdsFromState()
       );
 
-      target.innerHTML = microRowsTable(filteredRows, activeIds);
+      const activeMacroIds = new Set(
+        state.micros?.activeMacroFamilyIds ||
+        extractMacroIdsFromRotation(state.micros?.activeRotation || {}) ||
+        activeMacroIdsFromState()
+      );
+
+      target.innerHTML = microRowsTable(filteredRows, activeIds, activeMacroIds);
 
       bindMicroTableEvents();
     }
@@ -1401,27 +1538,34 @@
       const data = await api(endpoints.overview);
       state.overview = data;
 
-      const activeCount =
+      const activeMicroCount =
         data.activeRotation?.microFamilyIds?.length ||
         data.activeRotationCount ||
+        data.activeMicroFamilies ||
+        0;
+
+      const activeMacroCount =
+        data.activeRotation?.macroFamilyIds?.length ||
+        data.activeRotation?.activeMacroFamilyIds?.length ||
+        data.activeMacroFamilies ||
         0;
 
       $("overview").innerHTML = `
         <div class="grid">
           ${metricCard("Current week", data.weekKey || data.currentWeek || "-")}
           ${metricCard("Previous week", data.previousWeekKey || "-")}
-          ${metricCard("Active microFamilies", activeCount)}
+          ${metricCard("Active true micro", activeMicroCount)}
+          ${metricCard("Active macro", activeMacroCount)}
           ${metricCard("Open positions", fmtInt(data.openPositions))}
           ${metricCard("Scanner candidates", fmtInt(data.latestScan?.candidatesCount || data.scannerCandidates))}
-          ${metricCard("Current week micros", fmtInt(data.currentWeekMicroFamilies))}
-          ${metricCard("Previous week micros", fmtInt(data.previousWeekMicroFamilies))}
-          ${metricCard("Last trade actions", data.tradeMeta?.actionCounts ? Object.entries(data.tradeMeta.actionCounts).map(([k, v]) => `${k}:${v}`).join(" ") : "NA")}
+          ${metricCard("Current week families", fmtInt(data.currentWeekMicroFamilies))}
+          ${metricCard("Previous week families", fmtInt(data.previousWeekMicroFamilies))}
         </div>
 
         <div class="section-title">
           <div>
             <h2>System status</h2>
-            <p>Snelle samenvatting van scanner, trade engine en active rotation.</p>
+            <p>Macro = oude grove micro-family. True micro = doelgerichte execution signature.</p>
           </div>
         </div>
 
@@ -1440,14 +1584,19 @@
 
           <div class="card">
             <h3>Analyze rotation</h3>
-            <div class="metric-value">${escapeHtml(fmtInt(activeCount))}</div>
-            <div class="metric-extra">actieve micro-families</div>
+            <div class="metric-value">${escapeHtml(fmtInt(activeMicroCount))}</div>
+            <div class="metric-extra">actieve true micro-families</div>
           </div>
         </div>
 
         <div class="card">
           <h3>Active Rotation</h3>
           ${jsonBlock(data.activeRotation)}
+        </div>
+
+        <div class="card">
+          <h3>Trade meta</h3>
+          ${jsonBlock(data.tradeMeta || data.runMeta || null)}
         </div>
       `;
     }
@@ -1540,7 +1689,11 @@
 
         <div class="grid">
           ${metricCard("Open positions", fmtInt(positions.length))}
+          ${metricCard("In sync", data.scannerAndTradeInSync ? "YES" : "NO")}
           ${metricCard("Last processed", data.lastProcessed?.snapshotId || data.lastProcessedSnapshot || data.lastProcessedSnapshotId || "-")}
+          ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
+          ${metricCard("Active true micro", fmtInt(data.runMeta?.activeMicroFamilies || data.activeMicroFamilies || 0))}
+          ${metricCard("Active macro", fmtInt(data.runMeta?.activeMacroFamilies || data.activeMacroFamilies || 0))}
           ${metricCard("Last run", fmtTs(data.runMeta?.completedAt || data.runMeta?.startedAt || data.lastRunAt))}
           ${metricCard("Actions", data.runMeta?.actionCounts ? Object.entries(data.runMeta.actionCounts).map(([key, value]) => `${key}:${value}`).join(" ") : "NA")}
         </div>
@@ -1548,7 +1701,7 @@
         <div class="section-title">
           <div>
             <h2>Open positions</h2>
-            <p>Live positie-overzicht met R, MFE, MAE en gekoppelde micro-family.</p>
+            <p>Live positie-overzicht met R, MFE, MAE en gekoppelde true micro-family.</p>
           </div>
         </div>
 
@@ -1573,7 +1726,8 @@
           { label: "CurR", render: (row) => fmt(row.currentR, 3) },
           { label: "MFE", render: (row) => fmt(row.mfeR, 3) },
           { label: "MAE", render: (row) => fmt(row.maeR, 3) },
-          { label: "Micro", render: (row) => `<code>${escapeHtml(row.microFamilyId)}</code>` },
+          { label: "True Micro", render: (row) => `<code>${escapeHtml(microId(row))}</code>` },
+          { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row))}</code>` },
           { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
         ])}
 
@@ -1584,8 +1738,9 @@
       `;
 
       $("runTradeBtn")?.addEventListener("click", async () => {
-        await api(endpoints.runTrade);
-        setMessage("TradeSystem handmatig gestart.", "ok");
+        const result = await api(endpoints.runTrade);
+        const counts = result.counts || {};
+        setMessage(`TradeSystem run klaar. Entries=${counts.entries || 0}, waits=${counts.waits || 0}, liveRows=${counts.liveRows || 0}.`, "ok");
         await renderTrade();
       });
 
@@ -1598,15 +1753,21 @@
       state.microMode = mode || "balanced";
       showLoading("micros");
 
-      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=200`);
+      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=300`);
       state.micros = data;
 
       const rows = getRows(data, ["rows", "microFamilies", "micros"]);
 
       const activeIds = new Set(
         data.activeMicroFamilyIds ||
-        data.activeRotation?.microFamilyIds ||
+        extractIdsFromRotation(data.activeRotation || {}) ||
         activeIdsFromState()
+      );
+
+      const activeMacroIds = new Set(
+        data.activeMacroFamilyIds ||
+        extractMacroIdsFromRotation(data.activeRotation || {}) ||
+        activeMacroIdsFromState()
       );
 
       const filteredRows = filterMicroRows(rows);
@@ -1619,10 +1780,11 @@
             `).join("")}
           </select>
 
-          <input id="microSearch" type="search" placeholder="Zoek microFamily, family, side, bucket..." value="${escapeAttr(state.microSearch)}" />
+          <input id="microSearch" type="search" placeholder="Zoek true micro, macro, family, side, bucket..." value="${escapeAttr(state.microSearch)}" />
 
           <button type="button" class="primary" id="activateBestBalancedBtn">Activate best balanced</button>
-          <button type="button" class="success" id="copyTopIdsBtn">Copy top IDs</button>
+          <button type="button" class="success" id="copyTopMicroIdsBtn">Copy top true micro IDs</button>
+          <button type="button" class="success" id="copyTopMacroIdsBtn">Copy top macro IDs</button>
           <button type="button" id="downloadMicrosBtn">Export JSON</button>
         </div>
 
@@ -1630,11 +1792,22 @@
           ${metricCard("Rows", fmtInt(rows.length))}
           ${metricCard("Filtered", fmtInt(filteredRows.length))}
           ${metricCard("Mode", state.microMode)}
-          ${metricCard("Active IDs known", fmtInt(activeIds.size))}
+          ${metricCard("Active true micro", fmtInt(activeIds.size))}
+          ${metricCard("Active macro", fmtInt(activeMacroIds.size))}
+          ${metricCard("Completed", fmt(data.summary?.completed, 2))}
+          ${metricCard("Total R", fmt(data.summary?.totalR, 2))}
+          ${metricCard("Tradable", fmtInt(data.summary?.tradableMicroFamilies || 0))}
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>True micro families</h2>
+            <p>Macro = oude micro-family bucket. True micro = extra strakke execution fingerprint binnen de macro.</p>
+          </div>
         </div>
 
         <div id="microsTable">
-          ${microRowsTable(filteredRows, activeIds)}
+          ${microRowsTable(filteredRows, activeIds, activeMacroIds)}
         </div>
       `;
 
@@ -1658,12 +1831,20 @@
 
       $("activateBestBalancedBtn")?.addEventListener("click", activateBestBalanced);
 
-      $("copyTopIdsBtn")?.addEventListener("click", () => {
+      $("copyTopMicroIdsBtn")?.addEventListener("click", () => {
         const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
         const currentFilteredRows = filterMicroRows(currentRows);
-        const ids = currentFilteredRows.map(microId).filter(Boolean).slice(0, 50);
+        const ids = uniqueStrings(currentFilteredRows.map(microId)).slice(0, 50);
 
-        copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} microFamilyIds gekopieerd.`);
+        copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} true microFamilyIds gekopieerd.`);
+      });
+
+      $("copyTopMacroIdsBtn")?.addEventListener("click", () => {
+        const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
+        const currentFilteredRows = filterMicroRows(currentRows);
+        const ids = uniqueStrings(currentFilteredRows.map(macroId)).slice(0, 50);
+
+        copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} macroFamilyIds gekopieerd.`);
       });
 
       $("downloadMicrosBtn")?.addEventListener("click", () => {
@@ -1699,13 +1880,16 @@
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="metric-extra">${escapeHtml(row.familyId || "")} ${escapeHtml(row.side || "")}</div>
+              <div class="metric-extra">
+                true micro=${escapeHtml(microId(row))} · macro=${escapeHtml(macroId(row))} · family=${escapeHtml(familyId(row))}
+              </div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
 
           <div class="toolbar">
-            <button type="button" class="success" id="copyDrawerIdBtn">Copy ID</button>
+            <button type="button" class="success" id="copyDrawerIdBtn">Copy true micro ID</button>
+            <button type="button" class="success" id="copyDrawerMacroBtn">Copy macro ID</button>
             <button type="button" id="copyDrawerJsonBtn">Copy JSON</button>
           </div>
 
@@ -1713,10 +1897,24 @@
             ${metricCard("Seen", fmtInt(row.seen))}
             ${metricCard("Completed", fmt(row.completed, 2))}
             ${metricCard("Fair WR", fmtPctRatio(row.fairWinrate))}
-            ${metricCard("Balanced", fmt(row.balancedScore, 2))}
+            ${metricCard("Balanced", fmt(row.dashboardBalancedScore ?? row.balancedScore, 2))}
+            ${metricCard("AvgR", fmt(row.avgR, 3))}
+            ${metricCard("TotalR", fmt(row.totalR, 3))}
+            ${metricCard("DirectSL", fmtPctRatio(row.directSLPct))}
+            ${metricCard("CostR", fmt(row.avgCostR, 3))}
           </div>
 
           <div class="two-col">
+            <div class="card">
+              <h3>IDs</h3>
+              ${jsonBlock({
+                microFamilyId: microId(row),
+                macroFamilyId: macroId(row),
+                familyId: familyId(row),
+                active: row.active
+              })}
+            </div>
+
             <div class="card">
               <h3>Stats</h3>
               ${jsonBlock({
@@ -1730,13 +1928,21 @@
                 totalR: row.totalR,
                 profitFactor: row.profitFactor,
                 directSLPct: row.directSLPct,
-                balancedScore: row.balancedScore
+                balancedScore: row.balancedScore,
+                dashboardBalancedScore: row.dashboardBalancedScore
               })}
+            </div>
+          </div>
+
+          <div class="two-col">
+            <div class="card">
+              <h3>True micro definition</h3>
+              ${jsonBlock(row.definitionParts || row.microDefinitionParts || row.definition || [])}
             </div>
 
             <div class="card">
-              <h3>Definition</h3>
-              ${jsonBlock(row.definitionParts || row.definition || row.parts || [])}
+              <h3>Macro definition</h3>
+              ${jsonBlock(row.macroDefinitionParts || row.macroDefinition || row.parentDefinitionParts || [])}
             </div>
           </div>
 
@@ -1747,7 +1953,8 @@
         `;
 
         $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
-        $("copyDrawerIdBtn")?.addEventListener("click", () => copyText(id, "MicroFamilyId gekopieerd."));
+        $("copyDrawerIdBtn")?.addEventListener("click", () => copyText(microId(row), "True microFamilyId gekopieerd."));
+        $("copyDrawerMacroBtn")?.addEventListener("click", () => copyText(macroId(row), "MacroFamilyId gekopieerd."));
         $("copyDrawerJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "MicroFamily JSON gekopieerd."));
       } catch (error) {
         drawer.innerHTML = `
@@ -1778,8 +1985,12 @@
 
       const active = data.active || data.activeRotation || {};
       const next = data.next || data.nextRotation || {};
-      const activeIds = active.microFamilyIds || [];
-      const nextIds = next.microFamilyIds || [];
+
+      const activeIds = extractIdsFromRotation(active);
+      const nextIds = extractIdsFromRotation(next);
+
+      const activeMacroIds = extractMacroIdsFromRotation(active);
+      const nextMacroIds = extractMacroIdsFromRotation(next);
 
       const activeRowsRaw = getRows(data, ["activeRows", "rows", "activeMicroFamilies"]);
       const activeRows = activeRowsRaw.length
@@ -1789,45 +2000,54 @@
       $("rotation").innerHTML = `
         <div class="toolbar">
           <button type="button" class="primary" id="activateBestBalancedNowBtn">Activate best balanced now</button>
-          <button type="button" class="success" id="copyActiveIdsBtn">Copy active microFamilyIds</button>
-          <button type="button" class="success" id="copyActiveEnvBtn">Copy ENV line</button>
+          <button type="button" class="warn" id="freezeWeeklyBtn">Freeze next rotation</button>
+          <button type="button" class="warn" id="activateNextBtn">Activate next rotation</button>
+          <button type="button" class="success" id="copyActiveMicroIdsBtn">Copy active true micro IDs</button>
+          <button type="button" class="success" id="copyActiveMacroIdsBtn">Copy active macro IDs</button>
           <button type="button" id="downloadRotationBtn">Export rotation JSON</button>
         </div>
 
         <div class="grid">
-          ${metricCard("Active count", fmtInt(activeIds.length))}
-          ${metricCard("Next count", fmtInt(nextIds.length))}
+          ${metricCard("Active true micro", fmtInt(activeIds.length))}
+          ${metricCard("Active macro", fmtInt(activeMacroIds.length))}
+          ${metricCard("Next true micro", fmtInt(nextIds.length))}
+          ${metricCard("Next macro", fmtInt(nextMacroIds.length))}
           ${metricCard("Active source week", active.sourceWeekKey || data.sourceWeekKey || "NA")}
           ${metricCard("Mode", active.mode || data.mode || "NA")}
+          ${metricCard("Eligible", fmtInt(active.eligibleCount || 0))}
+          ${metricCard("Rotation ID", active.rotationId || "NA")}
         </div>
 
         <div class="section-title">
           <div>
             <h2>Active rotation</h2>
-            <p>Deze micro-families worden nu door TradeSystem toegestaan voor Discord entries.</p>
+            <p>Deze true micro-families worden nu door TradeSystem toegestaan. Macro blijft beschikbaar als parent-context.</p>
           </div>
         </div>
 
         ${table(activeRows, [
           { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
-          { label: "MicroFamilyId", render: (row) => `<code>${escapeHtml(microId(row))}</code>` },
-          { label: "Family", key: "familyId" },
+          { label: "IDs", render: idStack },
           { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
           { label: "Completed", render: (row) => fmt(row.completed, 2) },
           { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
           { label: "AvgR", render: (row) => fmt(row.avgR, 3) },
           { label: "TotalR", render: (row) => fmt(row.totalR, 3) },
-          { label: "Balanced", render: (row) => fmt(row.balancedScore, 2) }
+          { label: "DirectSL", render: (row) => fmtPctRatio(row.directSLPct) },
+          { label: "Balanced", render: (row) => fmt(row.dashboardBalancedScore ?? row.balancedScore, 2) }
         ], "Geen actieve rotation gevonden.")}
 
         <div class="card">
           <h3>Copy block voor TradeSystem</h3>
           <div class="toolbar">
-            <button type="button" class="success" id="copyActiveJsonBtn">Copy JSON array</button>
-            <button type="button" class="success" id="copyActiveEnvLineBtn">Copy ENV line</button>
+            <button type="button" class="success" id="copyActiveMicroJsonBtn">Copy true micro JSON array</button>
+            <button type="button" class="success" id="copyActiveMicroEnvBtn">Copy true micro ENV</button>
+            <button type="button" class="success" id="copyActiveMacroJsonBtn">Copy macro JSON array</button>
+            <button type="button" class="success" id="copyActiveMacroEnvBtn">Copy macro ENV</button>
           </div>
           <pre>${escapeHtml(JSON.stringify(activeIds, null, 2))}</pre>
           <pre>${escapeHtml(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`)}</pre>
+          <pre>${escapeHtml(`ACTIVE_MACRO_FAMILY_IDS=${activeMacroIds.join(",")}`)}</pre>
         </div>
 
         <div class="card">
@@ -1837,11 +2057,39 @@
       `;
 
       $("activateBestBalancedNowBtn")?.addEventListener("click", activateBestBalanced);
-      $("copyActiveIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`));
-      $("copyActiveEnvBtn")?.addEventListener("click", () => copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd."));
-      $("copyActiveJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`));
-      $("copyActiveEnvLineBtn")?.addEventListener("click", () => copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd."));
+
+      $("freezeWeeklyBtn")?.addEventListener("click", async () => {
+        const result = await api(endpoints.weeklyFreeze, {
+          method: "POST",
+          body: JSON.stringify({ force: true, mode: "balanced" })
+        });
+
+        setMessage(`Next rotation frozen. rotationId=${result.rotationId || result.result?.result?.rotationId || "NA"}`, "ok");
+        await renderRotation();
+      });
+
+      $("activateNextBtn")?.addEventListener("click", async () => {
+        const result = await api(endpoints.activateNextRotation, {
+          method: "POST",
+          body: JSON.stringify({ force: true })
+        });
+
+        setMessage(`Next rotation activated. count=${result.activatedCount || 0}`, "ok");
+        await renderRotation();
+      });
+
+      $("copyActiveMicroIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} true micro IDs.`));
+      $("copyActiveMacroIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeMacroIds, null, 2), `Copied ${activeMacroIds.length} macro IDs.`));
+
+      $("copyActiveMicroJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} true micro IDs.`));
+      $("copyActiveMicroEnvBtn")?.addEventListener("click", () => copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "True micro ENV line gekopieerd."));
+
+      $("copyActiveMacroJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeMacroIds, null, 2), `Copied ${activeMacroIds.length} macro IDs.`));
+      $("copyActiveMacroEnvBtn")?.addEventListener("click", () => copyText(`ACTIVE_MACRO_FAMILY_IDS=${activeMacroIds.join(",")}`, "Macro ENV line gekopieerd."));
+
       $("downloadRotationBtn")?.addEventListener("click", () => downloadJson("active-rotation.json", data));
+
+      bindMicroTableEvents();
     }
 
     async function renderDiscord() {
@@ -1868,7 +2116,8 @@
           { label: "Type", render: (row) => escapeHtml(row.type || row.level || "-") },
           { label: "Coin", render: (row) => coinAvatar(row.payload || row, "sm") },
           { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side || row.payload?.side))}">${escapeHtml(sideLabel(row.side || row.payload?.side))}</span>` },
-          { label: "Micro", render: (row) => `<code>${escapeHtml(row.microFamilyId || row.payload?.microFamilyId || "")}</code>` },
+          { label: "True Micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row))}</code>` },
+          { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row.payload || row))}</code>` },
           { label: "Result", render: (row) => escapeHtml(row.result ? JSON.stringify(row.result) : row.message || row.content || "") }
         ])}
       `;
@@ -1882,7 +2131,7 @@
         <div class="grid-3">
           <div class="card">
             <h3>Reset learning only</h3>
-            <p class="metric-extra">Wist observations, outcomes, weekly micro stats en shadow data. Open positions blijven staan.</p>
+            <p class="metric-extra">Wist observations, outcomes, weekly macro/micro stats en shadow data. Open positions blijven staan.</p>
             <button type="button" class="warn" id="resetLearningBtn">Reset learning</button>
           </div>
 
@@ -1973,7 +2222,7 @@
     }
 
     async function activateBestBalanced() {
-      if (!confirm("Activate best balanced microFamilies als active rotation?")) return;
+      if (!confirm("Activate best balanced true microFamilies als active rotation?")) return;
 
       const data = await api(endpoints.rotation, {
         method: "POST",
@@ -1983,12 +2232,11 @@
         })
       });
 
-      const count =
-        data.activeRotation?.microFamilyIds?.length ||
-        data.active?.microFamilyIds?.length ||
-        0;
+      const active = data.activeRotation || data.active || {};
+      const microCount = extractIdsFromRotation(active).length;
+      const macroCount = extractMacroIdsFromRotation(active).length;
 
-      setMessage(`Activated ${count} microFamilies.`, "ok");
+      setMessage(`Activated ${microCount} true microFamilies binnen ${macroCount} macroFamilies.`, "ok");
 
       if (state.activeTab === "micros") {
         await renderMicros(state.microMode);
