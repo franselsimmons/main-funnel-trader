@@ -1,210 +1,1287 @@
 <!-- FILE: public/admin.html -->
-
 <!doctype html>
-
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Micro-Family Admin</title>
+
   <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #111827; background: #f6f7fb; }
-    body { margin: 0; }
-    header { padding: 18px 24px; background: #111827; color: white; display: flex; justify-content: space-between; align-items: center; }
-    main { padding: 20px; max-width: 1500px; margin: 0 auto; }
-    button, select, input { border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 12px; background: white; cursor: pointer; }
-    button.primary { background: #111827; color: white; border-color: #111827; }
-    button.danger { background: #991b1b; color: white; border-color: #991b1b; }
-    button.warn { background: #92400e; color: white; border-color: #92400e; }
-    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    .tab { background: white; }
-    .tab.active { background: #111827; color: white; }
-    .grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 12px; }
-    .card { background: white; border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px; box-shadow: 0 1px 3px #0001; }
-    .card h3 { margin: 0 0 8px; font-size: 14px; color: #374151; }
-    .metric { font-size: 24px; font-weight: 700; }
-    table { border-collapse: collapse; width: 100%; background: white; border-radius: 12px; overflow: hidden; }
-    th, td { text-align: left; border-bottom: 1px solid #e5e7eb; padding: 8px; font-size: 13px; vertical-align: top; }
-    th { background: #f3f4f6; font-weight: 700; position: sticky; top: 0; }
-    code { font-size: 12px; background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0b1020; color: #e5e7eb; padding: 14px; border-radius: 12px; max-height: 520px; overflow: auto; }
-    .toolbar { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
-    .hidden { display: none; }
-    .pill { display:inline-block; padding:2px 7px; border-radius: 999px; background:#e5e7eb; font-size:12px; }
-    .pill.active { background:#dcfce7; color:#166534; }
-    .drawer { position: fixed; right: 0; top: 0; bottom: 0; width: min(720px, 94vw); background: white; border-left: 1px solid #e5e7eb; box-shadow: -8px 0 30px #0002; padding: 18px; overflow: auto; z-index: 10; }
-    .muted { color: #6b7280; }
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --dark: #111827;
+      --border: #e5e7eb;
+      --border-strong: #d1d5db;
+      --green-bg: #dcfce7;
+      --green-text: #166534;
+      --red-bg: #fee2e2;
+      --red-text: #991b1b;
+      --amber-bg: #fef3c7;
+      --amber-text: #92400e;
+      --blue-bg: #dbeafe;
+      --blue-text: #1d4ed8;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      padding: 18px 24px;
+      background: var(--dark);
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    header strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    header .muted {
+      color: #9ca3af;
+      margin-top: 4px;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    main {
+      padding: 20px;
+      max-width: 1500px;
+      margin: 0 auto;
+    }
+
+    button,
+    select,
+    input {
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 9px 12px;
+      background: white;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button:hover,
+    select:hover {
+      filter: brightness(0.98);
+    }
+
+    input {
+      cursor: text;
+    }
+
+    button.primary {
+      background: var(--dark);
+      color: white;
+      border-color: var(--dark);
+    }
+
+    button.danger {
+      background: var(--red-text);
+      color: white;
+      border-color: var(--red-text);
+    }
+
+    button.warn {
+      background: var(--amber-text);
+      color: white;
+      border-color: var(--amber-text);
+    }
+
+    button.success {
+      background: var(--green-text);
+      color: white;
+      border-color: var(--green-text);
+    }
+
+    button.small {
+      padding: 5px 8px;
+      font-size: 12px;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tab {
+      background: white;
+    }
+
+    .tab.active {
+      background: var(--dark);
+      color: white;
+      border-color: var(--dark);
+    }
+
+    .panel.hidden,
+    .hidden {
+      display: none;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 12px;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: #374151;
+    }
+
+    .metric {
+      font-size: 24px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+
+    .toolbar input[type="search"] {
+      min-width: 260px;
+      flex: 1;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      margin-bottom: 12px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 1050px;
+      background: white;
+    }
+
+    th,
+    td {
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      padding: 8px;
+      font-size: 13px;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #f3f4f6;
+      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:hover td {
+      background: #f9fafb;
+    }
+
+    code {
+      font-size: 12px;
+      background: #f3f4f6;
+      padding: 2px 4px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0b1020;
+      color: #e5e7eb;
+      padding: 14px;
+      border-radius: 12px;
+      max-height: 520px;
+      overflow: auto;
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      color: #374151;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .pill.active {
+      background: var(--green-bg);
+      color: var(--green-text);
+    }
+
+    .pill.warn {
+      background: var(--amber-bg);
+      color: var(--amber-text);
+    }
+
+    .pill.danger {
+      background: var(--red-bg);
+      color: var(--red-text);
+    }
+
+    .pill.info {
+      background: var(--blue-bg);
+      color: var(--blue-text);
+    }
+
+    .message {
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+      background: white;
+      box-shadow: var(--shadow);
+    }
+
+    .message.error {
+      background: var(--red-bg);
+      border-color: #fecaca;
+      color: var(--red-text);
+    }
+
+    .message.ok {
+      background: var(--green-bg);
+      border-color: #bbf7d0;
+      color: var(--green-text);
+    }
+
+    .message.warn {
+      background: var(--amber-bg);
+      border-color: #fde68a;
+      color: var(--amber-text);
+    }
+
+    .drawer {
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: min(760px, 94vw);
+      background: white;
+      border-left: 1px solid var(--border);
+      box-shadow: -8px 0 30px rgba(0, 0, 0, 0.14);
+      padding: 18px;
+      overflow: auto;
+      z-index: 20;
+    }
+
+    .drawer-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .drawer h2 {
+      margin: 0;
+      font-size: 18px;
+      word-break: break-word;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 900px) {
+      header {
+        padding: 16px;
+        flex-direction: column;
+      }
+
+      main {
+        padding: 14px;
+      }
+
+      .grid {
+        grid-template-columns: repeat(2, minmax(150px, 1fr));
+      }
+
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar input[type="search"] {
+        min-width: 100%;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .tab {
+        flex: 1 1 auto;
+      }
+
+      header strong {
+        font-size: 18px;
+      }
+
+      .metric {
+        font-size: 21px;
+      }
+    }
   </style>
 </head>
+
 <body>
   <header>
     <div>
       <strong>Micro-Family Trading Admin</strong>
       <div class="muted">Scanner → TradeSystem → Analyze → Active Rotation → Discord</div>
     </div>
-    <button onclick="refresh()">Refresh</button>
+    <button id="refreshBtn" type="button">Refresh</button>
   </header>
 
   <main>
     <div class="tabs">
-      <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
-      <button class="tab" data-tab="scanner" onclick="showTab('scanner')">Scanner</button>
-      <button class="tab" data-tab="trade" onclick="showTab('trade')">TradeSystem</button>
-      <button class="tab" data-tab="micros" onclick="showTab('micros')">MicroFamilies</button>
-      <button class="tab" data-tab="rotation" onclick="showTab('rotation')">Rotation</button>
-      <button class="tab" data-tab="discord" onclick="showTab('discord')">Discord Logs</button>
-      <button class="tab" data-tab="reset" onclick="showTab('reset')">Reset</button>
+      <button type="button" class="tab active" data-tab="overview">Overview</button>
+      <button type="button" class="tab" data-tab="scanner">Scanner</button>
+      <button type="button" class="tab" data-tab="trade">TradeSystem</button>
+      <button type="button" class="tab" data-tab="micros">MicroFamilies</button>
+      <button type="button" class="tab" data-tab="rotation">Rotation</button>
+      <button type="button" class="tab" data-tab="discord">Discord Logs</button>
+      <button type="button" class="tab" data-tab="reset">Reset</button>
     </div>
 
-```
-<section id="overview" class="panel"></section>
-<section id="scanner" class="panel hidden"></section>
-<section id="trade" class="panel hidden"></section>
-<section id="micros" class="panel hidden"></section>
-<section id="rotation" class="panel hidden"></section>
-<section id="discord" class="panel hidden"></section>
-<section id="reset" class="panel hidden"></section>
-```
+    <div id="message"></div>
 
+    <section id="overview" class="panel"></section>
+    <section id="scanner" class="panel hidden"></section>
+    <section id="trade" class="panel hidden"></section>
+    <section id="micros" class="panel hidden"></section>
+    <section id="rotation" class="panel hidden"></section>
+    <section id="discord" class="panel hidden"></section>
+    <section id="reset" class="panel hidden"></section>
   </main>
 
   <div id="drawer" class="drawer hidden"></div>
 
-<script>
-const $ = id => document.getElementById(id);
-let state = { overview: null, micros: null, rotation: null };
+  <script>
+    const state = {
+      activeTab: "overview",
+      overview: null,
+      scanner: null,
+      trade: null,
+      micros: null,
+      rotation: null,
+      discord: null,
+      microMode: "balanced",
+      microSearch: ""
+    };
 
-function showTab(id) {
-  document.querySelectorAll('.panel').forEach(el => el.classList.add('hidden'));
-  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-  $(id).classList.remove('hidden');
-  document.querySelector(`[data-tab="${id}"]`).classList.add('active');
-  refresh(id);
-}
+    const endpoints = {
+      overview: "/api/admin/overview",
+      scanner: "/api/admin/scanner",
+      trade: "/api/admin/trade",
+      micros: "/api/admin/micro-families",
+      rotation: "/api/admin/rotation",
+      discord: "/api/admin/discord-logs",
+      microDetail: "/api/admin/micro-family",
+      runScanner: "/api/scanner/run?force=true",
+      runTrade: "/api/trade/run?force=true",
+      resetLearning: "/api/admin/reset-learning",
+      resetRotation: "/api/admin/reset-rotation",
+      factoryReset: "/api/admin/factory-reset"
+    };
 
-async function api(url, opts) {
-  const res = await fetch(url, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || data.reason || res.statusText);
-  return data;
-}
+    const tabs = ["overview", "scanner", "trade", "micros", "rotation", "discord", "reset"];
 
-function fmt(n, d = 3) { return Number(n || 0).toFixed(d); }
-function pct(n) { return `${(Number(n || 0) * 100).toFixed(1)}%`; }
-function htmlEscape(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+    const $ = (id) => document.getElementById(id);
 
-function table(rows, cols) {
-  if (!rows?.length) return '<div class="card">Geen data.</div>';
-  return `<table><thead><tr>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${c.render ? c.render(row) : htmlEscape(row[c.key])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-}
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
 
-async function renderOverview() {
-  const data = await api('/api/admin/overview');
-  state.overview = data;
-  $('overview').innerHTML = `
-    <div class="grid">
-      <div class="card"><h3>Current week</h3><div class="metric">${data.weekKey}</div></div>
-      <div class="card"><h3>Previous week</h3><div class="metric">${data.previousWeekKey}</div></div>
-      <div class="card"><h3>Active microFamilies</h3><div class="metric">${data.activeRotation?.microFamilyIds?.length || 0}</div></div>
-      <div class="card"><h3>Open positions</h3><div class="metric">${data.openPositions}</div></div>
-      <div class="card"><h3>Scanner candidates</h3><div class="metric">${data.latestScan?.candidatesCount || 0}</div></div>
-      <div class="card"><h3>Current week micros</h3><div class="metric">${data.currentWeekMicroFamilies}</div></div>
-      <div class="card"><h3>Previous week micros</h3><div class="metric">${data.previousWeekMicroFamilies}</div></div>
-      <div class="card"><h3>Last trade run</h3><div class="metric">${data.tradeMeta?.actionCounts ? Object.entries(data.tradeMeta.actionCounts).map(([k,v]) => `${k}:${v}`).join(' ') : 'NA'}</div></div>
-    </div>
-    <div class="card" style="margin-top:12px"><h3>Active Rotation</h3><pre>${htmlEscape(JSON.stringify(data.activeRotation, null, 2))}</pre></div>
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("`", "&#096;");
+    }
 
-`;
-}
+    function fmt(value, decimals = 3) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return n.toFixed(decimals);
+    }
 
-async function renderScanner() {
-const data = await api(’/api/admin/scanner’);
-const candidates = data.snapshot?.candidates || [];
-$(‘scanner’).innerHTML = `<div class="card"><h3>Latest snapshot</h3><pre>${htmlEscape(JSON.stringify(data.latest, null, 2))}</pre></div> ${table(candidates, [ {label:'Symbol', key:'symbol'}, {label:'Side', key:'side'}, {label:'Score', key:'scannerScore'}, {label:'1h', render:r=>fmt(r.change1h,2)+'%'}, {label:'24h', render:r=>fmt(r.change24h,2)+'%'}, {label:'Vol24h', render:r=>Number(r.volume24h||0).toLocaleString()}, {label:'FakeRisk', key:'fakeBreakoutRisk'}, {label:'Reason', key:'scannerReason'} ])}`;
-}
+    function fmtInt(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "0";
+      return Math.round(n).toLocaleString();
+    }
 
-async function renderTrade() {
-const data = await api(’/api/admin/trade’);
-$(‘trade’).innerHTML = ` <div class="toolbar"> <button class="primary" onclick="api('/api/trade/run?force=true').then(()=>refresh('trade'))">Run TradeSystem now</button> </div> <div class="card"><h3>Last processed snapshot</h3><pre>${htmlEscape(JSON.stringify(data.lastProcessed, null, 2))}</pre></div> <h3>Open positions</h3> ${table(data.positions || [], [ {label:'Symbol', key:'symbol'}, {label:'Side', key:'side'}, {label:'Entry', key:'entry'}, {label:'SL', key:'sl'}, {label:'TP', key:'tp'}, {label:'RR', render:r=>fmt(r.rr,2)}, {label:'CurR', render:r=>fmt(r.currentR,3)}, {label:'MFE', render:r=>fmt(r.mfeR,3)}, {label:'MAE', render:r=>fmt(r.maeR,3)}, {label:'Micro', render:r=>`<code>${htmlEscape(r.microFamilyId)}</code>`} ])} <div class="card"><h3>Run meta</h3><pre>${htmlEscape(JSON.stringify(data.runMeta, null, 2))}</pre></div> `;
-}
+    function fmtPctRatio(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return `${(n * 100).toFixed(1)}%`;
+    }
 
-async function renderMicros(mode = document.getElementById(‘microMode’)?.value || ‘balanced’) {
-const data = await api(`/api/admin/micro-families?mode=${mode}&limit=200`);
-state.micros = data;
-$(‘micros’).innerHTML = `<div class="toolbar"> <select id="microMode" onchange="renderMicros(this.value)"> ${['balanced','winrate','totalR','avgR','directSL','observed'].map(m =>`<option ${m===mode?‘selected’:’’}>${m}</option>`).join('')} </select> <button onclick="copyActiveIds()">Copy active IDs</button> <button class="primary" onclick="activateBestBalanced()">Activate best balanced</button> </div> ${table(data.rows || [], [ {label:'Rank', key:'rank'}, {label:'Active', render:r=>`<span class="pill ${r.active?'active':''}">${r.active?‘ACTIVE’:‘off’}</span>`}, {label:'MicroFamily', render:r=>`<button onclick="openMicro('${r.microFamilyId}')"><code>${htmlEscape(r.microFamilyId)}</code></button>`}, {label:'Family', key:'familyId'}, {label:'Side', key:'side'}, {label:'Seen', key:'seen'}, {label:'Completed', render:r=>fmt(r.completed,2)}, {label:'Real', key:'realCompleted'}, {label:'Shadow', key:'shadowCompleted'}, {label:'Fair WR', render:r=>pct(r.fairWinrate)}, {label:'Net AvgR', render:r=>fmt(r.avgR,3)}, {label:'Net TotalR', render:r=>fmt(r.totalR,3)}, {label:'CostR', render:r=>fmt(r.avgCostR,3)}, {label:'PF', render:r=>fmt(r.profitFactor,2)}, {label:'DirectSL', render:r=>pct(r.directSLPct)}, {label:'GaveBack 1R', render:r=>pct(r.gaveBackAfterOneRPct)}, {label:'BE Exit%', render:r=>pct(r.beWouldExitPct)}, {label:'Balanced', render:r=>fmt(r.balancedScore,2)} ])} `;
-}
+    function fmtPctRaw(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return `${n.toFixed(2)}%`;
+    }
 
-async function openMicro(id) {
-const data = await api(`/api/admin/micro-family/${encodeURIComponent(id)}`);
-$(‘drawer’).classList.remove(‘hidden’);
-$(‘drawer’).innerHTML = `<button onclick="$('drawer').classList.add('hidden')">Close</button><h2>${htmlEscape(id)}</h2><pre>${htmlEscape(JSON.stringify(data.row, null, 2))}</pre>`;
-}
+    function fmtMoneyLike(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
 
-async function renderRotation() {
-const data = await api(’/api/admin/rotation’);
-state.rotation = data;
-$(‘rotation’).innerHTML = `<div class="toolbar"> <button class="primary" onclick="activateBestBalanced()">Activate best balanced now</button> <button onclick="copyActiveIds()">Copy active microFamilyIds</button> </div> <div class="grid"> <div class="card"><h3>Active count</h3><div class="metric">${data.active?.microFamilyIds?.length || 0}</div></div> <div class="card"><h3>Next count</h3><div class="metric">${data.next?.microFamilyIds?.length || 0}</div></div> <div class="card"><h3>Active source week</h3><div class="metric">${data.active?.sourceWeekKey || 'NA'}</div></div> <div class="card"><h3>Mode</h3><div class="metric">${data.active?.mode || 'NA'}</div></div> </div> <h3>Active rotation</h3><pre>${htmlEscape(JSON.stringify(data.active, null, 2))}</pre> <h3>Next rotation</h3><pre>${htmlEscape(JSON.stringify(data.next, null, 2))}</pre>`;
-}
+    function fmtTs(value) {
+      if (!value) return "-";
+      const n = Number(value);
+      const date = Number.isFinite(n) ? new Date(n) : new Date(value);
+      if (Number.isNaN(date.getTime())) return "-";
+      return date.toLocaleString();
+    }
 
-async function renderDiscord() {
-const data = await api(’/api/admin/discord-logs?limit=100’);
-$(‘discord’).innerHTML = table(data.logs || [], [
-{label:‘TS’, render:r=>new Date(r.ts).toLocaleString()}, {label:‘Type’, key:‘type’},
-{label:‘Symbol’, render:r=>r.payload?.symbol || ‘’}, {label:‘Side’, render:r=>r.payload?.side || ‘’},
-{label:‘Micro’, render:r=>`<code>${htmlEscape(r.payload?.microFamilyId || '')}</code>`},
-{label:‘Result’, render:r=>htmlEscape(JSON.stringify(r.result))}
-]);
-}
+    function jsonBlock(data) {
+      return `<pre>${escapeHtml(JSON.stringify(data ?? null, null, 2))}</pre>`;
+    }
 
-function renderReset() {
-$(‘reset’).innerHTML = `<div class="card"><h3>Reset learning only</h3><p>Wist observations, outcomes, weekly micro stats en shadow data. Open positions blijven staan.</p><button class="warn" onclick="postReset('/api/admin/reset-learning')">Reset learning</button></div> <div class="card"><h3>Reset rotation only</h3><p>Wist active/next rotation. Learning blijft staan.</p><button class="warn" onclick="postReset('/api/admin/reset-rotation')">Reset rotation</button></div> <div class="card"><h3>Factory reset</h3><p>Wist scanner snapshots, trade memory, open positions, analyze stats, rotations en live cache. Vereist exacte bevestiging.</p> <input id="factoryConfirm" style="width:320px" placeholder="FACTORY_RESET_CONFIRMED" /> <label><input id="factoryForce" type="checkbox" /> force even with open positions</label> <button class="danger" onclick="factoryReset()">Factory reset</button> </div>`;
-}
+    function setMessage(message = "", type = "") {
+      if (!message) {
+        $("message").innerHTML = "";
+        return;
+      }
 
-async function postReset(url) {
-if (!confirm(‘Zeker?’)) return;
-const data = await api(url, { method:‘POST’ });
-alert(JSON.stringify(data, null, 2));
-refresh();
-}
+      const cls = type ? `message ${type}` : "message";
+      $("message").innerHTML = `<div class="${cls}">${escapeHtml(message)}</div>`;
+    }
 
-async function factoryReset() {
-if (!confirm(‘FACTORY RESET wist alles. Doorgaan?’)) return;
-const data = await api(’/api/admin/factory-reset’, {
-method:‘POST’, headers:{‘content-type’:‘application/json’},
-body: JSON.stringify({ confirm: $(‘factoryConfirm’).value, force: $(‘factoryForce’).checked })
-});
-alert(JSON.stringify(data, null, 2));
-refresh();
-}
+    function showLoading(tabId, label = "Laden...") {
+      $(tabId).innerHTML = `<div class="card"><h3>${escapeHtml(label)}</h3><div class="muted">Tab: ${escapeHtml(tabId)}</div></div>`;
+    }
 
-async function activateBestBalanced() {
-const data = await api(’/api/admin/rotation’, { method:‘POST’, headers:{‘content-type’:‘application/json’}, body: JSON.stringify({ action:‘activateBestBalanced’ }) });
-alert(`Activated ${data.activeRotation?.microFamilyIds?.length || 0} microFamilies`);
-refresh();
-}
+    function getRows(data, keys = []) {
+      if (Array.isArray(data)) return data;
 
-function copyActiveIds() {
-const ids = state.rotation?.active?.microFamilyIds || state.overview?.activeRotation?.microFamilyIds || [];
-navigator.clipboard.writeText(JSON.stringify(ids, null, 2));
-alert(`Copied ${ids.length} active microFamilyIds`);
-}
+      for (const key of keys) {
+        const value = data?.[key];
+        if (Array.isArray(value)) return value;
+      }
 
-async function refresh(tab = document.querySelector(’.tab.active’)?.dataset.tab || ‘overview’) {
-try {
-if (tab === ‘overview’) return renderOverview();
-if (tab === ‘scanner’) return renderScanner();
-if (tab === ‘trade’) return renderTrade();
-if (tab === ‘micros’) return renderMicros();
-if (tab === ‘rotation’) return renderRotation();
-if (tab === ‘discord’) return renderDiscord();
-if (tab === ‘reset’) return renderReset();
-} catch (error) {
-$(tab).innerHTML = `<div class="card"><h3>Error</h3><pre>${htmlEscape(error.message)}</pre></div>`;
-}
-}
+      if (Array.isArray(data?.rows)) return data.rows;
+      if (Array.isArray(data?.items)) return data.items;
+      if (Array.isArray(data?.data)) return data.data;
 
-refresh(‘overview’);
-</script>
+      return [];
+    }
 
+    async function api(url, options = {}) {
+      const headers = {
+        "accept": "application/json",
+        ...(options.headers || {})
+      };
+
+      const hasBody = options.body !== undefined && options.body !== null;
+      if (hasBody && !headers["content-type"]) {
+        headers["content-type"] = "application/json";
+      }
+
+      const response = await fetch(url, {
+        cache: "no-store",
+        ...options,
+        headers
+      });
+
+      const rawText = await response.text();
+
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = { raw: rawText };
+      }
+
+      if (!response.ok) {
+        const reason = data.error || data.reason || data.message || response.statusText;
+        throw new Error(`${response.status} ${reason}\n${JSON.stringify(data, null, 2)}`);
+      }
+
+      return data;
+    }
+
+    function table(rows, cols, emptyText = "Geen data.") {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return `<div class="card">${escapeHtml(emptyText)}</div>`;
+      }
+
+      const head = cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("");
+
+      const body = rows.map((row) => {
+        const cells = cols.map((c) => {
+          const value = c.render ? c.render(row) : escapeHtml(row?.[c.key]);
+          return `<td>${value}</td>`;
+        }).join("");
+
+        return `<tr>${cells}</tr>`;
+      }).join("");
+
+      return `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>${head}</tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function metricCard(label, value, extra = "") {
+      return `
+        <div class="card">
+          <h3>${escapeHtml(label)}</h3>
+          <div class="metric">${escapeHtml(value)}</div>
+          ${extra ? `<div class="muted">${escapeHtml(extra)}</div>` : ""}
+        </div>
+      `;
+    }
+
+    async function copyText(text, label = "Gekopieerd") {
+      try {
+        await navigator.clipboard.writeText(text);
+        setMessage(label, "ok");
+        return;
+      } catch {
+        const area = document.createElement("textarea");
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+        setMessage(label, "ok");
+      }
+    }
+
+    function downloadJson(filename, data) {
+      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+
+      a.href = url;
+      a.download = filename;
+      a.click();
+
+      URL.revokeObjectURL(url);
+    }
+
+    function activeIdsFromState() {
+      return (
+        state.rotation?.active?.microFamilyIds ||
+        state.rotation?.activeRotation?.microFamilyIds ||
+        state.overview?.activeRotation?.microFamilyIds ||
+        []
+      ).filter(Boolean);
+    }
+
+    function selectedMicroRows() {
+      return getRows(state.micros, ["rows", "microFamilies", "micros"]);
+    }
+
+    function microId(row) {
+      return row?.microFamilyId || row?.id || "";
+    }
+
+    function renderActiveCopyBlock(ids) {
+      const json = JSON.stringify(ids, null, 2);
+      const env = `ACTIVE_MICRO_FAMILY_IDS=${ids.join(",")}`;
+
+      return `
+        <div class="card">
+          <h3>TradeSystem copy block</h3>
+          <div class="toolbar">
+            <button type="button" class="success" data-copy-json="active">Copy JSON array</button>
+            <button type="button" class="success" data-copy-env="active">Copy ENV line</button>
+          </div>
+          <pre>${escapeHtml(json)}</pre>
+          <pre>${escapeHtml(env)}</pre>
+        </div>
+      `;
+    }
+
+    async function renderOverview() {
+      showLoading("overview");
+
+      const data = await api(endpoints.overview);
+      state.overview = data;
+
+      const activeCount =
+        data.activeRotation?.microFamilyIds?.length ||
+        data.activeRotationCount ||
+        0;
+
+      $("overview").innerHTML = `
+        <div class="grid">
+          ${metricCard("Current week", data.weekKey || data.currentWeek || "-")}
+          ${metricCard("Previous week", data.previousWeekKey || "-")}
+          ${metricCard("Active microFamilies", activeCount)}
+          ${metricCard("Open positions", fmtInt(data.openPositions))}
+          ${metricCard("Scanner candidates", fmtInt(data.latestScan?.candidatesCount || data.scannerCandidates))}
+          ${metricCard("Current week micros", fmtInt(data.currentWeekMicroFamilies))}
+          ${metricCard("Previous week micros", fmtInt(data.previousWeekMicroFamilies))}
+          ${metricCard("Last trade actions", data.tradeMeta?.actionCounts ? Object.entries(data.tradeMeta.actionCounts).map(([k, v]) => `${k}:${v}`).join(" ") : "NA")}
+        </div>
+
+        <div class="card">
+          <h3>Active Rotation</h3>
+          ${jsonBlock(data.activeRotation)}
+        </div>
+
+        <div class="card">
+          <h3>Raw overview JSON</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+    }
+
+    async function renderScanner() {
+      showLoading("scanner");
+
+      const data = await api(endpoints.scanner);
+      state.scanner = data;
+
+      const snapshot = data.snapshot || data.latestSnapshot || data.latest || {};
+      const candidates = snapshot.candidates || data.candidates || [];
+
+      $("scanner").innerHTML = `
+        <div class="toolbar">
+          <button type="button" class="primary" id="runScannerBtn">Run Scanner now</button>
+          <button type="button" id="copyScannerJsonBtn">Copy scanner JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Snapshot ID", snapshot.snapshotId || "-")}
+          ${metricCard("Created at", fmtTs(snapshot.createdAt))}
+          ${metricCard("BTC state", snapshot.btcState || "-")}
+          ${metricCard("Regime", snapshot.regime || "-")}
+          ${metricCard("Candidates", fmtInt(candidates.length))}
+        </div>
+
+        ${table(candidates, [
+          { label: "Symbol", key: "symbol" },
+          { label: "Contract", key: "contractSymbol" },
+          { label: "Side", key: "side" },
+          { label: "Price", render: (r) => fmt(r.price, 6) },
+          { label: "Score", render: (r) => fmt(r.scannerScore ?? r.moveScore, 1) },
+          { label: "1h", render: (r) => fmtPctRaw(r.change1h) },
+          { label: "24h", render: (r) => fmtPctRaw(r.change24h) },
+          { label: "Vol24h", render: (r) => fmtMoneyLike(r.volume24h) },
+          { label: "FakeBO", render: (r) => r.fakeBreakout ? '<span class="pill danger">YES</span>' : '<span class="pill active">NO</span>' },
+          { label: "FakeRisk", render: (r) => r.fakeBreakoutRisk ? '<span class="pill warn">RISK</span>' : '<span class="pill active">OK</span>' },
+          { label: "Reason", key: "scannerReason" }
+        ])}
+
+        <div class="card">
+          <h3>Raw scanner JSON</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("runScannerBtn")?.addEventListener("click", async () => {
+        await api(endpoints.runScanner);
+        setMessage("Scanner handmatig gestart.", "ok");
+        await renderScanner();
+      });
+
+      $("copyScannerJsonBtn")?.addEventListener("click", () => {
+        copyText(JSON.stringify(data, null, 2), "Scanner JSON gekopieerd.");
+      });
+    }
+
+    async function renderTrade() {
+      showLoading("trade");
+
+      const data = await api(endpoints.trade);
+      state.trade = data;
+
+      const positions = getRows(data, ["positions", "openPositions"]);
+
+      $("trade").innerHTML = `
+        <div class="toolbar">
+          <button type="button" class="primary" id="runTradeBtn">Run TradeSystem now</button>
+          <button type="button" id="copyTradeJsonBtn">Copy trade JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Open positions", fmtInt(positions.length))}
+          ${metricCard("Last processed", data.lastProcessed?.snapshotId || data.lastProcessedSnapshot || data.lastProcessedSnapshotId || "-")}
+          ${metricCard("Last run", fmtTs(data.runMeta?.ts || data.lastRunAt))}
+          ${metricCard("Actions", data.runMeta?.actionCounts ? Object.entries(data.runMeta.actionCounts).map(([k, v]) => `${k}:${v}`).join(" ") : "NA")}
+        </div>
+
+        <div class="card">
+          <h3>Last processed snapshot</h3>
+          ${jsonBlock(data.lastProcessed)}
+        </div>
+
+        <h3>Open positions</h3>
+        ${table(positions, [
+          { label: "Symbol", key: "symbol" },
+          { label: "Side", key: "side" },
+          { label: "Entry", render: (r) => fmt(r.entry, 6) },
+          { label: "SL", render: (r) => fmt(r.sl, 6) },
+          { label: "TP", render: (r) => fmt(r.tp, 6) },
+          { label: "RR", render: (r) => fmt(r.rr, 2) },
+          { label: "CurR", render: (r) => fmt(r.currentR, 3) },
+          { label: "MFE", render: (r) => fmt(r.mfeR, 3) },
+          { label: "MAE", render: (r) => fmt(r.maeR, 3) },
+          { label: "Micro", render: (r) => `<code>${escapeHtml(r.microFamilyId)}</code>` },
+          { label: "Opened", render: (r) => fmtTs(r.openedAt || r.createdAt) }
+        ])}
+
+        <div class="card">
+          <h3>Run meta</h3>
+          ${jsonBlock(data.runMeta)}
+        </div>
+
+        <div class="card">
+          <h3>Raw trade JSON</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("runTradeBtn")?.addEventListener("click", async () => {
+        await api(endpoints.runTrade);
+        setMessage("TradeSystem handmatig gestart.", "ok");
+        await renderTrade();
+      });
+
+      $("copyTradeJsonBtn")?.addEventListener("click", () => {
+        copyText(JSON.stringify(data, null, 2), "Trade JSON gekopieerd.");
+      });
+    }
+
+    async function renderMicros(mode = state.microMode) {
+      state.microMode = mode || "balanced";
+      showLoading("micros");
+
+      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=200`);
+      state.micros = data;
+
+      const rows = getRows(data, ["rows", "microFamilies", "micros"]);
+      const activeIds = new Set(activeIdsFromState());
+      const search = state.microSearch.trim().toLowerCase();
+
+      const filteredRows = search
+        ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search))
+        : rows;
+
+      $("micros").innerHTML = `
+        <div class="toolbar">
+          <select id="microMode">
+            ${["balanced", "winrate", "totalR", "avgR", "directSL", "observed"].map((m) => `
+              <option value="${escapeAttr(m)}" ${m === state.microMode ? "selected" : ""}>${escapeHtml(m)}</option>
+            `).join("")}
+          </select>
+
+          <input id="microSearch" type="search" placeholder="Zoek microFamily, family, side, bucket..." value="${escapeAttr(state.microSearch)}" />
+
+          <button type="button" class="primary" id="activateBestBalancedBtn">Activate best balanced</button>
+          <button type="button" class="success" id="copyTopIdsBtn">Copy top IDs</button>
+          <button type="button" id="downloadMicrosBtn">Export JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Rows", fmtInt(rows.length))}
+          ${metricCard("Filtered", fmtInt(filteredRows.length))}
+          ${metricCard("Mode", state.microMode)}
+          ${metricCard("Active IDs known", fmtInt(activeIds.size))}
+        </div>
+
+        ${table(filteredRows, [
+          { label: "Rank", render: (r, i) => escapeHtml(r.rank ?? "") },
+          { label: "Active", render: (r) => {
+            const isActive = Boolean(r.active) || activeIds.has(microId(r));
+            return `<span class="pill ${isActive ? "active" : ""}">${isActive ? "ACTIVE" : "off"}</span>`;
+          }},
+          { label: "MicroFamily", render: (r) => {
+            const id = microId(r);
+            return `<button type="button" class="small" data-open-micro="${escapeAttr(id)}"><code>${escapeHtml(id)}</code></button>`;
+          }},
+          { label: "Family", key: "familyId" },
+          { label: "Side", key: "side" },
+          { label: "Seen", render: (r) => fmtInt(r.seen) },
+          { label: "Completed", render: (r) => fmt(r.completed, 2) },
+          { label: "Real", render: (r) => fmtInt(r.realCompleted) },
+          { label: "Shadow", render: (r) => fmtInt(r.shadowCompleted) },
+          { label: "Fair WR", render: (r) => fmtPctRatio(r.fairWinrate ?? r.bayesianWinrate ?? r.wilsonLowerBound) },
+          { label: "Winrate", render: (r) => fmtPctRatio(r.winrate) },
+          { label: "Net AvgR", render: (r) => fmt(r.avgR, 3) },
+          { label: "Net TotalR", render: (r) => fmt(r.totalR, 3) },
+          { label: "CostR", render: (r) => fmt(r.avgCostR, 3) },
+          { label: "PF", render: (r) => fmt(r.profitFactor, 2) },
+          { label: "DirectSL", render: (r) => fmtPctRatio(r.directSLPct) },
+          { label: "GaveBack 1R", render: (r) => fmtPctRatio(r.gaveBackAfterOneRPct) },
+          { label: "BE Exit%", render: (r) => fmtPctRatio(r.beWouldExitPct) },
+          { label: "Balanced", render: (r) => `<strong>${fmt(r.balancedScore, 2)}</strong>` },
+          { label: "Copy", render: (r) => `<button type="button" class="small" data-copy-micro="${escapeAttr(microId(r))}">Copy</button>` }
+        ])}
+
+        <div class="card">
+          <h3>Raw micro-family JSON</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("microMode")?.addEventListener("change", (event) => {
+        renderMicros(event.target.value);
+      });
+
+      $("microSearch")?.addEventListener("input", (event) => {
+        state.microSearch = event.target.value;
+        renderMicros(state.microMode);
+      });
+
+      $("activateBestBalancedBtn")?.addEventListener("click", activateBestBalanced);
+
+      $("copyTopIdsBtn")?.addEventListener("click", () => {
+        const ids = filteredRows.map(microId).filter(Boolean).slice(0, 50);
+        copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} microFamilyIds gekopieerd.`);
+      });
+
+      $("downloadMicrosBtn")?.addEventListener("click", () => {
+        downloadJson("micro-families.json", data);
+      });
+
+      document.querySelectorAll("[data-open-micro]").forEach((btn) => {
+        btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
+      });
+
+      document.querySelectorAll("[data-copy-micro]").forEach((btn) => {
+        btn.addEventListener("click", () => copyText(btn.dataset.copyMicro, "MicroFamilyId gekopieerd."));
+      });
+    }
+
+    async function openMicro(id) {
+      if (!id) return;
+
+      const drawer = $("drawer");
+      drawer.classList.remove("hidden");
+      drawer.innerHTML = `
+        <div class="drawer-head">
+          <div>
+            <h2>${escapeHtml(id)}</h2>
+            <div class="muted">Detail wordt geladen...</div>
+          </div>
+          <button type="button" id="closeDrawerBtn">Close</button>
+        </div>
+      `;
+
+      $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
+
+      try {
+        const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}`);
+        const row = data.row || data.microFamily || data;
+
+        drawer.innerHTML = `
+          <div class="drawer-head">
+            <div>
+              <h2>${escapeHtml(id)}</h2>
+              <div class="muted">${escapeHtml(row.familyId || "")} ${escapeHtml(row.side || "")}</div>
+            </div>
+            <button type="button" id="closeDrawerBtn">Close</button>
+          </div>
+
+          <div class="toolbar">
+            <button type="button" class="success" id="copyDrawerIdBtn">Copy ID</button>
+            <button type="button" id="copyDrawerJsonBtn">Copy JSON</button>
+          </div>
+
+          <div class="two-col">
+            <div class="card">
+              <h3>Stats</h3>
+              ${jsonBlock({
+                seen: row.seen,
+                completed: row.completed,
+                realCompleted: row.realCompleted,
+                shadowCompleted: row.shadowCompleted,
+                winrate: row.winrate,
+                fairWinrate: row.fairWinrate,
+                avgR: row.avgR,
+                totalR: row.totalR,
+                profitFactor: row.profitFactor,
+                directSLPct: row.directSLPct,
+                balancedScore: row.balancedScore
+              })}
+            </div>
+
+            <div class="card">
+              <h3>Definition</h3>
+              ${jsonBlock(row.definitionParts || row.definition || row.parts || [])}
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Raw detail JSON</h3>
+            ${jsonBlock(data)}
+          </div>
+        `;
+
+        $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
+        $("copyDrawerIdBtn")?.addEventListener("click", () => copyText(id, "MicroFamilyId gekopieerd."));
+        $("copyDrawerJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "MicroFamily JSON gekopieerd."));
+      } catch (error) {
+        drawer.innerHTML = `
+          <div class="drawer-head">
+            <div>
+              <h2>${escapeHtml(id)}</h2>
+              <div class="muted">Detail API error</div>
+            </div>
+            <button type="button" id="closeDrawerBtn">Close</button>
+          </div>
+          <div class="message error">${escapeHtml(error.message)}</div>
+        `;
+
+        $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
+      }
+    }
+
+    function closeDrawer() {
+      $("drawer").classList.add("hidden");
+      $("drawer").innerHTML = "";
+    }
+
+    async function renderRotation() {
+      showLoading("rotation");
+
+      const data = await api(endpoints.rotation);
+      state.rotation = data;
+
+      const active = data.active || data.activeRotation || {};
+      const next = data.next || data.nextRotation || {};
+      const activeIds = active.microFamilyIds || [];
+      const nextIds = next.microFamilyIds || [];
+
+      const activeRowsRaw = getRows(data, ["activeRows", "rows", "activeMicroFamilies"]);
+      const activeRows = activeRowsRaw.length
+        ? activeRowsRaw
+        : activeIds.map((id, index) => ({ rank: index + 1, microFamilyId: id }));
+
+      $("rotation").innerHTML = `
+        <div class="toolbar">
+          <button type="button" class="primary" id="activateBestBalancedNowBtn">Activate best balanced now</button>
+          <button type="button" class="success" id="copyActiveIdsBtn">Copy active microFamilyIds</button>
+          <button type="button" class="success" id="copyActiveEnvBtn">Copy ENV line</button>
+          <button type="button" id="downloadRotationBtn">Export rotation JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Active count", fmtInt(activeIds.length))}
+          ${metricCard("Next count", fmtInt(nextIds.length))}
+          ${metricCard("Active source week", active.sourceWeekKey || data.sourceWeekKey || "NA")}
+          ${metricCard("Mode", active.mode || data.mode || "NA")}
+        </div>
+
+        <h3>Active rotation rows</h3>
+        ${table(activeRows, [
+          { label: "Rank", render: (r) => escapeHtml(r.rank ?? "") },
+          { label: "MicroFamilyId", render: (r) => `<code>${escapeHtml(microId(r))}</code>` },
+          { label: "Family", key: "familyId" },
+          { label: "Side", key: "side" },
+          { label: "Completed", render: (r) => fmt(r.completed, 2) },
+          { label: "Fair WR", render: (r) => fmtPctRatio(r.fairWinrate ?? r.bayesianWinrate ?? r.wilsonLowerBound) },
+          { label: "AvgR", render: (r) => fmt(r.avgR, 3) },
+          { label: "TotalR", render: (r) => fmt(r.totalR, 3) },
+          { label: "Balanced", render: (r) => fmt(r.balancedScore, 2) }
+        ], "Geen actieve rotation gevonden.")}
+
+        ${renderActiveCopyBlock(activeIds)}
+
+        <div class="card">
+          <h3>Active rotation raw</h3>
+          ${jsonBlock(active)}
+        </div>
+
+        <div class="card">
+          <h3>Next rotation raw</h3>
+          ${jsonBlock(next)}
+        </div>
+
+        <div class="card">
+          <h3>Raw rotation JSON</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("activateBestBalancedNowBtn")?.addEventListener("click", activateBestBalanced);
+      $("copyActiveIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`));
+      $("copyActiveEnvBtn")?.addEventListener("click", () => copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd."));
+      $("downloadRotationBtn")?.addEventListener("click", () => downloadJson("active-rotation.json", data));
+
+      document.querySelector("[data-copy-json='active']")?.addEventListener("click", () => {
+        copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`);
+      });
+
+      document.querySelector("[data-copy-env='active']")?.addEventListener("click", () => {
+        copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd.");
+      });
+    }
+
+    async function renderDiscord() {
+      showLoading("discord");
+
+      const data = await api(`${endpoints.discord}?limit=100`);
+      state.discord = data;
+
+      const logs = getRows(data, ["logs", "items"]);
+
+      $("discord").innerHTML = `
+        <div class="toolbar">
+          <button type="button" id="copyDiscordJsonBtn">Copy Discord JSON</button>
+          <button type="button" id="downloadDiscordBtn">Export JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Logs", fmtInt(logs.length))}
+          ${metricCard("Last log", fmtTs(logs[0]?.ts || logs[0]?.createdAt))}
+        </div>
+
+        ${table(logs, [
+          { label: "TS", render: (r) => fmtTs(r.ts || r.createdAt) },
+          { label: "Type", render: (r) => escapeHtml(r.type || r.level || "-") },
+          { label: "Symbol", render: (r) => escapeHtml(r.symbol || r.payload?.symbol || "") },
+          { label: "Side", render: (r) => escapeHtml(r.side || r.payload?.side || "") },
+          { label: "Micro", render: (r) => `<code>${escapeHtml(r.microFamilyId || r.payload?.microFamilyId || "")}</code>` },
+          { label: "Result", render: (r) => escapeHtml(r.result ? JSON.stringify(r.result) : r.message || r.content || "") }
+        ])}
+
+        <div class="card">
+          <h3>Raw Discord JSON</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("copyDiscordJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
+      $("downloadDiscordBtn")?.addEventListener("click", () => downloadJson("discord-logs.json", data));
+    }
+
+    function renderReset() {
+      $("reset").innerHTML = `
+        <div class="grid">
+          <div class="card">
+            <h3>Reset learning only</h3>
+            <p class="muted">Wist observations, outcomes, weekly micro stats en shadow data. Open positions blijven staan.</p>
+            <button type="button" class="warn" id="resetLearningBtn">Reset learning</button>
+          </div>
+
+          <div class="card">
+            <h3>Reset rotation only</h3>
+            <p class="muted">Wist active/next rotation. Learning blijft staan.</p>
+            <button type="button" class="warn" id="resetRotationBtn">Reset rotation</button>
+          </div>
+
+          <div class="card">
+            <h3>Factory reset</h3>
+            <p class="muted">Wist scanner snapshots, trade memory, open positions, analyze stats, rotations en live cache.</p>
+            <input id="factoryConfirm" style="width: 100%; margin-bottom: 8px;" placeholder="FACTORY_RESET_CONFIRMED" />
+            <label style="display: block; margin-bottom: 8px;">
+              <input id="factoryForce" type="checkbox" />
+              force even with open positions
+            </label>
+            <button type="button" class="danger" id="factoryResetBtn">Factory reset</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Reset result</h3>
+          <pre id="resetResult">Nog geen reset uitgevoerd.</pre>
+        </div>
+      `;
+
+      $("resetLearningBtn")?.addEventListener("click", postResetLearning);
+      $("resetRotationBtn")?.addEventListener("click", postResetRotation);
+      $("factoryResetBtn")?.addEventListener("click", postFactoryReset);
+    }
+
+    async function postResetLearning() {
+      const confirmValue = prompt("Typ RESET_LEARNING om learning te wissen.");
+      if (confirmValue !== "RESET_LEARNING") return;
+
+      const data = await api(endpoints.resetLearning, {
+        method: "POST",
+        body: JSON.stringify({
+          confirm: "RESET_LEARNING",
+          confirmed: "RESET_LEARNING"
+        })
+      });
+
+      $("resetResult").textContent = JSON.stringify(data, null, 2);
+      setMessage("Learning reset uitgevoerd.", "ok");
+    }
+
+    async function postResetRotation() {
+      if (!confirm("Reset active/next rotation?")) return;
+
+      const data = await api(endpoints.resetRotation, {
+        method: "POST",
+        body: JSON.stringify({
+          confirm: true,
+          confirmed: true
+        })
+      });
+
+      $("resetResult").textContent = JSON.stringify(data, null, 2);
+      setMessage("Rotation reset uitgevoerd.", "ok");
+    }
+
+    async function postFactoryReset() {
+      const confirmValue = $("factoryConfirm").value.trim();
+      const forceValue = $("factoryForce").checked;
+
+      if (confirmValue !== "FACTORY_RESET_CONFIRMED") {
+        setMessage("Factory reset geblokkeerd: bevestiging is niet exact FACTORY_RESET_CONFIRMED.", "error");
+        return;
+      }
+
+      if (!confirm("FACTORY RESET wist alles. Doorgaan?")) return;
+
+      const data = await api(endpoints.factoryReset, {
+        method: "POST",
+        body: JSON.stringify({
+          confirm: "FACTORY_RESET_CONFIRMED",
+          confirmed: "FACTORY_RESET_CONFIRMED",
+          force: forceValue,
+          forceClosePositions: forceValue
+        })
+      });
+
+      $("resetResult").textContent = JSON.stringify(data, null, 2);
+      setMessage("Factory reset uitgevoerd.", "ok");
+    }
+
+    async function activateBestBalanced() {
+      if (!confirm("Activate best balanced microFamilies als active rotation?")) return;
+
+      const data = await api(endpoints.rotation, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "activateBestBalanced",
+          mode: "balanced"
+        })
+      });
+
+      const count =
+        data.activeRotation?.microFamilyIds?.length ||
+        data.active?.microFamilyIds?.length ||
+        0;
+
+      setMessage(`Activated ${count} microFamilies.`, "ok");
+
+      await renderRotation();
+    }
+
+    function showTab(id) {
+      if (!tabs.includes(id)) id = "overview";
+
+      state.activeTab = id;
+
+      document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+
+      $(id).classList.remove("hidden");
+      document.querySelector(`[data-tab="${id}"]`)?.classList.add("active");
+
+      location.hash = id;
+      refresh(id);
+    }
+
+    async function refresh(tab = state.activeTab) {
+      setMessage("");
+
+      try {
+        if (tab === "overview") return await renderOverview();
+        if (tab === "scanner") return await renderScanner();
+        if (tab === "trade") return await renderTrade();
+        if (tab === "micros") return await renderMicros();
+        if (tab === "rotation") return await renderRotation();
+        if (tab === "discord") return await renderDiscord();
+        if (tab === "reset") return renderReset();
+      } catch (error) {
+        const message = error?.message || String(error);
+        setMessage(message, "error");
+        $(tab).innerHTML = `<div class="card"><h3>Error</h3>${jsonBlock({ message })}</div>`;
+      }
+    }
+
+    document.querySelectorAll(".tab").forEach((button) => {
+      button.addEventListener("click", () => showTab(button.dataset.tab));
+    });
+
+    $("refreshBtn").addEventListener("click", () => refresh(state.activeTab));
+
+    $("drawer").addEventListener("click", (event) => {
+      if (event.target.id === "drawer") closeDrawer();
+    });
+
+    window.addEventListener("error", (event) => {
+      setMessage(event.message || "Browser error", "error");
+    });
+
+    window.addEventListener("unhandledrejection", (event) => {
+      setMessage(event.reason?.message || String(event.reason || "Unhandled promise rejection"), "error");
+    });
+
+    const initialTab = location.hash.replace("#", "") || "overview";
+    showTab(tabs.includes(initialTab) ? initialTab : "overview");
+  </script>
 </body>
 </html>
