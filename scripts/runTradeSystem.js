@@ -6,12 +6,19 @@ function hasFlag(flag) {
   return process.argv.includes(flag);
 }
 
+function shouldForceProcessSnapshot() {
+  return (
+    hasFlag('--force') ||
+    hasFlag('--forceProcessSnapshot') ||
+    hasFlag('--force-process-snapshot')
+  );
+}
+
 async function main() {
   const startedAt = Date.now();
+  const argv = process.argv.slice(2);
 
-  const forceProcessSnapshot =
-    hasFlag('--force') ||
-    hasFlag('--forceProcessSnapshot');
+  const forceProcessSnapshot = shouldForceProcessSnapshot();
 
   try {
     const result = await runTradeSystem({
@@ -21,6 +28,7 @@ async function main() {
     console.log(JSON.stringify({
       ok: result?.ok !== false,
       source: 'CLI_RUN_TRADE_SYSTEM',
+      argv,
       forceProcessSnapshot,
       durationMs: Date.now() - startedAt,
       result
@@ -31,6 +39,7 @@ async function main() {
     console.error(JSON.stringify({
       ok: false,
       source: 'CLI_RUN_TRADE_SYSTEM',
+      argv,
       forceProcessSnapshot,
       error: error?.message || String(error),
       stack: error?.stack,
