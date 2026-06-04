@@ -23,6 +23,17 @@ import {
   fetchCandles
 } from './bitgetClient.js';
 
+function scannerConcurrency() {
+  const value =
+    CONFIG.scanner?.dataConcurrency ||
+    CONFIG.trade?.dataConcurrency ||
+    5;
+
+  const n = Number(value);
+
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5;
+}
+
 function inferSide({ change1h, change24h }) {
   const ch1 = safeNumber(change1h, 0);
   const ch24 = safeNumber(change24h, 0);
@@ -130,7 +141,8 @@ function dedupeByBaseSymbol(tickers) {
       byBase.set(baseSymbol, {
         ...ticker,
         baseSymbol,
-        symbol: normalizeContractSymbol(ticker.symbol)
+        symbol: normalizeContractSymbol(ticker.symbol),
+        contractSymbol: normalizeContractSymbol(ticker.contractSymbol || ticker.symbol)
       });
     }
   }
@@ -148,7 +160,7 @@ function buildTickerUniverse(rawTickers) {
     .slice(0, CONFIG.scanner.maxSymbols);
 }
 
-async function createCandleCache() {
+function createCandleCache() {
   const cache = new Map();
 
   return async function getCandles(symbol, timeframe = '15m', limit = CONFIG.scanner.candleLimit) {
@@ -167,11 +179,22 @@ async function createCandleCache() {
 async function buildBtcContext({ universe, getCandles }) {
   const btcTicker =
     universe.find((row) => row.baseSymbol === 'BTC') ||
-    parseTicker({ symbol: 'BTCUSDT', last: 0, quoteVolume: 0, change24h: 0 });
+    parseTicker({
+      symbol: 'BTCUSDT',
+      last: 0,
+      quoteVolume: 0,
+      change24h: 0
+    });
 
-  const btcCandles15m = await getCandles('BTCUSDT', '15m', CONFIG.scanner.candleLimit);
+  const btcCandles15m = await getCandles(
+    'BTCUSDT',
+    '15m',
+    CONFIG.scanner.candleLimit
+  );
+
   const btcChange1h = calcOneHourChange(btcCandles15m);
   const btcChange24h = safeNumber(btcTicker.change24h, 0);
+
   const btcState = classifyBtcState({
     change24: btcChange24h,
     change1h: btcChange1h
@@ -202,8 +225,8 @@ async function analyzeTickerCandidate({
   btcState,
   getCandles
 }) {
-  const contractSymbol = normalizeContractSymbol(ticker.symbol);
-  const baseSymbol = normalizeBaseSymbol(ticker.symbol);
+  const contractSymbol = normalizeContractSymbol(ticker.contractSymbol || ticker.symbol);
+  const baseSymbol = normalizeBaseSymbol(ticker.baseSymbol || ticker.symbol);
 
   if (!contractSymbol || !baseSymbol) {
     return {
@@ -212,7 +235,11 @@ async function analyzeTickerCandidate({
     };
   }
 
-  const candles15m = await getCandles(contractSymbol, '15m', CONFIG.scanner.candleLimit);
+  const candles15m = await getCandles(
+    contractSymbol,
+    '15m',
+    CONFIG.scanner.candleLimit
+  );
 
   if (candles15m.length < 30) {
     return {
@@ -277,6 +304,7 @@ async function analyzeTickerCandidate({
       snapshotId,
 
       symbol: baseSymbol,
+      baseSymbol,
       contractSymbol,
       side,
 
@@ -305,11 +333,9 @@ async function analyzeTickerCandidate({
 
 function countSkipped(results) {
   return results.reduce((acc, row) => {
-    const reason = row?.skippedReason;
+    const reason = row?.skippedReason || (row?.candidate ? 'SELECTED' : 'UNKNOWN');
 
-    if (reason) {
-      acc[reason] = (acc[reason] || 0) + 1;
-    }
+    acc[reason] = (acc[reason] || 0) + 1;
 
     return acc;
   }, {});
@@ -317,9 +343,10 @@ function countSkipped(results) {
 
 export async function runScanner() {
   const redis = getVolatileRedis();
+
   const startedAt = Date.now();
   const snapshotId = randomId('scan');
-  const getCandles = await createCandleCache();
+  const getCandles = createCandleCache();
 
   const rawTickers = await fetchBitgetTickers();
   const universe = buildTickerUniverse(rawTickers);
@@ -331,7 +358,7 @@ export async function runScanner() {
 
   const results = await mapConcurrent(
     universe,
-    CONFIG.scanner.dataConcurrency || CONFIG.trade.dataConcurrency || 5,
+    scannerConcurrency(),
     async (ticker) => analyzeTickerCandidate({
       ticker,
       snapshotId,
@@ -346,10 +373,15 @@ export async function runScanner() {
     .filter(Boolean)
     .sort((a, b) => b.scannerScore - a.scannerScore);
 
+  const completedAt = Date.now();
+
   const snapshot = {
+    ok: true,
+
     snapshotId,
     createdAt: startedAt,
-    durationMs: Date.now() - startedAt,
+    completedAt,
+    durationMs: completedAt - startedAt,
 
     btcState: btcContext.btcState,
     regime: btcContext.regime,
@@ -359,10 +391,13 @@ export async function runScanner() {
 
     rawCount: Array.isArray(rawTickers) ? rawTickers.length : 0,
     filteredUniverse: universe.length,
+
     candidatesCount: cleanCandidates.length,
     skippedCounts: countSkipped(results),
 
-    topSymbols: cleanCandidates.slice(0, 20).map((candidate) => candidate.symbol),
+    topSymbols: cleanCandidates
+      .slice(0, 20)
+      .map((candidate) => candidate.symbol),
 
     candidates: cleanCandidates
   };
@@ -371,22 +406,36 @@ export async function runScanner() {
     redis,
     KEYS.scan.snapshot(snapshotId),
     snapshot,
-    { ex: CONFIG.scanner.snapshotTtlSec }
+    {
+      ex: CONFIG.scanner.snapshotTtlSec
+    }
   );
 
   await setJson(
     redis,
     KEYS.scan.latest,
     {
+      ok: true,
+
       snapshotId,
       createdAt: startedAt,
+      completedAt,
       durationMs: snapshot.durationMs,
+
       candidatesCount: cleanCandidates.length,
+
       btcState: btcContext.btcState,
       regime: btcContext.regime,
+
+      rawCount: snapshot.rawCount,
+      filteredUniverse: snapshot.filteredUniverse,
+      skippedCounts: snapshot.skippedCounts,
+
       topSymbols: snapshot.topSymbols
     },
-    { ex: CONFIG.scanner.snapshotTtlSec }
+    {
+      ex: CONFIG.scanner.snapshotTtlSec
+    }
   );
 
   return snapshot;
