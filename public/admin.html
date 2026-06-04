@@ -896,7 +896,13 @@
 
     function coinName(row) {
       const symbol = baseSymbol(row);
-      return row?.name || row?.coinName || row?.fullName || row?.assetName || COIN_NAMES[symbol] || symbol;
+
+      return row?.name ||
+        row?.coinName ||
+        row?.fullName ||
+        row?.assetName ||
+        COIN_NAMES[symbol] ||
+        symbol;
     }
 
     function coinLogo(row) {
@@ -913,11 +919,13 @@
       if (direct) return direct;
 
       const symbol = baseSymbol(row).toLowerCase();
-      return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${symbol}.svg`;
+
+      return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${symbol}.png`;
     }
 
     function handleCoinLogoError(img) {
       const parent = img?.parentElement;
+
       if (!parent) return;
 
       parent.classList.add("fallback");
@@ -926,15 +934,19 @@
 
     function sideClass(side) {
       const s = String(side || "").toLowerCase();
+
       if (s === "bull" || s === "long" || s === "buy") return "bull";
       if (s === "bear" || s === "short" || s === "sell") return "bear";
+
       return "neutral";
     }
 
     function sideLabel(side) {
       const s = String(side || "").toLowerCase();
+
       if (s === "bull" || s === "long" || s === "buy") return "LONG";
       if (s === "bear" || s === "short" || s === "sell") return "SHORT";
+
       return String(side || "NA").toUpperCase();
     }
 
@@ -964,60 +976,80 @@
 
     function fmt(value, decimals = 3) {
       const n = Number(value);
+
       if (!Number.isFinite(n)) return "-";
+
       return n.toFixed(decimals);
     }
 
     function fmtInt(value) {
       const n = Number(value);
+
       if (!Number.isFinite(n)) return "0";
+
       return Math.round(n).toLocaleString();
     }
 
     function fmtPctRatio(value) {
       const n = Number(value);
+
       if (!Number.isFinite(n)) return "-";
+
       return `${(n * 100).toFixed(1)}%`;
     }
 
     function fmtPctRaw(value) {
       const n = Number(value);
+
       if (!Number.isFinite(n)) return "-";
+
       return `${n.toFixed(2)}%`;
     }
 
     function fmtPrice(value) {
       const n = Number(value);
+
       if (!Number.isFinite(n)) return "-";
       if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
       if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+
       return n.toLocaleString(undefined, { maximumFractionDigits: 8 });
     }
 
     function fmtMoneyLike(value) {
       const n = Number(value);
+
       if (!Number.isFinite(n)) return "-";
       if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
       if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
       if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+
       return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
     }
 
     function fmtTs(value) {
       if (!value) return "-";
+
       const n = Number(value);
       const date = Number.isFinite(n) ? new Date(n) : new Date(value);
+
       if (Number.isNaN(date.getTime())) return "-";
+
       return date.toLocaleString();
     }
 
     function ageText(ts) {
       if (!ts) return "-";
+
       const n = Number(ts);
+
       if (!Number.isFinite(n)) return "-";
+
       const sec = Math.max(0, Math.floor((Date.now() - n) / 1000));
+
       if (sec < 60) return `${sec}s geleden`;
       if (sec < 3600) return `${Math.floor(sec / 60)}m geleden`;
+
       return `${Math.floor(sec / 3600)}u geleden`;
     }
 
@@ -1076,6 +1108,7 @@
       const rawText = await response.text();
 
       let data = {};
+
       try {
         data = rawText ? JSON.parse(rawText) : {};
       } catch {
@@ -1095,11 +1128,16 @@
         return `<div class="empty">${escapeHtml(emptyText)}</div>`;
       }
 
-      const head = cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("");
+      const head = cols
+        .map((column) => `<th>${escapeHtml(column.label)}</th>`)
+        .join("");
 
       const body = rows.map((row, index) => {
-        const cells = cols.map((c) => {
-          const value = c.render ? c.render(row, index) : escapeHtml(row?.[c.key]);
+        const cells = cols.map((column) => {
+          const value = column.render
+            ? column.render(row, index)
+            : escapeHtml(row?.[column.key]);
+
           return `<td>${value}</td>`;
         }).join("");
 
@@ -1130,6 +1168,7 @@
 
     function scoreBar(value, max = 100) {
       const n = Math.max(0, Math.min(100, (Number(value) / max) * 100 || 0));
+
       return `<div class="score-bar"><span style="--w:${n.toFixed(1)}%"></span></div>`;
     }
 
@@ -1261,7 +1300,10 @@
     }
 
     function downloadJson(filename, data) {
-      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: "application/json" });
+      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], {
+        type: "application/json"
+      });
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
 
@@ -1274,6 +1316,8 @@
 
     function activeIdsFromState() {
       return (
+        state.micros?.activeMicroFamilyIds ||
+        state.micros?.activeRotation?.microFamilyIds ||
         state.rotation?.active?.microFamilyIds ||
         state.rotation?.activeRotation?.microFamilyIds ||
         state.overview?.activeRotation?.microFamilyIds ||
@@ -1283,6 +1327,72 @@
 
     function microId(row) {
       return row?.microFamilyId || row?.id || "";
+    }
+
+    function filterMicroRows(rows = []) {
+      const search = state.microSearch.trim().toLowerCase();
+
+      if (!search) return rows;
+
+      return rows.filter((row) => {
+        return JSON.stringify(row).toLowerCase().includes(search);
+      });
+    }
+
+    function microRowsTable(rows, activeIdsInput = []) {
+      const activeIds = activeIdsInput instanceof Set
+        ? activeIdsInput
+        : new Set(activeIdsInput || []);
+
+      return table(rows, [
+        { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
+        { label: "Active", render: (row) => {
+          const isActive = Boolean(row.active) || activeIds.has(microId(row));
+          return `<span class="pill ${isActive ? "active" : ""}">${isActive ? "ACTIVE" : "off"}</span>`;
+        }},
+        { label: "MicroFamily", render: (row) => {
+          const id = microId(row);
+          return `<button type="button" class="small" data-open-micro="${escapeAttr(id)}"><code>${escapeHtml(id)}</code></button>`;
+        }},
+        { label: "Family", key: "familyId" },
+        { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+        { label: "Seen", render: (row) => fmtInt(row.seen) },
+        { label: "Completed", render: (row) => fmt(row.completed, 2) },
+        { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
+        { label: "Winrate", render: (row) => fmtPctRatio(row.winrate) },
+        { label: "Net AvgR", render: (row) => fmt(row.avgR, 3) },
+        { label: "Net TotalR", render: (row) => fmt(row.totalR, 3) },
+        { label: "PF", render: (row) => fmt(row.profitFactor, 2) },
+        { label: "DirectSL", render: (row) => fmtPctRatio(row.directSLPct) },
+        { label: "Balanced", render: (row) => `<strong>${fmt(row.balancedScore, 2)}</strong>` },
+        { label: "Copy", render: (row) => `<button type="button" class="small" data-copy-micro="${escapeAttr(microId(row))}">Copy</button>` }
+      ]);
+    }
+
+    function bindMicroTableEvents() {
+      document.querySelectorAll("[data-open-micro]").forEach((btn) => {
+        btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
+      });
+
+      document.querySelectorAll("[data-copy-micro]").forEach((btn) => {
+        btn.addEventListener("click", () => copyText(btn.dataset.copyMicro, "MicroFamilyId gekopieerd."));
+      });
+    }
+
+    function renderMicrosTableOnly(filteredRows) {
+      const target = $("microsTable");
+
+      if (!target) return;
+
+      const activeIds = new Set(
+        state.micros?.activeMicroFamilyIds ||
+        state.micros?.activeRotation?.microFamilyIds ||
+        activeIdsFromState()
+      );
+
+      target.innerHTML = microRowsTable(filteredRows, activeIds);
+
+      bindMicroTableEvents();
     }
 
     async function renderOverview() {
@@ -1364,9 +1474,9 @@
           ${metricCard("BTC state", snapshot.btcState || "-")}
           ${metricCard("Regime", snapshot.regime || "-")}
           ${metricCard("Candidates", fmtInt(candidates.length))}
-          ${metricCard("Clean candidates", fmtInt(candidates.filter((c) => !c.fakeBreakout).length))}
-          ${metricCard("Fake risk", fmtInt(candidates.filter((c) => c.fakeBreakoutRisk).length))}
-          ${metricCard("Avg score", fmt(candidates.reduce((a, c) => a + Number(c.scannerScore || c.moveScore || 0), 0) / Math.max(1, candidates.length), 1))}
+          ${metricCard("Clean candidates", fmtInt(candidates.filter((candidate) => !candidate.fakeBreakout).length))}
+          ${metricCard("Fake risk", fmtInt(candidates.filter((candidate) => candidate.fakeBreakoutRisk).length))}
+          ${metricCard("Avg score", fmt(candidates.reduce((sum, candidate) => sum + Number(candidate.scannerScore || candidate.moveScore || 0), 0) / Math.max(1, candidates.length), 1))}
         </div>
 
         <div class="section-title">
@@ -1388,16 +1498,16 @@
         </div>
 
         ${table(candidates, [
-          { label: "Coin", render: (r) => coinAvatar(r, "sm") },
+          { label: "Coin", render: (row) => coinAvatar(row, "sm") },
           { label: "Contract", key: "contractSymbol" },
-          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
-          { label: "Price", render: (r) => `$${escapeHtml(fmtPrice(r.price))}` },
-          { label: "Score", render: (r) => `${escapeHtml(fmt(r.scannerScore ?? r.moveScore, 1))}${scoreBar(r.scannerScore ?? r.moveScore, 100)}` },
-          { label: "1h", render: (r) => fmtPctRaw(r.change1h) },
-          { label: "24h", render: (r) => fmtPctRaw(r.change24h) },
-          { label: "Vol24h", render: (r) => fmtMoneyLike(r.volume24h) },
-          { label: "FakeBO", render: (r) => r.fakeBreakout ? '<span class="pill danger">YES</span>' : '<span class="pill active">NO</span>' },
-          { label: "FakeRisk", render: (r) => r.fakeBreakoutRisk ? '<span class="pill warn">RISK</span>' : '<span class="pill active">OK</span>' },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+          { label: "Price", render: (row) => `$${escapeHtml(fmtPrice(row.price))}` },
+          { label: "Score", render: (row) => `${escapeHtml(fmt(row.scannerScore ?? row.moveScore, 1))}${scoreBar(row.scannerScore ?? row.moveScore, 100)}` },
+          { label: "1h", render: (row) => fmtPctRaw(row.change1h) },
+          { label: "24h", render: (row) => fmtPctRaw(row.change24h) },
+          { label: "Vol24h", render: (row) => fmtMoneyLike(row.volume24h) },
+          { label: "FakeBO", render: (row) => row.fakeBreakout ? '<span class="pill danger">YES</span>' : '<span class="pill active">NO</span>' },
+          { label: "FakeRisk", render: (row) => row.fakeBreakoutRisk ? '<span class="pill warn">RISK</span>' : '<span class="pill active">OK</span>' },
           { label: "Reason", key: "scannerReason" }
         ])}
       `;
@@ -1431,8 +1541,8 @@
         <div class="grid">
           ${metricCard("Open positions", fmtInt(positions.length))}
           ${metricCard("Last processed", data.lastProcessed?.snapshotId || data.lastProcessedSnapshot || data.lastProcessedSnapshotId || "-")}
-          ${metricCard("Last run", fmtTs(data.runMeta?.ts || data.lastRunAt))}
-          ${metricCard("Actions", data.runMeta?.actionCounts ? Object.entries(data.runMeta.actionCounts).map(([k, v]) => `${k}:${v}`).join(" ") : "NA")}
+          ${metricCard("Last run", fmtTs(data.runMeta?.completedAt || data.runMeta?.startedAt || data.lastRunAt))}
+          ${metricCard("Actions", data.runMeta?.actionCounts ? Object.entries(data.runMeta.actionCounts).map(([key, value]) => `${key}:${value}`).join(" ") : "NA")}
         </div>
 
         <div class="section-title">
@@ -1454,17 +1564,17 @@
         </div>
 
         ${table(positions, [
-          { label: "Coin", render: (r) => coinAvatar(r, "sm") },
-          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
-          { label: "Entry", render: (r) => fmtPrice(r.entry) },
-          { label: "SL", render: (r) => fmtPrice(r.sl) },
-          { label: "TP", render: (r) => fmtPrice(r.tp) },
-          { label: "RR", render: (r) => fmt(r.rr, 2) },
-          { label: "CurR", render: (r) => fmt(r.currentR, 3) },
-          { label: "MFE", render: (r) => fmt(r.mfeR, 3) },
-          { label: "MAE", render: (r) => fmt(r.maeR, 3) },
-          { label: "Micro", render: (r) => `<code>${escapeHtml(r.microFamilyId)}</code>` },
-          { label: "Opened", render: (r) => fmtTs(r.openedAt || r.createdAt) }
+          { label: "Coin", render: (row) => coinAvatar(row, "sm") },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+          { label: "Entry", render: (row) => fmtPrice(row.entry) },
+          { label: "SL", render: (row) => fmtPrice(row.sl) },
+          { label: "TP", render: (row) => fmtPrice(row.tp) },
+          { label: "RR", render: (row) => fmt(row.rr, 2) },
+          { label: "CurR", render: (row) => fmt(row.currentR, 3) },
+          { label: "MFE", render: (row) => fmt(row.mfeR, 3) },
+          { label: "MAE", render: (row) => fmt(row.maeR, 3) },
+          { label: "Micro", render: (row) => `<code>${escapeHtml(row.microFamilyId)}</code>` },
+          { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
         ])}
 
         <div class="card">
@@ -1492,18 +1602,20 @@
       state.micros = data;
 
       const rows = getRows(data, ["rows", "microFamilies", "micros"]);
-      const activeIds = new Set(activeIdsFromState());
-      const search = state.microSearch.trim().toLowerCase();
 
-      const filteredRows = search
-        ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search))
-        : rows;
+      const activeIds = new Set(
+        data.activeMicroFamilyIds ||
+        data.activeRotation?.microFamilyIds ||
+        activeIdsFromState()
+      );
+
+      const filteredRows = filterMicroRows(rows);
 
       $("micros").innerHTML = `
         <div class="toolbar">
           <select id="microMode">
-            ${["balanced", "winrate", "totalR", "avgR", "directSL", "observed"].map((m) => `
-              <option value="${escapeAttr(m)}" ${m === state.microMode ? "selected" : ""}>${escapeHtml(m)}</option>
+            ${["balanced", "winrate", "totalR", "avgR", "directSL", "observed"].map((modeName) => `
+              <option value="${escapeAttr(modeName)}" ${modeName === state.microMode ? "selected" : ""}>${escapeHtml(modeName)}</option>
             `).join("")}
           </select>
 
@@ -1521,60 +1633,51 @@
           ${metricCard("Active IDs known", fmtInt(activeIds.size))}
         </div>
 
-        ${table(filteredRows, [
-          { label: "Rank", render: (r, i) => escapeHtml(r.rank ?? i + 1) },
-          { label: "Active", render: (r) => {
-            const isActive = Boolean(r.active) || activeIds.has(microId(r));
-            return `<span class="pill ${isActive ? "active" : ""}">${isActive ? "ACTIVE" : "off"}</span>`;
-          }},
-          { label: "MicroFamily", render: (r) => {
-            const id = microId(r);
-            return `<button type="button" class="small" data-open-micro="${escapeAttr(id)}"><code>${escapeHtml(id)}</code></button>`;
-          }},
-          { label: "Family", key: "familyId" },
-          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
-          { label: "Seen", render: (r) => fmtInt(r.seen) },
-          { label: "Completed", render: (r) => fmt(r.completed, 2) },
-          { label: "Fair WR", render: (r) => fmtPctRatio(r.fairWinrate ?? r.bayesianWinrate ?? r.wilsonLowerBound) },
-          { label: "Winrate", render: (r) => fmtPctRatio(r.winrate) },
-          { label: "Net AvgR", render: (r) => fmt(r.avgR, 3) },
-          { label: "Net TotalR", render: (r) => fmt(r.totalR, 3) },
-          { label: "PF", render: (r) => fmt(r.profitFactor, 2) },
-          { label: "DirectSL", render: (r) => fmtPctRatio(r.directSLPct) },
-          { label: "Balanced", render: (r) => `<strong>${fmt(r.balancedScore, 2)}</strong>` },
-          { label: "Copy", render: (r) => `<button type="button" class="small" data-copy-micro="${escapeAttr(microId(r))}">Copy</button>` }
-        ])}
+        <div id="microsTable">
+          ${microRowsTable(filteredRows, activeIds)}
+        </div>
       `;
 
-      $("microMode")?.addEventListener("change", (event) => renderMicros(event.target.value));
+      $("microMode")?.addEventListener("change", (event) => {
+        renderMicros(event.target.value);
+      });
 
       $("microSearch")?.addEventListener("input", (event) => {
         state.microSearch = event.target.value;
-        renderMicros(state.microMode);
+
+        const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
+        const currentFilteredRows = filterMicroRows(currentRows);
+        const filteredMetric = document.querySelector("#micros .grid .metric-card:nth-child(2) .metric-value");
+
+        if (filteredMetric) {
+          filteredMetric.textContent = fmtInt(currentFilteredRows.length);
+        }
+
+        renderMicrosTableOnly(currentFilteredRows);
       });
 
       $("activateBestBalancedBtn")?.addEventListener("click", activateBestBalanced);
 
       $("copyTopIdsBtn")?.addEventListener("click", () => {
-        const ids = filteredRows.map(microId).filter(Boolean).slice(0, 50);
+        const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
+        const currentFilteredRows = filterMicroRows(currentRows);
+        const ids = currentFilteredRows.map(microId).filter(Boolean).slice(0, 50);
+
         copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} microFamilyIds gekopieerd.`);
       });
 
-      $("downloadMicrosBtn")?.addEventListener("click", () => downloadJson("micro-families.json", data));
-
-      document.querySelectorAll("[data-open-micro]").forEach((btn) => {
-        btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
+      $("downloadMicrosBtn")?.addEventListener("click", () => {
+        downloadJson("micro-families.json", data);
       });
 
-      document.querySelectorAll("[data-copy-micro]").forEach((btn) => {
-        btn.addEventListener("click", () => copyText(btn.dataset.copyMicro, "MicroFamilyId gekopieerd."));
-      });
+      bindMicroTableEvents();
     }
 
     async function openMicro(id) {
       if (!id) return;
 
       const drawer = $("drawer");
+
       drawer.classList.remove("hidden");
       drawer.innerHTML = `
         <div class="drawer-head">
@@ -1706,15 +1809,15 @@
         </div>
 
         ${table(activeRows, [
-          { label: "Rank", render: (r, i) => escapeHtml(r.rank ?? i + 1) },
-          { label: "MicroFamilyId", render: (r) => `<code>${escapeHtml(microId(r))}</code>` },
+          { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
+          { label: "MicroFamilyId", render: (row) => `<code>${escapeHtml(microId(row))}</code>` },
           { label: "Family", key: "familyId" },
-          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
-          { label: "Completed", render: (r) => fmt(r.completed, 2) },
-          { label: "Fair WR", render: (r) => fmtPctRatio(r.fairWinrate ?? r.bayesianWinrate ?? r.wilsonLowerBound) },
-          { label: "AvgR", render: (r) => fmt(r.avgR, 3) },
-          { label: "TotalR", render: (r) => fmt(r.totalR, 3) },
-          { label: "Balanced", render: (r) => fmt(r.balancedScore, 2) }
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+          { label: "Completed", render: (row) => fmt(row.completed, 2) },
+          { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
+          { label: "AvgR", render: (row) => fmt(row.avgR, 3) },
+          { label: "TotalR", render: (row) => fmt(row.totalR, 3) },
+          { label: "Balanced", render: (row) => fmt(row.balancedScore, 2) }
         ], "Geen actieve rotation gevonden.")}
 
         <div class="card">
@@ -1761,12 +1864,12 @@
         </div>
 
         ${table(logs, [
-          { label: "TS", render: (r) => fmtTs(r.ts || r.createdAt) },
-          { label: "Type", render: (r) => escapeHtml(r.type || r.level || "-") },
-          { label: "Coin", render: (r) => coinAvatar(r.payload || r, "sm") },
-          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side || r.payload?.side))}">${escapeHtml(sideLabel(r.side || r.payload?.side))}</span>` },
-          { label: "Micro", render: (r) => `<code>${escapeHtml(r.microFamilyId || r.payload?.microFamilyId || "")}</code>` },
-          { label: "Result", render: (r) => escapeHtml(r.result ? JSON.stringify(r.result) : r.message || r.content || "") }
+          { label: "TS", render: (row) => fmtTs(row.ts || row.createdAt) },
+          { label: "Type", render: (row) => escapeHtml(row.type || row.level || "-") },
+          { label: "Coin", render: (row) => coinAvatar(row.payload || row, "sm") },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side || row.payload?.side))}">${escapeHtml(sideLabel(row.side || row.payload?.side))}</span>` },
+          { label: "Micro", render: (row) => `<code>${escapeHtml(row.microFamilyId || row.payload?.microFamilyId || "")}</code>` },
+          { label: "Result", render: (row) => escapeHtml(row.result ? JSON.stringify(row.result) : row.message || row.content || "") }
         ])}
       `;
 
@@ -1814,6 +1917,7 @@
 
     async function postResetLearning() {
       const confirmValue = prompt("Typ RESET_LEARNING om learning te wissen.");
+
       if (confirmValue !== "RESET_LEARNING") return;
 
       const data = await api(endpoints.resetLearning, {
@@ -1885,7 +1989,18 @@
         0;
 
       setMessage(`Activated ${count} microFamilies.`, "ok");
-      await renderRotation();
+
+      if (state.activeTab === "micros") {
+        await renderMicros(state.microMode);
+        return;
+      }
+
+      if (state.activeTab === "rotation") {
+        await renderRotation();
+        return;
+      }
+
+      await refresh(state.activeTab);
     }
 
     function showTab(id) {
@@ -1917,7 +2032,9 @@
         if (tab === "reset") return renderReset();
       } catch (error) {
         const message = error?.message || String(error);
+
         setMessage(message, "error");
+
         $(tab).innerHTML = `<div class="card"><h3>Error</h3>${jsonBlock({ message })}</div>`;
       }
     }
