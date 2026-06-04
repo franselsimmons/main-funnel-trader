@@ -49,41 +49,103 @@ import {
 } from './positionSizing.js';
 import { sendEntryAlert } from '../discord/discord.js';
 
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 300;
+
 function now() {
   return Date.now();
 }
 
+function cfgNumber(value, fallback) {
+  const n = safeNumber(value, fallback);
+
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function cfgBoolean(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+
+  return Boolean(value);
+}
+
+function positiveInt(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const n = Math.floor(cfgNumber(value, fallback));
+
+  return Math.max(min, Math.min(max, n));
+}
+
 function tradeConfig() {
+  const configuredTradeMax = cfgNumber(CONFIG.trade?.maxCandidatesPerSnapshot, 0);
+  const configuredAnalyzeMax = cfgNumber(
+    CONFIG.trade?.analyzeMaxCandidatesPerSnapshot ??
+    CONFIG.trade?.maxAnalyzeCandidatesPerSnapshot ??
+    CONFIG.scanner?.maxCandidates ??
+    CONFIG.scanner?.analyzeMaxCandidates,
+    DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT
+  );
+
+  const maxCandidatesPerSnapshot = positiveInt(
+    Math.max(configuredTradeMax, configuredAnalyzeMax, DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT),
+    DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
+    1,
+    1000
+  );
+
   return {
-    maxCandidatesPerSnapshot: Math.max(
+    maxCandidatesPerSnapshot,
+
+    maxSnapshotAgeSec: cfgNumber(CONFIG.trade?.maxSnapshotAgeSec, 8 * 60),
+
+    dataConcurrency: positiveInt(
+      CONFIG.trade?.dataConcurrency,
+      8,
       1,
-      Math.floor(safeNumber(CONFIG.trade?.maxCandidatesPerSnapshot, 80))
+      20
     ),
-    maxSnapshotAgeSec: safeNumber(CONFIG.trade?.maxSnapshotAgeSec, 8 * 60),
-    dataConcurrency: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.trade?.dataConcurrency, 5))
+
+    maxOpenPositions: positiveInt(
+      CONFIG.trade?.maxOpenPositions,
+      30
     ),
-    maxOpenPositions: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.trade?.maxOpenPositions, 30))
+
+    maxOpenSameSide: positiveInt(
+      CONFIG.trade?.maxOpenSameSide,
+      15
     ),
-    maxOpenSameSide: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.trade?.maxOpenSameSide, 15))
+
+    maxSpreadPct: cfgNumber(CONFIG.trade?.maxSpreadPct, 0.015),
+
+    candleTtlSec: positiveInt(
+      CONFIG.trade?.candleTtlSec,
+      90
     ),
-    maxSpreadPct: safeNumber(CONFIG.trade?.maxSpreadPct, 0.015),
-    candleTtlSec: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.trade?.candleTtlSec, 90))
+
+    orderbookTtlSec: positiveInt(
+      CONFIG.trade?.orderbookTtlSec,
+      12
     ),
-    orderbookTtlSec: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.trade?.orderbookTtlSec, 12))
+
+    fundingTtlSec: positiveInt(
+      CONFIG.trade?.fundingTtlSec,
+      120
     ),
-    fundingTtlSec: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.trade?.fundingTtlSec, 120))
+
+    requireScannerGateForLiveEntries: CONFIG.trade?.requireScannerGateForLiveEntries !== false,
+
+    blockDiscoveryOnlyLiveEntries: CONFIG.trade?.blockDiscoveryOnlyLiveEntries !== false,
+
+    allowFakeBreakoutLiveEntries: cfgBoolean(
+      CONFIG.trade?.allowFakeBreakoutLiveEntries,
+      false
+    ),
+
+    allowLowConfidenceLiveEntries: cfgBoolean(
+      CONFIG.trade?.allowLowConfidenceLiveEntries,
+      false
+    ),
+
+    minLiveScannerScore: Math.max(
+      0,
+      cfgNumber(CONFIG.trade?.minLiveScannerScore, 0)
     )
   };
 }
@@ -91,10 +153,11 @@ function tradeConfig() {
 function analyzeConfig() {
   return {
     shadowEnabled: CONFIG.analyze?.shadowEnabled !== false,
-    shadowHorizonMin: safeNumber(CONFIG.analyze?.shadowHorizonMin, 6 * 60),
-    maxShadowMonitorsPerRun: Math.max(
-      1,
-      Math.floor(safeNumber(CONFIG.analyze?.maxShadowMonitorsPerRun, 80))
+    shadowHorizonMin: cfgNumber(CONFIG.analyze?.shadowHorizonMin, 6 * 60),
+
+    maxShadowMonitorsPerRun: positiveInt(
+      CONFIG.analyze?.maxShadowMonitorsPerRun,
+      80
     )
   };
 }
@@ -102,7 +165,7 @@ function analyzeConfig() {
 function sizingConfig() {
   return {
     enabled: CONFIG.sizing?.enabled !== false,
-    baseRiskPct: safeNumber(CONFIG.sizing?.baseRiskPct, 0.0025)
+    baseRiskPct: cfgNumber(CONFIG.sizing?.baseRiskPct, 0.0025)
   };
 }
 
@@ -138,6 +201,7 @@ function actionCounts(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
     acc[key] = (acc[key] || 0) + 1;
+
     return acc;
   }, {});
 }
@@ -290,24 +354,6 @@ function isKnownTrueMicroFamilyId(id = '') {
   return idHasSchema(id, microSchema);
 }
 
-function getTradeSideFromRow(row = {}) {
-  const direct = sideToTradeSide(row.tradeSide || row.side);
-
-  if (direct !== 'UNKNOWN') return direct;
-
-  const familyId = String(row.familyId || '').toUpperCase();
-
-  if (familyId.startsWith('LONG_')) return 'LONG';
-  if (familyId.startsWith('SHORT_')) return 'SHORT';
-
-  const microId = String(row.microFamilyId || '').toUpperCase();
-
-  if (microId.includes('MICRO_LONG_')) return 'LONG';
-  if (microId.includes('MICRO_SHORT_')) return 'SHORT';
-
-  return 'UNKNOWN';
-}
-
 function buildActiveRotationContext(activeRotation) {
   const rows = Array.isArray(activeRotation?.microFamilies)
     ? activeRotation.microFamilies
@@ -425,6 +471,104 @@ function buildRotationWaitReason(activeContext, row = {}) {
   }
 
   return 'MICRO_FAMILY_NOT_IN_ACTIVE_ROTATION';
+}
+
+function scannerGatePassed(row = {}) {
+  if (row.scannerGatePassed === undefined || row.scannerGatePassed === null) {
+    return true;
+  }
+
+  return Boolean(row.scannerGatePassed);
+}
+
+function isDiscoveryOnly(row = {}) {
+  return Boolean(row.tradeDiscoveryOnly || row.discoveryOnly || row.analyzeOnly);
+}
+
+function validateLiveEntryGates(row = {}) {
+  const cfg = tradeConfig();
+
+  const spreadPct = safeNumber(
+    row.spreadPct ??
+    row.liveSpreadPct ??
+    row.orderbookSpreadPct,
+    0
+  );
+
+  const score = safeNumber(
+    row.scannerScore ??
+    row.moveScore,
+    0
+  );
+
+  if (cfg.requireScannerGateForLiveEntries && !scannerGatePassed(row)) {
+    return {
+      ok: false,
+      reason: 'SCANNER_GATE_NOT_PASSED',
+      scannerGatePassed: false
+    };
+  }
+
+  if (cfg.blockDiscoveryOnlyLiveEntries && isDiscoveryOnly(row)) {
+    return {
+      ok: false,
+      reason: 'SCANNER_DISCOVERY_ONLY_NOT_LIVE',
+      tradeDiscoveryOnly: true
+    };
+  }
+
+  if (!cfg.allowFakeBreakoutLiveEntries && row.fakeBreakout) {
+    return {
+      ok: false,
+      reason: 'FAKE_BREAKOUT_NOT_LIVE',
+      fakeBreakout: true,
+      fakeBreakoutReason: row.fakeBreakoutReason || null
+    };
+  }
+
+  if (
+    !cfg.allowLowConfidenceLiveEntries &&
+    String(row.sideConfidence || '').toUpperCase() === 'LOW'
+  ) {
+    return {
+      ok: false,
+      reason: 'LOW_SIDE_CONFIDENCE_NOT_LIVE',
+      sideConfidence: row.sideConfidence
+    };
+  }
+
+  if (spreadPct > cfg.maxSpreadPct) {
+    return {
+      ok: false,
+      reason: 'SPREAD_TOO_WIDE',
+      spreadPct,
+      maxSpreadPct: cfg.maxSpreadPct
+    };
+  }
+
+  if (row.liveSpreadGatePassed === false) {
+    return {
+      ok: false,
+      reason: 'SPREAD_GATE_FAILED',
+      spreadPct,
+      maxSpreadPct: cfg.maxSpreadPct
+    };
+  }
+
+  if (cfg.minLiveScannerScore > 0 && score < cfg.minLiveScannerScore) {
+    return {
+      ok: false,
+      reason: 'SCANNER_SCORE_TOO_LOW_FOR_LIVE',
+      scannerScore: score,
+      minLiveScannerScore: cfg.minLiveScannerScore
+    };
+  }
+
+  return {
+    ok: true,
+    spreadPct,
+    scannerScore: score
+  };
 }
 
 async function cachedVolatile(key, ttlSec, fn) {
@@ -677,8 +821,73 @@ async function monitorShadowPositions() {
   return results.filter(Boolean);
 }
 
-async function processCandidate(candidate) {
+function enrichMetricsWithScannerAndLiveGates({
+  metrics,
+  candidate,
+  ob
+}) {
   const cfg = tradeConfig();
+  const normalized = normalizeCandidate(candidate);
+
+  const spreadPct = safeNumber(
+    metrics?.spreadPct ??
+    ob?.spreadPct,
+    0
+  );
+
+  return {
+    ...metrics,
+
+    snapshotId: normalized.snapshotId || metrics.snapshotId || null,
+
+    scannerScore: safeNumber(
+      normalized.scannerScore ??
+      normalized.moveScore ??
+      metrics.scannerScore,
+      0
+    ),
+
+    moveScore: safeNumber(
+      normalized.moveScore ??
+      normalized.scannerScore ??
+      metrics.moveScore,
+      0
+    ),
+
+    scannerReason: normalized.scannerReason || metrics.scannerReason || null,
+    scannerTs: normalized.scannerTs || metrics.scannerTs || null,
+
+    scannerGatePassed: normalized.scannerGatePassed !== false,
+    scannerGateReason: normalized.scannerGateReason || null,
+
+    analyzeEligible: normalized.analyzeEligible !== false,
+    tradeDiscoveryOnly: Boolean(normalized.tradeDiscoveryOnly),
+
+    passesMoveFilter: normalized.passesMoveFilter !== false,
+    passesVolumeFilter: normalized.passesVolumeFilter !== false,
+    hasDirectionalSide: normalized.hasDirectionalSide !== false,
+
+    sideConfidence: normalized.sideConfidence || metrics.sideConfidence || null,
+
+    fakeBreakout: Boolean(normalized.fakeBreakout || metrics.fakeBreakout),
+    fakeBreakoutRisk: Boolean(normalized.fakeBreakoutRisk || metrics.fakeBreakoutRisk),
+    fakeBreakoutReason: normalized.fakeBreakoutReason || metrics.fakeBreakoutReason || null,
+    breakoutType: normalized.breakoutType || metrics.breakoutType || null,
+
+    pullbackConfirmed: Boolean(normalized.pullbackConfirmed || metrics.pullbackConfirmed),
+    retestConfirmed: Boolean(normalized.retestConfirmed || metrics.retestConfirmed),
+    sweepConfirmed: Boolean(normalized.sweepConfirmed || metrics.sweepConfirmed),
+
+    spreadPct,
+    liveSpreadPct: spreadPct,
+    maxSpreadPct: cfg.maxSpreadPct,
+    liveSpreadGatePassed: spreadPct <= cfg.maxSpreadPct,
+
+    liveDataTs: now()
+  };
+}
+
+async function processCandidate(candidate) {
   const normalized = normalizeCandidate(candidate);
 
   if (!normalized.symbol || !normalized.contractSymbol) {
@@ -695,16 +904,6 @@ async function processCandidate(candidate) {
     return {
       action: waitAction(normalized, 'LIVE_DATA_FAILED', {
         error: data.error?.message || null
-      }),
-      metrics: null
-    };
-  }
-
-  if (safeNumber(data.ob.spreadPct, 0) > cfg.maxSpreadPct) {
-    return {
-      action: waitAction(normalized, 'SPREAD_TOO_WIDE', {
-        spreadPct: data.ob.spreadPct,
-        maxSpreadPct: cfg.maxSpreadPct
       }),
       metrics: null
     };
@@ -752,7 +951,11 @@ async function processCandidate(candidate) {
 
   return {
     action: null,
-    metrics
+    metrics: enrichMetricsWithScannerAndLiveGates({
+      metrics,
+      candidate: normalized,
+      ob: data.ob
+    })
   };
 }
 
@@ -776,7 +979,8 @@ function buildEntryAction({
   activeContext,
   weeklyStats,
   riskFraction,
-  riskCaps
+  riskCaps,
+  liveGate
 }) {
   const activeMacroFamilyId =
     parentMacroFamilyId(row) ||
@@ -796,6 +1000,7 @@ function buildEntryAction({
 
     riskFraction,
     riskCaps,
+    liveGate,
 
     btcRelation: row.btcRelation,
 
@@ -948,6 +1153,23 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
+    const liveGate = validateLiveEntryGates(row);
+
+    if (!liveGate.ok) {
+      actions.push({
+        ...row,
+        action: 'WAIT',
+        reason: liveGate.reason,
+        activeRotationId: activeContext.rotationId,
+        activeMacroFamilyId: parentMacroFamilyId(row) || null,
+        liveGate,
+        liveEligible: false,
+        shadowOnly: true
+      });
+
+      continue;
+    }
+
     const alreadyOpen = await getOpenPosition(row.symbol);
 
     if (alreadyOpen) {
@@ -956,7 +1178,8 @@ export async function runTradeSystem(options = {}) {
         action: 'WAIT',
         reason: 'SYMBOL_ALREADY_OPEN',
         activeRotationId: activeContext.rotationId,
-        liveEligible: false
+        liveEligible: false,
+        shadowOnly: false
       });
 
       continue;
@@ -971,7 +1194,8 @@ export async function runTradeSystem(options = {}) {
         reason: exposure.reason,
         activeRotationId: activeContext.rotationId,
         exposure,
-        liveEligible: false
+        liveEligible: false,
+        shadowOnly: false
       });
 
       continue;
@@ -1000,7 +1224,8 @@ export async function runTradeSystem(options = {}) {
         reason: riskCaps.reason,
         activeRotationId: activeContext.rotationId,
         riskCaps,
-        liveEligible: false
+        liveEligible: false,
+        shadowOnly: false
       });
 
       continue;
@@ -1011,7 +1236,8 @@ export async function runTradeSystem(options = {}) {
       activeContext,
       weeklyStats,
       riskFraction,
-      riskCaps
+      riskCaps,
+      liveGate
     });
 
     const position = buildOpenPositionFromEntry(entry);
@@ -1032,7 +1258,10 @@ export async function runTradeSystem(options = {}) {
       snapshotId: snapshot.snapshotId,
       processedAt: now(),
       forceProcessSnapshot,
+
       candidates: candidates.length,
+      processed: processed.length,
+      earlyActions: earlyActions.length,
       liveRows: liveRows.length,
       analyzedRows: analyzedRows.length,
       actions: actions.length,
@@ -1054,6 +1283,8 @@ export async function runTradeSystem(options = {}) {
     snapshotAgeSec: Math.round(snapshotAgeSec),
 
     candidates: candidates.length,
+    processed: processed.length,
+    earlyActions: earlyActions.length,
     liveRows: liveRows.length,
     analyzedRows: analyzedRows.length,
 
@@ -1070,6 +1301,14 @@ export async function runTradeSystem(options = {}) {
     activeMacroFamilyIds: activeContext.activeMacroFamilyIds,
     trueMicroOnly: activeContext.trueMicroOnly,
     usedLegacyFallback: activeContext.usedLegacyFallback,
+
+    scannerSnapshotStats: {
+      candidatesCount: snapshot.candidatesCount || candidates.length,
+      scannerGateCandidatesCount: snapshot.scannerGateCandidatesCount || null,
+      analyzeOnlyCandidatesCount: snapshot.analyzeOnlyCandidatesCount || null,
+      filteredUniverse: snapshot.filteredUniverse || null,
+      rawCount: snapshot.rawCount || null
+    },
 
     skippedNewEntries: false
   });
