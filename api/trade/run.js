@@ -4,7 +4,7 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import { getDurableRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
-import { runTradeSystem } from '../../src/trade/src/tradeSystem.js';
+import { runTradeSystem } from '../../src/trade/tradeSystem.js';
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET, POST');
@@ -37,30 +37,59 @@ async function readBody(req) {
 
   if (req.body) {
     if (typeof req.body === 'string') return parseJson(req.body);
+    if (Buffer.isBuffer(req.body)) return parseJson(req.body.toString('utf8'));
+
     return req.body;
   }
 
   const chunks = [];
 
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
   const text = Buffer.concat(chunks).toString('utf8');
+
   return parseJson(text);
 }
 
 function getLockTtlSec() {
-  return Number(CONFIG.trade?.lockTtlSec || 180);
+  const ttl = Number(CONFIG.trade?.lockTtlSec || 180);
+
+  return Number.isFinite(ttl) && ttl > 0 ? ttl : 180;
 }
 
-function shouldForceProcessSnapshot(req, body) {
+function isTrue(value) {
   return (
-    req.query?.force === 'true' ||
-    req.query?.forceProcessSnapshot === 'true' ||
-    body.force === true ||
-    body.forceProcessSnapshot === true
+    value === true ||
+    value === 'true' ||
+    value === 1 ||
+    value === '1'
   );
+}
+
+function shouldForceProcessSnapshot(req, body = {}) {
+  return (
+    isTrue(req.query?.force) ||
+    isTrue(req.query?.forceProcessSnapshot) ||
+    isTrue(body.force) ||
+    isTrue(body.forceProcessSnapshot)
+  );
+}
+
+function resolveStatus(error) {
+  if (Number.isFinite(error?.statusCode)) {
+    return error.statusCode;
+  }
+
+  if (
+    error?.reason === 'LOCK_NOT_ACQUIRED' ||
+    error?.message === 'LOCK_NOT_ACQUIRED'
+  ) {
+    return 409;
+  }
+
+  return 500;
 }
 
 export default async function handler(req, res) {
@@ -96,18 +125,15 @@ export default async function handler(req, res) {
       result
     });
   } catch (error) {
-    const status =
-      error?.statusCode ||
-      error?.reason === 'LOCK_NOT_ACQUIRED' ||
-      error?.message === 'LOCK_NOT_ACQUIRED'
-        ? 409
-        : 500;
+    const status = resolveStatus(error);
 
     return res.status(status).json({
       ok: false,
       error: error?.message || String(error),
       durationMs: Date.now() - startedAt,
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
