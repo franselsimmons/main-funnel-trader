@@ -28,6 +28,19 @@ const DEFAULT_MAX_CANDIDATES = 300;
 const DEFAULT_MIN_QUOTE_VOLUME_24H = 50_000;
 const DEFAULT_SOFT_MIN_QUOTE_VOLUME_24H = 10_000;
 
+const BLOCKED_BASE_SYMBOLS = new Set([
+  'USDT',
+  'USDC',
+  'USD',
+  'BUSD',
+  'FDUSD',
+  'TUSD',
+  'DAI',
+  'EUR',
+  'TRY',
+  'BRL'
+]);
+
 function cfgNumber(pathValue, fallback) {
   const value = safeNumber(pathValue, fallback);
 
@@ -118,6 +131,72 @@ function blockNoDirectionEnabled() {
 
 function blockSmallMoveEnabled() {
   return cfgBoolean(CONFIG.scanner?.blockSmallMove, false);
+}
+
+function stripUsdtQuote(symbol = '') {
+  const value = String(symbol || '').trim().toUpperCase();
+
+  if (!value.endsWith('USDT')) return value;
+
+  return value.slice(0, -4);
+}
+
+function isBlockedBaseSymbol(baseSymbol = '') {
+  const base = String(baseSymbol || '').trim().toUpperCase();
+
+  if (!base) return true;
+
+  return BLOCKED_BASE_SYMBOLS.has(base);
+}
+
+function isValidUsdtFuturesContractSymbol(symbol = '') {
+  const value = String(symbol || '').trim().toUpperCase();
+
+  if (!value) return false;
+  if (value === 'USDT') return false;
+  if (!value.endsWith('USDT')) return false;
+  if (!/^[A-Z0-9]+USDT$/.test(value)) return false;
+
+  const base = stripUsdtQuote(value);
+
+  if (isBlockedBaseSymbol(base)) return false;
+
+  return true;
+}
+
+function normalizeScannerTicker(rawTicker = {}) {
+  const ticker = parseTicker(rawTicker);
+
+  const contractSymbol = normalizeContractSymbol(
+    ticker.contractSymbol ||
+    ticker.symbol
+  );
+
+  if (!isValidUsdtFuturesContractSymbol(contractSymbol)) {
+    return null;
+  }
+
+  const derivedBaseSymbol = stripUsdtQuote(contractSymbol);
+
+  const parsedBaseSymbol = normalizeBaseSymbol(
+    ticker.baseSymbol ||
+    derivedBaseSymbol
+  );
+
+  const baseSymbol = isBlockedBaseSymbol(parsedBaseSymbol)
+    ? derivedBaseSymbol
+    : parsedBaseSymbol;
+
+  if (isBlockedBaseSymbol(baseSymbol)) {
+    return null;
+  }
+
+  return {
+    ...ticker,
+    symbol: contractSymbol,
+    contractSymbol,
+    baseSymbol
+  };
 }
 
 function inferSide({ change1h, change24h, btcState }) {
@@ -242,7 +321,12 @@ function cleanFakeResult(fake = {}) {
 
 function isTradableTicker(ticker) {
   if (!ticker?.symbol) return false;
+  if (!ticker?.contractSymbol) return false;
   if (!ticker?.baseSymbol) return false;
+
+  if (!isValidUsdtFuturesContractSymbol(ticker.contractSymbol)) return false;
+  if (isBlockedBaseSymbol(ticker.baseSymbol)) return false;
+
   if (safeNumber(ticker.price, 0) <= 0) return false;
 
   const volume24h = safeNumber(ticker.volume24h, 0);
@@ -259,19 +343,21 @@ function dedupeByBaseSymbol(tickers) {
   const byBase = new Map();
 
   for (const ticker of tickers) {
-    const baseSymbol = normalizeBaseSymbol(ticker.baseSymbol || ticker.symbol);
+    const normalized = normalizeScannerTicker(ticker);
 
-    if (!baseSymbol) continue;
+    if (!normalized) continue;
+
+    const baseSymbol = normalized.baseSymbol;
+    const contractSymbol = normalized.contractSymbol;
+
+    if (!baseSymbol || !contractSymbol) continue;
+    if (isBlockedBaseSymbol(baseSymbol)) continue;
+    if (!isValidUsdtFuturesContractSymbol(contractSymbol)) continue;
 
     const existing = byBase.get(baseSymbol);
 
-    if (!existing || safeNumber(ticker.volume24h, 0) > safeNumber(existing.volume24h, 0)) {
-      byBase.set(baseSymbol, {
-        ...ticker,
-        baseSymbol,
-        symbol: normalizeContractSymbol(ticker.symbol),
-        contractSymbol: normalizeContractSymbol(ticker.contractSymbol || ticker.symbol)
-      });
+    if (!existing || safeNumber(normalized.volume24h, 0) > safeNumber(existing.volume24h, 0)) {
+      byBase.set(baseSymbol, normalized);
     }
   }
 
@@ -281,7 +367,8 @@ function dedupeByBaseSymbol(tickers) {
 function buildTickerUniverse(rawTickers) {
   return dedupeByBaseSymbol(
     (Array.isArray(rawTickers) ? rawTickers : [])
-      .map(parseTicker)
+      .map(normalizeScannerTicker)
+      .filter(Boolean)
       .filter(isTradableTicker)
   )
     .sort((a, b) => safeNumber(b.volume24h, 0) - safeNumber(a.volume24h, 0))
@@ -294,6 +381,11 @@ function createCandleCache() {
   return async function getCandles(symbol, timeframe = '15m', limit = CONFIG.scanner.candleLimit) {
     const contractSymbol = normalizeContractSymbol(symbol);
     const candleLimit = Math.max(30, Math.floor(safeNumber(limit, CONFIG.scanner.candleLimit || 80)));
+
+    if (!isValidUsdtFuturesContractSymbol(contractSymbol)) {
+      return [];
+    }
+
     const key = `${contractSymbol}:${timeframe}:${candleLimit}`;
 
     if (cache.has(key)) return cache.get(key);
@@ -308,12 +400,20 @@ function createCandleCache() {
 async function buildBtcContext({ universe, getCandles }) {
   const btcTicker =
     universe.find((row) => row.baseSymbol === 'BTC') ||
-    parseTicker({
+    normalizeScannerTicker({
       symbol: 'BTCUSDT',
       last: 0,
       quoteVolume: 0,
       change24h: 0
-    });
+    }) ||
+    {
+      symbol: 'BTCUSDT',
+      contractSymbol: 'BTCUSDT',
+      baseSymbol: 'BTC',
+      price: 0,
+      volume24h: 0,
+      change24h: 0
+    };
 
   const btcCandles15m = await getCandles(
     'BTCUSDT',
@@ -402,13 +502,29 @@ async function analyzeTickerCandidate({
   regime,
   getCandles
 }) {
-  const contractSymbol = normalizeContractSymbol(ticker.contractSymbol || ticker.symbol);
-  const baseSymbol = normalizeBaseSymbol(ticker.baseSymbol || ticker.symbol);
+  const normalizedTicker = normalizeScannerTicker(ticker);
 
-  if (!contractSymbol || !baseSymbol) {
+  if (!normalizedTicker) {
     return {
       candidate: null,
       skippedReason: 'INVALID_SYMBOL'
+    };
+  }
+
+  const contractSymbol = normalizedTicker.contractSymbol;
+  const baseSymbol = normalizedTicker.baseSymbol;
+
+  if (!isValidUsdtFuturesContractSymbol(contractSymbol)) {
+    return {
+      candidate: null,
+      skippedReason: 'INVALID_CONTRACT_SYMBOL'
+    };
+  }
+
+  if (isBlockedBaseSymbol(baseSymbol)) {
+    return {
+      candidate: null,
+      skippedReason: 'BLOCKED_BASE_SYMBOL'
     };
   }
 
@@ -426,7 +542,7 @@ async function analyzeTickerCandidate({
   }
 
   const change1h = calcOneHourChange(candles15m);
-  const change24h = safeNumber(ticker.change24h, 0);
+  const change24h = safeNumber(normalizedTicker.change24h, 0);
   const side = inferSide({
     change1h,
     change24h,
@@ -447,7 +563,7 @@ async function analyzeTickerCandidate({
     change24h,
     fake,
     side,
-    volume24h: ticker.volume24h
+    volume24h: normalizedTicker.volume24h
   });
 
   if (gates.hardBlocked) {
@@ -471,14 +587,14 @@ async function analyzeTickerCandidate({
   const scannerScore = calcScannerScore({
     change1h,
     change24h,
-    volume24h: ticker.volume24h,
+    volume24h: normalizedTicker.volume24h,
     volumeExpansion,
     sideConfidenceLevel,
     ...fake
   });
 
   const lastClose = safeNumber(candles15m.at(-1)?.close, 0);
-  const price = lastClose > 0 ? lastClose : safeNumber(ticker.price, 0);
+  const price = lastClose > 0 ? lastClose : safeNumber(normalizedTicker.price, 0);
 
   return {
     candidate: {
@@ -496,7 +612,7 @@ async function analyzeTickerCandidate({
 
       change1h: Number(change1h.toFixed(3)),
       change24h: Number(change24h.toFixed(3)),
-      volume24h: safeNumber(ticker.volume24h, 0),
+      volume24h: safeNumber(normalizedTicker.volume24h, 0),
       volumeExpansion: Number(volumeExpansion.toFixed(3)),
 
       btcState,
