@@ -1,10 +1,10 @@
-// ================= FILE: api/analyze/weekly-freeze.js =================
+// ================= FILE: api/analyze/activate-rotation.js =================
 
 import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import { getDurableRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
-import { freezeWeeklyRotation } from '../../src/analyze/rotationEngine.js';
+import { activateNextRotation } from '../../src/analyze/rotationEngine.js';
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET, POST');
@@ -62,23 +62,10 @@ function isTrue(value) {
   );
 }
 
-function getFreezeLockTtlSec() {
-  const ttl = Number(CONFIG.analyze?.freezeLockTtlSec || 600);
+function getActivateLockTtlSec() {
+  const ttl = Number(CONFIG.analyze?.activateLockTtlSec || 600);
 
   return Number.isFinite(ttl) && ttl > 0 ? ttl : 600;
-}
-
-function getRotationMode(req, body = {}) {
-  return (
-    body.mode ||
-    req.query?.mode ||
-    CONFIG.rotation?.mode ||
-    'balanced'
-  );
-}
-
-function getWeekKey(req, body = {}) {
-  return body.weekKey || req.query?.weekKey || undefined;
 }
 
 function isManualRun(req, body = {}) {
@@ -88,27 +75,37 @@ function isManualRun(req, body = {}) {
   );
 }
 
-function unwrapFreezePayload(lockResult) {
+function unwrapActivatePayload(lockResult) {
   return lockResult?.result || null;
 }
 
-function responseWeekKey(lockResult, fallbackWeekKey = null) {
-  const payload = unwrapFreezePayload(lockResult);
+function responseRotationId(lockResult) {
+  const payload = unwrapActivatePayload(lockResult);
 
   return (
-    payload?.weekKey ||
-    payload?.rotation?.sourceWeekKey ||
-    fallbackWeekKey ||
+    payload?.activeRotation?.rotationId ||
+    payload?.rotationId ||
     null
   );
 }
 
-function responseRotationId(lockResult) {
-  const payload = unwrapFreezePayload(lockResult);
+function responseActivatedCount(lockResult) {
+  const payload = unwrapActivatePayload(lockResult);
 
   return (
-    payload?.rotationId ||
-    payload?.rotation?.rotationId ||
+    payload?.activeRotation?.microFamilyIds?.length ||
+    payload?.active?.microFamilyIds?.length ||
+    payload?.microFamilyIds?.length ||
+    0
+  );
+}
+
+function responseReason(lockResult) {
+  const payload = unwrapActivatePayload(lockResult);
+
+  return (
+    lockResult?.reason ||
+    payload?.reason ||
     null
   );
 }
@@ -142,33 +139,30 @@ export default async function handler(req, res) {
     const body = await readBody(req);
 
     const redis = getDurableRedis();
-    const lockKey = KEYS.analyze?.freezeLock || 'ANALYZE:WEEKLY_FREEZE_LOCK';
-    const lockTtlSec = getFreezeLockTtlSec();
-
-    const weekKey = getWeekKey(req, body);
-    const mode = getRotationMode(req, body);
+    const lockKey = KEYS.analyze?.activateLock || 'ANALYZE:ROTATION_ACTIVATE_LOCK';
+    const lockTtlSec = getActivateLockTtlSec();
 
     const result = await withRedisLock(
       redis,
       lockKey,
       lockTtlSec,
-      async () => freezeWeeklyRotation({
-        weekKey,
-        mode
-      })
+      async () => activateNextRotation()
     );
 
+    const payload = unwrapActivatePayload(result);
+    const payloadOk = payload?.ok !== false;
+
     return res.status(200).json({
-      ok: result?.ok !== false,
+      ok: result?.ok !== false && payloadOk,
       skipped: Boolean(result?.skipped),
 
       source: isManualRun(req, body)
-        ? 'ADMIN_MANUAL_FREEZE'
-        : 'CRON_OR_API_FREEZE',
+        ? 'ADMIN_MANUAL_ACTIVATE_ROTATION'
+        : 'CRON_OR_API_ACTIVATE_ROTATION',
 
-      weekKey: responseWeekKey(result, weekKey),
-      mode,
       rotationId: responseRotationId(result),
+      activatedCount: responseActivatedCount(result),
+      reason: responseReason(result),
 
       durationMs: Date.now() - startedAt,
 
