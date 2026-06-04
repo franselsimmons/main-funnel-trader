@@ -3,115 +3,490 @@
 import { CONFIG } from '../config.js';
 import { KEYS } from '../keys.js';
 import { getDurableRedis, pushJsonLog } from '../redis.js';
+import { normalizeBaseSymbol, safeNumber, sideToTradeSide } from '../utils.js';
+
+const DISCORD_LIMITS = {
+  fieldName: 256,
+  fieldValue: 1024,
+  embedDescription: 4096,
+  webhookContent: 2000
+};
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function truncate(value, max = 1024) {
+  const text = String(value ?? '');
+
+  if (text.length <= max) return text;
+
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
+}
+
+function field(name, value, inline = false) {
+  const cleanName = truncate(name || 'Field', DISCORD_LIMITS.fieldName);
+  const cleanValue = truncate(value || 'NA', DISCORD_LIMITS.fieldValue);
+
+  return {
+    name: cleanName,
+    value: cleanValue,
+    inline
+  };
+}
+
+function fmt(value, decimals = 3) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  return n.toFixed(decimals);
+}
+
+function fmtPctRatio(value, decimals = 1) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  return `${(n * 100).toFixed(decimals)}%`;
+}
+
+function fmtPctRaw(value, decimals = 3) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  return `${n.toFixed(decimals)}%`;
+}
+
+function fmtPrice(value) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  if (n >= 1000) return n.toFixed(2);
+  if (n >= 1) return n.toFixed(6);
+
+  return n.toFixed(10);
+}
+
+function normalizeSideLabel(side) {
+  const tradeSide = sideToTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'LONG';
+  if (tradeSide === 'SHORT') return 'SHORT';
+
+  return String(side || 'UNKNOWN').toUpperCase();
+}
+
+function discordColorForSide(side) {
+  const tradeSide = sideToTradeSide(side);
+
+  if (tradeSide === 'LONG') return 0x22c55e;
+  if (tradeSide === 'SHORT') return 0xef4444;
+
+  return 0x64748b;
+}
+
+function discordColorForResult(exitR) {
+  const r = safeNumber(exitR, 0);
+
+  if (r > 0) return 0x2563eb;
+  if (r < 0) return 0xdc2626;
+
+  return 0x94a3b8;
+}
+
+function coinLogoUrl(symbol) {
+  const base = normalizeBaseSymbol(symbol).toLowerCase();
+
+  if (!base) return null;
+
+  return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${base}.svg`;
+}
+
+function adminUrl(path = '') {
+  const baseUrl = String(CONFIG.app?.baseUrl || '').replace(/\/+$/g, '');
+
+  if (!baseUrl) return null;
+
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+  return `${baseUrl}${cleanPath}`;
+}
+
+function compactPayload(payload = {}) {
+  return {
+    symbol: payload.symbol || null,
+    contractSymbol: payload.contractSymbol || null,
+    side: payload.side || null,
+    action: payload.action || null,
+    reason: payload.reason || null,
+    exitReason: payload.exitReason || null,
+
+    microFamilyId: payload.microFamilyId || null,
+    familyId: payload.familyId || null,
+    activeRotationId: payload.activeRotationId || null,
+
+    entry: payload.entry ?? null,
+    exit: payload.exit ?? null,
+    sl: payload.sl ?? null,
+    tp: payload.tp ?? null,
+    rr: payload.rr ?? null,
+
+    exitR: payload.exitR ?? null,
+    netR: payload.netR ?? null,
+    grossR: payload.grossR ?? null,
+    costR: payload.costR ?? null,
+    pnlPct: payload.pnlPct ?? null,
+
+    fairWinrate: payload.weeklyStats?.fairWinrate ?? payload.fairWinrate ?? null,
+    avgR: payload.weeklyStats?.avgR ?? payload.avgR ?? null,
+    totalR: payload.weeklyStats?.totalR ?? payload.totalR ?? null,
+    balancedScore: payload.weeklyStats?.balancedScore ?? payload.balancedScore ?? null,
+
+    ts: Date.now()
+  };
+}
 
 async function postDiscord(content) {
   if (!CONFIG.discord.enabled || !CONFIG.discord.webhookUrl) {
-    return { ok: true, skipped: true, reason: 'DISCORD_DISABLED' };
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'DISCORD_DISABLED'
+    };
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CONFIG.discord.timeoutMs);
+
   try {
-    const res = await fetch(CONFIG.discord.webhookUrl, {
+    const response = await fetch(CONFIG.discord.webhookUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json'
+      },
       body: JSON.stringify(content),
       signal: controller.signal
     });
-    return { ok: res.ok, status: res.status };
+
+    const responseText = await response.text().catch(() => '');
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      response: response.ok ? undefined : truncate(responseText, 500)
+    };
   } catch (error) {
-    return { ok: false, error: error.name === 'AbortError' ? 'DISCORD_TIMEOUT' : error.message };
+    return {
+      ok: false,
+      error: error?.name === 'AbortError'
+        ? 'DISCORD_TIMEOUT'
+        : error?.message || String(error)
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
 async function logDiscord(type, payload, result) {
-  const redis = getDurableRedis();
-  await pushJsonLog(redis, KEYS.discord.logList, {
-    type,
-    payload,
-    result,
-    ts: Date.now()
-  }, CONFIG.discord.logLimit).catch(() => null);
+  try {
+    const redis = getDurableRedis();
+
+    await pushJsonLog(
+      redis,
+      KEYS.discord.logList,
+      {
+        type,
+        payload: compactPayload(payload),
+        result,
+        ts: Date.now()
+      },
+      CONFIG.discord.logLimit
+    );
+  } catch {
+    // Discord logging mag trade execution nooit blokkeren.
+  }
 }
 
-export async function sendEntryAlert(entry) {
-  const title = `ACTIVE MICRO ENTRY — ${entry.symbol} ${entry.side?.toUpperCase()}`;
-  const mf = entry.weeklyStats || {};
+export async function sendEntryAlert(entry = {}) {
+  const symbol = normalizeBaseSymbol(entry.symbol || entry.contractSymbol);
+  const side = normalizeSideLabel(entry.side);
+  const weeklyStats = entry.weeklyStats || {};
+  const logo = coinLogoUrl(symbol);
+  const admin = adminUrl('/admin.html#rotation');
+
+  const title = `ACTIVE MICRO ENTRY — ${symbol || 'UNKNOWN'} ${side}`;
+
+  const fields = [
+    field('Reason', entry.reason || 'ACTIVE_MICRO_FAMILY_ENTRY', true),
+    field('Family', entry.familyId || 'NA', true),
+    field('Rotation', entry.activeRotationId || 'NA', true),
+
+    field('MicroFamily', `\`${entry.microFamilyId || 'NA'}\``, false),
+
+    field(
+      'Risk Geometry',
+      [
+        `entry=${fmtPrice(entry.entry)}`,
+        `sl=${fmtPrice(entry.sl)}`,
+        `tp=${fmtPrice(entry.tp)}`,
+        `rr=${fmt(entry.rr, 2)}`,
+        `risk=${fmtPctRatio(entry.riskFraction, 3)}`
+      ].join('\n'),
+      true
+    ),
+
+    field(
+      'Weekly Stats',
+      [
+        `rank=${weeklyStats.rank ?? 'NA'}`,
+        `completed=${weeklyStats.completed ?? 0}`,
+        `fairWR=${fmtPctRatio(weeklyStats.fairWinrate)}`,
+        `avgR=${fmt(weeklyStats.avgR, 3)}`,
+        `totalR=${fmt(weeklyStats.totalR, 3)}`,
+        `balanced=${fmt(weeklyStats.balancedScore, 2)}`
+      ].join('\n'),
+      true
+    ),
+
+    field(
+      'Live Context',
+      [
+        `RSI=${entry.rsiZone || 'NA'} / ${fmt(entry.rsi, 2)}`,
+        `flow=${entry.flow || 'NA'}`,
+        `ob=${entry.obRelation || 'NA'}`,
+        `btc=${entry.btcState || 'NA'} (${entry.btcRelation || 'NA'})`,
+        `regime=${entry.regime || 'NA'}`
+      ].join('\n'),
+      true
+    ),
+
+    field(
+      'Execution Quality',
+      [
+        `spread=${fmt(safeNumber(entry.spreadPct, 0) * 10000, 2)}bps`,
+        `depth=${fmt(entry.depthMinUsd1p, 0)}`,
+        `funding=${fmtPctRatio(entry.fundingRate, 4)}`,
+        `confluence=${fmt(entry.confluence, 1)}`,
+        `sniper=${fmt(entry.sniperScore, 1)}`
+      ].join('\n'),
+      true
+    )
+  ];
+
+  if (admin) {
+    fields.push(field('Dashboard', admin, false));
+  }
+
   const content = {
-    embeds: [{
-      title,
-      color: 3066993,
-      fields: [
-        { name: 'Reason', value: String(entry.reason || 'ACTIVE_MICRO_FAMILY_ENTRY'), inline: true },
-        { name: 'MicroFamily', value: `\`${entry.microFamilyId || 'NA'}\``, inline: false },
-        { name: 'Family', value: String(entry.familyId || 'NA'), inline: true },
-        { name: 'Weekly Rank', value: String(mf.rank ?? 'NA'), inline: true },
-        { name: 'Weekly Stats', value: `completed=${mf.completed ?? 0}\nfairWR=${((mf.fairWinrate ?? 0) * 100).toFixed(1)}%\navgR=${mf.avgR ?? 0}\ntotalR=${mf.totalR ?? 0}\nbalanced=${mf.balancedScore ?? 0}`, inline: true },
-        { name: 'Risk', value: `entry=${entry.entry}\nsl=${entry.sl}\ntp=${entry.tp}\nrr=${Number(entry.rr || 0).toFixed(2)}`, inline: true },
-        { name: 'Context', value: `RSI=${entry.rsiZone}\nflow=${entry.flow}\nob=${entry.obRelation}\nbtc=${entry.btcState}\nregime=${entry.regime}`, inline: true }
-      ],
-      timestamp: new Date().toISOString()
-    }]
+    username: 'Micro-Family Trader',
+    embeds: [
+      {
+        title,
+        color: discordColorForSide(entry.side),
+        thumbnail: logo ? { url: logo } : undefined,
+        fields,
+        timestamp: nowIso()
+      }
+    ]
   };
+
   const result = await postDiscord(content);
   await logDiscord('ENTRY', entry, result);
+
   return result;
 }
 
-export async function sendExitAlert(outcome) {
+export async function sendExitAlert(outcome = {}) {
+  const symbol = normalizeBaseSymbol(outcome.symbol || outcome.contractSymbol);
+  const side = normalizeSideLabel(outcome.side);
+  const logo = coinLogoUrl(symbol);
+
+  const title = `TRADE EXIT — ${symbol || 'UNKNOWN'} ${side} ${outcome.exitReason || 'EXIT'}`;
+
+  const fields = [
+    field('MicroFamily', `\`${outcome.microFamilyId || 'NA'}\``, false),
+    field('Family', outcome.familyId || 'NA', true),
+    field('Reason', outcome.exitReason || 'NA', true),
+    field('Source', outcome.source || 'REAL', true),
+
+    field(
+      'Net Result',
+      [
+        `exitR=${fmt(outcome.exitR, 4)}`,
+        `netR=${fmt(outcome.netR, 4)}`,
+        `pnl=${fmtPctRaw(outcome.pnlPct, 4)}`,
+        `costR=${fmt(outcome.costR, 4)}`
+      ].join('\n'),
+      true
+    ),
+
+    field(
+      'Gross / Cost',
+      [
+        `grossR=${fmt(outcome.grossR, 4)}`,
+        `grossPnl=${fmtPctRaw(outcome.grossPnlPct, 4)}`,
+        `cost=${fmtPctRaw(outcome.costPct, 4)}`,
+        `fee=${fmtPctRaw(outcome.feePct, 4)}`,
+        `slip=${fmtPctRaw(outcome.slippagePct, 4)}`
+      ].join('\n'),
+      true
+    ),
+
+    field(
+      'Path',
+      [
+        `mfeR=${fmt(outcome.mfeR, 3)}`,
+        `maeR=${fmt(outcome.maeR, 3)}`,
+        `directSL=${Boolean(outcome.directToSL)}`,
+        `nearTP=${Boolean(outcome.nearTpSeen)}`,
+        `halfR=${Boolean(outcome.reachedHalfR)}`,
+        `oneR=${Boolean(outcome.reachedOneR)}`
+      ].join('\n'),
+      true
+    ),
+
+    field(
+      'Management Diagnostics',
+      [
+        `beArmed=${Boolean(outcome.beArmed)}`,
+        `beWouldExit=${Boolean(outcome.beWouldExit)}`,
+        `gaveBackHalf=${Boolean(outcome.gaveBackAfterHalfR)}`,
+        `gaveBackOne=${Boolean(outcome.gaveBackAfterOneR)}`,
+        `nearTpThenLoss=${Boolean(outcome.nearTpThenLoss)}`
+      ].join('\n'),
+      true
+    )
+  ];
+
   const content = {
-    embeds: [{
-      title: `TRADE EXIT — ${outcome.symbol} ${outcome.side?.toUpperCase()} ${outcome.exitReason}`,
-      color: Number(outcome.exitR || 0) >= 0 ? 3447003 : 15158332,
-      fields: [
-        { name: 'MicroFamily', value: `\`${outcome.microFamilyId || 'NA'}\``, inline: false },
-        { name: 'Result', value: `exitR=${outcome.exitR}\npnlPct=${outcome.pnlPct}%`, inline: true },
-        { name: 'Path', value: `mfeR=${outcome.mfeR}\nmaeR=${outcome.maeR}\ndirectSL=${Boolean(outcome.directToSL)}\nnearTP=${Boolean(outcome.nearTpSeen)}`, inline: true }
-      ],
-      timestamp: new Date().toISOString()
-    }]
+    username: 'Micro-Family Trader',
+    embeds: [
+      {
+        title,
+        color: discordColorForResult(outcome.exitR),
+        thumbnail: logo ? { url: logo } : undefined,
+        fields,
+        timestamp: nowIso()
+      }
+    ]
   };
+
   const result = await postDiscord(content);
   await logDiscord('EXIT', outcome, result);
+
   return result;
 }
 
-export async function sendWeeklyRotationReport(rotation, label = 'WEEKLY_ROTATION') {
-  const top = (rotation.microFamilies || []).slice(0, 10)
-    .map(row => `#${row.rank} ${row.side} ${row.familyId} ${row.microFamilyId}\ncompleted=${row.completed} fairWR=${((row.fairWinrate || 0) * 100).toFixed(1)}% avgR=${row.avgR} balanced=${row.balancedScore}`)
-    .join('\n\n') || 'No active micro families selected.';
+export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEKLY_ROTATION') {
+  const rotation =
+    rotationInput.rotation ||
+    rotationInput.activeRotation ||
+    rotationInput.nextRotation ||
+    rotationInput;
+
+  const microFamilies = Array.isArray(rotation.microFamilies)
+    ? rotation.microFamilies
+    : [];
+
+  const top = microFamilies.slice(0, 10)
+    .map((row) => {
+      return [
+        `#${row.rank ?? 'NA'} ${normalizeSideLabel(row.side)} ${row.familyId || 'NA'}`,
+        `${row.microFamilyId || 'NA'}`,
+        `completed=${row.completed ?? 0} fairWR=${fmtPctRatio(row.fairWinrate)} avgR=${fmt(row.avgR, 3)} totalR=${fmt(row.totalR, 3)} balanced=${fmt(row.balancedScore, 2)}`
+      ].join('\n');
+    })
+    .join('\n\n');
+
+  const summary = top || 'No active micro-families selected.';
 
   const content = {
-    embeds: [{
-      title: label,
-      color: 15844367,
-      fields: [
-        { name: 'Rotation', value: `id=${rotation.rotationId}\nsourceWeek=${rotation.sourceWeekKey}\nactiveWeek=${rotation.activeWeekKey}\nmode=${rotation.mode}` },
-        { name: 'Top active microFamilies', value: top.slice(0, 3900) }
-      ],
-      timestamp: new Date().toISOString()
-    }]
+    username: 'Micro-Family Trader',
+    embeds: [
+      {
+        title: label,
+        color: rotation.empty ? 0xf59e0b : 0x7c3aed,
+        fields: [
+          field(
+            'Rotation',
+            [
+              `id=${rotation.rotationId || 'NA'}`,
+              `sourceWeek=${rotation.sourceWeekKey || 'NA'}`,
+              `activeWeek=${rotation.activeWeekKey || 'NA'}`,
+              `mode=${rotation.mode || 'NA'}`,
+              `count=${rotation.microFamilyIds?.length || 0}`
+            ].join('\n'),
+            false
+          ),
+          field(
+            'Selection',
+            [
+              `eligible=${rotation.eligibleCount ?? 'NA'}`,
+              `ranked=${rotation.rankedCount ?? 'NA'}`,
+              `minCompleted=${rotation.minWeightedCompleted ?? CONFIG.rotation.minWeightedCompleted}`,
+              `topNPerSide=${rotation.topNPerSide ?? CONFIG.rotation.topNPerSide}`,
+              `empty=${Boolean(rotation.empty)}`
+            ].join('\n'),
+            true
+          ),
+          field(
+            'Top microFamilies',
+            truncate(summary, DISCORD_LIMITS.fieldValue),
+            false
+          )
+        ],
+        timestamp: nowIso()
+      }
+    ]
   };
+
   const result = await postDiscord(content);
   await logDiscord('WEEKLY_ROTATION', rotation, result);
+
   return result;
 }
 
-export async function sendResetReport(report) {
+export async function sendResetReport(report = {}) {
+  const deleted = JSON.stringify(report.deleted || {}, null, 2);
+
   const content = {
-    embeds: [{
-      title: `RESET — ${report.type}`,
-      color: 15105570,
-      fields: [
-        { name: 'Result', value: `ok=${Boolean(report.ok)}\nreason=${report.reason || 'OK'}\nopenPositions=${report.openPositionsCount ?? 'NA'}` },
-        { name: 'Deleted', value: JSON.stringify(report.deleted || {}, null, 2).slice(0, 1000) }
-      ],
-      timestamp: new Date().toISOString()
-    }]
+    username: 'Micro-Family Trader',
+    embeds: [
+      {
+        title: `RESET — ${report.type || 'UNKNOWN'}`,
+        color: report.ok ? 0xf59e0b : 0xdc2626,
+        fields: [
+          field(
+            'Result',
+            [
+              `ok=${Boolean(report.ok)}`,
+              `reason=${report.reason || 'OK'}`,
+              `force=${Boolean(report.force)}`,
+              `openPositions=${report.openPositionsCount ?? 'NA'}`
+            ].join('\n'),
+            true
+          ),
+          field(
+            'Preserved',
+            JSON.stringify(report.preserved || {}, null, 2) || '{}',
+            true
+          ),
+          field(
+            'Deleted',
+            truncate(deleted, 1000),
+            false
+          )
+        ],
+        timestamp: nowIso()
+      }
+    ]
   };
+
   const result = await postDiscord(content);
   await logDiscord('RESET', report, result);
+
   return result;
 }
