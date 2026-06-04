@@ -57,6 +57,10 @@ async function readBody(req) {
       return parseJson(req.body.trim());
     }
 
+    if (Buffer.isBuffer(req.body)) {
+      return parseJson(req.body.toString('utf8').trim());
+    }
+
     return req.body;
   }
 
@@ -101,7 +105,7 @@ function idsFromRotation(rotation = {}) {
     rotation.ids ||
     (
       Array.isArray(rotation.microFamilies)
-        ? rotation.microFamilies.map((row) => row.microFamilyId)
+        ? rotation.microFamilies.map((row) => row?.microFamilyId)
         : []
     )
   );
@@ -114,12 +118,22 @@ function normalizeRotation(rotation = {}, fallback = {}) {
   };
 
   const microFamilyIds = idsFromRotation(base);
+  const microFamilies = Array.isArray(base.microFamilies)
+    ? base.microFamilies
+    : [];
 
   return {
     ...base,
     microFamilyIds,
-    count: microFamilyIds.length
+    microFamilies,
+    count: microFamilyIds.length || microFamilies.length
   };
+}
+
+function rowsFromDashboardRows(rows, fallbackRows) {
+  if (Array.isArray(rows) && rows.length > 0) return rows;
+  if (Array.isArray(fallbackRows)) return fallbackRows;
+  return [];
 }
 
 function normalizeDashboard(dashboard = {}) {
@@ -135,6 +149,16 @@ function normalizeDashboard(dashboard = {}) {
     {}
   );
 
+  const activeRows = rowsFromDashboardRows(
+    dashboard.activeRows,
+    active.microFamilies
+  );
+
+  const nextRows = rowsFromDashboardRows(
+    dashboard.nextRows,
+    next.microFamilies
+  );
+
   return {
     ...dashboard,
 
@@ -144,11 +168,11 @@ function normalizeDashboard(dashboard = {}) {
     activeRotation: active,
     nextRotation: next,
 
-    activeRows: dashboard.activeRows || active.microFamilies || [],
-    nextRows: dashboard.nextRows || next.microFamilies || [],
+    activeRows,
+    nextRows,
 
-    activeCount: active.microFamilyIds.length,
-    nextCount: next.microFamilyIds.length
+    activeCount: active.microFamilyIds.length || activeRows.length,
+    nextCount: next.microFamilyIds.length || nextRows.length
   };
 }
 
