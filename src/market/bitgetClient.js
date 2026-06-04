@@ -44,8 +44,17 @@ function bitgetErrorMessage(prefix, details = {}) {
   return `${prefix}_${JSON.stringify(details).slice(0, 500)}`;
 }
 
+function isLikelyNetworkError(error) {
+  return (
+    error?.name === 'TypeError' ||
+    String(error?.message || '').toLowerCase().includes('fetch failed') ||
+    String(error?.message || '').toLowerCase().includes('network')
+  );
+}
+
 async function fetchJsonOnce(path, params = {}, timeoutMs = CONFIG.bitget.timeoutMs) {
   const url = buildUrl(path, params);
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -54,7 +63,7 @@ async function fetchJsonOnce(path, params = {}, timeoutMs = CONFIG.bitget.timeou
       method: 'GET',
       headers: {
         accept: 'application/json',
-        'user-agent': `${CONFIG.strategyVersion || 'CLEAN_MF_TS_V1'}`
+        'user-agent': CONFIG.strategyVersion || 'CLEAN_MF_TS_V1'
       },
       signal: controller.signal
     });
@@ -71,15 +80,20 @@ async function fetchJsonOnce(path, params = {}, timeoutMs = CONFIG.bitget.timeou
 
       error.status = response.status;
       error.retryable = RETRYABLE_HTTP_STATUS.has(response.status);
+
       throw error;
     }
 
     if (!json) {
-      throw new Error(bitgetErrorMessage('BITGET_INVALID_JSON', {
+      const error = new Error(bitgetErrorMessage('BITGET_INVALID_JSON', {
         path,
         params,
         body: text.slice(0, 240)
       }));
+
+      error.retryable = false;
+
+      throw error;
     }
 
     if (json.code && json.code !== '00000') {
@@ -91,6 +105,7 @@ async function fetchJsonOnce(path, params = {}, timeoutMs = CONFIG.bitget.timeou
 
       error.code = json.code;
       error.retryable = ['40010', '40725', '429'].includes(String(json.code));
+
       throw error;
     }
 
@@ -104,7 +119,12 @@ async function fetchJsonOnce(path, params = {}, timeoutMs = CONFIG.bitget.timeou
       }));
 
       timeoutError.retryable = true;
+
       throw timeoutError;
+    }
+
+    if (isLikelyNetworkError(error)) {
+      error.retryable = true;
     }
 
     throw error;
@@ -327,18 +347,46 @@ export async function fetchOrderBook(symbol) {
   return null;
 }
 
+function parseBookRow(row) {
+  if (Array.isArray(row)) {
+    const price = safeNumber(row[0], 0);
+    const qty = safeNumber(row[1], 0);
+
+    if (price <= 0 || qty <= 0) return null;
+
+    return [price, qty];
+  }
+
+  if (row && typeof row === 'object') {
+    const price = safeNumber(
+      row.price ??
+      row.px ??
+      row[0],
+      0
+    );
+
+    const qty = safeNumber(
+      row.size ??
+      row.qty ??
+      row.quantity ??
+      row.sz ??
+      row[1],
+      0
+    );
+
+    if (price <= 0 || qty <= 0) return null;
+
+    return [price, qty];
+  }
+
+  return null;
+}
+
 function parseBookSide(side) {
   if (!Array.isArray(side)) return [];
 
   return side
-    .map((row) => {
-      const price = safeNumber(row?.[0], 0);
-      const qty = safeNumber(row?.[1], 0);
-
-      if (price <= 0 || qty <= 0) return null;
-
-      return [price, qty];
-    })
+    .map(parseBookRow)
     .filter(Boolean);
 }
 
@@ -362,6 +410,8 @@ export function analyzeOrderBook(raw) {
       askDepthUsd1p: 0,
       imbalance: 0,
       mid: 0,
+      bestBid: 0,
+      bestAsk: 0,
       fetchFailed: true
     };
   }
@@ -382,6 +432,7 @@ export function analyzeOrderBook(raw) {
   }, 0);
 
   const depthTotal = bidDepth + askDepth;
+
   const imbalance = depthTotal > 0
     ? (bidDepth - askDepth) / depthTotal
     : 0;
