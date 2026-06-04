@@ -1,0 +1,210 @@
+<!-- FILE: public/admin.html -->
+
+<!doctype html>
+
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Micro-Family Admin</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #111827; background: #f6f7fb; }
+    body { margin: 0; }
+    header { padding: 18px 24px; background: #111827; color: white; display: flex; justify-content: space-between; align-items: center; }
+    main { padding: 20px; max-width: 1500px; margin: 0 auto; }
+    button, select, input { border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 12px; background: white; cursor: pointer; }
+    button.primary { background: #111827; color: white; border-color: #111827; }
+    button.danger { background: #991b1b; color: white; border-color: #991b1b; }
+    button.warn { background: #92400e; color: white; border-color: #92400e; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab { background: white; }
+    .tab.active { background: #111827; color: white; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 12px; }
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px; box-shadow: 0 1px 3px #0001; }
+    .card h3 { margin: 0 0 8px; font-size: 14px; color: #374151; }
+    .metric { font-size: 24px; font-weight: 700; }
+    table { border-collapse: collapse; width: 100%; background: white; border-radius: 12px; overflow: hidden; }
+    th, td { text-align: left; border-bottom: 1px solid #e5e7eb; padding: 8px; font-size: 13px; vertical-align: top; }
+    th { background: #f3f4f6; font-weight: 700; position: sticky; top: 0; }
+    code { font-size: 12px; background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0b1020; color: #e5e7eb; padding: 14px; border-radius: 12px; max-height: 520px; overflow: auto; }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+    .hidden { display: none; }
+    .pill { display:inline-block; padding:2px 7px; border-radius: 999px; background:#e5e7eb; font-size:12px; }
+    .pill.active { background:#dcfce7; color:#166534; }
+    .drawer { position: fixed; right: 0; top: 0; bottom: 0; width: min(720px, 94vw); background: white; border-left: 1px solid #e5e7eb; box-shadow: -8px 0 30px #0002; padding: 18px; overflow: auto; z-index: 10; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <strong>Micro-Family Trading Admin</strong>
+      <div class="muted">Scanner → TradeSystem → Analyze → Active Rotation → Discord</div>
+    </div>
+    <button onclick="refresh()">Refresh</button>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
+      <button class="tab" data-tab="scanner" onclick="showTab('scanner')">Scanner</button>
+      <button class="tab" data-tab="trade" onclick="showTab('trade')">TradeSystem</button>
+      <button class="tab" data-tab="micros" onclick="showTab('micros')">MicroFamilies</button>
+      <button class="tab" data-tab="rotation" onclick="showTab('rotation')">Rotation</button>
+      <button class="tab" data-tab="discord" onclick="showTab('discord')">Discord Logs</button>
+      <button class="tab" data-tab="reset" onclick="showTab('reset')">Reset</button>
+    </div>
+
+```
+<section id="overview" class="panel"></section>
+<section id="scanner" class="panel hidden"></section>
+<section id="trade" class="panel hidden"></section>
+<section id="micros" class="panel hidden"></section>
+<section id="rotation" class="panel hidden"></section>
+<section id="discord" class="panel hidden"></section>
+<section id="reset" class="panel hidden"></section>
+```
+
+  </main>
+
+  <div id="drawer" class="drawer hidden"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let state = { overview: null, micros: null, rotation: null };
+
+function showTab(id) {
+  document.querySelectorAll('.panel').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  $(id).classList.remove('hidden');
+  document.querySelector(`[data-tab="${id}"]`).classList.add('active');
+  refresh(id);
+}
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.reason || res.statusText);
+  return data;
+}
+
+function fmt(n, d = 3) { return Number(n || 0).toFixed(d); }
+function pct(n) { return `${(Number(n || 0) * 100).toFixed(1)}%`; }
+function htmlEscape(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function table(rows, cols) {
+  if (!rows?.length) return '<div class="card">Geen data.</div>';
+  return `<table><thead><tr>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${c.render ? c.render(row) : htmlEscape(row[c.key])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+async function renderOverview() {
+  const data = await api('/api/admin/overview');
+  state.overview = data;
+  $('overview').innerHTML = `
+    <div class="grid">
+      <div class="card"><h3>Current week</h3><div class="metric">${data.weekKey}</div></div>
+      <div class="card"><h3>Previous week</h3><div class="metric">${data.previousWeekKey}</div></div>
+      <div class="card"><h3>Active microFamilies</h3><div class="metric">${data.activeRotation?.microFamilyIds?.length || 0}</div></div>
+      <div class="card"><h3>Open positions</h3><div class="metric">${data.openPositions}</div></div>
+      <div class="card"><h3>Scanner candidates</h3><div class="metric">${data.latestScan?.candidatesCount || 0}</div></div>
+      <div class="card"><h3>Current week micros</h3><div class="metric">${data.currentWeekMicroFamilies}</div></div>
+      <div class="card"><h3>Previous week micros</h3><div class="metric">${data.previousWeekMicroFamilies}</div></div>
+      <div class="card"><h3>Last trade run</h3><div class="metric">${data.tradeMeta?.actionCounts ? Object.entries(data.tradeMeta.actionCounts).map(([k,v]) => `${k}:${v}`).join(' ') : 'NA'}</div></div>
+    </div>
+    <div class="card" style="margin-top:12px"><h3>Active Rotation</h3><pre>${htmlEscape(JSON.stringify(data.activeRotation, null, 2))}</pre></div>
+
+`;
+}
+
+async function renderScanner() {
+const data = await api(’/api/admin/scanner’);
+const candidates = data.snapshot?.candidates || [];
+$(‘scanner’).innerHTML = `<div class="card"><h3>Latest snapshot</h3><pre>${htmlEscape(JSON.stringify(data.latest, null, 2))}</pre></div> ${table(candidates, [ {label:'Symbol', key:'symbol'}, {label:'Side', key:'side'}, {label:'Score', key:'scannerScore'}, {label:'1h', render:r=>fmt(r.change1h,2)+'%'}, {label:'24h', render:r=>fmt(r.change24h,2)+'%'}, {label:'Vol24h', render:r=>Number(r.volume24h||0).toLocaleString()}, {label:'FakeRisk', key:'fakeBreakoutRisk'}, {label:'Reason', key:'scannerReason'} ])}`;
+}
+
+async function renderTrade() {
+const data = await api(’/api/admin/trade’);
+$(‘trade’).innerHTML = ` <div class="toolbar"> <button class="primary" onclick="api('/api/trade/run?force=true').then(()=>refresh('trade'))">Run TradeSystem now</button> </div> <div class="card"><h3>Last processed snapshot</h3><pre>${htmlEscape(JSON.stringify(data.lastProcessed, null, 2))}</pre></div> <h3>Open positions</h3> ${table(data.positions || [], [ {label:'Symbol', key:'symbol'}, {label:'Side', key:'side'}, {label:'Entry', key:'entry'}, {label:'SL', key:'sl'}, {label:'TP', key:'tp'}, {label:'RR', render:r=>fmt(r.rr,2)}, {label:'CurR', render:r=>fmt(r.currentR,3)}, {label:'MFE', render:r=>fmt(r.mfeR,3)}, {label:'MAE', render:r=>fmt(r.maeR,3)}, {label:'Micro', render:r=>`<code>${htmlEscape(r.microFamilyId)}</code>`} ])} <div class="card"><h3>Run meta</h3><pre>${htmlEscape(JSON.stringify(data.runMeta, null, 2))}</pre></div> `;
+}
+
+async function renderMicros(mode = document.getElementById(‘microMode’)?.value || ‘balanced’) {
+const data = await api(`/api/admin/micro-families?mode=${mode}&limit=200`);
+state.micros = data;
+$(‘micros’).innerHTML = `<div class="toolbar"> <select id="microMode" onchange="renderMicros(this.value)"> ${['balanced','winrate','totalR','avgR','directSL','observed'].map(m =>`<option ${m===mode?‘selected’:’’}>${m}</option>`).join('')} </select> <button onclick="copyActiveIds()">Copy active IDs</button> <button class="primary" onclick="activateBestBalanced()">Activate best balanced</button> </div> ${table(data.rows || [], [ {label:'Rank', key:'rank'}, {label:'Active', render:r=>`<span class="pill ${r.active?'active':''}">${r.active?‘ACTIVE’:‘off’}</span>`}, {label:'MicroFamily', render:r=>`<button onclick="openMicro('${r.microFamilyId}')"><code>${htmlEscape(r.microFamilyId)}</code></button>`}, {label:'Family', key:'familyId'}, {label:'Side', key:'side'}, {label:'Seen', key:'seen'}, {label:'Completed', render:r=>fmt(r.completed,2)}, {label:'Real', key:'realCompleted'}, {label:'Shadow', key:'shadowCompleted'}, {label:'Fair WR', render:r=>pct(r.fairWinrate)}, {label:'Net AvgR', render:r=>fmt(r.avgR,3)}, {label:'Net TotalR', render:r=>fmt(r.totalR,3)}, {label:'CostR', render:r=>fmt(r.avgCostR,3)}, {label:'PF', render:r=>fmt(r.profitFactor,2)}, {label:'DirectSL', render:r=>pct(r.directSLPct)}, {label:'GaveBack 1R', render:r=>pct(r.gaveBackAfterOneRPct)}, {label:'BE Exit%', render:r=>pct(r.beWouldExitPct)}, {label:'Balanced', render:r=>fmt(r.balancedScore,2)} ])} `;
+}
+
+async function openMicro(id) {
+const data = await api(`/api/admin/micro-family/${encodeURIComponent(id)}`);
+$(‘drawer’).classList.remove(‘hidden’);
+$(‘drawer’).innerHTML = `<button onclick="$('drawer').classList.add('hidden')">Close</button><h2>${htmlEscape(id)}</h2><pre>${htmlEscape(JSON.stringify(data.row, null, 2))}</pre>`;
+}
+
+async function renderRotation() {
+const data = await api(’/api/admin/rotation’);
+state.rotation = data;
+$(‘rotation’).innerHTML = `<div class="toolbar"> <button class="primary" onclick="activateBestBalanced()">Activate best balanced now</button> <button onclick="copyActiveIds()">Copy active microFamilyIds</button> </div> <div class="grid"> <div class="card"><h3>Active count</h3><div class="metric">${data.active?.microFamilyIds?.length || 0}</div></div> <div class="card"><h3>Next count</h3><div class="metric">${data.next?.microFamilyIds?.length || 0}</div></div> <div class="card"><h3>Active source week</h3><div class="metric">${data.active?.sourceWeekKey || 'NA'}</div></div> <div class="card"><h3>Mode</h3><div class="metric">${data.active?.mode || 'NA'}</div></div> </div> <h3>Active rotation</h3><pre>${htmlEscape(JSON.stringify(data.active, null, 2))}</pre> <h3>Next rotation</h3><pre>${htmlEscape(JSON.stringify(data.next, null, 2))}</pre>`;
+}
+
+async function renderDiscord() {
+const data = await api(’/api/admin/discord-logs?limit=100’);
+$(‘discord’).innerHTML = table(data.logs || [], [
+{label:‘TS’, render:r=>new Date(r.ts).toLocaleString()}, {label:‘Type’, key:‘type’},
+{label:‘Symbol’, render:r=>r.payload?.symbol || ‘’}, {label:‘Side’, render:r=>r.payload?.side || ‘’},
+{label:‘Micro’, render:r=>`<code>${htmlEscape(r.payload?.microFamilyId || '')}</code>`},
+{label:‘Result’, render:r=>htmlEscape(JSON.stringify(r.result))}
+]);
+}
+
+function renderReset() {
+$(‘reset’).innerHTML = `<div class="card"><h3>Reset learning only</h3><p>Wist observations, outcomes, weekly micro stats en shadow data. Open positions blijven staan.</p><button class="warn" onclick="postReset('/api/admin/reset-learning')">Reset learning</button></div> <div class="card"><h3>Reset rotation only</h3><p>Wist active/next rotation. Learning blijft staan.</p><button class="warn" onclick="postReset('/api/admin/reset-rotation')">Reset rotation</button></div> <div class="card"><h3>Factory reset</h3><p>Wist scanner snapshots, trade memory, open positions, analyze stats, rotations en live cache. Vereist exacte bevestiging.</p> <input id="factoryConfirm" style="width:320px" placeholder="FACTORY_RESET_CONFIRMED" /> <label><input id="factoryForce" type="checkbox" /> force even with open positions</label> <button class="danger" onclick="factoryReset()">Factory reset</button> </div>`;
+}
+
+async function postReset(url) {
+if (!confirm(‘Zeker?’)) return;
+const data = await api(url, { method:‘POST’ });
+alert(JSON.stringify(data, null, 2));
+refresh();
+}
+
+async function factoryReset() {
+if (!confirm(‘FACTORY RESET wist alles. Doorgaan?’)) return;
+const data = await api(’/api/admin/factory-reset’, {
+method:‘POST’, headers:{‘content-type’:‘application/json’},
+body: JSON.stringify({ confirm: $(‘factoryConfirm’).value, force: $(‘factoryForce’).checked })
+});
+alert(JSON.stringify(data, null, 2));
+refresh();
+}
+
+async function activateBestBalanced() {
+const data = await api(’/api/admin/rotation’, { method:‘POST’, headers:{‘content-type’:‘application/json’}, body: JSON.stringify({ action:‘activateBestBalanced’ }) });
+alert(`Activated ${data.activeRotation?.microFamilyIds?.length || 0} microFamilies`);
+refresh();
+}
+
+function copyActiveIds() {
+const ids = state.rotation?.active?.microFamilyIds || state.overview?.activeRotation?.microFamilyIds || [];
+navigator.clipboard.writeText(JSON.stringify(ids, null, 2));
+alert(`Copied ${ids.length} active microFamilyIds`);
+}
+
+async function refresh(tab = document.querySelector(’.tab.active’)?.dataset.tab || ‘overview’) {
+try {
+if (tab === ‘overview’) return renderOverview();
+if (tab === ‘scanner’) return renderScanner();
+if (tab === ‘trade’) return renderTrade();
+if (tab === ‘micros’) return renderMicros();
+if (tab === ‘rotation’) return renderRotation();
+if (tab === ‘discord’) return renderDiscord();
+if (tab === ‘reset’) return renderReset();
+} catch (error) {
+$(tab).innerHTML = `<div class="card"><h3>Error</h3><pre>${htmlEscape(error.message)}</pre></div>`;
+}
+}
+
+refresh(‘overview’);
+</script>
+
+</body>
+</html>
