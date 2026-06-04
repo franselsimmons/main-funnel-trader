@@ -56,6 +56,13 @@ async function readBody(req) {
   return parseJson(text);
 }
 
+function isConfirmed(body) {
+  return (
+    body.confirm === CONFIRM_TEXT ||
+    body.confirmed === CONFIRM_TEXT
+  );
+}
+
 async function acquireLock(redis, key, token) {
   const acquired = await redis.set(key, token, {
     nx: true,
@@ -69,12 +76,12 @@ async function releaseLock(redis, key, token) {
   try {
     const current = await redis.get(key);
 
-    if (current === token) {
-      await redis.del(key);
-      return true;
+    if (current !== token) {
+      return false;
     }
 
-    return false;
+    await redis.del(key);
+    return true;
   } catch {
     return false;
   }
@@ -128,6 +135,11 @@ async function releaseLocks(redis, keys, token) {
   return released;
 }
 
+async function delKey(redis, key) {
+  if (!key) return 0;
+  return redis.del(key);
+}
+
 async function runLearningDeleteSteps(redis) {
   const deleted = {};
 
@@ -135,6 +147,12 @@ async function runLearningDeleteSteps(redis) {
   deleted.microStats = await delPattern(redis, 'ANALYZE:MICRO:*', 10000);
   deleted.observationDedupe = await delPattern(redis, 'ANALYZE:OBS:LAST:*', 10000);
   deleted.shadow = await delPattern(redis, 'ANALYZE:SHADOW:*', 10000);
+
+  // Belangrijk:
+  // Active rotation blijft staan, zodat TradeSystem niet direct zonder gate draait.
+  // Next rotation moet weg, want die is gebaseerd op learning-data die nu verwijderd is.
+  deleted.nextRotation = await delKey(redis, KEYS.analyze?.nextRotation);
+  deleted.rotationValidFrom = await delKey(redis, KEYS.analyze?.rotationValidFrom);
 
   return deleted;
 }
@@ -152,11 +170,7 @@ export default async function handler(req, res) {
 
     const body = await readBody(req);
 
-    const confirmed =
-      body.confirm === CONFIRM_TEXT ||
-      body.confirmed === CONFIRM_TEXT;
-
-    if (!confirmed) {
+    if (!isConfirmed(body)) {
       return res.status(400).json({
         ok: false,
         blocked: true,
@@ -190,10 +204,11 @@ export default async function handler(req, res) {
       deleted,
       preserved: {
         activeRotation: true,
-        nextRotation: true,
         openPositions: true,
         scannerSnapshots: true,
-        tradeMemory: true
+        tradeMemory: true,
+        resetLogs: true,
+        discordLogs: true
       },
       resetAt: Date.now()
     };
