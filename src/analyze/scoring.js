@@ -7,6 +7,8 @@ const DEFAULT_WILSON_Z = 1.96;
 const DEFAULT_PRIOR_TRADES = 24;
 const DEFAULT_PRIOR_WINRATE = 0.5;
 const DEFAULT_SAMPLE_CAP = 50;
+const DEFAULT_AVG_R_CAP = 5;
+const DEFAULT_AVG_R_SAMPLE_EXPONENT = 1.35;
 
 function now() {
   return Date.now();
@@ -44,6 +46,18 @@ function wilsonZ() {
 
 function sampleCap() {
   return Math.max(1, rotationNumber('sampleReliabilityCap', DEFAULT_SAMPLE_CAP));
+}
+
+function avgRCap() {
+  return Math.max(0.5, rotationNumber('avgRCap', DEFAULT_AVG_R_CAP));
+}
+
+function avgRSampleExponent() {
+  return clamp(
+    rotationNumber('avgRSampleExponent', DEFAULT_AVG_R_SAMPLE_EXPONENT),
+    0.5,
+    3
+  );
 }
 
 function inc(obj, key, amount = 1) {
@@ -106,7 +120,7 @@ function actualOutcomeCounts(stats = {}) {
   }
 
   const completedFallback = safeNumber(stats.completed, 0);
-  const winrateFallback = clamp(stats.winrate, 0, 1);
+  const winrateFallback = clamp(safeNumber(stats.winrate, 0), 0, 1);
 
   if (completedFallback <= 0) {
     return {
@@ -125,12 +139,38 @@ function actualOutcomeCounts(stats = {}) {
   };
 }
 
+function weightedCompletedCount(stats = {}) {
+  const realCompleted = safeNumber(stats.realCompleted, 0);
+  const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
+
+  if (realCompleted > 0 || shadowCompleted > 0) {
+    return realCompleted + shadowCompleted * shadowWeight();
+  }
+
+  return safeNumber(stats.completed, 0);
+}
+
 function sampleReliability(completed) {
   const n = safeNumber(completed, 0);
 
   if (n <= 0) return 0;
 
   return clamp(Math.sqrt(Math.min(n, sampleCap()) / sampleCap()), 0, 1);
+}
+
+function sampleAdjustedAvgR(avgR, reliability) {
+  const cappedAvgR = clamp(
+    safeNumber(avgR, 0),
+    -avgRCap(),
+    avgRCap()
+  );
+
+  const samplePenalty = Math.pow(
+    clamp(reliability, 0, 1),
+    avgRSampleExponent()
+  );
+
+  return cappedAvgR * samplePenalty;
 }
 
 export function createMicroStats({
@@ -179,6 +219,8 @@ export function createMicroStats({
     avgR: 0,
     avgWinR: 0,
     avgLossR: 0,
+    sampleAdjustedAvgR: 0,
+    avgRScore: 0,
 
     totalPnlPct: 0,
     avgPnlPct: 0,
@@ -205,6 +247,7 @@ export function createMicroStats({
     profitFactor: 0,
     sampleReliability: 0,
     balancedScore: 0,
+    dashboardBalancedScore: 0,
 
     directSLPct: 0,
     nearTpPct: 0,
@@ -253,6 +296,9 @@ function ensureStatsShape(stats = {}) {
 
   stats.winrateSample = safeNumber(stats.winrateSample, 0);
   stats.sampleAdjustedWinrate = safeNumber(stats.sampleAdjustedWinrate, 0);
+  stats.sampleAdjustedAvgR = safeNumber(stats.sampleAdjustedAvgR, 0);
+  stats.avgRScore = safeNumber(stats.avgRScore, 0);
+  stats.dashboardBalancedScore = safeNumber(stats.dashboardBalancedScore, 0);
 
   stats.createdAt ||= now();
   stats.updatedAt ||= now();
@@ -322,9 +368,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
   }
 
   // Weighted completed remains for R/PnL math.
-  stats.completed =
-    safeNumber(stats.realCompleted, 0) +
-    safeNumber(stats.shadowCompleted, 0) * shadowWeight();
+  stats.completed = weightedCompletedCount(stats);
 
   stats.wins = safeNumber(stats.wins, 0) + (win ? weight : 0);
   stats.losses = safeNumber(stats.losses, 0) + (loss ? weight : 0);
@@ -399,7 +443,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
 
 export function wilsonLowerBound(wins, completed, z = wilsonZ()) {
   const n = safeNumber(completed, 0);
-  const w = clamp(wins, 0, n);
+  const w = clamp(safeNumber(wins, 0), 0, n);
 
   if (n <= 0) return 0;
 
@@ -481,10 +525,41 @@ function buildBalancedScore({
   );
 }
 
+function buildAvgRScore({
+  sampleAdjustedAvgRValue,
+  fair,
+  totalR,
+  sampleRel,
+  profitFactor,
+  nearTpPct,
+  reachedOneRPct,
+  directSLPct,
+  nearTpThenLossPct,
+  gaveBackAfterOneRPct,
+  avgCostR
+}) {
+  const pfNorm = clamp(profitFactor, 0, 10) / 10;
+  const totalRComponent = Math.log1p(positive(totalR)) * 8;
+
+  return (
+    sampleAdjustedAvgRValue * 100 +
+    fair * 35 +
+    sampleRel * 25 +
+    totalRComponent +
+    pfNorm * 8 +
+    nearTpPct * 3 +
+    reachedOneRPct * 3 -
+    directSLPct * 35 -
+    nearTpThenLossPct * 15 -
+    gaveBackAfterOneRPct * 10 -
+    Math.max(0, avgCostR) * 8
+  );
+}
+
 export function refreshStats(stats) {
   ensureStatsShape(stats);
 
-  const weightedCompleted = safeNumber(stats.completed, 0);
+  const weightedCompleted = weightedCompletedCount(stats);
   const weightedWins = safeNumber(stats.wins, 0);
   const weightedLosses = safeNumber(stats.losses, 0);
   const totalR = safeNumber(stats.totalR, 0);
@@ -574,9 +649,25 @@ export function refreshStats(stats) {
     ? safeNumber(stats.totalCostR, 0) / weightedCompleted
     : 0;
 
+  const sampleAdjustedAvgRValue = sampleAdjustedAvgR(avgR, reliability);
+
   const balancedScore = buildBalancedScore({
     fair,
     avgR,
+    totalR,
+    sampleRel: reliability,
+    profitFactor,
+    nearTpPct,
+    reachedOneRPct,
+    directSLPct,
+    nearTpThenLossPct,
+    gaveBackAfterOneRPct,
+    avgCostR
+  });
+
+  const avgRScore = buildAvgRScore({
+    sampleAdjustedAvgRValue,
+    fair,
     totalR,
     sampleRel: reliability,
     profitFactor,
@@ -607,6 +698,8 @@ export function refreshStats(stats) {
     avgPnlPct: round4(avgPnlPct),
     avgWinR: round4(avgWinR),
     avgLossR: round4(avgLossR),
+    sampleAdjustedAvgR: round4(sampleAdjustedAvgRValue),
+    avgRScore: round4(avgRScore),
 
     profitFactor: round4(profitFactor),
 
@@ -622,6 +715,7 @@ export function refreshStats(stats) {
 
     avgCostR: round4(avgCostR),
     balancedScore: round4(balancedScore),
+    dashboardBalancedScore: round4(balancedScore),
 
     updatedAt: now()
   });
@@ -638,8 +732,20 @@ function compareWinrate(a, b) {
     b.fairWinrate - a.fairWinrate ||
     b.wilsonLowerBound - a.wilsonLowerBound ||
     b.bayesianWinrate - a.bayesianWinrate ||
-    b.winrate - a.winrate ||
     b.winrateSample - a.winrateSample ||
+    b.winrate - a.winrate ||
+    b.totalR - a.totalR ||
+    b.avgR - a.avgR ||
+    sortById(a, b)
+  );
+}
+
+function compareAvgR(a, b) {
+  return (
+    b.avgRScore - a.avgRScore ||
+    b.sampleAdjustedAvgR - a.sampleAdjustedAvgR ||
+    b.winrateSample - a.winrateSample ||
+    b.fairWinrate - a.fairWinrate ||
     b.totalR - a.totalR ||
     b.avgR - a.avgR ||
     sortById(a, b)
@@ -671,11 +777,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
     }
 
     if (mode === 'avgR') {
-      return (
-        b.avgR - a.avgR ||
-        b.winrateSample - a.winrateSample ||
-        compareWinrate(a, b)
-      );
+      return compareAvgR(a, b);
     }
 
     if (mode === 'directSL') {
