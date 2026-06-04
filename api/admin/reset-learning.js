@@ -174,6 +174,11 @@ async function delKey(redis, key) {
 async function runLearningDeleteSteps(redis) {
   const deleted = {};
 
+  // Alles onder ANALYZE:WEEK:* pakt:
+  // - oude full-object week key
+  // - nieuwe compressed/sharded index
+  // - nieuwe compressed/sharded rows
+  // - week meta
   deleted.weeks = await delPattern(
     redis,
     'ANALYZE:WEEK:*',
@@ -186,15 +191,33 @@ async function runLearningDeleteSteps(redis) {
     10000
   );
 
-  deleted.observationDedupe = await delPattern(
+  deleted.observationDedupeA = await delPattern(
     redis,
     'ANALYZE:OBS:LAST:*',
     10000
   );
 
-  deleted.shadow = await delPattern(
+  deleted.observationDedupeB = await delPattern(
+    redis,
+    'ANALYZE:OBS:*',
+    10000
+  );
+
+  deleted.shadowA = await delPattern(
     redis,
     'ANALYZE:SHADOW:*',
+    10000
+  );
+
+  deleted.shadowB = await delPattern(
+    redis,
+    'ANALYZE:SHADOW_OPEN:*',
+    10000
+  );
+
+  deleted.shadowC = await delPattern(
+    redis,
+    'ANALYZE:SHADOW_LAST:*',
     10000
   );
 
