@@ -27,7 +27,10 @@ function now() {
 
 function tradeConfig() {
   return {
-    dataConcurrency: Math.max(1, Math.floor(safeNumber(CONFIG.trade?.dataConcurrency, 5))),
+    dataConcurrency: Math.max(
+      1,
+      Math.floor(safeNumber(CONFIG.trade?.dataConcurrency, 5))
+    ),
     positionTimeStopMin: safeNumber(CONFIG.trade?.positionTimeStopMin, 12 * 60)
   };
 }
@@ -40,6 +43,34 @@ function manageConfig() {
     trailArmR: safeNumber(CONFIG.manage?.trailArmR, 1.00),
     trailLockR: safeNumber(CONFIG.manage?.trailLockR, 0.35)
   };
+}
+
+function schemaConfig() {
+  const macroSchema = String(
+    CONFIG.analyze?.macroSchema ||
+    CONFIG.analyze?.legacySchema ||
+    'MF_V1'
+  ).toUpperCase();
+
+  const microSchema = String(
+    CONFIG.analyze?.microSchema ||
+    'MF_V2'
+  ).toUpperCase();
+
+  const currentSchema = String(
+    CONFIG.analyze?.schema ||
+    microSchema
+  ).toUpperCase();
+
+  return {
+    currentSchema,
+    macroSchema,
+    microSchema
+  };
+}
+
+function allowLegacyMacroLiveEntries() {
+  return Boolean(CONFIG.trade?.allowLegacyMacroLiveEntries);
 }
 
 function round4(value) {
@@ -71,6 +102,129 @@ function isLong(side) {
 
 function isShort(side) {
   return sideToTradeSide(side) === 'SHORT';
+}
+
+function idHasSchema(id, schema) {
+  const value = String(id || '').toUpperCase();
+  const target = String(schema || '').toUpperCase();
+
+  if (!value || !target) return false;
+
+  return value.includes(`_${target}_`) ||
+    value.endsWith(`_${target}`) ||
+    value.includes(`|SCHEMA=${target}`);
+}
+
+function definitionHasSchema(row = {}, schema) {
+  const target = String(schema || '').toUpperCase();
+
+  if (!target) return false;
+
+  const parts = Array.isArray(row.definitionParts)
+    ? row.definitionParts
+    : [];
+
+  if (parts.some((part) => String(part).toUpperCase() === `SCHEMA=${target}`)) {
+    return true;
+  }
+
+  return String(row.definition || '').toUpperCase().includes(`SCHEMA=${target}`);
+}
+
+function rowSchema(row = {}) {
+  return String(
+    row.microFamilySchema ||
+    row.schema ||
+    row.versionSchema ||
+    ''
+  ).toUpperCase();
+}
+
+function rowMicroId(row = {}) {
+  return String(row.microFamilyId || row.id || '').trim();
+}
+
+function parentMacroFamilyId(row = {}) {
+  return String(
+    row.parentMacroFamilyId ||
+    row.parentMicroFamilyId ||
+    row.macroFamilyId ||
+    ''
+  ).trim();
+}
+
+function isTrueMicroFamilyRow(row = {}) {
+  const { microSchema, macroSchema } = schemaConfig();
+
+  const id = rowMicroId(row);
+  const schema = rowSchema(row);
+  const version = String(row.version || '').toUpperCase();
+
+  if (!row || !id) return false;
+  if (version.includes('MACRO')) return false;
+
+  if (row.isTrueMicro === true) return true;
+  if (schema === microSchema) return true;
+  if (idHasSchema(id, microSchema)) return true;
+  if (definitionHasSchema(row, microSchema)) return true;
+
+  if (row.isLegacyMacro === true) return false;
+  if (schema === macroSchema) return false;
+  if (idHasSchema(id, macroSchema)) return false;
+  if (definitionHasSchema(row, macroSchema)) return false;
+
+  return Boolean(parentMacroFamilyId(row));
+}
+
+function normalizeMicroIdentity(row = {}) {
+  const { currentSchema, microSchema, macroSchema } = schemaConfig();
+
+  const microFamilyId = rowMicroId(row);
+  const macroId = parentMacroFamilyId(row);
+  const trueMicro = isTrueMicroFamilyRow(row);
+
+  return {
+    microFamilyId,
+    familyId: row.familyId || null,
+
+    parentMacroFamilyId: macroId || null,
+    macroFamilyId: macroId || null,
+
+    microFamilySchema: row.microFamilySchema || (
+      trueMicro
+        ? microSchema
+        : macroSchema
+    ),
+
+    analyzeSchema: row.analyzeSchema || currentSchema,
+
+    isTrueMicro: trueMicro,
+    isLegacyMacro: !trueMicro,
+
+    trueMicroOnly: row.trueMicroOnly !== false
+  };
+}
+
+function assertEntryTradeable(entry = {}) {
+  if (!entry.microFamilyId) {
+    throw new Error('OPEN_POSITION_MICRO_FAMILY_ID_MISSING');
+  }
+
+  if (!entry.familyId) {
+    throw new Error('OPEN_POSITION_FAMILY_ID_MISSING');
+  }
+
+  if (!entry.entry || !entry.sl || !entry.tp) {
+    throw new Error('OPEN_POSITION_RISK_GEOMETRY_MISSING');
+  }
+
+  if (!entry.liveEligible) {
+    throw new Error('OPEN_POSITION_NOT_LIVE_ELIGIBLE');
+  }
+
+  if (!allowLegacyMacroLiveEntries() && !isTrueMicroFamilyRow(entry)) {
+    throw new Error('OPEN_POSITION_REQUIRES_TRUE_MICRO_FAMILY');
+  }
 }
 
 function calcStopFromR({
@@ -293,11 +447,19 @@ export async function saveOpenPosition(position) {
     throw new Error('OPEN_POSITION_SYMBOL_MISSING');
   }
 
+  const identity = normalizeMicroIdentity(position);
+
   const row = {
     ...position,
+    ...identity,
+
     symbol: position.symbol || keySymbol,
     baseSymbol: position.baseSymbol || keySymbol,
+
     status: position.status || 'OPEN',
+
+    strategyVersion: position.strategyVersion || CONFIG.strategyVersion,
+
     updatedAt: now()
   };
 
@@ -415,18 +577,25 @@ export function updatePathMetrics(position, price) {
 }
 
 export function buildOpenPositionFromEntry(entry) {
+  assertEntryTradeable(entry);
+
   const keySymbol = storageSymbol(entry);
   const openedAt = now();
+  const identity = normalizeMicroIdentity(entry);
 
   return {
     ...entry,
+    ...identity,
 
     tradeId: entry.tradeId || randomId('trade'),
 
     symbol: entry.symbol || keySymbol,
     baseSymbol: entry.baseSymbol || keySymbol,
+    contractSymbol: entry.contractSymbol || null,
 
     status: 'OPEN',
+
+    strategyVersion: entry.strategyVersion || CONFIG.strategyVersion,
 
     openedAt,
     createdAt: openedAt,
@@ -475,6 +644,27 @@ async function markPriceFetchFailed(position) {
   return position;
 }
 
+function enrichOutcomeIdentity(outcome = {}, position = {}) {
+  const identity = normalizeMicroIdentity(position);
+
+  return {
+    ...outcome,
+    ...identity,
+
+    activeRotationId: position.activeRotationId || null,
+    activeMacroFamilyId:
+      position.activeMacroFamilyId ||
+      identity.parentMacroFamilyId ||
+      null,
+
+    weeklyStats: position.weeklyStats || null,
+
+    isTrueMicro: identity.isTrueMicro,
+    isLegacyMacro: identity.isLegacyMacro,
+    trueMicroOnly: identity.trueMicroOnly
+  };
+}
+
 async function monitorOnePosition({
   position,
   priceFetcher,
@@ -514,12 +704,14 @@ async function monitorOnePosition({
     };
   }
 
-  const outcome = buildOutcomeFromPosition({
+  const baseOutcome = buildOutcomeFromPosition({
     position,
     exitPrice: price,
     exitReason: exit.reason,
     source: 'REAL'
   });
+
+  const outcome = enrichOutcomeIdentity(baseOutcome, position);
 
   await recordOutcome(outcome, {
     source: 'REAL'
