@@ -1,18 +1,60 @@
 // ================= FILE: api/admin/rotation.js =================
 
 import { KEYS } from '../../src/keys.js';
-import { getIsoWeekKey, getPreviousIsoWeekKey } from '../../src/utils.js';
-import { getDurableRedis, setJson } from '../../src/redis.js';
+import {
+  getIsoWeekKey,
+  getPreviousIsoWeekKey
+} from '../../src/utils.js';
+import {
+  getDurableRedis,
+  setJson
+} from '../../src/redis.js';
 import {
   getRotationDashboard,
   buildRotationFromWeek,
   activateSelectedMicroFamilies
-} from '../../src/analyze/src/rotationEngine.js';
+} from '../../src/analyze/rotationEngine.js';
+
+const ALLOWED_ACTIONS = [
+  'activateBestBalanced',
+  'activateSelected'
+];
+
+const ALLOWED_MODES = new Set([
+  'balanced',
+  'winrate',
+  'totalR',
+  'avgR',
+  'directSL',
+  'observed'
+]);
+
+function methodNotAllowed(res) {
+  res.setHeader('Allow', 'GET, POST');
+
+  return res.status(405).json({
+    ok: false,
+    error: 'METHOD_NOT_ALLOWED',
+    allowed: ['GET', 'POST']
+  });
+}
+
+function parseJson(text) {
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const error = new Error('INVALID_JSON_BODY');
+    error.statusCode = 400;
+    throw error;
+  }
+}
 
 async function readBody(req) {
   if (req.body) {
     if (typeof req.body === 'string') {
-      return req.body.trim() ? JSON.parse(req.body) : {};
+      return parseJson(req.body.trim());
     }
 
     return req.body;
@@ -26,13 +68,20 @@ async function readBody(req) {
 
   const text = Buffer.concat(chunks).toString('utf8').trim();
 
-  return text ? JSON.parse(text) : {};
+  return parseJson(text);
 }
 
-function firstQueryValue(value, fallback = null) {
+function firstValue(value, fallback = null) {
   if (Array.isArray(value)) return value[0] ?? fallback;
   if (value === undefined || value === null || value === '') return fallback;
+
   return value;
+}
+
+function normalizeMode(value, fallback = 'balanced') {
+  const mode = String(value || fallback).trim();
+
+  return ALLOWED_MODES.has(mode) ? mode : fallback;
 }
 
 function normalizeMicroFamilyIds(value) {
@@ -40,34 +89,208 @@ function normalizeMicroFamilyIds(value) {
 
   return [...new Set(
     value
-      .map(id => String(id || '').trim())
+      .map((id) => String(id || '').trim())
       .filter(Boolean)
   )];
 }
 
-function normalizeRotation(rotation, fallback = {}) {
-  const microFamilyIds = normalizeMicroFamilyIds(
-    rotation?.microFamilyIds ||
-    rotation?.activeMicroFamilyIds ||
-    rotation?.ids ||
-    []
+function idsFromRotation(rotation = {}) {
+  return normalizeMicroFamilyIds(
+    rotation.microFamilyIds ||
+    rotation.activeMicroFamilyIds ||
+    rotation.ids ||
+    (
+      Array.isArray(rotation.microFamilies)
+        ? rotation.microFamilies.map((row) => row.microFamilyId)
+        : []
+    )
   );
+}
+
+function normalizeRotation(rotation = {}, fallback = {}) {
+  const base = {
+    ...fallback,
+    ...(rotation || {})
+  };
+
+  const microFamilyIds = idsFromRotation(base);
 
   return {
-    ...fallback,
-    ...rotation,
+    ...base,
     microFamilyIds,
     count: microFamilyIds.length
   };
 }
 
-function methodNotAllowed(res) {
-  res.setHeader('Allow', 'GET, POST');
+function normalizeDashboard(dashboard = {}) {
+  const active = normalizeRotation(
+    dashboard.active ||
+    dashboard.activeRotation ||
+    {}
+  );
 
-  return res.status(405).json({
+  const next = normalizeRotation(
+    dashboard.next ||
+    dashboard.nextRotation ||
+    {}
+  );
+
+  return {
+    ...dashboard,
+
+    active,
+    next,
+
+    activeRotation: active,
+    nextRotation: next,
+
+    activeRows: dashboard.activeRows || active.microFamilies || [],
+    nextRows: dashboard.nextRows || next.microFamilies || [],
+
+    activeCount: active.microFamilyIds.length,
+    nextCount: next.microFamilyIds.length
+  };
+}
+
+async function handleGet(req, res) {
+  const dashboard = normalizeDashboard(await getRotationDashboard());
+
+  return res.status(200).json({
+    ok: true,
+    ...dashboard,
+    serverTs: Date.now()
+  });
+}
+
+async function activateBestBalanced(body) {
+  const sourceWeekKey = firstValue(
+    body.weekKey,
+    getPreviousIsoWeekKey()
+  );
+
+  const activeWeekKey = firstValue(
+    body.activeWeekKey,
+    getIsoWeekKey()
+  );
+
+  const mode = normalizeMode(
+    firstValue(body.mode, 'balanced'),
+    'balanced'
+  );
+
+  const rotation = await buildRotationFromWeek({
+    weekKey: sourceWeekKey,
+    activeWeekKey,
+    mode
+  });
+
+  const active = normalizeRotation({
+    ...rotation,
+    source: 'ADMIN_ACTIVATE_BEST_BALANCED',
+    sourceWeekKey,
+    activeWeekKey,
+    mode,
+    activatedAt: Date.now()
+  });
+
+  await setJson(
+    getDurableRedis(),
+    KEYS.analyze.activeRotation,
+    active
+  );
+
+  return {
+    action: 'activateBestBalanced',
+    sourceWeekKey,
+    activeWeekKey,
+    mode,
+    activeRotation: active,
+    active,
+    activatedCount: active.microFamilyIds.length
+  };
+}
+
+async function activateSelected(body) {
+  const microFamilyIds = normalizeMicroFamilyIds(body.microFamilyIds);
+
+  if (!microFamilyIds.length) {
+    const error = new Error('MICRO_FAMILY_IDS_REQUIRED');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const sourceWeekKey = firstValue(
+    body.weekKey,
+    getPreviousIsoWeekKey()
+  );
+
+  const active = await activateSelectedMicroFamilies({
+    microFamilyIds,
+    weekKey: sourceWeekKey,
+    mode: 'selected'
+  });
+
+  const normalizedActive = normalizeRotation({
+    ...active,
+    source: 'ADMIN_ACTIVATE_SELECTED',
+    sourceWeekKey,
+    activeWeekKey: active.activeWeekKey || getIsoWeekKey(),
+    mode: 'selected',
+    activatedAt: active.activatedAt || Date.now()
+  });
+
+  await setJson(
+    getDurableRedis(),
+    KEYS.analyze.activeRotation,
+    normalizedActive
+  );
+
+  return {
+    action: 'activateSelected',
+    sourceWeekKey,
+    activeRotation: normalizedActive,
+    active: normalizedActive,
+    activatedCount: normalizedActive.microFamilyIds.length
+  };
+}
+
+async function handlePost(req, res) {
+  const body = await readBody(req);
+  const action = String(body?.action || '').trim();
+
+  if (!action) {
+    return res.status(400).json({
+      ok: false,
+      reason: 'ACTION_REQUIRED',
+      allowedActions: ALLOWED_ACTIONS
+    });
+  }
+
+  if (action === 'activateBestBalanced') {
+    const result = await activateBestBalanced(body);
+
+    return res.status(200).json({
+      ok: true,
+      ...result,
+      serverTs: Date.now()
+    });
+  }
+
+  if (action === 'activateSelected') {
+    const result = await activateSelected(body);
+
+    return res.status(200).json({
+      ok: true,
+      ...result,
+      serverTs: Date.now()
+    });
+  }
+
+  return res.status(400).json({
     ok: false,
-    error: 'METHOD_NOT_ALLOWED',
-    allowed: ['GET', 'POST']
+    reason: 'UNKNOWN_ACTION',
+    action,
+    allowedActions: ALLOWED_ACTIONS
   });
 }
 
@@ -76,131 +299,23 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const dashboard = await getRotationDashboard();
-
-      const active = normalizeRotation(dashboard?.active || dashboard?.activeRotation || {});
-      const next = normalizeRotation(dashboard?.next || dashboard?.nextRotation || {});
-
-      return res.status(200).json({
-        ok: true,
-        ...dashboard,
-        active,
-        next,
-        activeRotation: active,
-        nextRotation: next,
-        serverTs: Date.now()
-      });
+      return await handleGet(req, res);
     }
 
-    if (req.method !== 'POST') {
-      return methodNotAllowed(res);
+    if (req.method === 'POST') {
+      return await handlePost(req, res);
     }
 
-    const body = await readBody(req);
-    const action = String(body?.action || '').trim();
-
-    if (!action) {
-      return res.status(400).json({
-        ok: false,
-        reason: 'ACTION_REQUIRED',
-        allowedActions: ['activateBestBalanced', 'activateSelected']
-      });
-    }
-
-    if (action === 'activateBestBalanced') {
-      const sourceWeekKey = firstQueryValue(
-        body.weekKey,
-        getPreviousIsoWeekKey()
-      );
-
-      const activeWeekKey = firstQueryValue(
-        body.activeWeekKey,
-        getIsoWeekKey()
-      );
-
-      const mode = firstQueryValue(body.mode, 'balanced');
-
-      const rotation = await buildRotationFromWeek({
-        weekKey: sourceWeekKey,
-        activeWeekKey,
-        mode
-      });
-
-      const active = normalizeRotation(rotation, {
-        rotationId: `ADMIN_ROTATION_${activeWeekKey}_${Date.now()}`,
-        source: 'ADMIN_ACTIVATE_BEST_BALANCED',
-        sourceWeekKey,
-        activeWeekKey,
-        mode,
-        activatedAt: Date.now()
-      });
-
-      await setJson(getDurableRedis(), KEYS.analyze.activeRotation, active);
-
-      return res.status(200).json({
-        ok: true,
-        action,
-        sourceWeekKey,
-        activeWeekKey,
-        mode,
-        activeRotation: active,
-        active,
-        activatedCount: active.microFamilyIds.length,
-        serverTs: Date.now()
-      });
-    }
-
-    if (action === 'activateSelected') {
-      const microFamilyIds = normalizeMicroFamilyIds(body.microFamilyIds);
-
-      if (!microFamilyIds.length) {
-        return res.status(400).json({
-          ok: false,
-          reason: 'MICRO_FAMILY_IDS_REQUIRED',
-          message: 'activateSelected vereist minimaal één microFamilyId.'
-        });
-      }
-
-      const sourceWeekKey = firstQueryValue(
-        body.weekKey,
-        getPreviousIsoWeekKey()
-      );
-
-      const active = await activateSelectedMicroFamilies({
-        microFamilyIds,
-        weekKey: sourceWeekKey
-      });
-
-      const normalizedActive = normalizeRotation(active, {
-        source: 'ADMIN_ACTIVATE_SELECTED',
-        sourceWeekKey,
-        activeWeekKey: getIsoWeekKey(),
-        mode: 'selected',
-        activatedAt: Date.now()
-      });
-
-      return res.status(200).json({
-        ok: true,
-        action,
-        sourceWeekKey,
-        activeRotation: normalizedActive,
-        active: normalizedActive,
-        activatedCount: normalizedActive.microFamilyIds.length,
-        serverTs: Date.now()
-      });
-    }
-
-    return res.status(400).json({
-      ok: false,
-      reason: 'UNKNOWN_ACTION',
-      action,
-      allowedActions: ['activateBestBalanced', 'activateSelected']
-    });
+    return methodNotAllowed(res);
   } catch (error) {
-    return res.status(500).json({
+    const status = error.statusCode || 500;
+
+    return res.status(status).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
