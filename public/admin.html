@@ -417,6 +417,8 @@
 
     .coin-main {
       min-width: 0;
+      display: flex;
+      flex-direction: column;
     }
 
     .coin-symbol {
@@ -481,6 +483,7 @@
       align-items: center;
       gap: 10px;
       margin-top: 12px;
+      overflow: hidden;
     }
 
     .coin-mini {
@@ -913,6 +916,14 @@
       return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${symbol}.svg`;
     }
 
+    function handleCoinLogoError(img) {
+      const parent = img?.parentElement;
+      if (!parent) return;
+
+      parent.classList.add("fallback");
+      img.remove();
+    }
+
     function sideClass(side) {
       const s = String(side || "").toLowerCase();
       if (s === "bull" || s === "long" || s === "buy") return "bull";
@@ -940,7 +951,7 @@
               src="${escapeAttr(logo)}"
               alt="${escapeAttr(symbol)}"
               loading="lazy"
-              onerror="this.remove(); this.parentElement.classList.add('fallback');"
+              onerror="handleCoinLogoError(this)"
             />
           </span>
           <span class="coin-main">
@@ -1125,7 +1136,6 @@
     function coinCard(row) {
       const side = sideClass(row.side);
       const symbol = baseSymbol(row);
-      const name = coinName(row);
       const price = row.price ?? row.entry ?? row.currentPrice ?? row.markPrice;
       const score = row.scannerScore ?? row.moveScore ?? row.sniperScore ?? row.confluence ?? 0;
 
