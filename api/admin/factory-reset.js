@@ -59,6 +59,17 @@ async function readBody(req) {
   return parseJson(text);
 }
 
+function isTrue(value) {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function isConfirmed(body, requiredText) {
+  return (
+    body.confirm === requiredText ||
+    body.confirmed === requiredText
+  );
+}
+
 async function delKey(redis, key) {
   if (!key) return 0;
   return redis.del(key);
@@ -77,12 +88,12 @@ async function releaseLock(redis, key, token) {
   try {
     const current = await redis.get(key);
 
-    if (current === token) {
-      await redis.del(key);
-      return true;
+    if (current !== token) {
+      return false;
     }
 
-    return false;
+    await redis.del(key);
+    return true;
   } catch {
     return false;
   }
@@ -92,6 +103,7 @@ async function acquireResetLocks({ durable, volatile, token }) {
   const acquired = [];
 
   const adminAcquired = await acquireLock(durable, LOCK_KEYS.admin, token);
+
   if (!adminAcquired) {
     return {
       ok: false,
@@ -99,9 +111,14 @@ async function acquireResetLocks({ durable, volatile, token }) {
       acquired
     };
   }
-  acquired.push({ redis: durable, key: LOCK_KEYS.admin });
+
+  acquired.push({
+    redis: durable,
+    key: LOCK_KEYS.admin
+  });
 
   const scannerAcquired = await acquireLock(volatile, LOCK_KEYS.scanner, token);
+
   if (!scannerAcquired) {
     return {
       ok: false,
@@ -109,9 +126,14 @@ async function acquireResetLocks({ durable, volatile, token }) {
       acquired
     };
   }
-  acquired.push({ redis: volatile, key: LOCK_KEYS.scanner });
+
+  acquired.push({
+    redis: volatile,
+    key: LOCK_KEYS.scanner
+  });
 
   const tradeAcquired = await acquireLock(durable, LOCK_KEYS.trade, token);
+
   if (!tradeAcquired) {
     return {
       ok: false,
@@ -119,7 +141,11 @@ async function acquireResetLocks({ durable, volatile, token }) {
       acquired
     };
   }
-  acquired.push({ redis: durable, key: LOCK_KEYS.trade });
+
+  acquired.push({
+    redis: durable,
+    key: LOCK_KEYS.trade
+  });
 
   return {
     ok: true,
@@ -130,8 +156,9 @@ async function acquireResetLocks({ durable, volatile, token }) {
 async function releaseResetLocks(acquired, token) {
   const released = [];
 
-  for (const lock of acquired.reverse()) {
+  for (const lock of [...acquired].reverse()) {
     const ok = await releaseLock(lock.redis, lock.key, token);
+
     released.push({
       key: lock.key,
       released: ok
@@ -144,24 +171,30 @@ async function releaseResetLocks(acquired, token) {
 async function runDeleteSteps({ durable, volatile }) {
   const deleted = {};
 
+  // Scanner volatile data
   deleted.scanSnapshots = await delPattern(volatile, 'SCAN:SNAPSHOT:*', 10000);
   deleted.scanLatest = await delKey(volatile, KEYS.scan?.latest);
 
+  // Trade durable data
   deleted.tradeOpen = await delPattern(durable, 'TRADE:OPEN:*', 10000);
   deleted.tradeLastProcessed = await delKey(durable, KEYS.trade?.lastProcessedSnapshot);
   deleted.tradeMeta = await delKey(durable, KEYS.trade?.runMeta);
 
+  // Circuit breakers
   deleted.circuitPaused = await delPattern(durable, 'CIRCUIT:PAUSED:*', 10000);
 
+  // Analyze learning data
   deleted.analyzeWeeks = await delPattern(durable, 'ANALYZE:WEEK:*', 10000);
   deleted.analyzeMicros = await delPattern(durable, 'ANALYZE:MICRO:*', 10000);
   deleted.analyzeObsLast = await delPattern(durable, 'ANALYZE:OBS:LAST:*', 10000);
   deleted.analyzeShadow = await delPattern(durable, 'ANALYZE:SHADOW:*', 10000);
 
+  // Rotation
   deleted.activeRotation = await delKey(durable, KEYS.analyze?.activeRotation);
   deleted.nextRotation = await delKey(durable, KEYS.analyze?.nextRotation);
   deleted.rotationValidFrom = await delKey(durable, KEYS.analyze?.rotationValidFrom);
 
+  // Volatile live cache
   deleted.liveCache = await delPattern(volatile, 'LIVE:CACHE:*', 10000);
 
   return deleted;
@@ -180,15 +213,14 @@ export default async function handler(req, res) {
 
     const body = await readBody(req);
 
-    const requiredConfirmText = CONFIG.reset?.confirmText || 'FACTORY_RESET_CONFIRMED';
+    const requiredConfirmText =
+      CONFIG.reset?.confirmText || 'FACTORY_RESET_CONFIRMED';
 
-    const confirmed =
-      body.confirm === requiredConfirmText ||
-      body.confirmed === requiredConfirmText;
+    const confirmed = isConfirmed(body, requiredConfirmText);
 
     const force =
-      body.force === true ||
-      body.forceClosePositions === true;
+      isTrue(body.force) ||
+      isTrue(body.forceClosePositions);
 
     if (!confirmed) {
       return res.status(400).json({
@@ -230,7 +262,9 @@ export default async function handler(req, res) {
         blocked: true,
         reason: 'OPEN_POSITIONS_EXIST',
         count: openPositions.length,
-        symbols: openPositions.map((position) => position.symbol).filter(Boolean)
+        symbols: openPositions
+          .map((position) => position.symbol)
+          .filter(Boolean)
       });
     }
 
@@ -244,8 +278,14 @@ export default async function handler(req, res) {
       type: 'FACTORY_RESET',
       force,
       openPositionsCount: openPositions.length,
-      openPositionSymbols: openPositions.map((position) => position.symbol).filter(Boolean),
+      openPositionSymbols: openPositions
+        .map((position) => position.symbol)
+        .filter(Boolean),
       deleted,
+      preserved: {
+        resetLogs: true,
+        discordLogs: true
+      },
       resetAt: Date.now()
     };
 
