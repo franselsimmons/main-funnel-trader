@@ -12,8 +12,35 @@ function getArgValue(name) {
   return match.slice(prefix.length).trim() || null;
 }
 
+function getResultWeekKey(result, fallback = null) {
+  return (
+    result?.weekKey ||
+    result?.sourceWeekKey ||
+    result?.rotation?.sourceWeekKey ||
+    fallback ||
+    null
+  );
+}
+
+function getResultRotationId(result) {
+  return (
+    result?.rotationId ||
+    result?.rotation?.rotationId ||
+    null
+  );
+}
+
+function getResultCount(result) {
+  return (
+    result?.microFamilyIds?.length ||
+    result?.rotation?.microFamilyIds?.length ||
+    0
+  );
+}
+
 async function main() {
   const startedAt = Date.now();
+  const argv = process.argv.slice(2);
 
   const weekKey =
     getArgValue('weekKey') ||
@@ -34,8 +61,11 @@ async function main() {
     console.log(JSON.stringify({
       ok: result?.ok !== false,
       source: 'CLI_FREEZE_WEEKLY_ROTATION',
-      weekKey: weekKey || result?.weekKey || null,
+      argv,
+      weekKey: getResultWeekKey(result, weekKey),
       mode,
+      rotationId: getResultRotationId(result),
+      selectedMicroFamilies: getResultCount(result),
       durationMs: Date.now() - startedAt,
       result
     }, null, 2));
@@ -45,6 +75,7 @@ async function main() {
     console.error(JSON.stringify({
       ok: false,
       source: 'CLI_FREEZE_WEEKLY_ROTATION',
+      argv,
       weekKey: weekKey || null,
       mode,
       error: error?.message || String(error),
