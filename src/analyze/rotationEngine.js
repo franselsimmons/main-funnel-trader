@@ -7,8 +7,8 @@ import {
   getIsoWeekKey,
   getNextIsoWeekKey,
   randomId,
-  sideToTradeSide,
-  uniq
+  safeNumber,
+  sideToTradeSide
 } from '../utils.js';
 import { getWeekMicros, saveWeekMicros } from './analyzeEngine.js';
 import { rankMicros, refreshStats } from './scoring.js';
@@ -16,6 +16,30 @@ import { sendWeeklyRotationReport } from '../discord/discord.js';
 
 function now() {
   return Date.now();
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function minWeightedCompleted() {
+  return safeNumber(CONFIG.rotation?.minWeightedCompleted, 5);
+}
+
+function topNPerSide() {
+  const n = Number(CONFIG.rotation?.topNPerSide || 10);
+
+  return Number.isFinite(n) && n > 0
+    ? Math.floor(n)
+    : 10;
+}
+
+function defaultRotationMode() {
+  return CONFIG.rotation?.mode || 'balanced';
 }
 
 function microSide(row = {}) {
@@ -37,42 +61,58 @@ function microSide(row = {}) {
 }
 
 function isEligible(row = {}) {
-  return Number(row.completed || 0) >= CONFIG.rotation.minWeightedCompleted;
+  return safeNumber(row.completed, 0) >= minWeightedCompleted();
 }
 
 function compactRotationRow(row = {}, rank = 0) {
   const refreshed = refreshStats(row);
+  const side = refreshed.side || (
+    microSide(refreshed) === 'LONG'
+      ? 'bull'
+      : microSide(refreshed) === 'SHORT'
+        ? 'bear'
+        : 'unknown'
+  );
 
   return {
     rank,
+
     microFamilyId: refreshed.microFamilyId,
     familyId: refreshed.familyId,
-    side: refreshed.side,
+    side,
 
-    seen: refreshed.seen,
-    completed: refreshed.completed,
-    realCompleted: refreshed.realCompleted,
-    shadowCompleted: refreshed.shadowCompleted,
+    seen: safeNumber(refreshed.seen, 0),
+    completed: safeNumber(refreshed.completed, 0),
+    realCompleted: safeNumber(refreshed.realCompleted, 0),
+    shadowCompleted: safeNumber(refreshed.shadowCompleted, 0),
 
-    winrate: refreshed.winrate,
-    bayesianWinrate: refreshed.bayesianWinrate,
-    wilsonLowerBound: refreshed.wilsonLowerBound,
-    fairWinrate: refreshed.fairWinrate,
+    winrate: safeNumber(refreshed.winrate, 0),
+    bayesianWinrate: safeNumber(refreshed.bayesianWinrate, 0),
+    wilsonLowerBound: safeNumber(refreshed.wilsonLowerBound, 0),
+    fairWinrate: safeNumber(refreshed.fairWinrate, 0),
 
-    avgR: refreshed.avgR,
-    totalR: refreshed.totalR,
-    avgWinR: refreshed.avgWinR,
-    avgLossR: refreshed.avgLossR,
+    avgR: safeNumber(refreshed.avgR, 0),
+    totalR: safeNumber(refreshed.totalR, 0),
+    avgWinR: safeNumber(refreshed.avgWinR, 0),
+    avgLossR: safeNumber(refreshed.avgLossR, 0),
 
-    profitFactor: refreshed.profitFactor,
-    directSLPct: refreshed.directSLPct,
-    nearTpPct: refreshed.nearTpPct,
-    reachedOneRPct: refreshed.reachedOneRPct,
-    avgCostR: refreshed.avgCostR,
+    profitFactor: safeNumber(refreshed.profitFactor, 0),
+    directSLPct: safeNumber(refreshed.directSLPct, 0),
+    nearTpPct: safeNumber(refreshed.nearTpPct, 0),
+    reachedOneRPct: safeNumber(refreshed.reachedOneRPct, 0),
 
-    balancedScore: refreshed.balancedScore,
+    beWouldExitPct: safeNumber(refreshed.beWouldExitPct, 0),
+    gaveBackAfterHalfRPct: safeNumber(refreshed.gaveBackAfterHalfRPct, 0),
+    gaveBackAfterOneRPct: safeNumber(refreshed.gaveBackAfterOneRPct, 0),
+    nearTpThenLossPct: safeNumber(refreshed.nearTpThenLossPct, 0),
 
-    definitionParts: refreshed.definitionParts || [],
+    avgCostR: safeNumber(refreshed.avgCostR, 0),
+    balancedScore: safeNumber(refreshed.balancedScore, 0),
+
+    definitionParts: Array.isArray(refreshed.definitionParts)
+      ? refreshed.definitionParts
+      : [],
+
     definition: refreshed.definition || ''
   };
 }
@@ -113,14 +153,15 @@ function buildEmptyRotation({
     rotationId: randomId(`ROT_${weekKey}_${mode}`),
     source: 'ANALYZE_WEEKLY_RANKING',
     mode,
+
     sourceWeekKey: weekKey,
     activeWeekKey,
 
     generatedAt: now(),
     strategyVersion: CONFIG.strategyVersion,
 
-    minWeightedCompleted: CONFIG.rotation.minWeightedCompleted,
-    topNPerSide: CONFIG.rotation.topNPerSide,
+    minWeightedCompleted: minWeightedCompleted(),
+    topNPerSide: topNPerSide(),
 
     eligibleCount: 0,
     rankedCount: ranked.length,
@@ -139,13 +180,13 @@ function buildEmptyRotation({
 export async function buildRotationFromWeek({
   weekKey = getIsoWeekKey(),
   activeWeekKey = getNextIsoWeekKey(),
-  mode = CONFIG.rotation.mode
+  mode = defaultRotationMode()
 } = {}) {
   const micros = await getWeekMicros(weekKey);
 
   const ranked = rankMicros(micros, mode);
   const eligible = ranked.filter(isEligible);
-  const selected = selectTopPerSide(eligible, CONFIG.rotation.topNPerSide);
+  const selected = selectTopPerSide(eligible, topNPerSide());
 
   if (selected.length === 0) {
     return buildEmptyRotation({
@@ -161,24 +202,23 @@ export async function buildRotationFromWeek({
     compactRotationRow(row, index + 1)
   ));
 
-  const microFamilyIds = uniq(
-    microFamilies
-      .map((row) => row.microFamilyId)
-      .filter(Boolean)
+  const microFamilyIds = uniqueStrings(
+    microFamilies.map((row) => row.microFamilyId)
   );
 
   return {
     rotationId: randomId(`ROT_${weekKey}_${mode}`),
     source: 'ANALYZE_WEEKLY_RANKING',
     mode,
+
     sourceWeekKey: weekKey,
     activeWeekKey,
 
     generatedAt: now(),
     strategyVersion: CONFIG.strategyVersion,
 
-    minWeightedCompleted: CONFIG.rotation.minWeightedCompleted,
-    topNPerSide: CONFIG.rotation.topNPerSide,
+    minWeightedCompleted: minWeightedCompleted(),
+    topNPerSide: topNPerSide(),
 
     eligibleCount: eligible.length,
     rankedCount: ranked.length,
@@ -197,7 +237,7 @@ export async function buildRotationFromWeek({
 export async function freezeWeeklyRotation({
   weekKey = getIsoWeekKey(),
   activeWeekKey = getNextIsoWeekKey(),
-  mode = CONFIG.rotation.mode
+  mode = defaultRotationMode()
 } = {}) {
   const redis = getDurableRedis();
 
@@ -212,28 +252,49 @@ export async function freezeWeeklyRotation({
     mode
   });
 
-  await setJson(redis, KEYS.analyze.nextRotation, rotation);
+  await setJson(
+    redis,
+    KEYS.analyze.nextRotation,
+    rotation
+  );
 
-  await setJson(redis, KEYS.analyze.rotationValidFrom, {
-    validFrom: `${activeWeekKey}_MONDAY_00_UTC`,
-    ts: now(),
-    sourceWeekKey: weekKey,
-    activeWeekKey,
-    rotationId: rotation.rotationId
-  });
+  await setJson(
+    redis,
+    KEYS.analyze.rotationValidFrom,
+    {
+      validFrom: `${activeWeekKey}_MONDAY_00_UTC`,
+      ts: now(),
+      sourceWeekKey: weekKey,
+      activeWeekKey,
+      rotationId: rotation.rotationId
+    }
+  );
 
-  await sendWeeklyRotationReport(rotation, 'NEXT_ROTATION_READY').catch(() => null);
+  await sendWeeklyRotationReport(
+    rotation,
+    'NEXT_ROTATION_READY'
+  ).catch(() => null);
 
   return {
     ok: true,
     type: 'NEXT_ROTATION_READY',
+    weekKey,
+    activeWeekKey,
+    mode,
+    rotationId: rotation.rotationId,
+    selectedMicroFamilies: rotation.microFamilyIds.length,
     rotation
   };
 }
 
 export async function activateNextRotation() {
   const redis = getDurableRedis();
-  const next = await getJson(redis, KEYS.analyze.nextRotation, null);
+
+  const next = await getJson(
+    redis,
+    KEYS.analyze.nextRotation,
+    null
+  );
 
   if (!next) {
     return {
@@ -248,23 +309,38 @@ export async function activateNextRotation() {
     activatedAt: now()
   };
 
-  await setJson(redis, KEYS.analyze.activeRotation, active);
+  await setJson(
+    redis,
+    KEYS.analyze.activeRotation,
+    active
+  );
 
-  await sendWeeklyRotationReport(active, 'ACTIVE_ROTATION_ACTIVATED').catch(() => null);
+  await sendWeeklyRotationReport(
+    active,
+    'ACTIVE_ROTATION_ACTIVATED'
+  ).catch(() => null);
 
   return {
     ok: true,
-    activeRotation: active
+    activeRotation: active,
+    rotationId: active.rotationId,
+    activatedCount: active.microFamilyIds?.length || 0
   };
 }
 
 export async function getActiveRotation() {
   const redis = getDurableRedis();
-  return await getJson(redis, KEYS.analyze.activeRotation, null);
+
+  return await getJson(
+    redis,
+    KEYS.analyze.activeRotation,
+    null
+  );
 }
 
 export async function getActiveRotationSet() {
   const active = await getActiveRotation();
+
   return new Set(active?.microFamilyIds || []);
 }
 
@@ -276,11 +352,7 @@ export async function activateSelectedMicroFamilies({
   const redis = getDurableRedis();
   const micros = await getWeekMicros(weekKey);
 
-  const ids = uniq(
-    (Array.isArray(microFamilyIds) ? microFamilyIds : [])
-      .map((id) => String(id || '').trim())
-      .filter(Boolean)
-  );
+  const ids = uniqueStrings(microFamilyIds);
 
   const microFamilies = ids.map((id, index) => {
     const row = micros[id];
@@ -294,13 +366,33 @@ export async function activateSelectedMicroFamilies({
       microFamilyId: id,
       familyId: null,
       side: null,
+
+      seen: 0,
       completed: 0,
+      realCompleted: 0,
+      shadowCompleted: 0,
+
+      winrate: 0,
+      bayesianWinrate: 0,
+      wilsonLowerBound: 0,
       fairWinrate: 0,
+
       avgR: 0,
       totalR: 0,
+      avgWinR: 0,
+      avgLossR: 0,
+
+      profitFactor: 0,
+      directSLPct: 0,
+      nearTpPct: 0,
+      reachedOneRPct: 0,
+      avgCostR: 0,
+
       balancedScore: 0,
+
       definitionParts: [],
       definition: '',
+
       manualOnly: true
     };
   });
@@ -317,11 +409,18 @@ export async function activateSelectedMicroFamilies({
     activatedAt: now(),
     strategyVersion: CONFIG.strategyVersion,
 
+    empty: ids.length === 0,
+    emptyReason: ids.length === 0 ? 'NO_MANUAL_IDS_SELECTED' : null,
+
     microFamilyIds: ids,
     microFamilies
   };
 
-  await setJson(redis, KEYS.analyze.activeRotation, active);
+  await setJson(
+    redis,
+    KEYS.analyze.activeRotation,
+    active
+  );
 
   return active;
 }
