@@ -17,6 +17,18 @@ function round6(value) {
   return Number(safeNumber(value, 0).toFixed(6));
 }
 
+function sizingConfig() {
+  return {
+    enabled: CONFIG.sizing?.enabled !== false,
+    baseRiskPct: Math.max(0, safeNumber(CONFIG.sizing?.baseRiskPct, 0.0025)),
+    minMult: Math.max(0, safeNumber(CONFIG.sizing?.minMult, 0.5)),
+    maxMult: Math.max(0, safeNumber(CONFIG.sizing?.maxMult, 1.25)),
+    maxTotalRiskPct: Math.max(0, safeNumber(CONFIG.sizing?.maxTotalRiskPct, 0.03)),
+    maxSameSideRiskPct: Math.max(0, safeNumber(CONFIG.sizing?.maxSameSideRiskPct, 0.015)),
+    maxCounterBtcRiskPct: Math.max(0, safeNumber(CONFIG.sizing?.maxCounterBtcRiskPct, 0.0075))
+  };
+}
+
 function normalizeBtcRelation(value) {
   const relation = String(value || '').toUpperCase();
 
@@ -49,39 +61,36 @@ function btcRelationFromRow(row = {}) {
 }
 
 function positionRiskFraction(position = {}) {
+  const cfg = sizingConfig();
   const direct = safeNumber(position.riskFraction, NaN);
 
   if (Number.isFinite(direct) && direct > 0) {
     return direct;
   }
 
-  const fallback = safeNumber(CONFIG.sizing.baseRiskPct, 0.0025);
-
-  return Math.max(0, fallback);
+  return cfg.baseRiskPct;
 }
 
 function normalizeRiskFraction(value) {
-  const risk = safeNumber(value, CONFIG.sizing.baseRiskPct);
+  const cfg = sizingConfig();
+  const risk = safeNumber(value, cfg.baseRiskPct);
 
   return clamp(
     risk,
     0,
     Math.max(
-      CONFIG.sizing.maxTotalRiskPct,
-      CONFIG.sizing.baseRiskPct,
+      cfg.maxTotalRiskPct,
+      cfg.baseRiskPct,
       0
     )
   );
 }
 
-// How much equity a single new position should risk, scaled by how trustworthy
-// the micro-family is. Strong + well-sampled family -> up to maxMult.
-// Thin/weak family -> minMult.
 export function riskFractionForEntry({ weeklyStats } = {}) {
-  const base = Math.max(0, safeNumber(CONFIG.sizing.baseRiskPct, 0.0025));
+  const cfg = sizingConfig();
 
-  if (!CONFIG.sizing.enabled) {
-    return round6(base);
+  if (!cfg.enabled) {
+    return round6(cfg.baseRiskPct);
   }
 
   const completed = safeNumber(weeklyStats?.completed, 0);
@@ -89,7 +98,7 @@ export function riskFractionForEntry({ weeklyStats } = {}) {
   const fairWinrate = safeNumber(weeklyStats?.fairWinrate, 0);
 
   const sampleConf = clamp(
-    completed / Math.max(1, safeNumber(CONFIG.rotation.priorTrades, 24)),
+    completed / Math.max(1, safeNumber(CONFIG.rotation?.priorTrades, 24)),
     0,
     1
   );
@@ -105,19 +114,17 @@ export function riskFractionForEntry({ weeklyStats } = {}) {
     qualityConf * 0.40 +
     winrateConf * 0.20;
 
-  const minMult = Math.max(0, safeNumber(CONFIG.sizing.minMult, 0.5));
-  const maxMult = Math.max(minMult, safeNumber(CONFIG.sizing.maxMult, 1.25));
+  const maxMult = Math.max(cfg.minMult, cfg.maxMult);
 
   const mult = clamp(
-    minMult + (maxMult - minMult) * confidence,
-    minMult,
+    cfg.minMult + (maxMult - cfg.minMult) * confidence,
+    cfg.minMult,
     maxMult
   );
 
-  return round6(base * mult);
+  return round6(cfg.baseRiskPct * mult);
 }
 
-// Sum committed risk across open positions.
 export function summarizeOpenRisk(openPositions = []) {
   const rows = Array.isArray(openPositions) ? openPositions : [];
 
@@ -155,26 +162,26 @@ export function summarizeOpenRisk(openPositions = []) {
   };
 }
 
-// Gate a prospective entry against portfolio caps.
 export function checkRiskCaps({
   openPositions = [],
   side,
   btcRelation,
   riskFraction
 } = {}) {
+  const cfg = sizingConfig();
   const want = normalizeRiskFraction(riskFraction);
   const open = summarizeOpenRisk(openPositions);
   const tradeSide = sideToTradeSide(side);
   const relation = normalizeBtcRelation(btcRelation);
 
-  if (!CONFIG.sizing.enabled) {
+  if (!cfg.enabled) {
     return {
       ok: true,
       reason: 'SIZING_DISABLED',
       riskFraction: want,
       openRiskBefore: open.total,
       openRiskAfter: round6(open.total + want),
-      open
+      riskState: open
     };
   }
 
@@ -184,21 +191,17 @@ export function checkRiskCaps({
       reason: 'UNKNOWN_SIDE_FOR_RISK_CAP',
       side,
       want,
-      open
+      riskState: open
     };
   }
 
-  const maxTotalRiskPct = safeNumber(CONFIG.sizing.maxTotalRiskPct, 0.03);
-  const maxSameSideRiskPct = safeNumber(CONFIG.sizing.maxSameSideRiskPct, 0.015);
-  const maxCounterBtcRiskPct = safeNumber(CONFIG.sizing.maxCounterBtcRiskPct, 0.0075);
-
-  if (open.total + want > maxTotalRiskPct) {
+  if (open.total + want > cfg.maxTotalRiskPct) {
     return {
       ok: false,
       reason: 'MAX_TOTAL_RISK',
       open: open.total,
       want,
-      cap: maxTotalRiskPct,
+      cap: cfg.maxTotalRiskPct,
       riskState: open
     };
   }
@@ -207,28 +210,28 @@ export function checkRiskCaps({
     ? open.longRisk
     : open.shortRisk;
 
-  if (sideRisk + want > maxSameSideRiskPct) {
+  if (sideRisk + want > cfg.maxSameSideRiskPct) {
     return {
       ok: false,
       reason: 'MAX_SAME_SIDE_RISK',
       side: tradeSide,
       open: sideRisk,
       want,
-      cap: maxSameSideRiskPct,
+      cap: cfg.maxSameSideRiskPct,
       riskState: open
     };
   }
 
   if (
     relation === 'BTC_AGAINST' &&
-    open.counterBtcRisk + want > maxCounterBtcRiskPct
+    open.counterBtcRisk + want > cfg.maxCounterBtcRiskPct
   ) {
     return {
       ok: false,
       reason: 'MAX_COUNTER_BTC_RISK',
       open: open.counterBtcRisk,
       want,
-      cap: maxCounterBtcRiskPct,
+      cap: cfg.maxCounterBtcRiskPct,
       riskState: open
     };
   }
