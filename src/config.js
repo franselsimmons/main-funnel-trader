@@ -49,26 +49,37 @@ export const CONFIG = Object.freeze({
   },
 
   scanner: {
-    maxSymbols: int(env.SCANNER_MAX_SYMBOLS, 80),
+    // Universe cap after ticker volume filter.
+    // Bitget raw tickers are all fetched; this controls how many symbols get candle analysis.
+    maxSymbols: int(env.SCANNER_MAX_SYMBOLS, 200),
+
+    // Candle-fetch concurrency for scanner. Main bottleneck = candles, not tickers.
+    dataConcurrency: int(env.SCANNER_DATA_CONCURRENCY, 8),
+
     minQuoteVolume24h: num(env.SCANNER_MIN_QUOTE_VOLUME_24H, 5_000_000),
     minAbsChange1h: num(env.SCANNER_MIN_ABS_CHANGE_1H, 0.35),
     minAbsChange24h: num(env.SCANNER_MIN_ABS_CHANGE_24H, 1.00),
+
     snapshotTtlSec: int(env.SCANNER_SNAPSHOT_TTL_SEC, 30 * 60),
     candleLimit: int(env.SCANNER_CANDLE_LIMIT, 80),
     fakeBreakoutLookback: int(env.SCANNER_FAKE_BREAKOUT_LOOKBACK, 24),
-    lockTtlSec: int(env.SCANNER_LOCK_TTL_SEC, 240)
+
+    // Higher because 200 symbols can need materially longer than the old 80-symbol run.
+    lockTtlSec: int(env.SCANNER_LOCK_TTL_SEC, 420)
   },
 
   trade: {
     lockTtlSec: int(env.TRADE_LOCK_TTL_SEC, 180),
 
-    maxCandidatesPerSnapshot: int(env.TRADE_MAX_CANDIDATES_PER_SNAPSHOT, 80),
+    // More scanner candidates now possible because scanner universe increased 80 -> 200.
+    maxCandidatesPerSnapshot: int(env.TRADE_MAX_CANDIDATES_PER_SNAPSHOT, 120),
 
     // Scanner draait elke 5 min. Entries op snapshots ouder dan 8 min worden geskipt.
     // Open positions blijven wel gemonitord.
     maxSnapshotAgeSec: int(env.TRADE_MAX_SNAPSHOT_AGE_SEC, 8 * 60),
 
-    dataConcurrency: int(env.TRADE_DATA_CONCURRENCY, 5),
+    // Live validation uses orderbook + funding + 15m candles + 1h candles.
+    dataConcurrency: int(env.TRADE_DATA_CONCURRENCY, 6),
 
     maxOpenPositions: int(env.TRADE_MAX_OPEN_POSITIONS, 30),
     maxOpenSameSide: int(env.TRADE_MAX_OPEN_SAME_SIDE, 15),
