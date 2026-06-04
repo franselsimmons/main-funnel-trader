@@ -1,27 +1,46 @@
 // ================= FILE: api/admin/micro-family/[id].js =================
 
-import { getIsoWeekKey, getPreviousIsoWeekKey } from '../../../src/utils.js';
-import { getWeekMicros } from '../../../src/analyze/src/analyzeEngine.js';
-import { getActiveRotation } from '../../../src/analyze/src/rotationEngine.js';
+import {
+  getIsoWeekKey,
+  getPreviousIsoWeekKey,
+  sideToTradeSide,
+  safeNumber
+} from '../../../src/utils.js';
+import { getWeekMicros } from '../../../src/analyze/analyzeEngine.js';
+import { getActiveRotation } from '../../../src/analyze/rotationEngine.js';
+
+function methodNotAllowed(res) {
+  res.setHeader('Allow', 'GET');
+
+  return res.status(405).json({
+    ok: false,
+    error: 'METHOD_NOT_ALLOWED',
+    allowed: ['GET']
+  });
+}
 
 function firstQueryValue(value, fallback = null) {
   if (Array.isArray(value)) return value[0] ?? fallback;
   if (value === undefined || value === null || value === '') return fallback;
+
   return value;
 }
 
-function toNumber(value, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+function num(value, fallback = 0) {
+  return safeNumber(value, fallback);
 }
 
-function normalizeSide(side) {
-  const value = String(side || '').toLowerCase();
+function round(value, decimals = 4) {
+  return Number(num(value, 0).toFixed(decimals));
+}
 
-  if (value === 'bull' || value === 'long' || value === 'buy') return 'bull';
-  if (value === 'bear' || value === 'short' || value === 'sell') return 'bear';
+function normalizeDashboardSide(side) {
+  const tradeSide = sideToTradeSide(side);
 
-  return value || 'unknown';
+  if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
+
+  return 'unknown';
 }
 
 function extractActiveIds(activeRotation) {
@@ -39,66 +58,145 @@ function extractActiveIds(activeRotation) {
     return activeRotation.ids.filter(Boolean);
   }
 
+  if (Array.isArray(activeRotation.microFamilies)) {
+    return activeRotation.microFamilies
+      .map((row) => row.microFamilyId)
+      .filter(Boolean);
+  }
+
   return [];
 }
 
-function normalizeMicroRow(id, row, activeSet) {
-  const microFamilyId = row?.microFamilyId || row?.id || row?.key || id;
+function normalizeMicroRow(id, row = {}, activeSet = new Set()) {
+  const microFamilyId = row.microFamilyId || row.id || row.key || id;
 
   return {
     ...row,
 
     microFamilyId,
-    familyId: row?.familyId || row?.family || null,
-    side: normalizeSide(row?.side),
+    familyId: row.familyId || row.family || null,
+    side: normalizeDashboardSide(row.side),
 
     active: activeSet.has(microFamilyId),
 
-    seen: toNumber(row?.seen),
-    completed: toNumber(row?.completed),
-    realCompleted: toNumber(row?.realCompleted),
-    shadowCompleted: toNumber(row?.shadowCompleted),
+    seen: num(row.seen, 0),
+    observations: num(row.observations, 0),
 
-    wins: toNumber(row?.wins),
-    losses: toNumber(row?.losses),
-    flats: toNumber(row?.flats),
+    completed: round(row.completed, 4),
+    realCompleted: num(row.realCompleted, 0),
+    shadowCompleted: num(row.shadowCompleted, 0),
 
-    winrate: toNumber(row?.winrate),
-    bayesianWinrate: toNumber(row?.bayesianWinrate),
-    wilsonLowerBound: toNumber(row?.wilsonLowerBound),
-    fairWinrate: toNumber(
-      row?.fairWinrate ??
-      row?.bayesianWinrate ??
-      row?.wilsonLowerBound
+    wins: round(row.wins, 4),
+    losses: round(row.losses, 4),
+    flats: round(row.flats, 4),
+
+    realWins: num(row.realWins, 0),
+    realLosses: num(row.realLosses, 0),
+    shadowWins: num(row.shadowWins, 0),
+    shadowLosses: num(row.shadowLosses, 0),
+
+    winrate: round(row.winrate, 4),
+    bayesianWinrate: round(row.bayesianWinrate, 4),
+    wilsonLowerBound: round(row.wilsonLowerBound, 4),
+    fairWinrate: round(
+      row.fairWinrate ??
+      row.bayesianWinrate ??
+      row.wilsonLowerBound,
+      4
     ),
 
-    totalR: toNumber(row?.totalR),
-    avgR: toNumber(row?.avgR),
-    avgWinR: toNumber(row?.avgWinR),
-    avgLossR: toNumber(row?.avgLossR),
+    totalR: round(row.totalR, 4),
+    realTotalR: round(row.realTotalR, 4),
+    shadowTotalR: round(row.shadowTotalR, 4),
 
-    totalPnlPct: toNumber(row?.totalPnlPct),
-    avgPnlPct: toNumber(row?.avgPnlPct),
+    grossWinR: round(row.grossWinR, 4),
+    grossLossR: round(row.grossLossR, 4),
 
-    profitFactor: toNumber(row?.profitFactor),
-    directSLPct: toNumber(row?.directSLPct),
-    nearTpPct: toNumber(row?.nearTpPct),
+    avgR: round(row.avgR, 4),
+    avgWinR: round(row.avgWinR, 4),
+    avgLossR: round(row.avgLossR, 4),
 
-    directSLCount: toNumber(row?.directSLCount),
-    nearTpCount: toNumber(row?.nearTpCount),
+    totalPnlPct: round(row.totalPnlPct, 4),
+    avgPnlPct: round(row.avgPnlPct, 4),
 
-    reachedHalfRCount: toNumber(row?.reachedHalfRCount),
-    reachedOneRCount: toNumber(row?.reachedOneRCount),
+    profitFactor: round(row.profitFactor, 4),
 
-    avgCostR: toNumber(row?.avgCostR),
-    balancedScore: toNumber(row?.balancedScore),
+    directSLCount: round(row.directSLCount, 4),
+    directSLPct: round(row.directSLPct, 4),
 
-    definition: row?.definition || null,
-    definitionParts: Array.isArray(row?.definitionParts)
+    nearTpCount: round(row.nearTpCount, 4),
+    nearTpPct: round(row.nearTpPct, 4),
+
+    reachedHalfRCount: round(row.reachedHalfRCount, 4),
+    reachedOneRCount: round(row.reachedOneRCount, 4),
+    reachedHalfRPct: round(row.reachedHalfRPct, 4),
+    reachedOneRPct: round(row.reachedOneRPct, 4),
+
+    beWouldExitCount: round(row.beWouldExitCount, 4),
+    beWouldExitPct: round(row.beWouldExitPct, 4),
+
+    gaveBackAfterHalfRCount: round(row.gaveBackAfterHalfRCount, 4),
+    gaveBackAfterOneRCount: round(row.gaveBackAfterOneRCount, 4),
+    gaveBackAfterHalfRPct: round(row.gaveBackAfterHalfRPct, 4),
+    gaveBackAfterOneRPct: round(row.gaveBackAfterOneRPct, 4),
+
+    nearTpThenLossCount: round(row.nearTpThenLossCount, 4),
+    nearTpThenLossPct: round(row.nearTpThenLossPct, 4),
+
+    totalCostR: round(row.totalCostR, 4),
+    avgCostR: round(row.avgCostR, 4),
+
+    sampleReliability: round(row.sampleReliability, 4),
+    balancedScore: round(row.balancedScore, 4),
+
+    definition: row.definition || null,
+    definitionParts: Array.isArray(row.definitionParts)
       ? row.definitionParts
-      : Array.isArray(row?.definition)
+      : Array.isArray(row.definition)
         ? row.definition
-        : []
+        : [],
+
+    counters: row.counters || {},
+    examples: Array.isArray(row.examples) ? row.examples : [],
+    recentOutcomes: Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [],
+
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function buildDetailSummary(row) {
+  return {
+    microFamilyId: row.microFamilyId,
+    familyId: row.familyId,
+    side: row.side,
+    active: row.active,
+
+    seen: row.seen,
+    completed: row.completed,
+    realCompleted: row.realCompleted,
+    shadowCompleted: row.shadowCompleted,
+
+    fairWinrate: row.fairWinrate,
+    winrate: row.winrate,
+
+    avgR: row.avgR,
+    totalR: row.totalR,
+    profitFactor: row.profitFactor,
+
+    directSLPct: row.directSLPct,
+    nearTpPct: row.nearTpPct,
+
+    reachedHalfRPct: row.reachedHalfRPct,
+    reachedOneRPct: row.reachedOneRPct,
+
+    beWouldExitPct: row.beWouldExitPct,
+    gaveBackAfterHalfRPct: row.gaveBackAfterHalfRPct,
+    gaveBackAfterOneRPct: row.gaveBackAfterOneRPct,
+    nearTpThenLossPct: row.nearTpThenLossPct,
+
+    avgCostR: row.avgCostR,
+    balancedScore: row.balancedScore
   };
 }
 
@@ -106,16 +204,13 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
 
   if (req.method !== 'GET') {
-    return res.status(405).json({
-      ok: false,
-      error: 'METHOD_NOT_ALLOWED',
-      allowed: ['GET']
-    });
+    return methodNotAllowed(res);
   }
 
   try {
     const id = firstQueryValue(req.query?.id, null);
     const weekKey = firstQueryValue(req.query?.weekKey, getIsoWeekKey());
+
     const currentWeekKey = getIsoWeekKey();
     const previousWeekKey = getPreviousIsoWeekKey();
 
@@ -144,7 +239,8 @@ export default async function handler(req, res) {
         weekKey,
         currentWeekKey,
         previousWeekKey,
-        availableCount: Object.keys(micros || {}).length
+        availableCount: Object.keys(micros || {}).length,
+        activeRotationId: activeRotation?.rotationId || null
       });
     }
 
@@ -161,6 +257,7 @@ export default async function handler(req, res) {
       activeRotationId: activeRotation?.rotationId || null,
       active: row.active,
 
+      summary: buildDetailSummary(row),
       row,
 
       serverTs: Date.now()
@@ -169,7 +266,9 @@ export default async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      stack: process.env.NODE_ENV === 'production'
+        ? undefined
+        : error?.stack
     });
   }
 }
