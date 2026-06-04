@@ -7,7 +7,10 @@ import {
   upperWickPct,
   lowerWickPct
 } from './indicators.js';
-import { safeNumber } from '../utils.js';
+import {
+  safeNumber,
+  sideToTradeSide
+} from '../utils.js';
 
 const DEFAULT_LOOKBACK = 24;
 const RETEST_TOLERANCE_PCT = 0.004;
@@ -17,10 +20,10 @@ const WEAK_BODY_THRESHOLD = 0.35;
 const EXHAUSTION_VOLUME_EXPANSION = 1.4;
 
 function normalizeSide(side) {
-  const s = String(side || '').toLowerCase();
+  const tradeSide = sideToTradeSide(side);
 
-  if (['bull', 'long', 'buy'].includes(s)) return 'bull';
-  if (['bear', 'short', 'sell'].includes(s)) return 'bear';
+  if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
 
   return 'unknown';
 }
@@ -84,12 +87,14 @@ function analyzeBullBreakout({
 }) {
   const close = safeNumber(last.close, 0);
   const high = safeNumber(last.high, 0);
+  const low = safeNumber(last.low, 0);
 
   const upperWick = upperWickPct(last);
   const body = candleBodyPct(last);
 
   const sweptHigh = high > recentHigh && close < recentHigh;
   const closedAboveRange = close > recentHigh * (1 + BREAKOUT_BUFFER_PCT);
+
   const btcAgainst = isBtcAgainst('bull', btcState);
   const btcWith = isBtcWith('bull', btcState);
 
@@ -108,7 +113,7 @@ function analyzeBullBreakout({
 
   const retestConfirmed =
     pctDistance(close, recentHigh) <= RETEST_TOLERANCE_PCT ||
-    pctDistance(safeNumber(last.low, 0), recentHigh) <= RETEST_TOLERANCE_PCT;
+    pctDistance(low, recentHigh) <= RETEST_TOLERANCE_PCT;
 
   const pullbackConfirmed =
     close < recentHigh &&
@@ -135,13 +140,18 @@ function analyzeBullBreakout({
       recentLow,
       close,
       high,
+      low,
       upperWick,
       body,
       volumeExpansion,
       btcState,
       btcAgainst,
       btcWith,
+      sweptHigh,
       closedAboveRange,
+      wickReject,
+      weakBody,
+      volumeExhaustion,
       validBreakout
     }
   };
@@ -155,6 +165,7 @@ function analyzeBearBreakout({
   btcState
 }) {
   const close = safeNumber(last.close, 0);
+  const high = safeNumber(last.high, 0);
   const low = safeNumber(last.low, 0);
 
   const lowerWick = lowerWickPct(last);
@@ -162,6 +173,7 @@ function analyzeBearBreakout({
 
   const sweptLow = low < recentLow && close > recentLow;
   const closedBelowRange = close < recentLow * (1 - BREAKOUT_BUFFER_PCT);
+
   const btcAgainst = isBtcAgainst('bear', btcState);
   const btcWith = isBtcWith('bear', btcState);
 
@@ -180,7 +192,7 @@ function analyzeBearBreakout({
 
   const retestConfirmed =
     pctDistance(close, recentLow) <= RETEST_TOLERANCE_PCT ||
-    pctDistance(safeNumber(last.high, 0), recentLow) <= RETEST_TOLERANCE_PCT;
+    pctDistance(high, recentLow) <= RETEST_TOLERANCE_PCT;
 
   const pullbackConfirmed =
     close > recentLow &&
@@ -206,6 +218,7 @@ function analyzeBearBreakout({
       recentHigh,
       recentLow,
       close,
+      high,
       low,
       lowerWick,
       body,
@@ -213,7 +226,11 @@ function analyzeBearBreakout({
       btcState,
       btcAgainst,
       btcWith,
+      sweptLow,
       closedBelowRange,
+      wickReject,
+      weakBody,
+      volumeExhaustion,
       validBreakout
     }
   };
@@ -229,7 +246,10 @@ export function detectFakeBreakout({
     ? candles15m.filter(Boolean)
     : [];
 
-  const lb = Math.max(5, Number(lookback) || DEFAULT_LOOKBACK);
+  const lb = Math.max(
+    5,
+    Math.floor(Number(lookback) || DEFAULT_LOOKBACK)
+  );
 
   if (rows.length < lb + 2) {
     return emptyResult('INSUFFICIENT_CANDLES');
