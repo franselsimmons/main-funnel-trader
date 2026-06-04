@@ -4,27 +4,27 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Micro-Family Admin</title>
+  <title>Micro-Family Trading Admin</title>
 
   <style>
     :root {
-      --bg: #f6f7fb;
+      --bg: #f3f5f9;
       --panel: #ffffff;
-      --text: #111827;
-      --muted: #6b7280;
-      --dark: #111827;
-      --border: #e5e7eb;
-      --border-strong: #d1d5db;
-      --green-bg: #dcfce7;
-      --green-text: #166534;
-      --red-bg: #fee2e2;
-      --red-text: #991b1b;
-      --amber-bg: #fef3c7;
-      --amber-text: #92400e;
-      --blue-bg: #dbeafe;
-      --blue-text: #1d4ed8;
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --panel-soft: #f8fafc;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --dark: #0f172a;
+      --dark-2: #111827;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --purple: #7c3aed;
+      --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+      --shadow-soft: 0 2px 10px rgba(15, 23, 42, 0.06);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     * {
@@ -33,58 +33,33 @@
 
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(124, 58, 237, 0.10), transparent 30%),
+        var(--bg);
       color: var(--text);
-    }
-
-    header {
-      padding: 18px 24px;
-      background: var(--dark);
-      color: white;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-    }
-
-    header strong {
-      display: block;
-      font-size: 20px;
-      line-height: 1.2;
-    }
-
-    header .muted {
-      color: #9ca3af;
-      margin-top: 4px;
-      font-size: 14px;
-      line-height: 1.35;
-    }
-
-    main {
-      padding: 20px;
-      max-width: 1500px;
-      margin: 0 auto;
     }
 
     button,
     select,
     input {
-      border: 1px solid var(--border-strong);
-      border-radius: 8px;
-      padding: 9px 12px;
-      background: white;
-      color: var(--text);
-      cursor: pointer;
       font: inherit;
     }
 
-    button:hover,
-    select:hover {
-      filter: brightness(0.98);
+    button {
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: white;
+      color: var(--text);
+      cursor: pointer;
+      transition: 0.14s ease;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
     }
 
-    input {
-      cursor: text;
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.10);
     }
 
     button.primary {
@@ -93,27 +68,124 @@
       border-color: var(--dark);
     }
 
-    button.danger {
-      background: var(--red-text);
+    button.success {
+      background: var(--green);
       color: white;
-      border-color: var(--red-text);
+      border-color: var(--green);
     }
 
     button.warn {
-      background: var(--amber-text);
+      background: var(--amber);
       color: white;
-      border-color: var(--amber-text);
+      border-color: var(--amber);
     }
 
-    button.success {
-      background: var(--green-text);
+    button.danger {
+      background: var(--red);
       color: white;
-      border-color: var(--green-text);
+      border-color: var(--red);
     }
 
     button.small {
-      padding: 5px 8px;
+      padding: 6px 9px;
+      border-radius: 9px;
       font-size: 12px;
+    }
+
+    select,
+    input {
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: white;
+      color: var(--text);
+      min-height: 42px;
+    }
+
+    input[type="search"] {
+      min-width: 280px;
+    }
+
+    header {
+      background: linear-gradient(135deg, #0f172a 0%, #111827 48%, #1e1b4b 100%);
+      color: white;
+      padding: 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .header-inner {
+      max-width: 1500px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-start;
+    }
+
+    .brand-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      box-shadow: 0 12px 32px rgba(37, 99, 235, 0.35);
+      font-weight: 900;
+      letter-spacing: -0.04em;
+    }
+
+    .brand-title strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+    }
+
+    .brand-subtitle {
+      color: #94a3b8;
+      margin-top: 6px;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+    }
+
+    main {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 20px;
     }
 
     .tabs {
@@ -121,10 +193,18 @@
       flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: rgba(243, 245, 249, 0.86);
+      backdrop-filter: blur(14px);
+      padding: 10px 0;
     }
 
     .tab {
-      background: white;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.78);
+      border-color: rgba(203, 213, 225, 0.9);
     }
 
     .tab.active {
@@ -133,53 +213,350 @@
       border-color: var(--dark);
     }
 
-    .panel.hidden,
-    .hidden {
+    .hidden,
+    .panel.hidden {
       display: none;
+    }
+
+    .message {
+      border-radius: 16px;
+      padding: 13px 15px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      background: white;
+      box-shadow: var(--shadow-soft);
+      white-space: pre-wrap;
+    }
+
+    .message.ok {
+      color: #166534;
+      background: #dcfce7;
+      border-color: #bbf7d0;
+    }
+
+    .message.error {
+      color: #991b1b;
+      background: #fee2e2;
+      border-color: #fecaca;
+    }
+
+    .message.warn {
+      color: #92400e;
+      background: #fef3c7;
+      border-color: #fde68a;
     }
 
     .grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(180px, 1fr));
-      gap: 12px;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .coin-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(240px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
     }
 
     .card {
-      background: var(--panel);
+      background: rgba(255, 255, 255, 0.92);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-      box-shadow: var(--shadow);
-      margin-bottom: 12px;
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: var(--shadow-soft);
+      margin-bottom: 14px;
     }
 
     .card h3 {
-      margin: 0 0 8px;
+      margin: 0 0 10px;
       font-size: 14px;
-      color: #374151;
+      color: #334155;
     }
 
-    .metric {
-      font-size: 24px;
+    .metric-card {
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
       font-weight: 700;
+    }
+
+    .metric-value {
+      font-size: 26px;
+      line-height: 1.1;
+      font-weight: 850;
+      letter-spacing: -0.04em;
       word-break: break-word;
     }
 
-    .muted {
+    .metric-extra {
       color: var(--muted);
+      font-size: 12px;
+      margin-top: 5px;
+    }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      margin: 22px 0 10px;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .section-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
     }
 
     .toolbar {
       display: flex;
-      gap: 8px;
-      align-items: center;
-      margin: 12px 0;
       flex-wrap: wrap;
+      gap: 9px;
+      align-items: center;
+      margin: 12px 0 14px;
     }
 
-    .toolbar input[type="search"] {
-      min-width: 260px;
-      flex: 1;
+    .coin-card {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 16px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .coin-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      background: #94a3b8;
+    }
+
+    .coin-card.long::before,
+    .coin-card.bull::before {
+      background: linear-gradient(90deg, #16a34a, #22c55e);
+    }
+
+    .coin-card.short::before,
+    .coin-card.bear::before {
+      background: linear-gradient(90deg, #dc2626, #fb7185);
+    }
+
+    .coin-card.neutral::before {
+      background: linear-gradient(90deg, #64748b, #94a3b8);
+    }
+
+    .coin-head {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .coin-logo-wrap {
+      width: 42px;
+      height: 42px;
+      min-width: 42px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: linear-gradient(135deg, #e2e8f0, #f8fafc);
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+
+    .coin-logo-wrap.lg {
+      width: 52px;
+      height: 52px;
+      min-width: 52px;
+    }
+
+    .coin-logo-wrap.sm {
+      width: 30px;
+      height: 30px;
+      min-width: 30px;
+    }
+
+    .coin-logo-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .coin-logo-wrap.fallback::after {
+      content: attr(data-initial);
+      font-weight: 900;
+      font-size: 14px;
+      color: #334155;
+    }
+
+    .coin-main {
+      min-width: 0;
+    }
+
+    .coin-symbol {
+      font-weight: 850;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .coin-name {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 180px;
+    }
+
+    .coin-price {
+      margin-left: auto;
+      text-align: right;
+    }
+
+    .coin-price strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .coin-price span {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .coin-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .coin-stat {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 9px;
+    }
+
+    .coin-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+
+    .coin-stat strong {
+      font-size: 13px;
+    }
+
+    .coin-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .coin-mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 190px;
+    }
+
+    .coin-mini .coin-symbol {
+      font-size: 14px;
+    }
+
+    .coin-mini .coin-name {
+      font-size: 11px;
+      max-width: 140px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    .pill.active,
+    .pill.long,
+    .pill.bull {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .pill.short,
+    .pill.bear,
+    .pill.danger {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .pill.warn {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .pill.info {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .pill.purple {
+      background: #ede9fe;
+      color: #5b21b6;
+    }
+
+    .score-bar {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .score-bar > span {
+      display: block;
+      height: 100%;
+      width: var(--w);
+      background: linear-gradient(90deg, #2563eb, #7c3aed);
+      border-radius: inherit;
     }
 
     .table-wrap {
@@ -187,15 +564,15 @@
       overflow-x: auto;
       background: white;
       border: 1px solid var(--border);
-      border-radius: 12px;
-      box-shadow: var(--shadow);
-      margin-bottom: 12px;
+      border-radius: 18px;
+      box-shadow: var(--shadow-soft);
+      margin-bottom: 14px;
     }
 
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1050px;
+      min-width: 1100px;
       background: white;
     }
 
@@ -203,29 +580,31 @@
     td {
       text-align: left;
       border-bottom: 1px solid var(--border);
-      padding: 8px;
+      padding: 10px;
       font-size: 13px;
-      vertical-align: top;
+      vertical-align: middle;
       white-space: nowrap;
     }
 
     th {
-      background: #f3f4f6;
-      font-weight: 700;
+      background: #f8fafc;
+      color: #334155;
+      font-weight: 800;
       position: sticky;
       top: 0;
       z-index: 1;
     }
 
     tr:hover td {
-      background: #f9fafb;
+      background: #f8fafc;
     }
 
     code {
       font-size: 12px;
-      background: #f3f4f6;
-      padding: 2px 4px;
-      border-radius: 4px;
+      background: #f1f5f9;
+      padding: 3px 5px;
+      border-radius: 6px;
+      color: #334155;
       white-space: nowrap;
     }
 
@@ -235,69 +614,12 @@
       background: #0b1020;
       color: #e5e7eb;
       padding: 14px;
-      border-radius: 12px;
+      border-radius: 16px;
       max-height: 520px;
       overflow: auto;
       margin: 0;
       font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .pill {
-      display: inline-block;
-      padding: 2px 7px;
-      border-radius: 999px;
-      background: #e5e7eb;
-      color: #374151;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .pill.active {
-      background: var(--green-bg);
-      color: var(--green-text);
-    }
-
-    .pill.warn {
-      background: var(--amber-bg);
-      color: var(--amber-text);
-    }
-
-    .pill.danger {
-      background: var(--red-bg);
-      color: var(--red-text);
-    }
-
-    .pill.info {
-      background: var(--blue-bg);
-      color: var(--blue-text);
-    }
-
-    .message {
-      border-radius: 12px;
-      padding: 12px 14px;
-      margin-bottom: 12px;
-      border: 1px solid var(--border);
-      background: white;
-      box-shadow: var(--shadow);
-    }
-
-    .message.error {
-      background: var(--red-bg);
-      border-color: #fecaca;
-      color: var(--red-text);
-    }
-
-    .message.ok {
-      background: var(--green-bg);
-      border-color: #bbf7d0;
-      color: var(--green-text);
-    }
-
-    .message.warn {
-      background: var(--amber-bg);
-      border-color: #fde68a;
-      color: var(--amber-text);
+      line-height: 1.48;
     }
 
     .drawer {
@@ -305,13 +627,13 @@
       right: 0;
       top: 0;
       bottom: 0;
-      width: min(760px, 94vw);
+      width: min(780px, 94vw);
       background: white;
       border-left: 1px solid var(--border);
-      box-shadow: -8px 0 30px rgba(0, 0, 0, 0.14);
-      padding: 18px;
+      box-shadow: -12px 0 42px rgba(15, 23, 42, 0.18);
+      padding: 20px;
       overflow: auto;
-      z-index: 20;
+      z-index: 30;
     }
 
     .drawer-head {
@@ -319,24 +641,48 @@
       justify-content: space-between;
       align-items: flex-start;
       gap: 12px;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
 
     .drawer h2 {
       margin: 0;
-      font-size: 18px;
+      font-size: 20px;
+      letter-spacing: -0.03em;
       word-break: break-word;
     }
 
     .two-col {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: 14px;
     }
 
-    @media (max-width: 900px) {
+    .empty {
+      padding: 22px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--border-strong);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    @media (max-width: 1180px) {
+      .grid,
+      .coin-grid {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+
+      .grid-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
       header {
-        padding: 16px;
+        padding: 18px 14px;
+      }
+
+      .header-inner {
         flex-direction: column;
       }
 
@@ -344,34 +690,31 @@
         padding: 14px;
       }
 
-      .grid {
-        grid-template-columns: repeat(2, minmax(150px, 1fr));
-      }
-
+      .grid,
+      .coin-grid,
       .two-col {
         grid-template-columns: 1fr;
       }
 
-      .toolbar input[type="search"] {
-        min-width: 100%;
-      }
-    }
-
-    @media (max-width: 560px) {
-      .grid {
-        grid-template-columns: 1fr;
+      .tabs {
+        gap: 7px;
       }
 
       .tab {
         flex: 1 1 auto;
+        padding: 9px 10px;
       }
 
-      header strong {
-        font-size: 18px;
+      .brand-title strong {
+        font-size: 20px;
       }
 
-      .metric {
-        font-size: 21px;
+      input[type="search"] {
+        min-width: 100%;
+      }
+
+      .coin-stats {
+        grid-template-columns: repeat(2, 1fr);
       }
     }
   </style>
@@ -379,11 +722,22 @@
 
 <body>
   <header>
-    <div>
-      <strong>Micro-Family Trading Admin</strong>
-      <div class="muted">Scanner → TradeSystem → Analyze → Active Rotation → Discord</div>
+    <div class="header-inner">
+      <div>
+        <div class="brand-title">
+          <div class="brand-logo">MF</div>
+          <div>
+            <strong>Micro-Family Trading Admin</strong>
+            <div class="brand-subtitle">Scanner → TradeSystem → Analyze → Active Rotation → Discord</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="live-pill"><span class="live-dot"></span><span id="liveLabel">Live dashboard</span></div>
+        <button id="refreshBtn" type="button">Refresh</button>
+      </div>
     </div>
-    <button id="refreshBtn" type="button">Refresh</button>
   </header>
 
   <main>
@@ -440,6 +794,58 @@
 
     const tabs = ["overview", "scanner", "trade", "micros", "rotation", "discord", "reset"];
 
+    const COIN_NAMES = {
+      BTC: "Bitcoin",
+      ETH: "Ethereum",
+      SOL: "Solana",
+      XRP: "XRP",
+      BNB: "BNB",
+      DOGE: "Dogecoin",
+      ADA: "Cardano",
+      AVAX: "Avalanche",
+      LINK: "Chainlink",
+      DOT: "Polkadot",
+      TON: "Toncoin",
+      TRX: "TRON",
+      LTC: "Litecoin",
+      BCH: "Bitcoin Cash",
+      NEAR: "NEAR Protocol",
+      APT: "Aptos",
+      SUI: "Sui",
+      ARB: "Arbitrum",
+      OP: "Optimism",
+      INJ: "Injective",
+      ATOM: "Cosmos",
+      FIL: "Filecoin",
+      RUNE: "THORChain",
+      FET: "Fetch.ai",
+      RNDR: "Render",
+      PEPE: "Pepe",
+      SHIB: "Shiba Inu",
+      WIF: "dogwifhat",
+      BONK: "Bonk",
+      SEI: "Sei",
+      TIA: "Celestia",
+      JUP: "Jupiter",
+      PYTH: "Pyth Network",
+      UNI: "Uniswap",
+      AAVE: "Aave",
+      MKR: "Maker",
+      CRV: "Curve DAO",
+      LDO: "Lido DAO",
+      ICP: "Internet Computer",
+      ETC: "Ethereum Classic",
+      XLM: "Stellar",
+      HBAR: "Hedera",
+      MATIC: "Polygon",
+      POL: "Polygon",
+      ALGO: "Algorand",
+      GALA: "Gala",
+      SAND: "The Sandbox",
+      MANA: "Decentraland",
+      ENS: "Ethereum Name Service"
+    };
+
     const $ = (id) => document.getElementById(id);
 
     function escapeHtml(value) {
@@ -453,6 +859,96 @@
 
     function escapeAttr(value) {
       return escapeHtml(value).replaceAll("`", "&#096;");
+    }
+
+    function baseSymbol(input) {
+      const raw = typeof input === "string"
+        ? input
+        : input?.symbol || input?.baseSymbol || input?.coin || input?.contractSymbol || "";
+
+      let symbol = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+      const suffixes = [
+        "USDTUMCBL",
+        "USDCUMCBL",
+        "USDTPERP",
+        "USDCPERP",
+        "USDT",
+        "USDC",
+        "BUSD",
+        "PERP",
+        "SWAP",
+        "USD"
+      ];
+
+      for (const suffix of suffixes) {
+        if (symbol.endsWith(suffix) && symbol.length > suffix.length) {
+          symbol = symbol.slice(0, -suffix.length);
+          break;
+        }
+      }
+
+      return symbol || "COIN";
+    }
+
+    function coinName(row) {
+      const symbol = baseSymbol(row);
+      return row?.name || row?.coinName || row?.fullName || row?.assetName || COIN_NAMES[symbol] || symbol;
+    }
+
+    function coinLogo(row) {
+      const direct =
+        row?.logo ||
+        row?.image ||
+        row?.icon ||
+        row?.iconUrl ||
+        row?.logoUrl ||
+        row?.coinLogo ||
+        row?.marketData?.image ||
+        row?.market?.image;
+
+      if (direct) return direct;
+
+      const symbol = baseSymbol(row).toLowerCase();
+      return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${symbol}.svg`;
+    }
+
+    function sideClass(side) {
+      const s = String(side || "").toLowerCase();
+      if (s === "bull" || s === "long" || s === "buy") return "bull";
+      if (s === "bear" || s === "short" || s === "sell") return "bear";
+      return "neutral";
+    }
+
+    function sideLabel(side) {
+      const s = String(side || "").toLowerCase();
+      if (s === "bull" || s === "long" || s === "buy") return "LONG";
+      if (s === "bear" || s === "short" || s === "sell") return "SHORT";
+      return String(side || "NA").toUpperCase();
+    }
+
+    function coinAvatar(row, size = "") {
+      const symbol = baseSymbol(row);
+      const name = coinName(row);
+      const logo = coinLogo(row);
+      const initial = symbol.slice(0, 1) || "?";
+
+      return `
+        <div class="coin-mini">
+          <span class="coin-logo-wrap ${escapeAttr(size)}" data-initial="${escapeAttr(initial)}">
+            <img
+              src="${escapeAttr(logo)}"
+              alt="${escapeAttr(symbol)}"
+              loading="lazy"
+              onerror="this.remove(); this.parentElement.classList.add('fallback');"
+            />
+          </span>
+          <span class="coin-main">
+            <span class="coin-symbol">${escapeHtml(symbol)}</span>
+            <span class="coin-name">${escapeHtml(name)}</span>
+          </span>
+        </div>
+      `;
     }
 
     function fmt(value, decimals = 3) {
@@ -479,9 +975,20 @@
       return `${n.toFixed(2)}%`;
     }
 
+    function fmtPrice(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      return n.toLocaleString(undefined, { maximumFractionDigits: 8 });
+    }
+
     function fmtMoneyLike(value) {
       const n = Number(value);
       if (!Number.isFinite(n)) return "-";
+      if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+      if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+      if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
       return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
     }
 
@@ -491,6 +998,16 @@
       const date = Number.isFinite(n) ? new Date(n) : new Date(value);
       if (Number.isNaN(date.getTime())) return "-";
       return date.toLocaleString();
+    }
+
+    function ageText(ts) {
+      if (!ts) return "-";
+      const n = Number(ts);
+      if (!Number.isFinite(n)) return "-";
+      const sec = Math.max(0, Math.floor((Date.now() - n) / 1000));
+      if (sec < 60) return `${sec}s geleden`;
+      if (sec < 3600) return `${Math.floor(sec / 60)}m geleden`;
+      return `${Math.floor(sec / 3600)}u geleden`;
     }
 
     function jsonBlock(data) {
@@ -503,20 +1020,23 @@
         return;
       }
 
-      const cls = type ? `message ${type}` : "message";
-      $("message").innerHTML = `<div class="${cls}">${escapeHtml(message)}</div>`;
+      $("message").innerHTML = `<div class="message ${escapeAttr(type)}">${escapeHtml(message)}</div>`;
     }
 
     function showLoading(tabId, label = "Laden...") {
-      $(tabId).innerHTML = `<div class="card"><h3>${escapeHtml(label)}</h3><div class="muted">Tab: ${escapeHtml(tabId)}</div></div>`;
+      $(tabId).innerHTML = `
+        <div class="card">
+          <h3>${escapeHtml(label)}</h3>
+          <div class="empty">Data ophalen voor ${escapeHtml(tabId)}...</div>
+        </div>
+      `;
     }
 
     function getRows(data, keys = []) {
       if (Array.isArray(data)) return data;
 
       for (const key of keys) {
-        const value = data?.[key];
-        if (Array.isArray(value)) return value;
+        if (Array.isArray(data?.[key])) return data[key];
       }
 
       if (Array.isArray(data?.rows)) return data.rows;
@@ -528,12 +1048,11 @@
 
     async function api(url, options = {}) {
       const headers = {
-        "accept": "application/json",
+        accept: "application/json",
         ...(options.headers || {})
       };
 
-      const hasBody = options.body !== undefined && options.body !== null;
-      if (hasBody && !headers["content-type"]) {
+      if (options.body !== undefined && options.body !== null && !headers["content-type"]) {
         headers["content-type"] = "application/json";
       }
 
@@ -562,14 +1081,14 @@
 
     function table(rows, cols, emptyText = "Geen data.") {
       if (!Array.isArray(rows) || rows.length === 0) {
-        return `<div class="card">${escapeHtml(emptyText)}</div>`;
+        return `<div class="empty">${escapeHtml(emptyText)}</div>`;
       }
 
       const head = cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("");
 
-      const body = rows.map((row) => {
+      const body = rows.map((row, index) => {
         const cells = cols.map((c) => {
-          const value = c.render ? c.render(row) : escapeHtml(row?.[c.key]);
+          const value = c.render ? c.render(row, index) : escapeHtml(row?.[c.key]);
           return `<td>${value}</td>`;
         }).join("");
 
@@ -588,15 +1107,134 @@
 
     function metricCard(label, value, extra = "") {
       return `
-        <div class="card">
-          <h3>${escapeHtml(label)}</h3>
-          <div class="metric">${escapeHtml(value)}</div>
-          ${extra ? `<div class="muted">${escapeHtml(extra)}</div>` : ""}
+        <div class="card metric-card">
+          <div class="metric-label">${escapeHtml(label)}</div>
+          <div>
+            <div class="metric-value">${escapeHtml(value)}</div>
+            ${extra ? `<div class="metric-extra">${escapeHtml(extra)}</div>` : ""}
+          </div>
         </div>
       `;
     }
 
-    async function copyText(text, label = "Gekopieerd") {
+    function scoreBar(value, max = 100) {
+      const n = Math.max(0, Math.min(100, (Number(value) / max) * 100 || 0));
+      return `<div class="score-bar"><span style="--w:${n.toFixed(1)}%"></span></div>`;
+    }
+
+    function coinCard(row) {
+      const side = sideClass(row.side);
+      const symbol = baseSymbol(row);
+      const name = coinName(row);
+      const price = row.price ?? row.entry ?? row.currentPrice ?? row.markPrice;
+      const score = row.scannerScore ?? row.moveScore ?? row.sniperScore ?? row.confluence ?? 0;
+
+      return `
+        <article class="coin-card ${escapeAttr(side)}">
+          <div class="coin-head">
+            ${coinAvatar(row, "lg")}
+            <div class="coin-price">
+              <strong>$${escapeHtml(fmtPrice(price))}</strong>
+              <span>${escapeHtml(row.contractSymbol || symbol + "USDT")}</span>
+            </div>
+          </div>
+
+          <div class="coin-foot">
+            <span class="pill ${escapeAttr(side)}">${escapeHtml(sideLabel(row.side))}</span>
+            <span class="pill info">Score ${escapeHtml(fmt(score, 1))}</span>
+          </div>
+
+          ${scoreBar(score)}
+
+          <div class="coin-stats">
+            <div class="coin-stat">
+              <span>1h</span>
+              <strong>${escapeHtml(fmtPctRaw(row.change1h))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>24h</span>
+              <strong>${escapeHtml(fmtPctRaw(row.change24h))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>Volume</span>
+              <strong>${escapeHtml(fmtMoneyLike(row.volume24h))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>Pullback</span>
+              <strong>${row.pullbackConfirmed ? "Yes" : "No"}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>Retest</span>
+              <strong>${row.retestConfirmed ? "Yes" : "No"}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>Fake risk</span>
+              <strong>${row.fakeBreakoutRisk ? "Risk" : "Clean"}</strong>
+            </div>
+          </div>
+
+          <div class="coin-foot">
+            <span class="pill purple">${escapeHtml(row.scannerReason || "scanner")}</span>
+          </div>
+        </article>
+      `;
+    }
+
+    function positionCard(row) {
+      const side = sideClass(row.side);
+      const currentR = Number(row.currentR || 0);
+      const rPillClass = currentR >= 0 ? "active" : "danger";
+
+      return `
+        <article class="coin-card ${escapeAttr(side)}">
+          <div class="coin-head">
+            ${coinAvatar(row, "lg")}
+            <div class="coin-price">
+              <strong>${escapeHtml(fmt(currentR, 3))}R</strong>
+              <span>current R</span>
+            </div>
+          </div>
+
+          <div class="coin-foot">
+            <span class="pill ${escapeAttr(side)}">${escapeHtml(sideLabel(row.side))}</span>
+            <span class="pill ${rPillClass}">${escapeHtml(fmt(currentR, 2))}R</span>
+          </div>
+
+          <div class="coin-stats">
+            <div class="coin-stat">
+              <span>Entry</span>
+              <strong>${escapeHtml(fmtPrice(row.entry))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>SL</span>
+              <strong>${escapeHtml(fmtPrice(row.sl))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>TP</span>
+              <strong>${escapeHtml(fmtPrice(row.tp))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>RR</span>
+              <strong>${escapeHtml(fmt(row.rr, 2))}</strong>
+            </div>
+            <div class="coin-stat">
+              <span>MFE</span>
+              <strong>${escapeHtml(fmt(row.mfeR, 2))}R</strong>
+            </div>
+            <div class="coin-stat">
+              <span>MAE</span>
+              <strong>${escapeHtml(fmt(row.maeR, 2))}R</strong>
+            </div>
+          </div>
+
+          <div class="coin-foot">
+            <code>${escapeHtml(row.microFamilyId || "NO_MICRO")}</code>
+          </div>
+        </article>
+      `;
+    }
+
+    async function copyText(text, label = "Gekopieerd.") {
       try {
         await navigator.clipboard.writeText(text);
         setMessage(label, "ok");
@@ -633,29 +1271,8 @@
       ).filter(Boolean);
     }
 
-    function selectedMicroRows() {
-      return getRows(state.micros, ["rows", "microFamilies", "micros"]);
-    }
-
     function microId(row) {
       return row?.microFamilyId || row?.id || "";
-    }
-
-    function renderActiveCopyBlock(ids) {
-      const json = JSON.stringify(ids, null, 2);
-      const env = `ACTIVE_MICRO_FAMILY_IDS=${ids.join(",")}`;
-
-      return `
-        <div class="card">
-          <h3>TradeSystem copy block</h3>
-          <div class="toolbar">
-            <button type="button" class="success" data-copy-json="active">Copy JSON array</button>
-            <button type="button" class="success" data-copy-env="active">Copy ENV line</button>
-          </div>
-          <pre>${escapeHtml(json)}</pre>
-          <pre>${escapeHtml(env)}</pre>
-        </div>
-      `;
     }
 
     async function renderOverview() {
@@ -681,14 +1298,36 @@
           ${metricCard("Last trade actions", data.tradeMeta?.actionCounts ? Object.entries(data.tradeMeta.actionCounts).map(([k, v]) => `${k}:${v}`).join(" ") : "NA")}
         </div>
 
-        <div class="card">
-          <h3>Active Rotation</h3>
-          ${jsonBlock(data.activeRotation)}
+        <div class="section-title">
+          <div>
+            <h2>System status</h2>
+            <p>Snelle samenvatting van scanner, trade engine en active rotation.</p>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <h3>Scanner</h3>
+            <div class="metric-value">${escapeHtml(fmtInt(data.latestScan?.candidatesCount || 0))}</div>
+            <div class="metric-extra">laatste candidates</div>
+          </div>
+
+          <div class="card">
+            <h3>TradeSystem</h3>
+            <div class="metric-value">${escapeHtml(fmtInt(data.openPositions || 0))}</div>
+            <div class="metric-extra">open posities</div>
+          </div>
+
+          <div class="card">
+            <h3>Analyze rotation</h3>
+            <div class="metric-value">${escapeHtml(fmtInt(activeCount))}</div>
+            <div class="metric-extra">actieve micro-families</div>
+          </div>
         </div>
 
         <div class="card">
-          <h3>Raw overview JSON</h3>
-          ${jsonBlock(data)}
+          <h3>Active Rotation</h3>
+          ${jsonBlock(data.activeRotation)}
         </div>
       `;
     }
@@ -701,6 +1340,7 @@
 
       const snapshot = data.snapshot || data.latestSnapshot || data.latest || {};
       const candidates = snapshot.candidates || data.candidates || [];
+      const topCandidates = candidates.slice(0, 12);
 
       $("scanner").innerHTML = `
         <div class="toolbar">
@@ -710,18 +1350,39 @@
 
         <div class="grid">
           ${metricCard("Snapshot ID", snapshot.snapshotId || "-")}
-          ${metricCard("Created at", fmtTs(snapshot.createdAt))}
+          ${metricCard("Snapshot age", ageText(snapshot.createdAt), fmtTs(snapshot.createdAt))}
           ${metricCard("BTC state", snapshot.btcState || "-")}
           ${metricCard("Regime", snapshot.regime || "-")}
           ${metricCard("Candidates", fmtInt(candidates.length))}
+          ${metricCard("Clean candidates", fmtInt(candidates.filter((c) => !c.fakeBreakout).length))}
+          ${metricCard("Fake risk", fmtInt(candidates.filter((c) => c.fakeBreakoutRisk).length))}
+          ${metricCard("Avg score", fmt(candidates.reduce((a, c) => a + Number(c.scannerScore || c.moveScore || 0), 0) / Math.max(1, candidates.length), 1))}
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Scanner candidates</h2>
+            <p>Coins die de grove scannerfilter hebben overleefd.</p>
+          </div>
+        </div>
+
+        <div class="coin-grid">
+          ${topCandidates.length ? topCandidates.map(coinCard).join("") : '<div class="empty">Geen scanner candidates.</div>'}
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Detailed scanner table</h2>
+            <p>Compacte technische view voor filtercontrole.</p>
+          </div>
         </div>
 
         ${table(candidates, [
-          { label: "Symbol", key: "symbol" },
+          { label: "Coin", render: (r) => coinAvatar(r, "sm") },
           { label: "Contract", key: "contractSymbol" },
-          { label: "Side", key: "side" },
-          { label: "Price", render: (r) => fmt(r.price, 6) },
-          { label: "Score", render: (r) => fmt(r.scannerScore ?? r.moveScore, 1) },
+          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
+          { label: "Price", render: (r) => `$${escapeHtml(fmtPrice(r.price))}` },
+          { label: "Score", render: (r) => `${escapeHtml(fmt(r.scannerScore ?? r.moveScore, 1))}${scoreBar(r.scannerScore ?? r.moveScore, 100)}` },
           { label: "1h", render: (r) => fmtPctRaw(r.change1h) },
           { label: "24h", render: (r) => fmtPctRaw(r.change24h) },
           { label: "Vol24h", render: (r) => fmtMoneyLike(r.volume24h) },
@@ -729,11 +1390,6 @@
           { label: "FakeRisk", render: (r) => r.fakeBreakoutRisk ? '<span class="pill warn">RISK</span>' : '<span class="pill active">OK</span>' },
           { label: "Reason", key: "scannerReason" }
         ])}
-
-        <div class="card">
-          <h3>Raw scanner JSON</h3>
-          ${jsonBlock(data)}
-        </div>
       `;
 
       $("runScannerBtn")?.addEventListener("click", async () => {
@@ -754,6 +1410,7 @@
       state.trade = data;
 
       const positions = getRows(data, ["positions", "openPositions"]);
+      const topPositions = positions.slice(0, 12);
 
       $("trade").innerHTML = `
         <div class="toolbar">
@@ -768,18 +1425,30 @@
           ${metricCard("Actions", data.runMeta?.actionCounts ? Object.entries(data.runMeta.actionCounts).map(([k, v]) => `${k}:${v}`).join(" ") : "NA")}
         </div>
 
-        <div class="card">
-          <h3>Last processed snapshot</h3>
-          ${jsonBlock(data.lastProcessed)}
+        <div class="section-title">
+          <div>
+            <h2>Open positions</h2>
+            <p>Live positie-overzicht met R, MFE, MAE en gekoppelde micro-family.</p>
+          </div>
         </div>
 
-        <h3>Open positions</h3>
+        <div class="coin-grid">
+          ${topPositions.length ? topPositions.map(positionCard).join("") : '<div class="empty">Geen open posities.</div>'}
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Position table</h2>
+            <p>Exacte waardes voor execution/debug.</p>
+          </div>
+        </div>
+
         ${table(positions, [
-          { label: "Symbol", key: "symbol" },
-          { label: "Side", key: "side" },
-          { label: "Entry", render: (r) => fmt(r.entry, 6) },
-          { label: "SL", render: (r) => fmt(r.sl, 6) },
-          { label: "TP", render: (r) => fmt(r.tp, 6) },
+          { label: "Coin", render: (r) => coinAvatar(r, "sm") },
+          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
+          { label: "Entry", render: (r) => fmtPrice(r.entry) },
+          { label: "SL", render: (r) => fmtPrice(r.sl) },
+          { label: "TP", render: (r) => fmtPrice(r.tp) },
           { label: "RR", render: (r) => fmt(r.rr, 2) },
           { label: "CurR", render: (r) => fmt(r.currentR, 3) },
           { label: "MFE", render: (r) => fmt(r.mfeR, 3) },
@@ -791,11 +1460,6 @@
         <div class="card">
           <h3>Run meta</h3>
           ${jsonBlock(data.runMeta)}
-        </div>
-
-        <div class="card">
-          <h3>Raw trade JSON</h3>
-          ${jsonBlock(data)}
         </div>
       `;
 
@@ -848,7 +1512,7 @@
         </div>
 
         ${table(filteredRows, [
-          { label: "Rank", render: (r, i) => escapeHtml(r.rank ?? "") },
+          { label: "Rank", render: (r, i) => escapeHtml(r.rank ?? i + 1) },
           { label: "Active", render: (r) => {
             const isActive = Boolean(r.active) || activeIds.has(microId(r));
             return `<span class="pill ${isActive ? "active" : ""}">${isActive ? "ACTIVE" : "off"}</span>`;
@@ -858,33 +1522,21 @@
             return `<button type="button" class="small" data-open-micro="${escapeAttr(id)}"><code>${escapeHtml(id)}</code></button>`;
           }},
           { label: "Family", key: "familyId" },
-          { label: "Side", key: "side" },
+          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
           { label: "Seen", render: (r) => fmtInt(r.seen) },
           { label: "Completed", render: (r) => fmt(r.completed, 2) },
-          { label: "Real", render: (r) => fmtInt(r.realCompleted) },
-          { label: "Shadow", render: (r) => fmtInt(r.shadowCompleted) },
           { label: "Fair WR", render: (r) => fmtPctRatio(r.fairWinrate ?? r.bayesianWinrate ?? r.wilsonLowerBound) },
           { label: "Winrate", render: (r) => fmtPctRatio(r.winrate) },
           { label: "Net AvgR", render: (r) => fmt(r.avgR, 3) },
           { label: "Net TotalR", render: (r) => fmt(r.totalR, 3) },
-          { label: "CostR", render: (r) => fmt(r.avgCostR, 3) },
           { label: "PF", render: (r) => fmt(r.profitFactor, 2) },
           { label: "DirectSL", render: (r) => fmtPctRatio(r.directSLPct) },
-          { label: "GaveBack 1R", render: (r) => fmtPctRatio(r.gaveBackAfterOneRPct) },
-          { label: "BE Exit%", render: (r) => fmtPctRatio(r.beWouldExitPct) },
           { label: "Balanced", render: (r) => `<strong>${fmt(r.balancedScore, 2)}</strong>` },
           { label: "Copy", render: (r) => `<button type="button" class="small" data-copy-micro="${escapeAttr(microId(r))}">Copy</button>` }
         ])}
-
-        <div class="card">
-          <h3>Raw micro-family JSON</h3>
-          ${jsonBlock(data)}
-        </div>
       `;
 
-      $("microMode")?.addEventListener("change", (event) => {
-        renderMicros(event.target.value);
-      });
+      $("microMode")?.addEventListener("change", (event) => renderMicros(event.target.value));
 
       $("microSearch")?.addEventListener("input", (event) => {
         state.microSearch = event.target.value;
@@ -898,9 +1550,7 @@
         copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} microFamilyIds gekopieerd.`);
       });
 
-      $("downloadMicrosBtn")?.addEventListener("click", () => {
-        downloadJson("micro-families.json", data);
-      });
+      $("downloadMicrosBtn")?.addEventListener("click", () => downloadJson("micro-families.json", data));
 
       document.querySelectorAll("[data-open-micro]").forEach((btn) => {
         btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
@@ -920,7 +1570,7 @@
         <div class="drawer-head">
           <div>
             <h2>${escapeHtml(id)}</h2>
-            <div class="muted">Detail wordt geladen...</div>
+            <div class="metric-extra">Detail wordt geladen...</div>
           </div>
           <button type="button" id="closeDrawerBtn">Close</button>
         </div>
@@ -936,7 +1586,7 @@
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="muted">${escapeHtml(row.familyId || "")} ${escapeHtml(row.side || "")}</div>
+              <div class="metric-extra">${escapeHtml(row.familyId || "")} ${escapeHtml(row.side || "")}</div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
@@ -944,6 +1594,13 @@
           <div class="toolbar">
             <button type="button" class="success" id="copyDrawerIdBtn">Copy ID</button>
             <button type="button" id="copyDrawerJsonBtn">Copy JSON</button>
+          </div>
+
+          <div class="grid">
+            ${metricCard("Seen", fmtInt(row.seen))}
+            ${metricCard("Completed", fmt(row.completed, 2))}
+            ${metricCard("Fair WR", fmtPctRatio(row.fairWinrate))}
+            ${metricCard("Balanced", fmt(row.balancedScore, 2))}
           </div>
 
           <div class="two-col">
@@ -984,7 +1641,7 @@
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="muted">Detail API error</div>
+              <div class="metric-extra">Detail API error</div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
@@ -1031,12 +1688,18 @@
           ${metricCard("Mode", active.mode || data.mode || "NA")}
         </div>
 
-        <h3>Active rotation rows</h3>
+        <div class="section-title">
+          <div>
+            <h2>Active rotation</h2>
+            <p>Deze micro-families worden nu door TradeSystem toegestaan voor Discord entries.</p>
+          </div>
+        </div>
+
         ${table(activeRows, [
-          { label: "Rank", render: (r) => escapeHtml(r.rank ?? "") },
+          { label: "Rank", render: (r, i) => escapeHtml(r.rank ?? i + 1) },
           { label: "MicroFamilyId", render: (r) => `<code>${escapeHtml(microId(r))}</code>` },
           { label: "Family", key: "familyId" },
-          { label: "Side", key: "side" },
+          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side))}">${escapeHtml(sideLabel(r.side))}</span>` },
           { label: "Completed", render: (r) => fmt(r.completed, 2) },
           { label: "Fair WR", render: (r) => fmtPctRatio(r.fairWinrate ?? r.bayesianWinrate ?? r.wilsonLowerBound) },
           { label: "AvgR", render: (r) => fmt(r.avgR, 3) },
@@ -1044,36 +1707,28 @@
           { label: "Balanced", render: (r) => fmt(r.balancedScore, 2) }
         ], "Geen actieve rotation gevonden.")}
 
-        ${renderActiveCopyBlock(activeIds)}
-
         <div class="card">
-          <h3>Active rotation raw</h3>
-          ${jsonBlock(active)}
+          <h3>Copy block voor TradeSystem</h3>
+          <div class="toolbar">
+            <button type="button" class="success" id="copyActiveJsonBtn">Copy JSON array</button>
+            <button type="button" class="success" id="copyActiveEnvLineBtn">Copy ENV line</button>
+          </div>
+          <pre>${escapeHtml(JSON.stringify(activeIds, null, 2))}</pre>
+          <pre>${escapeHtml(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`)}</pre>
         </div>
 
         <div class="card">
           <h3>Next rotation raw</h3>
           ${jsonBlock(next)}
         </div>
-
-        <div class="card">
-          <h3>Raw rotation JSON</h3>
-          ${jsonBlock(data)}
-        </div>
       `;
 
       $("activateBestBalancedNowBtn")?.addEventListener("click", activateBestBalanced);
       $("copyActiveIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`));
       $("copyActiveEnvBtn")?.addEventListener("click", () => copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd."));
+      $("copyActiveJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`));
+      $("copyActiveEnvLineBtn")?.addEventListener("click", () => copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd."));
       $("downloadRotationBtn")?.addEventListener("click", () => downloadJson("active-rotation.json", data));
-
-      document.querySelector("[data-copy-json='active']")?.addEventListener("click", () => {
-        copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} active IDs.`);
-      });
-
-      document.querySelector("[data-copy-env='active']")?.addEventListener("click", () => {
-        copyText(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`, "ENV line gekopieerd.");
-      });
     }
 
     async function renderDiscord() {
@@ -1098,16 +1753,11 @@
         ${table(logs, [
           { label: "TS", render: (r) => fmtTs(r.ts || r.createdAt) },
           { label: "Type", render: (r) => escapeHtml(r.type || r.level || "-") },
-          { label: "Symbol", render: (r) => escapeHtml(r.symbol || r.payload?.symbol || "") },
-          { label: "Side", render: (r) => escapeHtml(r.side || r.payload?.side || "") },
+          { label: "Coin", render: (r) => coinAvatar(r.payload || r, "sm") },
+          { label: "Side", render: (r) => `<span class="pill ${escapeAttr(sideClass(r.side || r.payload?.side))}">${escapeHtml(sideLabel(r.side || r.payload?.side))}</span>` },
           { label: "Micro", render: (r) => `<code>${escapeHtml(r.microFamilyId || r.payload?.microFamilyId || "")}</code>` },
           { label: "Result", render: (r) => escapeHtml(r.result ? JSON.stringify(r.result) : r.message || r.content || "") }
         ])}
-
-        <div class="card">
-          <h3>Raw Discord JSON</h3>
-          ${jsonBlock(data)}
-        </div>
       `;
 
       $("copyDiscordJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
@@ -1116,22 +1766,22 @@
 
     function renderReset() {
       $("reset").innerHTML = `
-        <div class="grid">
+        <div class="grid-3">
           <div class="card">
             <h3>Reset learning only</h3>
-            <p class="muted">Wist observations, outcomes, weekly micro stats en shadow data. Open positions blijven staan.</p>
+            <p class="metric-extra">Wist observations, outcomes, weekly micro stats en shadow data. Open positions blijven staan.</p>
             <button type="button" class="warn" id="resetLearningBtn">Reset learning</button>
           </div>
 
           <div class="card">
             <h3>Reset rotation only</h3>
-            <p class="muted">Wist active/next rotation. Learning blijft staan.</p>
+            <p class="metric-extra">Wist active/next rotation. Learning blijft staan.</p>
             <button type="button" class="warn" id="resetRotationBtn">Reset rotation</button>
           </div>
 
           <div class="card">
             <h3>Factory reset</h3>
-            <p class="muted">Wist scanner snapshots, trade memory, open positions, analyze stats, rotations en live cache.</p>
+            <p class="metric-extra">Wist scanner snapshots, trade memory, open positions, analyze stats, rotations en live cache.</p>
             <input id="factoryConfirm" style="width: 100%; margin-bottom: 8px;" placeholder="FACTORY_RESET_CONFIRMED" />
             <label style="display: block; margin-bottom: 8px;">
               <input id="factoryForce" type="checkbox" />
@@ -1225,7 +1875,6 @@
         0;
 
       setMessage(`Activated ${count} microFamilies.`, "ok");
-
       await renderRotation();
     }
 
@@ -1246,6 +1895,7 @@
 
     async function refresh(tab = state.activeTab) {
       setMessage("");
+      $("liveLabel").textContent = `Last refresh ${new Date().toLocaleTimeString()}`;
 
       try {
         if (tab === "overview") return await renderOverview();
@@ -1267,10 +1917,6 @@
     });
 
     $("refreshBtn").addEventListener("click", () => refresh(state.activeTab));
-
-    $("drawer").addEventListener("click", (event) => {
-      if (event.target.id === "drawer") closeDrawer();
-    });
 
     window.addEventListener("error", (event) => {
       setMessage(event.message || "Browser error", "error");
