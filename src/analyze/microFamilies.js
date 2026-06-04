@@ -1,83 +1,169 @@
 // ================= FILE: src/analyze/microFamilies.js =================
 
 import { CONFIG } from '../config.js';
-import { bucketDepth, bucketFunding, bucketSpread, bucketStep, getObRelation, sideToTradeSide, stableHash, safeNumber } from '../utils.js';
+import {
+  bucketDepth,
+  bucketFunding,
+  bucketSpread,
+  bucketStep,
+  getObRelation,
+  sideToTradeSide,
+  stableHash,
+  safeNumber
+} from '../utils.js';
+
+function normalizeSide(side) {
+  const tradeSide = sideToTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
+
+  return 'unknown';
+}
 
 function coarseRsi(zone) {
   const z = String(zone || 'MID').toUpperCase();
+
   if (z.startsWith('LOWER')) return 'LOWER';
   if (z.startsWith('UPPER')) return 'UPPER';
+
   return 'MID';
 }
 
-// Coarse 3-tier bucket for continuous 0-100 scores. Categories, not gradations.
 function tier(score) {
-  const s = safeNumber(score);
+  const s = safeNumber(score, NaN);
+
+  if (!Number.isFinite(s)) return 'NA';
   if (s >= 70) return 'HI';
   if (s >= 45) return 'MID';
+
   return 'LO';
 }
 
-// Fold the 3 confirmation booleans into one ordinal entry-quality signal.
-// CONFIRMED (retest is strongest) > PULLBACK/SWEEP > NONE.
 function entryQuality(metrics = {}) {
   if (metrics.retestConfirmed) return 'RETEST';
-  if (metrics.pullbackConfirmed || metrics.sweepConfirmed) return 'PULLBACK';
+  if (metrics.pullbackConfirmed) return 'PULLBACK';
+  if (metrics.sweepConfirmed) return 'SWEEP';
+
   return 'RAW';
 }
 
 function btcRelation(side, btcState) {
-  const s = String(side || '').toLowerCase();
+  const tradeSide = sideToTradeSide(side);
   const btc = String(btcState || 'NEUTRAL').toUpperCase();
+
   if (btc === 'NEUTRAL' || btc === 'UNKNOWN') return 'BTC_NEUTRAL';
-  if (s === 'bull' && ['BULLISH', 'STRONG_BULL'].includes(btc)) return 'BTC_WITH';
-  if (s === 'bear' && ['BEARISH', 'STRONG_BEAR'].includes(btc)) return 'BTC_WITH';
+
+  if (tradeSide === 'LONG' && ['BULLISH', 'STRONG_BULL'].includes(btc)) {
+    return 'BTC_WITH';
+  }
+
+  if (tradeSide === 'SHORT' && ['BEARISH', 'STRONG_BEAR'].includes(btc)) {
+    return 'BTC_WITH';
+  }
+
+  if (tradeSide === 'UNKNOWN') return 'BTC_UNKNOWN';
+
   return 'BTC_AGAINST';
+}
+
+function coarseBtcState(side, btcState) {
+  return btcRelation(side, btcState);
+}
+
+function coarseRegime(regime) {
+  const r = String(regime || 'NORMAL_VOL').toUpperCase();
+
+  if (r.includes('HIGH') || r.includes('EXTREME')) return 'HIGH_VOL';
+  if (r.includes('LOW')) return 'LOW_VOL';
+
+  return 'NORMAL_VOL';
+}
+
+function coarseFlow(flow) {
+  const f = String(flow || 'NEUTRAL').toUpperCase();
+
+  if (['TREND', 'IMPULSE'].includes(f)) return 'TREND';
+  if (['BUILDING'].includes(f)) return 'BUILDING';
+
+  return 'NEUTRAL';
+}
+
+function coarseScannerReason(reason) {
+  const r = String(reason || 'UNKNOWN').toUpperCase();
+
+  if (r.includes('PULLBACK')) return 'PULLBACK';
+  if (r.includes('RETEST')) return 'RETEST';
+  if (r.includes('BREAKOUT')) return 'BREAKOUT';
+  if (r.includes('VOLUME')) return 'VOLUME';
+  if (r.includes('MOMENTUM')) return 'MOMENTUM';
+
+  return 'UNKNOWN';
+}
+
+function normalizeObRelation(metrics = {}) {
+  return String(
+    metrics.obRelation ||
+    getObRelation(metrics.side, metrics.obBias) ||
+    'UNKNOWN'
+  ).toUpperCase();
 }
 
 export function classifyFamily(metrics = {}) {
   const tradeSide = sideToTradeSide(metrics.side);
+
   const seedParts = [
     tradeSide,
-    String(metrics.flow || 'NEUTRAL').toUpperCase(),
+    coarseFlow(metrics.flow),
     coarseRsi(metrics.rsiZone),
-    String(metrics.obRelation || getObRelation(metrics.side, metrics.obBias)).toUpperCase(),
-    btcRelation(metrics.side, metrics.btcState),
-    String(metrics.regime || 'NORMAL').toUpperCase()
+    normalizeObRelation(metrics),
+    coarseBtcState(metrics.side, metrics.btcState),
+    coarseRegime(metrics.regime)
   ];
+
   const bucket = (parseInt(stableHash(seedParts.join('|'), 6), 16) % 50) + 1;
+
   return `${tradeSide}_${bucket}`;
 }
 
 export function classifyMicroFamily(metrics = {}) {
   const familyId = metrics.familyId || classifyFamily(metrics);
   const tradeSide = sideToTradeSide(metrics.side);
-  const obRelation = metrics.obRelation || getObRelation(metrics.side, metrics.obBias);
+  const normalizedSide = normalizeSide(metrics.side);
+  const obRelation = normalizeObRelation(metrics);
 
   const definitionParts = [
     `schema=${CONFIG.analyze.schema}`,
-    `side=${String(metrics.side || '').toLowerCase()}`,
+    `side=${normalizedSide}`,
     `family=${familyId}`,
+
+    // RSI blijft exact genoeg voor edge-detectie, maar family gebruikt coarse RSI.
     `rsiZone=${String(metrics.rsiZone || 'UNKNOWN').toUpperCase()}`,
-    `flow=${String(metrics.flow || 'UNKNOWN').toUpperCase()}`,
-    `obRelation=${String(obRelation || 'UNKNOWN').toUpperCase()}`,
-    `btcState=${String(metrics.btcState || 'UNKNOWN').toUpperCase()}`,
-    `regime=${String(metrics.regime || 'UNKNOWN').toUpperCase()}`,
-    // confluence/sniper are continuous *gradations*, not categories. Keeping them in the
-    // identity (20 buckets each) exploded the micro-family space into billions, so no family
-    // ever reached minWeightedCompleted and weekly learning stayed empty. Coarsened to 3 tiers
-    // (LO/MID/HI) so families actually accumulate samples. Fine score still rides on the row.
+
+    // Flow/regime/BTC worden bewust grover gemaakt om sample-size te houden.
+    `flow=${coarseFlow(metrics.flow)}`,
+    `obRelation=${obRelation}`,
+    `btcRelation=${coarseBtcState(metrics.side, metrics.btcState)}`,
+    `regime=${coarseRegime(metrics.regime)}`,
+
+    // Continue scores horen niet exact in de identity.
     `confluenceTier=${tier(metrics.confluence)}`,
     `sniperTier=${tier(metrics.sniperScore)}`,
+
     `rrBucket=${bucketStep(metrics.rr, 0.5, 'RR', 1)}`,
     `spreadBucket=${bucketSpread(metrics.spreadPct)}`,
     `depthBucket=${bucketDepth(metrics.depthMinUsd1p)}`,
     `fundingBucket=${bucketFunding(metrics.fundingRate)}`,
-    // The three confirmation flags rarely vary independently; collapse to one quality signal.
-    // fakeBreakoutRisk is implied by fakeBreakout, so it no longer needs its own dimension.
+
+    // Eén ordinaal quality signaal in plaats van losse booleans.
     `entryQuality=${entryQuality(metrics)}`,
+
+    // Fake breakout hoort bijna altijd false te zijn na scanner-filter.
+    // Toch laten staan voor audit als TradeSystem later twijfelgevallen doorlaat.
     `fakeBreakout=${Boolean(metrics.fakeBreakout)}`,
-    `scannerReason=${String(metrics.scannerReason || 'UNKNOWN').toUpperCase()}`
+
+    // Scanner reason grof, niet exact.
+    `scannerReason=${coarseScannerReason(metrics.scannerReason)}`
   ];
 
   const hash = stableHash(definitionParts.join('|'), 8);
@@ -89,6 +175,6 @@ export function classifyMicroFamily(metrics = {}) {
     definition: definitionParts.join(' | '),
     definitionParts,
     obRelation,
-    spreadBps: Number((safeNumber(metrics.spreadPct) * 10000).toFixed(3))
+    spreadBps: Number((safeNumber(metrics.spreadPct, 0) * 10000).toFixed(3))
   };
 }
