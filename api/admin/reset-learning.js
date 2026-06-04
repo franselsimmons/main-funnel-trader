@@ -4,8 +4,11 @@ import { randomUUID } from 'node:crypto';
 
 import { KEYS } from '../../src/keys.js';
 import {
+  getIsoWeekKey,
+  getPreviousIsoWeekKey
+} from '../../src/utils.js';
+import {
   getDurableRedis,
-  delPattern,
   pushJsonLog
 } from '../../src/redis.js';
 import { sendResetReport } from '../../src/discord/discord.js';
@@ -168,70 +171,85 @@ async function releaseLocks(redis, keys, token) {
 async function delKey(redis, key) {
   if (!key) return 0;
 
-  return redis.del(key);
+  return redis.del(key).catch(() => 0);
 }
 
-async function runLearningDeleteSteps(redis) {
-  const deleted = {};
+function uniqueStrings(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )];
+}
 
-  // Alles onder ANALYZE:WEEK:* pakt:
-  // - oude full-object week key
-  // - nieuwe compressed/sharded index
-  // - nieuwe compressed/sharded rows
-  // - week meta
-  deleted.weeks = await delPattern(
-    redis,
-    'ANALYZE:WEEK:*',
-    10000
-  );
+function firstValue(value, fallback = null) {
+  if (Array.isArray(value)) return value[0] ?? fallback;
+  if (value === undefined || value === null || value === '') return fallback;
 
-  deleted.microStats = await delPattern(
-    redis,
-    'ANALYZE:MICRO:*',
-    10000
-  );
+  return value;
+}
 
-  deleted.observationDedupeA = await delPattern(
-    redis,
-    'ANALYZE:OBS:LAST:*',
-    10000
-  );
+function getWeekKeyCandidates(body = {}) {
+  return uniqueStrings([
+    getPreviousIsoWeekKey(),
+    getIsoWeekKey(),
+    firstValue(body.weekKey, null),
+    firstValue(body.currentWeekKey, null),
+    firstValue(body.previousWeekKey, null),
+    ...(Array.isArray(body.weekKeys) ? body.weekKeys : [])
+  ]);
+}
 
-  deleted.observationDedupeB = await delPattern(
-    redis,
-    'ANALYZE:OBS:*',
-    10000
-  );
+function getWeekStorageKeys(weekKey) {
+  const base = KEYS.analyze.weekMicros(weekKey);
 
-  deleted.shadowA = await delPattern(
-    redis,
-    'ANALYZE:SHADOW:*',
-    10000
-  );
+  return [
+    base,
+    `${base}:INDEX`,
+    KEYS.analyze.weekMeta(weekKey)
+  ].filter(Boolean);
+}
 
-  deleted.shadowB = await delPattern(
-    redis,
-    'ANALYZE:SHADOW_OPEN:*',
-    10000
-  );
+async function deleteExactKeys(redis, keys = []) {
+  const safeKeys = uniqueStrings(keys);
 
-  deleted.shadowC = await delPattern(
-    redis,
-    'ANALYZE:SHADOW_LAST:*',
-    10000
-  );
+  if (!safeKeys.length) return 0;
 
-  // Active rotation blijft staan, zodat TradeSystem niet direct zonder gate draait.
-  // Next rotation moet weg, want die is gebaseerd op learning-data die nu verwijderd is.
-  deleted.nextRotation = await delKey(
-    redis,
-    KEYS.analyze?.nextRotation
-  );
+  let deleted = 0;
 
-  deleted.rotationValidFrom = await delKey(
-    redis,
-    KEYS.analyze?.rotationValidFrom
-  );
+  for (const key of safeKeys) {
+    deleted += await delKey(redis, key);
+  }
+
+  return deleted;
+}
+
+async function runLearningDeleteSteps(redis, body = {}) {
+  const weekKeys = getWeekKeyCandidates(body);
+  const weekMainKeys = weekKeys.flatMap(getWeekStorageKeys);
+
+  const deleted = {
+    weekKeys,
+
+    // Fast reset:
+    // - delete visible week base/index/meta keys
+    // - sharded ROW keys are intentionally not scanned/deleted here
+    // - because once INDEX is gone, getWeekMicros() cannot read orphan rows
+    // - orphan rows expire through TTL from analyzeEngine
+    weekMainKeys: await deleteExactKeys(redis, weekMainKeys),
+
+    // Active rotation blijft staan, zodat TradeSystem niet direct zonder gate draait.
+    // Next rotation moet weg, want die is gebaseerd op learning-data die nu verwijderd is.
+    nextRotation: await delKey(
+      redis,
+      KEYS.analyze?.nextRotation
+    ),
+
+    rotationValidFrom: await delKey(
+      redis,
+      KEYS.analyze?.rotationValidFrom
+    )
+  };
 
   return deleted;
 }
@@ -276,11 +294,11 @@ export default async function handler(req, res) {
       });
     }
 
-    const deleted = await runLearningDeleteSteps(redis);
+    const deleted = await runLearningDeleteSteps(redis, body);
 
     const report = {
       ok: true,
-      type: 'RESET_LEARNING',
+      type: 'RESET_LEARNING_FAST',
 
       deleted,
 
@@ -290,7 +308,8 @@ export default async function handler(req, res) {
         scannerSnapshots: true,
         tradeMemory: true,
         resetLogs: true,
-        discordLogs: true
+        discordLogs: true,
+        orphanWeekRowsExpireByTtl: true
       },
 
       resetAt: Date.now()
@@ -301,7 +320,7 @@ export default async function handler(req, res) {
       KEYS.reset?.logList || 'RESET:LOGS',
       report,
       100
-    );
+    ).catch(() => null);
 
     await sendResetReport(report).catch(() => null);
 
