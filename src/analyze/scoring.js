@@ -3,6 +3,11 @@
 import { CONFIG } from '../config.js';
 import { clamp, safeNumber } from '../utils.js';
 
+const DEFAULT_WILSON_Z = 1.96;
+const DEFAULT_PRIOR_TRADES = 24;
+const DEFAULT_PRIOR_WINRATE = 0.5;
+const DEFAULT_SAMPLE_CAP = 50;
+
 function now() {
   return Date.now();
 }
@@ -11,10 +16,34 @@ function round4(value) {
   return Number(safeNumber(value, 0).toFixed(4));
 }
 
+function rotationNumber(key, fallback) {
+  return safeNumber(CONFIG.rotation?.[key], fallback);
+}
+
+function analyzeNumber(key, fallback) {
+  return safeNumber(CONFIG.analyze?.[key], fallback);
+}
+
 function shadowWeight() {
-  const weight = safeNumber(CONFIG.analyze?.shadowWeight, 0.35);
+  const weight = analyzeNumber('shadowWeight', 0.35);
 
   return clamp(weight, 0, 1);
+}
+
+function priorTrades() {
+  return Math.max(0, rotationNumber('priorTrades', DEFAULT_PRIOR_TRADES));
+}
+
+function priorWinrate() {
+  return clamp(rotationNumber('priorWinrate', DEFAULT_PRIOR_WINRATE), 0, 1);
+}
+
+function wilsonZ() {
+  return Math.max(0.1, rotationNumber('wilsonZ', DEFAULT_WILSON_Z));
+}
+
+function sampleCap() {
+  return Math.max(1, rotationNumber('sampleReliabilityCap', DEFAULT_SAMPLE_CAP));
 }
 
 function inc(obj, key, amount = 1) {
@@ -32,6 +61,76 @@ function makeCounters() {
     regime: {},
     scannerReason: {}
   };
+}
+
+function positive(value) {
+  return Math.max(0, safeNumber(value, 0));
+}
+
+function actualOutcomeCounts(stats = {}) {
+  const realWins = safeNumber(stats.realWins, 0);
+  const realLosses = safeNumber(stats.realLosses, 0);
+  const realFlats = safeNumber(stats.realFlats, 0);
+
+  const shadowWins = safeNumber(stats.shadowWins, 0);
+  const shadowLosses = safeNumber(stats.shadowLosses, 0);
+  const shadowFlats = safeNumber(stats.shadowFlats, 0);
+
+  const wins = realWins + shadowWins;
+  const losses = realLosses + shadowLosses;
+  const flats = realFlats + shadowFlats;
+  const completed = wins + losses + flats;
+
+  if (completed > 0) {
+    return {
+      wins,
+      losses,
+      flats,
+      completed
+    };
+  }
+
+  // Backward fallback for old stored rows without real/shadow buckets.
+  const weightedWins = safeNumber(stats.wins, 0);
+  const weightedLosses = safeNumber(stats.losses, 0);
+  const weightedFlats = safeNumber(stats.flats, 0);
+  const weightedCompleted = weightedWins + weightedLosses + weightedFlats;
+
+  if (weightedCompleted > 0) {
+    return {
+      wins: weightedWins,
+      losses: weightedLosses,
+      flats: weightedFlats,
+      completed: weightedCompleted
+    };
+  }
+
+  const completedFallback = safeNumber(stats.completed, 0);
+  const winrateFallback = clamp(stats.winrate, 0, 1);
+
+  if (completedFallback <= 0) {
+    return {
+      wins: 0,
+      losses: 0,
+      flats: 0,
+      completed: 0
+    };
+  }
+
+  return {
+    wins: completedFallback * winrateFallback,
+    losses: completedFallback * (1 - winrateFallback),
+    flats: 0,
+    completed: completedFallback
+  };
+}
+
+function sampleReliability(completed) {
+  const n = safeNumber(completed, 0);
+
+  if (n <= 0) return 0;
+
+  return clamp(Math.sqrt(Math.min(n, sampleCap()) / sampleCap()), 0, 1);
 }
 
 export function createMicroStats({
@@ -55,6 +154,7 @@ export function createMicroStats({
     realCompleted: 0,
     shadowCompleted: 0,
     completed: 0,
+    winrateSample: 0,
 
     wins: 0,
     losses: 0,
@@ -100,6 +200,7 @@ export function createMicroStats({
     bayesianWinrate: 0,
     wilsonLowerBound: 0,
     fairWinrate: 0,
+    sampleAdjustedWinrate: 0,
 
     profitFactor: 0,
     sampleReliability: 0,
@@ -143,9 +244,15 @@ function ensureStatsShape(stats = {}) {
 
   stats.definition ||= stats.definitionParts.join(' | ');
 
+  stats.realFlats = safeNumber(stats.realFlats, 0);
+  stats.shadowFlats = safeNumber(stats.shadowFlats, 0);
+
   stats.grossWinR = safeNumber(stats.grossWinR, 0);
   stats.grossLossR = safeNumber(stats.grossLossR, 0);
   stats.totalCostR = safeNumber(stats.totalCostR, 0);
+
+  stats.winrateSample = safeNumber(stats.winrateSample, 0);
+  stats.sampleAdjustedWinrate = safeNumber(stats.sampleAdjustedWinrate, 0);
 
   stats.createdAt ||= now();
   stats.updatedAt ||= now();
@@ -214,6 +321,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
     if (flat) stats.realFlats = safeNumber(stats.realFlats, 0) + 1;
   }
 
+  // Weighted completed remains for R/PnL math.
   stats.completed =
     safeNumber(stats.realCompleted, 0) +
     safeNumber(stats.shadowCompleted, 0) * shadowWeight();
@@ -289,7 +397,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
   return refreshStats(stats);
 }
 
-export function wilsonLowerBound(wins, completed, z = CONFIG.rotation.wilsonZ) {
+export function wilsonLowerBound(wins, completed, z = wilsonZ()) {
   const n = safeNumber(completed, 0);
   const w = clamp(wins, 0, n);
 
@@ -308,14 +416,13 @@ export function bayesianWinrate(wins, completed) {
   const n = safeNumber(completed, 0);
   const w = safeNumber(wins, 0);
 
-  const priorTrades = Math.max(0, safeNumber(CONFIG.rotation.priorTrades, 24));
-  const priorWinrate = clamp(CONFIG.rotation.priorWinrate, 0, 1);
-  const priorWins = priorTrades * priorWinrate;
+  const priorN = priorTrades();
+  const priorW = priorN * priorWinrate();
 
-  const denominator = n + priorTrades;
+  const denominator = n + priorN;
 
   return denominator > 0
-    ? clamp((w + priorWins) / denominator, 0, 1)
+    ? clamp((w + priorW) / denominator, 0, 1)
     : 0;
 }
 
@@ -340,24 +447,65 @@ function fallbackGrossFromRecent(stats) {
   };
 }
 
+function buildBalancedScore({
+  fair,
+  avgR,
+  totalR,
+  sampleRel,
+  profitFactor,
+  nearTpPct,
+  reachedOneRPct,
+  directSLPct,
+  nearTpThenLossPct,
+  gaveBackAfterOneRPct,
+  avgCostR
+}) {
+  const pfNorm = clamp(profitFactor, 0, 10) / 10;
+
+  // Log scaling prevents 1 extreme TP from dominating stable high-sample families.
+  const totalRComponent = Math.log1p(positive(totalR)) * 12;
+  const avgRComponent = Math.log1p(positive(avgR)) * 8;
+
+  return (
+    fair * 100 +
+    sampleRel * 25 +
+    totalRComponent +
+    avgRComponent +
+    pfNorm * 8 +
+    nearTpPct * 4 +
+    reachedOneRPct * 4 -
+    directSLPct * 35 -
+    nearTpThenLossPct * 15 -
+    gaveBackAfterOneRPct * 10 -
+    Math.max(0, avgCostR) * 8
+  );
+}
+
 export function refreshStats(stats) {
   ensureStatsShape(stats);
 
-  const completed = safeNumber(stats.completed, 0);
-  const wins = safeNumber(stats.wins, 0);
-  const losses = safeNumber(stats.losses, 0);
+  const weightedCompleted = safeNumber(stats.completed, 0);
+  const weightedWins = safeNumber(stats.wins, 0);
+  const weightedLosses = safeNumber(stats.losses, 0);
   const totalR = safeNumber(stats.totalR, 0);
 
-  const rawWinrate = completed > 0 ? wins / completed : 0;
-  const bayes = bayesianWinrate(wins, completed);
-  const wilson = wilsonLowerBound(wins, completed);
-  const fair = completed > 0 ? wilson * 0.75 + bayes * 0.25 : 0;
+  const actualCounts = actualOutcomeCounts(stats);
+  const winrateSample = safeNumber(actualCounts.completed, 0);
+  const winrateWins = safeNumber(actualCounts.wins, 0);
+  const winrateFlats = safeNumber(actualCounts.flats, 0);
+  const winrateSuccesses = winrateWins + winrateFlats * 0.5;
 
-  const priorTrades = Math.max(0, safeNumber(CONFIG.rotation.priorTrades, 24));
-
-  const sampleReliability = completed > 0
-    ? completed / (completed + priorTrades)
+  const rawWinrate = winrateSample > 0
+    ? winrateSuccesses / winrateSample
     : 0;
+
+  const bayes = bayesianWinrate(winrateSuccesses, winrateSample);
+  const wilson = wilsonLowerBound(winrateSuccesses, winrateSample);
+  const fair = winrateSample > 0
+    ? wilson * 0.8 + bayes * 0.15 + rawWinrate * 0.05
+    : 0;
+
+  const reliability = sampleReliability(winrateSample);
 
   const fallbackGross = fallbackGrossFromRecent(stats);
 
@@ -369,68 +517,80 @@ export function refreshStats(stats) {
     ? safeNumber(stats.grossLossR, 0)
     : fallbackGross.grossLossR;
 
-  const avgR = completed > 0 ? totalR / completed : 0;
-  const avgPnlPct = completed > 0 ? safeNumber(stats.totalPnlPct, 0) / completed : 0;
+  const avgR = weightedCompleted > 0
+    ? totalR / weightedCompleted
+    : 0;
 
-  const avgWinR = wins > 0 ? grossWinR / wins : 0;
-  const avgLossR = losses > 0 ? -grossLossR / losses : 0;
+  const avgPnlPct = weightedCompleted > 0
+    ? safeNumber(stats.totalPnlPct, 0) / weightedCompleted
+    : 0;
+
+  const avgWinR = weightedWins > 0
+    ? grossWinR / weightedWins
+    : 0;
+
+  const avgLossR = weightedLosses > 0
+    ? -grossLossR / weightedLosses
+    : 0;
 
   const profitFactor =
     grossLossR > 0 ? grossWinR / grossLossR :
     grossWinR > 0 ? 99 :
     0;
 
-  const pfNorm = clamp(profitFactor, 0, 5) / 5;
-
-  const directSLPct = completed > 0
-    ? safeNumber(stats.directSLCount, 0) / completed
+  const directSLPct = weightedCompleted > 0
+    ? safeNumber(stats.directSLCount, 0) / weightedCompleted
     : 0;
 
-  const nearTpPct = completed > 0
-    ? safeNumber(stats.nearTpCount, 0) / completed
+  const nearTpPct = weightedCompleted > 0
+    ? safeNumber(stats.nearTpCount, 0) / weightedCompleted
     : 0;
 
-  const reachedHalfRPct = completed > 0
-    ? safeNumber(stats.reachedHalfRCount, 0) / completed
+  const reachedHalfRPct = weightedCompleted > 0
+    ? safeNumber(stats.reachedHalfRCount, 0) / weightedCompleted
     : 0;
 
-  const reachedOneRPct = completed > 0
-    ? safeNumber(stats.reachedOneRCount, 0) / completed
+  const reachedOneRPct = weightedCompleted > 0
+    ? safeNumber(stats.reachedOneRCount, 0) / weightedCompleted
     : 0;
 
-  const gaveBackAfterHalfRPct = completed > 0
-    ? safeNumber(stats.gaveBackAfterHalfRCount, 0) / completed
+  const gaveBackAfterHalfRPct = weightedCompleted > 0
+    ? safeNumber(stats.gaveBackAfterHalfRCount, 0) / weightedCompleted
     : 0;
 
-  const gaveBackAfterOneRPct = completed > 0
-    ? safeNumber(stats.gaveBackAfterOneRCount, 0) / completed
+  const gaveBackAfterOneRPct = weightedCompleted > 0
+    ? safeNumber(stats.gaveBackAfterOneRCount, 0) / weightedCompleted
     : 0;
 
-  const nearTpThenLossPct = completed > 0
-    ? safeNumber(stats.nearTpThenLossCount, 0) / completed
+  const nearTpThenLossPct = weightedCompleted > 0
+    ? safeNumber(stats.nearTpThenLossCount, 0) / weightedCompleted
     : 0;
 
-  const beWouldExitPct = completed > 0
-    ? safeNumber(stats.beWouldExitCount, 0) / completed
+  const beWouldExitPct = weightedCompleted > 0
+    ? safeNumber(stats.beWouldExitCount, 0) / weightedCompleted
     : 0;
 
-  const avgCostR = completed > 0
-    ? safeNumber(stats.totalCostR, 0) / completed
+  const avgCostR = weightedCompleted > 0
+    ? safeNumber(stats.totalCostR, 0) / weightedCompleted
     : 0;
 
-  const balancedScore =
-    fair * 100 +
-    avgR * 25 +
-    sampleReliability * 20 +
-    pfNorm * 10 +
-    nearTpPct * 4 +
-    reachedOneRPct * 4 -
-    directSLPct * 25 -
-    nearTpThenLossPct * 8 -
-    Math.max(0, avgCostR) * 8;
+  const balancedScore = buildBalancedScore({
+    fair,
+    avgR,
+    totalR,
+    sampleRel: reliability,
+    profitFactor,
+    nearTpPct,
+    reachedOneRPct,
+    directSLPct,
+    nearTpThenLossPct,
+    gaveBackAfterOneRPct,
+    avgCostR
+  });
 
   Object.assign(stats, {
-    completed: round4(completed),
+    completed: round4(weightedCompleted),
+    winrateSample: round4(winrateSample),
 
     grossWinR: round4(grossWinR),
     grossLossR: round4(grossLossR),
@@ -439,8 +599,9 @@ export function refreshStats(stats) {
     bayesianWinrate: round4(bayes),
     wilsonLowerBound: round4(wilson),
     fairWinrate: round4(fair),
+    sampleAdjustedWinrate: round4(fair),
 
-    sampleReliability: round4(sampleReliability),
+    sampleReliability: round4(reliability),
 
     avgR: round4(avgR),
     avgPnlPct: round4(avgPnlPct),
@@ -468,6 +629,30 @@ export function refreshStats(stats) {
   return stats;
 }
 
+function sortById(a, b) {
+  return String(a.microFamilyId || '').localeCompare(String(b.microFamilyId || ''));
+}
+
+function compareWinrate(a, b) {
+  return (
+    b.fairWinrate - a.fairWinrate ||
+    b.wilsonLowerBound - a.wilsonLowerBound ||
+    b.bayesianWinrate - a.bayesianWinrate ||
+    b.winrate - a.winrate ||
+    b.winrateSample - a.winrateSample ||
+    b.totalR - a.totalR ||
+    b.avgR - a.avgR ||
+    sortById(a, b)
+  );
+}
+
+function compareBalanced(a, b) {
+  return (
+    b.balancedScore - a.balancedScore ||
+    compareWinrate(a, b)
+  );
+}
+
 export function rankMicros(micros = {}, mode = 'balanced') {
   const rows = Object.values(micros || {})
     .filter(Boolean)
@@ -475,52 +660,41 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
   const sorted = [...rows].sort((a, b) => {
     if (mode === 'winrate') {
-      return (
-        b.fairWinrate - a.fairWinrate ||
-        b.completed - a.completed ||
-        b.avgR - a.avgR ||
-        b.totalR - a.totalR
-      );
+      return compareWinrate(a, b);
     }
 
     if (mode === 'totalR') {
       return (
         b.totalR - a.totalR ||
-        b.fairWinrate - a.fairWinrate ||
-        b.completed - a.completed
+        compareWinrate(a, b)
       );
     }
 
     if (mode === 'avgR') {
       return (
         b.avgR - a.avgR ||
-        b.completed - a.completed ||
-        b.fairWinrate - a.fairWinrate
+        b.winrateSample - a.winrateSample ||
+        compareWinrate(a, b)
       );
     }
 
     if (mode === 'directSL') {
       return (
         a.directSLPct - b.directSLPct ||
-        b.completed - a.completed ||
-        b.balancedScore - a.balancedScore
+        b.winrateSample - a.winrateSample ||
+        compareBalanced(a, b)
       );
     }
 
     if (mode === 'observed') {
       return (
         b.seen - a.seen ||
-        b.completed - a.completed ||
-        b.balancedScore - a.balancedScore
+        b.winrateSample - a.winrateSample ||
+        compareBalanced(a, b)
       );
     }
 
-    return (
-      b.balancedScore - a.balancedScore ||
-      b.fairWinrate - a.fairWinrate ||
-      b.completed - a.completed ||
-      b.totalR - a.totalR
-    );
+    return compareBalanced(a, b);
   });
 
   return sorted.map((row, index) => ({
