@@ -1,13 +1,16 @@
 // ================= FILE: src/market/indicators.js =================
 
-import { safeNumber } from '../utils.js';
+import {
+  safeNumber,
+  sideToTradeSide
+} from '../utils.js';
 
 function normalizeCandleTs(value) {
   const ts = safeNumber(value, 0);
 
   if (ts <= 0) return 0;
 
-  // Bitget geeft meestal ms terug. Als het seconds zijn: omzetten.
+  // Bitget geeft meestal milliseconds terug. Als het seconds zijn: omzetten.
   return ts < 10_000_000_000 ? ts * 1000 : ts;
 }
 
@@ -24,6 +27,7 @@ export function parseBitgetCandle(row) {
 
   if (![ts, open, high, low, close].every(Number.isFinite)) return null;
   if (ts <= 0 || open <= 0 || high <= 0 || low <= 0 || close <= 0) return null;
+  if (high < low) return null;
 
   return {
     ts,
@@ -87,6 +91,7 @@ export function candleDirection(candle) {
 
 export function calculateRsi(candles, period = 14) {
   const rows = Array.isArray(candles) ? candles : [];
+
   const closes = rows
     .map((candle) => safeNumber(candle?.close, NaN))
     .filter(Number.isFinite);
@@ -134,7 +139,7 @@ export function calculateAtrPct(candles, period = 14) {
 
   if (rows.length < p + 1) return 0;
 
-  const trs = [];
+  const trueRanges = [];
 
   for (let i = 1; i < rows.length; i += 1) {
     const high = safeNumber(rows[i]?.high, 0);
@@ -143,7 +148,7 @@ export function calculateAtrPct(candles, period = 14) {
 
     if (high <= 0 || low <= 0 || prevClose <= 0) continue;
 
-    trs.push(
+    trueRanges.push(
       Math.max(
         high - low,
         Math.abs(high - prevClose),
@@ -152,9 +157,9 @@ export function calculateAtrPct(candles, period = 14) {
     );
   }
 
-  if (trs.length === 0) return 0;
+  if (trueRanges.length === 0) return 0;
 
-  const atr = trs.reduce((sum, value) => sum + value, 0) / trs.length;
+  const atr = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
   const price = safeNumber(rows.at(-1)?.close, 0);
 
   return price > 0 ? atr / price : 0;
@@ -199,8 +204,13 @@ export function getRecentRange(candles, lookback = 24) {
     };
   }
 
-  const highs = rows.map((row) => safeNumber(row?.high, 0)).filter((n) => n > 0);
-  const lows = rows.map((row) => safeNumber(row?.low, 0)).filter((n) => n > 0);
+  const highs = rows
+    .map((row) => safeNumber(row?.high, 0))
+    .filter((n) => n > 0);
+
+  const lows = rows
+    .map((row) => safeNumber(row?.low, 0))
+    .filter((n) => n > 0);
 
   if (!highs.length || !lows.length) {
     return {
@@ -224,7 +234,8 @@ export function getRecentRange(candles, lookback = 24) {
 }
 
 export function calcMovePct(candles, lookback = 8) {
-  const rows = Array.isArray(candles) ? candles.slice(-lookback) : [];
+  const lb = Math.max(2, Math.floor(Number(lookback) || 8));
+  const rows = Array.isArray(candles) ? candles.slice(-lb) : [];
 
   if (rows.length < 2) return 0;
 
@@ -242,7 +253,10 @@ export function calcVolumeExpansion(candles, lookback = 20) {
 
   if (rows.length < 6) return 1;
 
-  const last = safeNumber(rows.at(-1)?.quoteVolume || rows.at(-1)?.volume, 0);
+  const last = safeNumber(
+    rows.at(-1)?.quoteVolume || rows.at(-1)?.volume,
+    0
+  );
 
   const previous = rows
     .slice(0, -1)
@@ -256,17 +270,23 @@ export function calcVolumeExpansion(candles, lookback = 20) {
   return avg > 0 ? Number((last / avg).toFixed(3)) : 1;
 }
 
-export function classifyFlow({ side, change1h, change24h, candles15m }) {
-  const s = String(side || '').toLowerCase();
+export function classifyFlow({
+  side,
+  change1h,
+  change24h,
+  candles15m
+} = {}) {
+  const tradeSide = sideToTradeSide(side);
+
+  if (tradeSide === 'UNKNOWN') return 'NEUTRAL';
+
   const ch1 = safeNumber(change1h, 0);
   const ch24 = safeNumber(change24h, 0);
   const shortMovePct = calcMovePct(candles15m, 8);
   const volumeExpansion = calcVolumeExpansion(candles15m, 20);
 
-  const wantsLong = s === 'bull' || s === 'long';
-  const wantsShort = s === 'bear' || s === 'short';
-
-  if (!wantsLong && !wantsShort) return 'NEUTRAL';
+  const wantsLong = tradeSide === 'LONG';
+  const wantsShort = tradeSide === 'SHORT';
 
   const directional = wantsLong
     ? ch1 > 0 && shortMovePct > 0
@@ -282,7 +302,7 @@ export function classifyFlow({ side, change1h, change24h, candles15m }) {
   if (directional && strong) return 'IMPULSE';
   if (directional) return 'BUILDING';
 
-  return 'NEUTRAL';
+  return wantsShort || wantsLong ? 'NEUTRAL' : 'NEUTRAL';
 }
 
 export function classifyVolatilityRegime(candles, atrPct = null) {
