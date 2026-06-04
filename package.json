@@ -8,12 +8,15 @@
     "scanner:run": "node scripts/runScanner.js",
     "trade:run": "node scripts/runTradeSystem.js",
     "analyze:freeze": "node scripts/freezeWeekly.js",
-    "analyze:activate": "node scripts/activateRotation.js"
+    "analyze:activate": "node scripts/activateRotation.js",
+    "trace:scanner": "node --trace-deprecation scripts/runScanner.js",
+    "trace:trade": "node --trace-deprecation scripts/runTradeSystem.js",
+    "check:node": "node -v"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   }
 }
