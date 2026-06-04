@@ -13,6 +13,7 @@ import {
   normalizeBaseSymbol,
   normalizeContractSymbol
 } from '../../src/utils.js';
+import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET');
@@ -42,8 +43,62 @@ function round(value, decimals = 4) {
   return Number(num(value, 0).toFixed(decimals));
 }
 
-function normalizeDashboardSide(side) {
-  const tradeSide = sideToTradeSide(side);
+function upper(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .flatMap((value) => {
+        if (Array.isArray(value)) return value;
+
+        return String(value || '')
+          .split(/[\s,]+/g)
+          .map((part) => part.trim());
+      })
+      .filter(Boolean)
+  )];
+}
+
+function inferTradeSide(row = {}) {
+  const direct = sideToTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction
+  );
+
+  if (direct !== 'UNKNOWN') return direct;
+
+  const rawSide = upper(row.side);
+
+  if (['BULL', 'LONG', 'BUY'].includes(rawSide)) return 'LONG';
+  if (['BEAR', 'SHORT', 'SELL'].includes(rawSide)) return 'SHORT';
+
+  const familyId = upper(row.familyId);
+  const macroFamilyId = upper(row.macroFamilyId);
+  const microFamilyId = upper(row.microFamilyId);
+
+  if (familyId.startsWith('LONG_')) return 'LONG';
+  if (familyId.startsWith('SHORT_')) return 'SHORT';
+
+  if (macroFamilyId.includes('MICRO_LONG_') || macroFamilyId.startsWith('LONG_')) {
+    return 'LONG';
+  }
+
+  if (macroFamilyId.includes('MICRO_SHORT_') || macroFamilyId.startsWith('SHORT_')) {
+    return 'SHORT';
+  }
+
+  if (microFamilyId.includes('MICRO_LONG_')) return 'LONG';
+  if (microFamilyId.includes('MICRO_SHORT_')) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function normalizeDashboardSide(row = {}) {
+  const tradeSide = inferTradeSide(row);
 
   if (tradeSide === 'LONG') return 'bull';
   if (tradeSide === 'SHORT') return 'bear';
@@ -59,6 +114,97 @@ function calcAgeSec(ts) {
   return Math.max(0, Math.floor((Date.now() - value) / 1000));
 }
 
+function calcRiskDistance(entry, initialSl) {
+  const e = num(entry, 0);
+  const sl = num(initialSl, 0);
+
+  if (e <= 0 || sl <= 0) return 0;
+
+  return Math.abs(e - sl);
+}
+
+function calcRewardDistance(entry, tp) {
+  const e = num(entry, 0);
+  const target = num(tp, 0);
+
+  if (e <= 0 || target <= 0) return 0;
+
+  return Math.abs(target - e);
+}
+
+function calcCurrentR({
+  side,
+  entry,
+  initialSl,
+  currentPrice,
+  fallback = 0
+} = {}) {
+  const e = num(entry, 0);
+  const sl = num(initialSl, 0);
+  const price = num(currentPrice, 0);
+  const riskDistance = calcRiskDistance(e, sl);
+
+  if (e <= 0 || sl <= 0 || price <= 0 || riskDistance <= 0) {
+    return num(fallback, 0);
+  }
+
+  const tradeSide = inferTradeSide({ side });
+
+  if (tradeSide === 'LONG') {
+    return (price - e) / riskDistance;
+  }
+
+  if (tradeSide === 'SHORT') {
+    return (e - price) / riskDistance;
+  }
+
+  return num(fallback, 0);
+}
+
+function getFamilyId(position = {}) {
+  return (
+    position.familyId ||
+    position.family ||
+    position.baseFamilyId ||
+    null
+  );
+}
+
+function getMacroFamilyId(position = {}) {
+  return (
+    position.macroFamilyId ||
+    position.parentMicroFamilyId ||
+    position.parentFamilyId ||
+    position.macroId ||
+    position.macroFamily ||
+    position.originalMicroFamilyId ||
+    null
+  );
+}
+
+function getMicroFamilyId(position = {}) {
+  return (
+    position.microFamilyId ||
+    position.liveMicroFamilyId ||
+    position.realMicroFamilyId ||
+    position.executionMicroFamilyId ||
+    null
+  );
+}
+
+function normalizeDefinitionParts(value) {
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === 'string') {
+    return value
+      .split('|')
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
 function normalizePosition(position = {}) {
   const symbol = normalizeBaseSymbol(
     position.symbol ||
@@ -72,12 +218,35 @@ function normalizePosition(position = {}) {
     symbol
   );
 
-  const side = normalizeDashboardSide(position.side);
+  const microFamilyId = getMicroFamilyId(position);
+  const macroFamilyId = getMacroFamilyId(position) || microFamilyId;
+  const familyId = getFamilyId(position);
+
+  const tradeSide = inferTradeSide({
+    ...position,
+    microFamilyId,
+    macroFamilyId,
+    familyId
+  });
+
+  const side = normalizeDashboardSide({
+    ...position,
+    tradeSide,
+    microFamilyId,
+    macroFamilyId,
+    familyId
+  });
 
   const entry = num(position.entry ?? position.entryPrice, 0);
   const sl = num(position.sl ?? position.stopLoss, 0);
-  const initialSl = num(position.initialSl ?? position.initialStopLoss ?? sl, sl);
+  const initialSl = num(
+    position.initialSl ??
+    position.initialStopLoss ??
+    sl,
+    sl
+  );
   const tp = num(position.tp ?? position.takeProfit, 0);
+
   const currentPrice = num(
     position.lastPrice ??
     position.currentPrice ??
@@ -86,18 +255,21 @@ function normalizePosition(position = {}) {
     null
   );
 
-  const riskDistance = entry > 0 && initialSl > 0
-    ? Math.abs(entry - initialSl)
-    : 0;
-
-  const rewardDistance = entry > 0 && tp > 0
-    ? Math.abs(tp - entry)
-    : 0;
+  const riskDistance = calcRiskDistance(entry, initialSl);
+  const rewardDistance = calcRewardDistance(entry, tp);
 
   const rr = num(
     position.rr,
     riskDistance > 0 ? rewardDistance / riskDistance : 0
   );
+
+  const currentR = calcCurrentR({
+    side: tradeSide,
+    entry,
+    initialSl,
+    currentPrice,
+    fallback: position.currentR
+  });
 
   const openedAt = num(
     position.openedAt ??
@@ -106,9 +278,17 @@ function normalizePosition(position = {}) {
     null
   );
 
-  const currentR = num(position.currentR, 0);
-  const mfeR = num(position.mfeR, 0);
-  const maeR = num(position.maeR, 0);
+  const macroDefinitionParts = normalizeDefinitionParts(
+    position.macroDefinitionParts ||
+    position.parentDefinitionParts ||
+    position.macroDefinition
+  );
+
+  const definitionParts = normalizeDefinitionParts(
+    position.definitionParts ||
+    position.microDefinitionParts ||
+    position.definition
+  );
 
   return {
     ...position,
@@ -118,6 +298,7 @@ function normalizePosition(position = {}) {
     contractSymbol,
 
     side,
+    tradeSide,
 
     entry,
     sl,
@@ -127,26 +308,36 @@ function normalizePosition(position = {}) {
 
     currentPrice,
     currentR: round(currentR, 4),
-    mfeR: round(mfeR, 4),
-    maeR: round(maeR, 4),
+    mfeR: round(position.mfeR, 4),
+    maeR: round(position.maeR, 4),
 
     riskPct: round(position.riskPct, 6),
     riskFraction: round(position.riskFraction, 6),
 
-    familyId: position.familyId || null,
-    microFamilyId: position.microFamilyId || null,
+    familyId,
+    macroFamilyId,
+    microFamilyId,
+
+    macroDefinition: position.macroDefinition || null,
+    macroDefinitionParts,
+
+    definition: position.definition || null,
+    definitionParts,
 
     activeRotationId: position.activeRotationId || null,
 
     openedAt,
     ageSec: calcAgeSec(openedAt),
 
-    riskDistance,
-    rewardDistance,
+    riskDistance: round(riskDistance, 10),
+    rewardDistance: round(rewardDistance, 10),
 
     ticksObserved: num(position.ticksObserved, 0),
     favorableTicks: num(position.favorableTicks, 0),
     adverseTicks: num(position.adverseTicks, 0),
+
+    priceFetchFailures: num(position.priceFetchFailures, 0),
+    lastPriceFetchFailedAt: position.lastPriceFetchFailedAt || null,
 
     reachedHalfR: Boolean(position.reachedHalfR),
     reachedOneR: Boolean(position.reachedOneR),
@@ -165,18 +356,31 @@ function normalizePosition(position = {}) {
     trailLiveApplied: Boolean(position.trailLiveApplied),
     slManagementSource: position.slManagementSource || null,
 
-    // Backwards-compatible namen voor admin.html / oude dashboard code.
     breakEvenArmed: Boolean(position.beArmed || position.breakEvenArmed),
     trailingActive: Boolean(
       position.trailLiveApplied ||
       position.trailingActive ||
-      String(position.slManagementSource || '').toUpperCase() === 'TRAIL'
+      upper(position.slManagementSource) === 'TRAIL'
     )
   };
 }
 
 function sum(rows, selector) {
   return rows.reduce((total, row) => total + num(selector(row), 0), 0);
+}
+
+function average(rows, selector) {
+  if (!rows.length) return 0;
+
+  return sum(rows, selector) / rows.length;
+}
+
+function countBy(rows, selector) {
+  return rows.reduce((acc, row) => {
+    const key = selector(row) || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 }
 
 function buildPositionStats(positions = []) {
@@ -195,6 +399,14 @@ function buildPositionStats(positions = []) {
   const longRiskFraction = sum(bull, (p) => p.riskFraction);
   const shortRiskFraction = sum(bear, (p) => p.riskFraction);
 
+  const uniqueMacroFamilies = uniqueStrings(
+    positions.map((position) => position.macroFamilyId)
+  );
+
+  const uniqueMicroFamilies = uniqueStrings(
+    positions.map((position) => position.microFamilyId)
+  );
+
   return {
     openPositions: positions.length,
 
@@ -210,13 +422,13 @@ function buildPositionStats(positions = []) {
     flatPositions: positions.length - profitable.length - losing.length,
 
     totalCurrentR: round(totalCurrentR, 4),
-    avgCurrentR: positions.length ? round(totalCurrentR / positions.length, 4) : 0,
+    avgCurrentR: round(average(positions, (p) => p.currentR), 4),
 
     totalMfeR: round(totalMfeR, 4),
-    avgMfeR: positions.length ? round(totalMfeR / positions.length, 4) : 0,
+    avgMfeR: round(average(positions, (p) => p.mfeR), 4),
 
     totalMaeR: round(totalMaeR, 4),
-    avgMaeR: positions.length ? round(totalMaeR / positions.length, 4) : 0,
+    avgMaeR: round(average(positions, (p) => p.maeR), 4),
 
     totalRiskFraction: round(totalRiskFraction, 6),
     longRiskFraction: round(longRiskFraction, 6),
@@ -234,7 +446,14 @@ function buildPositionStats(positions = []) {
 
     gaveBackAfterHalfR: positions.filter((p) => p.gaveBackAfterHalfR).length,
     gaveBackAfterOneR: positions.filter((p) => p.gaveBackAfterOneR).length,
-    nearTpThenLoss: positions.filter((p) => p.nearTpThenLoss).length
+    nearTpThenLoss: positions.filter((p) => p.nearTpThenLoss).length,
+
+    uniqueMacroFamilies: uniqueMacroFamilies.length,
+    uniqueMicroFamilies: uniqueMicroFamilies.length,
+
+    byMacroFamily: countBy(positions, (p) => p.macroFamilyId),
+    byMicroFamily: countBy(positions, (p) => p.microFamilyId),
+    bySide: countBy(positions, (p) => p.side)
   };
 }
 
@@ -282,21 +501,181 @@ function normalizeLastProcessed(lastProcessed) {
   };
 }
 
+function normalizeAction(action = {}) {
+  const microFamilyId = getMicroFamilyId(action);
+  const macroFamilyId = getMacroFamilyId(action) || microFamilyId;
+  const familyId = getFamilyId(action);
+
+  const tradeSide = inferTradeSide({
+    ...action,
+    microFamilyId,
+    macroFamilyId,
+    familyId
+  });
+
+  return {
+    ...action,
+
+    side: normalizeDashboardSide({
+      ...action,
+      tradeSide,
+      microFamilyId,
+      macroFamilyId,
+      familyId
+    }),
+    tradeSide,
+
+    familyId,
+    macroFamilyId,
+    microFamilyId,
+
+    scannerScore: action.scannerScore ?? action.moveScore ?? null,
+
+    confluence: round(action.confluence, 4),
+    sniperScore: round(action.sniperScore, 4),
+
+    rr: round(action.rr, 4),
+    spreadPct: round(action.spreadPct, 6),
+    depthMinUsd1p: round(action.depthMinUsd1p, 2),
+
+    liveEligible: Boolean(action.liveEligible),
+    shadowOnly: Boolean(action.shadowOnly)
+  };
+}
+
 function normalizeRunMeta(runMeta) {
   if (!runMeta || typeof runMeta !== 'object') return null;
 
+  const actions = Array.isArray(runMeta.actions)
+    ? runMeta.actions.map(normalizeAction)
+    : [];
+
+  const entryActions = actions.filter((action) => action.action === 'ENTRY');
+  const waitActions = actions.filter((action) => action.action === 'WAIT');
+
+  const actionCounts = runMeta.actionCounts || actions.reduce((acc, action) => {
+    const key = action.action || action.type || 'UNKNOWN';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
   return {
     ...runMeta,
-    actionCounts: runMeta.actionCounts || {},
-    actionsCount: Array.isArray(runMeta.actions)
-      ? runMeta.actions.length
-      : num(runMeta.actionsCount, 0),
+
+    actionCounts,
+
+    actions,
+    actionsCount: actions.length || num(runMeta.actionsCount, 0),
+
+    entriesCount: entryActions.length,
+    waitsCount: waitActions.length,
+
     realExitsCount: Array.isArray(runMeta.realExits)
       ? runMeta.realExits.length
       : num(runMeta.realExitsCount, 0),
+
     shadowExitsCount: Array.isArray(runMeta.shadowExits)
       ? runMeta.shadowExits.length
-      : num(runMeta.shadowExitsCount, 0)
+      : num(runMeta.shadowExitsCount, 0),
+
+    macroFamiliesSeen: uniqueStrings(
+      actions.map((action) => action.macroFamilyId)
+    ).length,
+
+    microFamiliesSeen: uniqueStrings(
+      actions.map((action) => action.microFamilyId)
+    ).length
+  };
+}
+
+function idsFromRotation(rotation = {}) {
+  const rows = Array.isArray(rotation.microFamilies)
+    ? rotation.microFamilies
+    : [];
+
+  const microFamilyIds = uniqueStrings([
+    rotation.microFamilyIds,
+    rotation.activeMicroFamilyIds,
+    rotation.ids,
+    rows.map((row) => row?.microFamilyId)
+  ]);
+
+  const macroFamilyIds = uniqueStrings([
+    rotation.macroFamilyIds,
+    rotation.activeMacroFamilyIds,
+    rows.map((row) => (
+      row?.macroFamilyId ||
+      row?.parentMicroFamilyId ||
+      row?.parentFamilyId ||
+      row?.microFamilyId
+    ))
+  ]);
+
+  return {
+    microFamilyIds,
+    macroFamilyIds: macroFamilyIds.length
+      ? macroFamilyIds
+      : microFamilyIds
+  };
+}
+
+function normalizeActiveRotation(activeRotation) {
+  if (!activeRotation) {
+    return {
+      rotationId: null,
+      activeMicroFamilyIds: [],
+      activeMacroFamilyIds: [],
+      activeMicroCount: 0,
+      activeMacroCount: 0,
+      raw: null
+    };
+  }
+
+  const ids = idsFromRotation(activeRotation);
+
+  return {
+    rotationId: activeRotation.rotationId || null,
+
+    activeMicroFamilyIds: ids.microFamilyIds,
+    activeMacroFamilyIds: ids.macroFamilyIds,
+
+    activeMicroCount: ids.microFamilyIds.length,
+    activeMacroCount: ids.macroFamilyIds.length,
+
+    sourceWeekKey: activeRotation.sourceWeekKey || null,
+    activeWeekKey: activeRotation.activeWeekKey || null,
+    mode: activeRotation.mode || null,
+    source: activeRotation.source || null,
+
+    raw: activeRotation
+  };
+}
+
+function buildRotationMatchStats(positions = [], activeRotationMeta = {}) {
+  const activeMicroSet = new Set(activeRotationMeta.activeMicroFamilyIds || []);
+  const activeMacroSet = new Set(activeRotationMeta.activeMacroFamilyIds || []);
+
+  const activeMicroPositions = positions.filter((position) => (
+    position.microFamilyId &&
+    activeMicroSet.has(position.microFamilyId)
+  ));
+
+  const activeMacroPositions = positions.filter((position) => (
+    position.macroFamilyId &&
+    activeMacroSet.has(position.macroFamilyId)
+  ));
+
+  const outsideRotation = positions.filter((position) => (
+    !activeMicroSet.has(position.microFamilyId) &&
+    !activeMacroSet.has(position.macroFamilyId)
+  ));
+
+  return {
+    activeMicroPositions: activeMicroPositions.length,
+    activeMacroPositions: activeMacroPositions.length,
+    outsideRotationPositions: outsideRotation.length,
+
+    outsideRotationSymbols: outsideRotation.map((position) => position.symbol).filter(Boolean)
   };
 }
 
@@ -315,12 +694,14 @@ export default async function handler(req, res) {
       rawPositions,
       runMetaRaw,
       lastProcessedRaw,
-      latestScan
+      latestScan,
+      activeRotationRaw
     ] = await Promise.all([
       getOpenPositions(),
       getJson(durable, KEYS.trade.runMeta, null),
       getJson(durable, KEYS.trade.lastProcessedSnapshot, null),
-      getJson(volatile, KEYS.scan.latest, null)
+      getJson(volatile, KEYS.scan.latest, null),
+      getActiveRotation().catch(() => null)
     ]);
 
     const positions = asArray(rawPositions).map(normalizePosition);
@@ -336,6 +717,12 @@ export default async function handler(req, res) {
       Boolean(lastProcessed.snapshotId) &&
       latestScannerSnapshotId === lastProcessed.snapshotId;
 
+    const activeRotation = normalizeActiveRotation(activeRotationRaw);
+    const rotationMatchStats = buildRotationMatchStats(
+      positions,
+      activeRotation
+    );
+
     return res.status(200).json({
       ok: true,
 
@@ -344,6 +731,7 @@ export default async function handler(req, res) {
       positionsCount: positions.length,
 
       stats,
+      rotationMatchStats,
 
       runMeta,
       lastProcessed,
@@ -351,6 +739,13 @@ export default async function handler(req, res) {
       latestScan,
       latestScannerSnapshotId,
       scannerAndTradeInSync,
+
+      activeRotationId: activeRotation.rotationId,
+      activeMicroFamilyIds: activeRotation.activeMicroFamilyIds,
+      activeMacroFamilyIds: activeRotation.activeMacroFamilyIds,
+      activeMicroCount: activeRotation.activeMicroCount,
+      activeMacroCount: activeRotation.activeMacroCount,
+      activeRotation,
 
       serverTs: Date.now()
     });
