@@ -84,7 +84,7 @@ function coarseFlow(flow) {
   const f = String(flow || 'NEUTRAL').toUpperCase();
 
   if (['TREND', 'IMPULSE'].includes(f)) return 'TREND';
-  if (['BUILDING'].includes(f)) return 'BUILDING';
+  if (f === 'BUILDING') return 'BUILDING';
 
   return 'NEUTRAL';
 }
@@ -92,8 +92,8 @@ function coarseFlow(flow) {
 function coarseScannerReason(reason) {
   const r = String(reason || 'UNKNOWN').toUpperCase();
 
-  if (r.includes('PULLBACK')) return 'PULLBACK';
   if (r.includes('RETEST')) return 'RETEST';
+  if (r.includes('PULLBACK')) return 'PULLBACK';
   if (r.includes('BREAKOUT')) return 'BREAKOUT';
   if (r.includes('VOLUME')) return 'VOLUME';
   if (r.includes('MOMENTUM')) return 'MOMENTUM';
@@ -131,22 +131,23 @@ export function classifyMicroFamily(metrics = {}) {
   const tradeSide = sideToTradeSide(metrics.side);
   const normalizedSide = normalizeSide(metrics.side);
   const obRelation = normalizeObRelation(metrics);
+  const btcRel = btcRelation(metrics.side, metrics.btcState);
+  const regime = coarseRegime(metrics.regime);
+  const flow = coarseFlow(metrics.flow);
+  const scannerReason = coarseScannerReason(metrics.scannerReason);
 
   const definitionParts = [
     `schema=${CONFIG.analyze.schema}`,
     `side=${normalizedSide}`,
     `family=${familyId}`,
 
-    // RSI blijft exact genoeg voor edge-detectie, maar family gebruikt coarse RSI.
     `rsiZone=${String(metrics.rsiZone || 'UNKNOWN').toUpperCase()}`,
 
-    // Flow/regime/BTC worden bewust grover gemaakt om sample-size te houden.
-    `flow=${coarseFlow(metrics.flow)}`,
+    `flow=${flow}`,
     `obRelation=${obRelation}`,
-    `btcRelation=${coarseBtcState(metrics.side, metrics.btcState)}`,
-    `regime=${coarseRegime(metrics.regime)}`,
+    `btcRelation=${btcRel}`,
+    `regime=${regime}`,
 
-    // Continue scores horen niet exact in de identity.
     `confluenceTier=${tier(metrics.confluence)}`,
     `sniperTier=${tier(metrics.sniperScore)}`,
 
@@ -155,26 +156,31 @@ export function classifyMicroFamily(metrics = {}) {
     `depthBucket=${bucketDepth(metrics.depthMinUsd1p)}`,
     `fundingBucket=${bucketFunding(metrics.fundingRate)}`,
 
-    // Eén ordinaal quality signaal in plaats van losse booleans.
     `entryQuality=${entryQuality(metrics)}`,
-
-    // Fake breakout hoort bijna altijd false te zijn na scanner-filter.
-    // Toch laten staan voor audit als TradeSystem later twijfelgevallen doorlaat.
     `fakeBreakout=${Boolean(metrics.fakeBreakout)}`,
-
-    // Scanner reason grof, niet exact.
-    `scannerReason=${coarseScannerReason(metrics.scannerReason)}`
+    `scannerReason=${scannerReason}`
   ];
 
   const hash = stableHash(definitionParts.join('|'), 8);
+
   const microFamilyId = `MICRO_${tradeSide}_${familyId}_${CONFIG.analyze.schema}_${hash}`;
 
   return {
     familyId,
     microFamilyId,
+
     definition: definitionParts.join(' | '),
     definitionParts,
+
+    side: normalizedSide,
+    tradeSide,
+
     obRelation,
+    btcRelation: btcRel,
+    regime,
+    flow,
+    scannerReason,
+
     spreadBps: Number((safeNumber(metrics.spreadPct, 0) * 10000).toFixed(3))
   };
 }
