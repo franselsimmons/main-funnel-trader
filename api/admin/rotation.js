@@ -11,13 +11,11 @@ import {
 } from '../../src/utils.js';
 import {
   getDurableRedis,
+  getJson,
   setJson
 } from '../../src/redis.js';
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
-import {
-  getRotationDashboard,
-  buildRotationFromWeek
-} from '../../src/analyze/rotationEngine.js';
+import { buildRotationFromWeek } from '../../src/analyze/rotationEngine.js';
 
 const ALLOWED_ACTIONS = [
   'activateBestBalanced',
@@ -40,6 +38,10 @@ const ALLOWED_MODES = new Set([
 ]);
 
 const TRADE_SIDES = new Set(['LONG', 'SHORT']);
+
+const DEFAULT_ACTIVE_ROWS_LIMIT = 100;
+const DEFAULT_NEXT_ROWS_LIMIT = 40;
+const MAX_ROWS_LIMIT = 250;
 
 function now() {
   return Date.now();
@@ -96,6 +98,14 @@ function firstValue(value, fallback = null) {
   if (value === undefined || value === null || value === '') return fallback;
 
   return value;
+}
+
+function toLimit(value, fallback = DEFAULT_ACTIVE_ROWS_LIMIT, max = MAX_ROWS_LIMIT) {
+  const n = Math.floor(Number(value));
+
+  if (!Number.isFinite(n) || n < 1) return fallback;
+
+  return Math.min(n, max);
 }
 
 function normalizeMode(value, fallback = 'balanced') {
@@ -181,8 +191,22 @@ function inferTradeSide(row = {}) {
   if (['BEAR', 'SHORT', 'SELL'].includes(rawSide)) return 'SHORT';
 
   const familyId = String(row.familyId || '').toUpperCase();
-  const macroFamilyId = String(row.macroFamilyId || row.parentMacroFamilyId || row.parentMicroFamilyId || '').toUpperCase();
-  const microFamilyId = String(row.microFamilyId || row.id || '').toUpperCase();
+  const macroFamilyId = String(
+    row.macroFamilyId ||
+    row.parentMacroFamilyId ||
+    row.parentMicroFamilyId ||
+    row.parentFamilyId ||
+    row.macroId ||
+    ''
+  ).toUpperCase();
+
+  const microFamilyId = String(
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.id ||
+    row.key ||
+    ''
+  ).toUpperCase();
 
   if (familyId.startsWith('LONG_')) return 'LONG';
   if (familyId.startsWith('SHORT_')) return 'SHORT';
@@ -199,16 +223,22 @@ function inferTradeSide(row = {}) {
 
   if (
     definition.includes('TRADESIDE=LONG') ||
+    definition.includes('TRADE_SIDE=LONG') ||
     definition.includes('SIDE=BULL') ||
-    definition.includes('SIDE=LONG')
+    definition.includes('SIDE=LONG') ||
+    definition.includes('DIRECTION=LONG') ||
+    definition.includes('DIRECTION=BULL')
   ) {
     return 'LONG';
   }
 
   if (
     definition.includes('TRADESIDE=SHORT') ||
+    definition.includes('TRADE_SIDE=SHORT') ||
     definition.includes('SIDE=BEAR') ||
-    definition.includes('SIDE=SHORT')
+    definition.includes('SIDE=SHORT') ||
+    definition.includes('DIRECTION=SHORT') ||
+    definition.includes('DIRECTION=BEAR')
   ) {
     return 'SHORT';
   }
@@ -262,7 +292,7 @@ function getMacroDefinitionParts(row = {}) {
 }
 
 function normalizeRotationRow(row = {}, index = 0) {
-  const microFamilyId = row.microFamilyId || row.id || row.key || null;
+  const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null;
   const macroFamilyId = getMacroFamilyId({
     ...row,
     microFamilyId
@@ -275,11 +305,10 @@ function normalizeRotationRow(row = {}, index = 0) {
   });
 
   return {
-    ...row,
-
     rank: num(row.rank, index + 1),
 
     microFamilyId,
+    trueMicroFamilyId: microFamilyId,
     familyId: getFamilyId(row),
     macroFamilyId,
 
@@ -294,6 +323,13 @@ function normalizeRotationRow(row = {}, index = 0) {
     }),
     tradeSide,
 
+    schema: row.schema || row.microFamilySchema || null,
+    microFamilySchema: row.microFamilySchema || row.schema || null,
+    version: row.version || null,
+
+    isTrueMicro: row.isTrueMicro === true || row.trueMicro === true,
+    isLegacyMacro: Boolean(row.isLegacyMacro),
+
     seen: num(row.seen, 0),
     observations: num(row.observations, 0),
 
@@ -301,11 +337,17 @@ function normalizeRotationRow(row = {}, index = 0) {
     realCompleted: num(row.realCompleted, 0),
     shadowCompleted: num(row.shadowCompleted, 0),
 
-    winrateSample: round(row.winrateSample, 4),
+    winrateSample: round(row.winrateSample ?? row.completed, 4),
     winrate: round(row.winrate, 4),
     bayesianWinrate: round(row.bayesianWinrate, 4),
     wilsonLowerBound: round(row.wilsonLowerBound, 4),
-    fairWinrate: round(row.fairWinrate, 4),
+    fairWinrate: round(
+      row.fairWinrate ??
+      row.sampleAdjustedWinrate ??
+      row.bayesianWinrate ??
+      row.wilsonLowerBound,
+      4
+    ),
     sampleAdjustedWinrate: round(row.sampleAdjustedWinrate, 4),
     sampleWilsonLowerBound: round(row.sampleWilsonLowerBound ?? row.wilsonLowerBound, 4),
     sampleReliability: round(row.sampleReliability, 4),
@@ -319,6 +361,7 @@ function normalizeRotationRow(row = {}, index = 0) {
 
     directSLPct: round(row.directSLPct, 4),
     nearTpPct: round(row.nearTpPct, 4),
+    reachedHalfRPct: round(row.reachedHalfRPct, 4),
     reachedOneRPct: round(row.reachedOneRPct, 4),
 
     beWouldExitPct: round(row.beWouldExitPct, 4),
@@ -326,9 +369,30 @@ function normalizeRotationRow(row = {}, index = 0) {
     gaveBackAfterOneRPct: round(row.gaveBackAfterOneRPct, 4),
     nearTpThenLossPct: round(row.nearTpThenLossPct, 4),
 
+    totalCostR: round(row.totalCostR, 4),
     avgCostR: round(row.avgCostR, 4),
+
     balancedScore: round(row.balancedScore, 4),
     dashboardBalancedScore: round(row.dashboardBalancedScore ?? row.balancedScore, 4),
+
+    assetClass: row.assetClass || null,
+
+    rsiZone: row.rsiZone || null,
+    rsiCoarse: row.rsiCoarse || null,
+
+    flow: row.flow || null,
+    flowCoarse: row.flowCoarse || null,
+
+    obRelation: row.obRelation || null,
+
+    btcState: row.btcState || null,
+    btcRelation: row.btcRelation || null,
+
+    regime: row.regime || null,
+    regimeCoarse: row.regimeCoarse || null,
+
+    scannerReason: row.scannerReason || null,
+    scannerReasonCoarse: row.scannerReasonCoarse || null,
 
     definitionParts: getDefinitionParts(row),
     definition: row.definition || '',
@@ -336,7 +400,11 @@ function normalizeRotationRow(row = {}, index = 0) {
     macroDefinitionParts: getMacroDefinitionParts(row),
     macroDefinition: row.macroDefinition || row.parentDefinition || '',
 
+    selectedTier: row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || null,
+    rotationEligibilityTier: row.rotationEligibilityTier || row.selectedTier || row.eligibilityTier || null,
+
     manualOnly: Boolean(row.manualOnly),
+
     isMirrorMicroFamily: Boolean(row.isMirrorMicroFamily),
     observationMirror: Boolean(row.observationMirror),
     analysisMirror: Boolean(row.analysisMirror),
@@ -418,43 +486,58 @@ function macroIdsFromRotation(rotation = {}, microFamilyIds = []) {
   return normalizeFamilyIds(microFamilyIds);
 }
 
-function missingSides(rows = []) {
+function missingSides(rows = [], rotation = {}) {
   const activeSides = new Set(
-    rows
-      .map((row) => row.tradeSide)
+    [
+      ...rows.map((row) => row.tradeSide),
+      rotation.bestLong ? 'LONG' : null,
+      rotation.bestShort ? 'SHORT' : null
+    ]
       .filter((side) => TRADE_SIDES.has(side))
   );
 
   return [...TRADE_SIDES].filter((side) => !activeSides.has(side));
 }
 
-function normalizeRotation(rotation = {}, fallback = {}) {
+function normalizeRotation(rotation = {}, fallback = {}, options = {}) {
   const base = {
     ...fallback,
     ...(rotation || {})
   };
 
-  const microFamilies = Array.isArray(base.microFamilies)
-    ? base.microFamilies.map((row, index) => normalizeRotationRow(row, index))
+  const rowLimit = toLimit(
+    options.rowLimit,
+    DEFAULT_ACTIVE_ROWS_LIMIT,
+    MAX_ROWS_LIMIT
+  );
+
+  const rawRows = Array.isArray(base.microFamilies)
+    ? base.microFamilies
     : [];
+
+  const microFamilies = rawRows
+    .slice(0, rowLimit)
+    .map((row, index) => normalizeRotationRow(row, index));
 
   const explicitMicroFamilyIds = normalizeFamilyIds(
     microIdsFromRotation({
       ...base,
-      microFamilies
+      microFamilies: rawRows
     }),
-    microFamilies.map((row) => row.microFamilyId)
+    rawRows.map((row) => row?.microFamilyId)
   );
 
   const explicitMacroFamilyIds = normalizeFamilyIds(
     macroIdsFromRotation({
       ...base,
-      microFamilies
+      microFamilies: rawRows
     }, explicitMicroFamilyIds),
-    microFamilies.map((row) => row.macroFamilyId)
+    rawRows.map((row) => getMacroFamilyId(row))
   );
 
-  const indexes = buildSelectionIndexes(microFamilies);
+  const indexes = buildSelectionIndexes(
+    rawRows.map((row, index) => normalizeRotationRow(row, index))
+  );
 
   const microFamilyIds = indexes.microFamilyIds.length
     ? indexes.microFamilyIds
@@ -472,8 +555,54 @@ function normalizeRotation(rotation = {}, fallback = {}) {
     microFamilies.find((row) => row.tradeSide === 'SHORT') ||
     (base.bestShort ? normalizeRotationRow(base.bestShort, 0) : null);
 
+  const empty = base.empty ?? microFamilyIds.length === 0;
+
   return {
-    ...base,
+    rotationId: base.rotationId || null,
+    source: base.source || null,
+    mode: base.mode || null,
+    sideMode: base.sideMode || null,
+
+    sourceWeekKey: base.sourceWeekKey || null,
+    activeWeekKey: base.activeWeekKey || null,
+
+    generatedAt: base.generatedAt || null,
+    activatedAt: base.activatedAt || null,
+    strategyVersion: base.strategyVersion || CONFIG.strategyVersion || null,
+
+    schema: base.schema || null,
+    macroSchema: base.macroSchema || null,
+    microSchema: base.microSchema || null,
+
+    trueMicroOnly: base.trueMicroOnly !== false,
+    usedLegacyFallback: Boolean(base.usedLegacyFallback),
+    usedSoftFallback: Boolean(base.usedSoftFallback),
+    usedObservationFallback: Boolean(base.usedObservationFallback),
+
+    selectedTier: base.selectedTier || null,
+    requestedTradeSide: base.requestedTradeSide || null,
+    preservedTradeSide: base.preservedTradeSide || null,
+    replacedSide: base.replacedSide || null,
+    preservedSide: base.preservedSide || null,
+
+    minWeightedCompleted: base.minWeightedCompleted ?? null,
+    topNPerSide: base.topNPerSide ?? null,
+    maxPerMacroFamily: base.maxPerMacroFamily ?? null,
+
+    eligibleCount: base.eligibleCount ?? null,
+    softEligibleCount: base.softEligibleCount ?? null,
+    observationEligibleCount: base.observationEligibleCount ?? null,
+    rankedCount: base.rankedCount ?? null,
+    allRankedCount: base.allRankedCount ?? null,
+    microCount: microFamilyIds.length || base.microCount || rawRows.length || 0,
+    macroCount: macroFamilyIds.length || base.macroCount || 0,
+    trueMicroCount: base.trueMicroCount ?? null,
+    legacyMacroCount: base.legacyMacroCount ?? null,
+
+    empty,
+    emptyReason: empty
+      ? base.emptyReason || 'NO_ACTIVE_MICRO_FAMILIES'
+      : base.emptyReason || null,
 
     microFamilyIds,
     activeMicroFamilyIds: microFamilyIds,
@@ -482,58 +611,81 @@ function normalizeRotation(rotation = {}, fallback = {}) {
     macroFamilyIds,
     activeMacroFamilyIds: macroFamilyIds,
 
-    microToMacroFamilyId: indexes.microToMacroFamilyId || base.microToMacroFamilyId || {},
-    macroToMicroFamilyIds: indexes.macroToMicroFamilyIds || base.macroToMicroFamilyIds || {},
+    microToMacroFamilyId: Object.keys(indexes.microToMacroFamilyId).length
+      ? indexes.microToMacroFamilyId
+      : base.microToMacroFamilyId || {},
+
+    macroToMicroFamilyIds: Object.keys(indexes.macroToMicroFamilyIds).length
+      ? indexes.macroToMicroFamilyIds
+      : base.macroToMicroFamilyIds || {},
 
     microFamilies,
 
+    rowsTruncated: rawRows.length > microFamilies.length,
+    rowsReturned: microFamilies.length,
+    rowsTotal: rawRows.length,
+
+    selectedMicroFamilyId: base.selectedMicroFamilyId || null,
+    selectedMacroFamilyId: base.selectedMacroFamilyId || null,
+
+    selectedRow: base.selectedRow
+      ? normalizeRotationRow(base.selectedRow, 0)
+      : null,
+
+    preservedOppositeRow: base.preservedOppositeRow
+      ? normalizeRotationRow(base.preservedOppositeRow, 0)
+      : null,
+
+    previousActiveMicroFamilyIds: normalizeFamilyIds(base.previousActiveMicroFamilyIds || []),
+    previousActiveMacroFamilyIds: normalizeFamilyIds(base.previousActiveMacroFamilyIds || []),
+
+    requestedMicroFamilyIds: normalizeFamilyIds(base.requestedMicroFamilyIds || []),
+    ignoredRequestedIds: Array.isArray(base.ignoredRequestedIds)
+      ? base.ignoredRequestedIds
+      : [],
+
+    expandedFromMacro: base.expandedFromMacro || {},
+
     bestLong,
     bestShort,
-    missingSides: missingSides(microFamilies),
+    missingSides: missingSides(microFamilies, {
+      ...base,
+      bestLong,
+      bestShort
+    }),
 
     count: microFamilyIds.length || microFamilies.length,
-    microCount: microFamilyIds.length || microFamilies.length,
-    macroCount: macroFamilyIds.length,
-
-    empty: base.empty ?? microFamilyIds.length === 0
+    activeCount: microFamilyIds.length || microFamilies.length
   };
 }
 
-function rowsFromDashboardRows(rows, fallbackRows) {
-  if (Array.isArray(rows) && rows.length > 0) return rows;
-  if (Array.isArray(fallbackRows)) return fallbackRows;
+function normalizeDashboardFromStored({
+  activeRaw,
+  nextRaw,
+  validFrom,
+  activeRowsLimit = DEFAULT_ACTIVE_ROWS_LIMIT,
+  nextRowsLimit = DEFAULT_NEXT_ROWS_LIMIT
+} = {}) {
+  const active = normalizeRotation(activeRaw || {}, {}, {
+    rowLimit: activeRowsLimit
+  });
 
-  return [];
-}
+  const next = normalizeRotation(nextRaw || {}, {}, {
+    rowLimit: nextRowsLimit
+  });
 
-function normalizeDashboard(dashboard = {}) {
-  const active = normalizeRotation(
-    dashboard.active ||
-    dashboard.activeRotation ||
-    {}
-  );
+  const activeRows = Array.isArray(active.microFamilies)
+    ? active.microFamilies
+    : [];
 
-  const next = normalizeRotation(
-    dashboard.next ||
-    dashboard.nextRotation ||
-    {}
-  );
-
-  const activeRows = rowsFromDashboardRows(
-    dashboard.activeRows,
-    active.microFamilies
-  ).map((row, index) => normalizeRotationRow(row, index));
-
-  const nextRows = rowsFromDashboardRows(
-    dashboard.nextRows,
-    next.microFamilies
-  ).map((row, index) => normalizeRotationRow(row, index));
+  const nextRows = Array.isArray(next.microFamilies)
+    ? next.microFamilies
+    : [];
 
   return {
-    ...dashboard,
-
     active,
     next,
+    validFrom,
 
     activeRotation: active,
     nextRotation: next,
@@ -553,6 +705,12 @@ function normalizeDashboard(dashboard = {}) {
     nextMicroFamilyIds: next.microFamilyIds,
     nextMacroFamilyIds: next.macroFamilyIds,
 
+    activeMicroToMacroFamilyId: active.microToMacroFamilyId || {},
+    nextMicroToMacroFamilyId: next.microToMacroFamilyId || {},
+
+    activeMacroToMicroFamilyIds: active.macroToMicroFamilyIds || {},
+    nextMacroToMicroFamilyIds: next.macroToMicroFamilyIds || {},
+
     bestLong: active.bestLong,
     bestShort: active.bestShort,
 
@@ -564,14 +722,58 @@ function normalizeDashboard(dashboard = {}) {
   };
 }
 
+async function getStoredRotationDashboard(options = {}) {
+  const redis = getDurableRedis();
+
+  const [activeRaw, nextRaw, validFrom] = await Promise.all([
+    getJson(redis, KEYS.analyze.activeRotation, null),
+    getJson(redis, KEYS.analyze.nextRotation, null),
+    getJson(redis, KEYS.analyze.rotationValidFrom, null)
+  ]);
+
+  return normalizeDashboardFromStored({
+    activeRaw,
+    nextRaw,
+    validFrom,
+    ...options
+  });
+}
+
+async function getStoredActiveRotation() {
+  const redis = getDurableRedis();
+  const activeRaw = await getJson(redis, KEYS.analyze.activeRotation, null);
+
+  return normalizeRotation(activeRaw || {}, {}, {
+    rowLimit: DEFAULT_ACTIVE_ROWS_LIMIT
+  });
+}
+
 async function handleGet(req, res) {
-  const dashboard = normalizeDashboard(await getRotationDashboard());
+  const activeRowsLimit = toLimit(
+    firstValue(req.query?.activeRowsLimit, DEFAULT_ACTIVE_ROWS_LIMIT),
+    DEFAULT_ACTIVE_ROWS_LIMIT,
+    MAX_ROWS_LIMIT
+  );
+
+  const nextRowsLimit = toLimit(
+    firstValue(req.query?.nextRowsLimit, DEFAULT_NEXT_ROWS_LIMIT),
+    DEFAULT_NEXT_ROWS_LIMIT,
+    MAX_ROWS_LIMIT
+  );
+
+  const dashboard = await getStoredRotationDashboard({
+    activeRowsLimit,
+    nextRowsLimit
+  });
 
   return res.status(200).json({
     ok: true,
 
     currentWeekKey: getIsoWeekKey(),
     previousWeekKey: getPreviousIsoWeekKey(),
+
+    activeRowsLimit,
+    nextRowsLimit,
 
     ...dashboard,
 
@@ -935,7 +1137,9 @@ async function buildSelectedRotationRows({
 }
 
 async function persistActiveRotation(active) {
-  const normalizedActive = normalizeRotation(active);
+  const normalizedActive = normalizeRotation(active, {}, {
+    rowLimit: MAX_ROWS_LIMIT
+  });
 
   await setJson(
     getDurableRedis(),
@@ -1043,13 +1247,7 @@ async function activateBestSideMicro(body, forcedTradeSide = null) {
   }
 
   const oppositeSide = oppositeTradeSide(requestedTradeSide);
-
-  const dashboard = normalizeDashboard(await getRotationDashboard());
-  const previousActive = normalizeRotation(
-    dashboard.active ||
-    dashboard.activeRotation ||
-    {}
-  );
+  const previousActive = await getStoredActiveRotation();
 
   const previousRows = Array.isArray(previousActive.microFamilies)
     ? previousActive.microFamilies.map((row, index) => normalizeRotationRow(row, index))
