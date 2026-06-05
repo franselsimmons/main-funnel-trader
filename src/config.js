@@ -36,8 +36,41 @@ const str = (value, fallback = '') => {
   return normalized || fallback;
 };
 
+const csv = (value, fallback = []) => {
+  if (value === undefined || value === null || value === '') return fallback;
+
+  const values = String(value)
+    .split(/[\s,|;]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return values.length ? values : fallback;
+};
+
+const tradeSides = (value, fallback = ['SHORT']) => {
+  const allowed = new Set(['LONG', 'SHORT']);
+
+  const values = csv(value, fallback)
+    .map((side) => String(side || '').trim().toUpperCase())
+    .filter((side) => allowed.has(side));
+
+  return values.length ? [...new Set(values)] : fallback;
+};
+
 export const CONFIG = Object.freeze({
-  strategyVersion: str(env.STRATEGY_VERSION, 'CLEAN_MF_TS_V2'),
+  strategyVersion: str(env.STRATEGY_VERSION, 'CLEAN_MF_TS_SHORT_ONLY_V1'),
+
+  direction: {
+    mode: str(env.DIRECTION_MODE, 'SHORT_ONLY'),
+    primaryTradeSide: str(env.PRIMARY_TRADE_SIDE, 'SHORT').toUpperCase(),
+    allowedTradeSides: tradeSides(env.ALLOWED_TRADE_SIDES, ['SHORT']),
+
+    shortEnabled: bool(env.SHORT_ENABLED, true),
+    longEnabled: bool(env.LONG_ENABLED, false),
+
+    blockLong: bool(env.BLOCK_LONG, true),
+    blockShort: bool(env.BLOCK_SHORT, false)
+  },
 
   app: {
     name: str(env.APP_NAME, 'Micro-Family Trading Admin'),
@@ -46,7 +79,7 @@ export const CONFIG = Object.freeze({
   },
 
   redis: {
-    // Upstash/Vercel safe ceiling. Analyze gebruikt nu sharded rows, maar dit blijft fallback-limiet.
+    // Upstash/Vercel safe ceiling. Analyze gebruikt sharded rows, maar dit blijft fallback-limiet.
     maxRequestBytes: int(env.REDIS_MAX_REQUEST_BYTES, 9_500_000)
   },
 
@@ -57,6 +90,14 @@ export const CONFIG = Object.freeze({
   },
 
   scanner: {
+    mode: str(env.SCANNER_MODE, 'SHORT_ONLY'),
+    allowedTradeSides: tradeSides(env.SCANNER_ALLOWED_TRADE_SIDES, ['SHORT']),
+    primaryTradeSide: str(env.SCANNER_PRIMARY_TRADE_SIDE, 'SHORT').toUpperCase(),
+
+    shortEnabled: bool(env.SCANNER_SHORT_ENABLED, true),
+    longEnabled: bool(env.SCANNER_LONG_ENABLED, false),
+    discardLongCandidates: bool(env.SCANNER_DISCARD_LONG_CANDIDATES, true),
+
     // Breder universum voor micro-family learning.
     // TradeSystem beslist later pas of iets live-entry waardig is.
     maxSymbols: int(env.SCANNER_MAX_SYMBOLS, 300),
@@ -68,7 +109,7 @@ export const CONFIG = Object.freeze({
     // Candle-fetch concurrency. Niet te hoog zetten op Vercel/Bitget.
     dataConcurrency: int(env.SCANNER_DATA_CONCURRENCY, 12),
 
-    // Breder dan oude settings zodat Analyze meer flow krijgt.
+    // Breder dan oude settings zodat Analyze meer SHORT-flow krijgt.
     minQuoteVolume24h: num(env.SCANNER_MIN_QUOTE_VOLUME_24H, 1_500_000),
     minAbsChange1h: num(env.SCANNER_MIN_ABS_CHANGE_1H, 0.12),
     minAbsChange24h: num(env.SCANNER_MIN_ABS_CHANGE_24H, 0.35),
@@ -82,6 +123,15 @@ export const CONFIG = Object.freeze({
   },
 
   trade: {
+    mode: str(env.TRADE_MODE, 'SHORT_ONLY'),
+    allowedTradeSides: tradeSides(env.TRADE_ALLOWED_TRADE_SIDES, ['SHORT']),
+    primaryTradeSide: str(env.TRADE_PRIMARY_TRADE_SIDE, 'SHORT').toUpperCase(),
+
+    shortEnabled: bool(env.TRADE_SHORT_ENABLED, true),
+    longEnabled: bool(env.TRADE_LONG_ENABLED, false),
+    blockLongEntries: bool(env.TRADE_BLOCK_LONG_ENTRIES, true),
+    blockShortEntries: bool(env.TRADE_BLOCK_SHORT_ENTRIES, false),
+
     lockTtlSec: int(env.TRADE_LOCK_TTL_SEC, 180),
 
     // Belangrijk: TradeSystem verwerkt veel scanner rows richting Analyze.
@@ -97,7 +147,9 @@ export const CONFIG = Object.freeze({
     dataConcurrency: int(env.TRADE_DATA_CONCURRENCY, 8),
 
     maxOpenPositions: int(env.TRADE_MAX_OPEN_POSITIONS, 30),
-    maxOpenSameSide: int(env.TRADE_MAX_OPEN_SAME_SIDE, 15),
+
+    // SHORT-only: same-side cap mag gelijk zijn aan portfolio-cap.
+    maxOpenSameSide: int(env.TRADE_MAX_OPEN_SAME_SIDE, 30),
 
     positionTimeStopMin: int(env.TRADE_POSITION_TIME_STOP_MIN, 12 * 60),
 
@@ -123,6 +175,14 @@ export const CONFIG = Object.freeze({
   },
 
   analyze: {
+    mode: str(env.ANALYZE_MODE, 'SHORT_ONLY'),
+    allowedTradeSides: tradeSides(env.ANALYZE_ALLOWED_TRADE_SIDES, ['SHORT']),
+    primaryTradeSide: str(env.ANALYZE_PRIMARY_TRADE_SIDE, 'SHORT').toUpperCase(),
+
+    shortEnabled: bool(env.ANALYZE_SHORT_ENABLED, true),
+    longEnabled: bool(env.ANALYZE_LONG_ENABLED, false),
+    discardLongObservations: bool(env.ANALYZE_DISCARD_LONG_OBSERVATIONS, true),
+
     // Macro = oude bucket. True micro = strakke execution fingerprint.
     schema: str(env.ANALYZE_SCHEMA || env.MICRO_FAMILY_SCHEMA, 'MF_V2'),
     legacySchema: str(env.ANALYZE_LEGACY_SCHEMA, 'MF_V1'),
@@ -164,7 +224,19 @@ export const CONFIG = Object.freeze({
 
   rotation: {
     mode: str(env.ROTATION_MODE, 'balanced'),
+    directionMode: str(env.ROTATION_DIRECTION_MODE, 'SHORT_ONLY'),
+    allowedTradeSides: tradeSides(env.ROTATION_ALLOWED_TRADE_SIDES, ['SHORT']),
+    primaryTradeSide: str(env.ROTATION_PRIMARY_TRADE_SIDE, 'SHORT').toUpperCase(),
+
+    shortEnabled: bool(env.ROTATION_SHORT_ENABLED, true),
+    longEnabled: bool(env.ROTATION_LONG_ENABLED, false),
+    blockLongActivation: bool(env.ROTATION_BLOCK_LONG_ACTIVATION, true),
+
+    // SHORT-only: deze waarde blijft bestaan voor backwards compatibility,
+    // maar rotation-code moet alleen SHORT selecteren.
     topNPerSide: int(env.ROTATION_TOP_N_PER_SIDE, 1),
+    topNShort: int(env.ROTATION_TOP_N_SHORT, 1),
+    topNLong: int(env.ROTATION_TOP_N_LONG, 0),
 
     // Nu bewust laag: systeem moet al met weinig proof kunnen testen,
     // maar score blijft Bayesian/Wilson gestraft bij kleine sample.
@@ -189,7 +261,11 @@ export const CONFIG = Object.freeze({
     enabled: bool(env.DISCORD_ENABLED, true),
     webhookUrl: str(env.DISCORD_WEBHOOK_URL, ''),
     timeoutMs: int(env.DISCORD_TIMEOUT_MS, 2500),
-    logLimit: int(env.DISCORD_LOG_LIMIT, 250)
+    logLimit: int(env.DISCORD_LOG_LIMIT, 250),
+
+    allowedTradeSides: tradeSides(env.DISCORD_ALLOWED_TRADE_SIDES, ['SHORT']),
+    shortEnabled: bool(env.DISCORD_SHORT_ENABLED, true),
+    longEnabled: bool(env.DISCORD_LONG_ENABLED, false)
   },
 
   reset: {
@@ -207,7 +283,10 @@ export const CONFIG = Object.freeze({
 
     // Portfolio caps.
     maxTotalRiskPct: num(env.SIZING_MAX_TOTAL_RISK_PCT, 0.03),
-    maxSameSideRiskPct: num(env.SIZING_MAX_SAME_SIDE_RISK_PCT, 0.015),
+
+    // SHORT-only: same-side cap mag gelijk zijn aan totale cap.
+    maxSameSideRiskPct: num(env.SIZING_MAX_SAME_SIDE_RISK_PCT, 0.03),
+
     maxCounterBtcRiskPct: num(env.SIZING_MAX_COUNTER_BTC_RISK_PCT, 0.0075)
   },
 
