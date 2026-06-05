@@ -4,6 +4,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 export const MS_PER_DAY = 86_400_000;
 
+const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
+const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
+
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const safeNumber = (value, fallback = 0) => {
@@ -31,6 +34,98 @@ export const round = (value, decimals = 4) => {
 export const pct = (value, decimals = 1) => {
   return `${(safeNumber(value) * 100).toFixed(decimals)}%`;
 };
+
+export const envBool = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (TRUE_VALUES.has(normalized)) return true;
+  if (FALSE_VALUES.has(normalized)) return false;
+
+  return fallback;
+};
+
+export const normalizeTradeSide = (side) => {
+  const s = String(side || '')
+    .trim()
+    .toUpperCase();
+
+  if (['LONG', 'BULL', 'BUY', 'BULLISH'].includes(s)) return 'LONG';
+  if (['SHORT', 'BEAR', 'SELL', 'BEARISH'].includes(s)) return 'SHORT';
+
+  return 'UNKNOWN';
+};
+
+function parseAllowedTradeSides(value) {
+  const raw = String(value || 'SHORT')
+    .split(/[\s,|;]+/g)
+    .map((part) => normalizeTradeSide(part))
+    .filter((side) => side === 'LONG' || side === 'SHORT');
+
+  const unique = [...new Set(raw)];
+
+  return unique.length ? unique : ['SHORT'];
+}
+
+export const SHORT_ONLY_MODE = envBool(process.env.LONG_ENABLED, false) === false &&
+  !parseAllowedTradeSides(process.env.ALLOWED_TRADE_SIDES).includes('LONG');
+
+export const DEFAULT_ALLOWED_TRADE_SIDES = parseAllowedTradeSides(
+  process.env.ALLOWED_TRADE_SIDES ||
+  process.env.TRADE_ALLOWED_TRADE_SIDES ||
+  process.env.SCANNER_ALLOWED_TRADE_SIDES ||
+  process.env.ANALYZE_ALLOWED_TRADE_SIDES ||
+  process.env.ROTATION_ALLOWED_TRADE_SIDES ||
+  'SHORT'
+);
+
+export function getAllowedTradeSides() {
+  const longEnabled = envBool(process.env.LONG_ENABLED, false);
+  const shortEnabled = envBool(process.env.SHORT_ENABLED, true);
+
+  const sides = DEFAULT_ALLOWED_TRADE_SIDES.filter((side) => {
+    if (side === 'LONG') return longEnabled;
+    if (side === 'SHORT') return shortEnabled;
+
+    return false;
+  });
+
+  return sides.length ? sides : ['SHORT'];
+}
+
+export function isAllowedTradeSide(side) {
+  const tradeSide = normalizeTradeSide(side);
+
+  if (tradeSide === 'UNKNOWN') return false;
+
+  return getAllowedTradeSides().includes(tradeSide);
+}
+
+export function shouldBlockTradeSide(side) {
+  return !isAllowedTradeSide(side);
+}
+
+export function isShortOnlyRuntime() {
+  const allowed = getAllowedTradeSides();
+
+  return allowed.length === 1 && allowed[0] === 'SHORT';
+}
+
+export function filterAllowedTradeSides(rows = [], sideGetter = (row) => row?.tradeSide || row?.side) {
+  if (!Array.isArray(rows)) return [];
+
+  return rows.filter((row) => isAllowedTradeSide(sideGetter(row)));
+}
+
+export function rejectLongSide(side, fallback = 'UNKNOWN') {
+  const tradeSide = normalizeTradeSide(side);
+
+  if (tradeSide === 'LONG') return fallback;
+  if (tradeSide === 'SHORT') return 'SHORT';
+
+  return fallback;
+}
 
 function cleanSymbolInput(raw) {
   return String(raw || '')
@@ -171,16 +266,11 @@ export function randomId(prefix = 'id') {
 }
 
 export function sideToTradeSide(side) {
-  const s = String(side || '').toLowerCase();
-
-  if (['bull', 'buy', 'long'].includes(s)) return 'LONG';
-  if (['bear', 'sell', 'short'].includes(s)) return 'SHORT';
-
-  return 'UNKNOWN';
+  return normalizeTradeSide(side);
 }
 
 export function tradeSideToDirection(side) {
-  const s = String(side || '').toUpperCase();
+  const s = normalizeTradeSide(side);
 
   if (s === 'LONG') return 'bull';
   if (s === 'SHORT') return 'bear';
@@ -189,6 +279,8 @@ export function tradeSideToDirection(side) {
 }
 
 export function isLongSide(side) {
+  if (!envBool(process.env.LONG_ENABLED, false)) return false;
+
   return sideToTradeSide(side) === 'LONG';
 }
 
@@ -196,10 +288,25 @@ export function isShortSide(side) {
   return sideToTradeSide(side) === 'SHORT';
 }
 
+export function isTradeSide(side) {
+  const tradeSide = sideToTradeSide(side);
+
+  return tradeSide === 'LONG' || tradeSide === 'SHORT';
+}
+
+export function isShortAllowed() {
+  return isAllowedTradeSide('SHORT');
+}
+
+export function isLongAllowed() {
+  return isAllowedTradeSide('LONG');
+}
+
 export function getObRelation(side, obBias) {
   const tradeSide = sideToTradeSide(side);
   const ob = String(obBias || 'NEUTRAL').toUpperCase();
 
+  if (shouldBlockTradeSide(tradeSide)) return 'BLOCKED';
   if (!['BULLISH', 'BEARISH'].includes(ob)) return 'NEUTRAL';
 
   if (tradeSide === 'LONG' && ob === 'BULLISH') return 'WITH';
