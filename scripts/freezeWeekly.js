@@ -1,10 +1,18 @@
 // ================= FILE: scripts/freezeWeekly.js =================
 
 import { CONFIG } from '../src/config.js';
+import {
+  getIsoWeekKey,
+  getNextIsoWeekKey
+} from '../src/utils.js';
 import { freezeWeeklyRotation } from '../src/analyze/rotationEngine.js';
 
 function now() {
   return Date.now();
+}
+
+function argv() {
+  return process.argv.slice(2);
 }
 
 function getArgValue(name) {
@@ -20,12 +28,42 @@ function hasFlag(name) {
   return process.argv.includes(`--${name}`);
 }
 
+function firstValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+
+  return null;
+}
+
+function flattenValues(values = []) {
+  const stack = Array.isArray(values) ? [...values] : [values];
+  const output = [];
+
+  while (stack.length > 0) {
+    const value = stack.shift();
+
+    if (Array.isArray(value)) {
+      stack.unshift(...value);
+      continue;
+    }
+
+    output.push(value);
+  }
+
+  return output;
+}
+
 function uniqueStrings(values = []) {
   return [...new Set(
-    (Array.isArray(values) ? values : [])
+    flattenValues(values)
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
+}
+
+function asRows(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function unwrapRotation(result = {}) {
@@ -34,47 +72,64 @@ function unwrapRotation(result = {}) {
     result?.nextRotation ||
     result?.activeRotation ||
     result?.active ||
+    result?.result?.rotation ||
+    result?.result?.nextRotation ||
+    null
+  );
+}
+
+function microId(row = {}) {
+  return (
+    row?.microFamilyId ||
+    row?.trueMicroFamilyId ||
+    row?.id ||
+    row?.key ||
+    null
+  );
+}
+
+function macroId(row = {}) {
+  return (
+    row?.parentMacroFamilyId ||
+    row?.macroFamilyId ||
+    row?.parentMicroFamilyId ||
+    row?.legacyMicroFamilyId ||
+    row?.coarseMicroFamilyId ||
+    row?.familyMacroId ||
+    row?.familyId ||
     null
   );
 }
 
 function extractMicroFamilyIds(rotation = {}) {
-  return uniqueStrings(
-    rotation?.microFamilyIds ||
-    rotation?.activeMicroFamilyIds ||
-    rotation?.ids ||
-    (
-      Array.isArray(rotation?.microFamilies)
-        ? rotation.microFamilies.map((row) => (
-          row?.microFamilyId ||
-          row?.trueMicroFamilyId ||
-          row?.id ||
-          null
-        ))
-        : []
-    )
-  );
+  const rows = asRows(rotation?.microFamilies);
+
+  return uniqueStrings([
+    rotation?.microFamilyIds || [],
+    rotation?.activeMicroFamilyIds || [],
+    rotation?.trueMicroFamilyIds || [],
+    rotation?.ids || [],
+    rows.map(microId),
+    rotation?.bestLong ? microId(rotation.bestLong) : null,
+    rotation?.bestShort ? microId(rotation.bestShort) : null,
+    rotation?.selectedRow ? microId(rotation.selectedRow) : null,
+    rotation?.preservedOppositeRow ? microId(rotation.preservedOppositeRow) : null
+  ]);
 }
 
 function extractMacroFamilyIds(rotation = {}) {
-  return uniqueStrings(
-    rotation?.macroFamilyIds ||
-    rotation?.activeMacroFamilyIds ||
-    rotation?.macroIds ||
-    (
-      Array.isArray(rotation?.microFamilies)
-        ? rotation.microFamilies.map((row) => (
-          row?.macroFamilyId ||
-          row?.parentMicroFamilyId ||
-          row?.legacyMicroFamilyId ||
-          row?.coarseMicroFamilyId ||
-          row?.familyMacroId ||
-          row?.familyId ||
-          null
-        ))
-        : []
-    )
-  );
+  const rows = asRows(rotation?.microFamilies);
+
+  return uniqueStrings([
+    rotation?.macroFamilyIds || [],
+    rotation?.activeMacroFamilyIds || [],
+    rotation?.macroIds || [],
+    rows.map(macroId),
+    rotation?.bestLong ? macroId(rotation.bestLong) : null,
+    rotation?.bestShort ? macroId(rotation.bestShort) : null,
+    rotation?.selectedRow ? macroId(rotation.selectedRow) : null,
+    rotation?.preservedOppositeRow ? macroId(rotation.preservedOppositeRow) : null
+  ]);
 }
 
 function getResultWeekKey(result, fallback = null) {
@@ -130,32 +185,59 @@ function getSelectedMacroCount(result = {}) {
 }
 
 function getMode() {
-  return (
+  return String(
     getArgValue('mode') ||
     CONFIG.rotation?.mode ||
     'balanced'
-  );
+  ).trim();
+}
+
+function getWeekKey() {
+  return String(
+    firstValue(
+      getArgValue('weekKey'),
+      getArgValue('week'),
+      getArgValue('sourceWeekKey'),
+      getIsoWeekKey()
+    )
+  ).trim();
+}
+
+function getActiveWeekKey() {
+  return String(
+    firstValue(
+      getArgValue('activeWeekKey'),
+      getArgValue('nextWeekKey'),
+      getNextIsoWeekKey()
+    )
+  ).trim();
 }
 
 function buildRequestedOptions() {
-  const weekKey =
-    getArgValue('weekKey') ||
-    getArgValue('week') ||
-    getArgValue('sourceWeekKey') ||
-    undefined;
+  const weekKey = getWeekKey();
+  const activeWeekKey = getActiveWeekKey();
 
   return {
     force: hasFlag('force'),
+
     weekKey,
     sourceWeekKey: weekKey,
-    activeWeekKey: getArgValue('activeWeekKey') || undefined,
+    activeWeekKey,
+
     mode: getMode()
+  };
+}
+
+function buildFreezeOptions(requested = {}) {
+  return {
+    weekKey: requested.weekKey,
+    activeWeekKey: requested.activeWeekKey,
+    mode: requested.mode
   };
 }
 
 function buildCliResponse({
   result,
-  argv,
   requested,
   startedAt
 }) {
@@ -168,7 +250,7 @@ function buildCliResponse({
 
     source: 'CLI_FREEZE_WEEKLY_ROTATION',
 
-    argv,
+    argv: argv(),
     requested,
 
     weekKey: getResultWeekKey(result, requested.weekKey || null),
@@ -186,11 +268,24 @@ function buildCliResponse({
     macroFamilyIds,
 
     empty: Boolean(rotation?.empty),
-    emptyReason: rotation?.emptyReason || null,
+    emptyReason: rotation?.emptyReason || result?.emptyReason || result?.reason || null,
 
     eligibleCount: rotation?.eligibleCount ?? null,
     rankedCount: rotation?.rankedCount ?? null,
-    microCount: rotation?.microCount ?? null,
+    allRankedCount: rotation?.allRankedCount ?? null,
+
+    microCount: rotation?.microCount ?? microFamilyIds.length,
+    macroCount: rotation?.macroCount ?? macroFamilyIds.length,
+
+    trueMicroOnly: rotation?.trueMicroOnly !== false,
+    usedLegacyFallback: Boolean(rotation?.usedLegacyFallback),
+    usedSoftFallback: Boolean(rotation?.usedSoftFallback),
+    usedObservationFallback: Boolean(rotation?.usedObservationFallback),
+
+    selectedTier: rotation?.selectedTier || null,
+    missingSides: Array.isArray(rotation?.missingSides)
+      ? rotation.missingSides
+      : [],
 
     durationMs: now() - startedAt,
 
@@ -200,7 +295,6 @@ function buildCliResponse({
 
 function buildCliError({
   error,
-  argv,
   requested,
   startedAt
 }) {
@@ -209,7 +303,7 @@ function buildCliError({
 
     source: 'CLI_FREEZE_WEEKLY_ROTATION',
 
-    argv,
+    argv: argv(),
     requested,
 
     weekKey: requested.weekKey || null,
@@ -226,19 +320,15 @@ function buildCliError({
 
 async function main() {
   const startedAt = now();
-  const argv = process.argv.slice(2);
   const requested = buildRequestedOptions();
 
   try {
-    const result = await freezeWeeklyRotation({
-      weekKey: requested.weekKey,
-      activeWeekKey: requested.activeWeekKey,
-      mode: requested.mode
-    });
+    const result = await freezeWeeklyRotation(
+      buildFreezeOptions(requested)
+    );
 
     const response = buildCliResponse({
       result,
-      argv,
       requested,
       startedAt
     });
@@ -250,7 +340,6 @@ async function main() {
     console.error(JSON.stringify(
       buildCliError({
         error,
-        argv,
         requested,
         startedAt
       }),
