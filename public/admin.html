@@ -739,6 +739,21 @@
       color: white;
     }
 
+    .pill.soft {
+      background: #e0f2fe;
+      color: #075985;
+    }
+
+    .pill.observation {
+      background: #fef9c3;
+      color: #854d0e;
+    }
+
+    .pill.raw {
+      background: #f1f5f9;
+      color: #475569;
+    }
+
     .score-bar {
       height: 8px;
       background: #e2e8f0;
@@ -1166,11 +1181,13 @@
         row.macroFamilyId,
         row.parentMicroFamilyId,
         row.familyId,
-        row.family
+        row.family,
+        row.definition,
+        Array.isArray(row.definitionParts) ? row.definitionParts.join("|") : ""
       ].map((value) => String(value || "").toUpperCase());
 
-      if (raw.some((value) => value === "LONG" || value === "BULL" || value === "BUY" || value.includes("LONG_") || value.includes("_LONG"))) return "LONG";
-      if (raw.some((value) => value === "SHORT" || value === "BEAR" || value === "SELL" || value.includes("SHORT_") || value.includes("_SHORT"))) return "SHORT";
+      if (raw.some((value) => value === "LONG" || value === "BULL" || value === "BUY" || value.includes("LONG_") || value.includes("_LONG") || value.includes("TRADESIDE=LONG"))) return "LONG";
+      if (raw.some((value) => value === "SHORT" || value === "BEAR" || value === "SELL" || value.includes("SHORT_") || value.includes("_SHORT") || value.includes("TRADESIDE=SHORT"))) return "SHORT";
 
       return "NA";
     }
@@ -1452,6 +1469,7 @@
     function macroId(row = {}) {
       return (
         row?.macroFamilyId ||
+        row?.parentMacroFamilyId ||
         row?.parentMicroFamilyId ||
         row?.legacyMicroFamilyId ||
         row?.coarseMicroFamilyId ||
@@ -1540,6 +1558,119 @@
           <div>
             <span class="id-label">Family</span>
             <code>${escapeHtml(family || "NO_FAMILY")}</code>
+          </div>
+        </div>
+      `;
+    }
+
+    function tierValue(row = {}) {
+      return String(
+        row.selectedTier ||
+        row.rotationEligibilityTier ||
+        row.eligibilityTier ||
+        row.selectionTier ||
+        ""
+      ).toUpperCase();
+    }
+
+    function tierPill(value) {
+      const tier = String(value || "NA").toUpperCase();
+
+      if (tier === "HARD") return '<span class="pill active">HARD</span>';
+      if (tier === "SOFT") return '<span class="pill soft">SOFT</span>';
+      if (tier === "OBSERVATION") return '<span class="pill observation">OBS</span>';
+      if (tier === "RAW_SIDE") return '<span class="pill raw">RAW</span>';
+
+      return `<span class="pill">${escapeHtml(tier || "NA")}</span>`;
+    }
+
+    function missingSidesArray(...sources) {
+      const values = sources
+        .flatMap((source) => {
+          if (!source) return [];
+          if (Array.isArray(source)) return source;
+          if (Array.isArray(source.missingSides)) return source.missingSides;
+          return [];
+        })
+        .map(normalizeSide)
+        .filter((side) => ["LONG", "SHORT"].includes(side));
+
+      return uniqueStrings(values);
+    }
+
+    function missingSidesHtml(sides = []) {
+      const rows = missingSidesArray(sides);
+
+      if (!rows.length) return '<span class="pill active">NONE</span>';
+
+      return rows
+        .map((side) => `<span class="pill warn">${escapeHtml(side)}</span>`)
+        .join(" ");
+    }
+
+    function boolText(value) {
+      return value ? "YES" : "NO";
+    }
+
+    function rotationDiagnosticsHtml(data = {}, active = {}) {
+      const selectedTier = active.selectedTier || data.selectedTier || "-";
+      const hardCount = data.hardCount ?? active.hardCount ?? active.selectionHardCount ?? "-";
+      const softCount = data.softCount ?? active.softCount ?? active.selectionSoftCount ?? "-";
+      const observationCount = data.observationCount ?? active.observationCount ?? active.selectionObservationCount ?? "-";
+      const candidateCount = data.candidateCount ?? active.candidateCount ?? "-";
+      const tradableCount = data.tradableCount ?? active.tradableCount ?? "-";
+      const sideCount = data.sideCount ?? active.sideCount ?? "-";
+      const usedSoftFallback = Boolean(data.usedSoftFallback || active.usedSoftFallback);
+      const usedObservationFallback = Boolean(data.usedObservationFallback || active.usedObservationFallback);
+      const missing = missingSidesArray(data, active);
+
+      return `
+        <div class="card">
+          <h3>Rotation diagnostics</h3>
+          <div class="toolbar">
+            ${tierPill(selectedTier)}
+            ${usedSoftFallback ? '<span class="pill soft">SOFT FALLBACK</span>' : '<span class="pill">NO SOFT FALLBACK</span>'}
+            ${usedObservationFallback ? '<span class="pill observation">OBS FALLBACK</span>' : '<span class="pill">NO OBS FALLBACK</span>'}
+            ${missingSidesHtml(missing)}
+          </div>
+
+          <div class="micro-performance-grid">
+            <div class="micro-performance-stat">
+              <span>Side rows</span>
+              <strong>${escapeHtml(sideCount)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Candidate rows</span>
+              <strong>${escapeHtml(candidateCount)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Tradable rows</span>
+              <strong>${escapeHtml(tradableCount)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Selected tier</span>
+              <strong>${escapeHtml(selectedTier)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Hard count</span>
+              <strong>${escapeHtml(hardCount)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Soft count</span>
+              <strong>${escapeHtml(softCount)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Observation count</span>
+              <strong>${escapeHtml(observationCount)}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Missing sides</span>
+              <strong>${escapeHtml(missing.length ? missing.join(", ") : "NONE")}</strong>
+            </div>
+          </div>
+
+          <div class="micro-connect-narrative">
+            HARD = normale minCompleted selectie. SOFT = fallback met positief scoreprofiel maar lage sample. OBS = laatste vangnet op basis van observaties zodat LONG/SHORT niet leeg valt.
           </div>
         </div>
       `;
@@ -1829,6 +1960,7 @@
       const active = activeMicroSet().has(micro);
       const score = row.dashboardBalancedScore ?? row.balancedScore;
       const trades = microTrades(row);
+      const tier = tierValue(row);
 
       return `
         <div class="micro-connect-card ${escapeAttr(cardClass)}">
@@ -1903,6 +2035,7 @@
           <div class="micro-connect-actions">
             <span class="pill ${escapeAttr(cardClass)}">${escapeHtml(normalizedSide)}</span>
             ${active ? '<span class="pill active">Actief</span>' : '<span class="pill info">Beschikbaar</span>'}
+            ${tier ? tierPill(tier) : ""}
             <button type="button" class="${escapeAttr(buttonClass)}" id="${escapeAttr(buttonId)}">
               ${active ? `Herselecteer ${escapeHtml(normalizedSide)} micro-family` : `Selecteer ${escapeHtml(normalizedSide)} micro-family`}
             </button>
@@ -1976,6 +2109,7 @@
         }},
         { label: "IDs", render: idStack },
         { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
+        { label: "Tier", render: (row) => tierValue(row) ? tierPill(tierValue(row)) : '<span class="pill">NA</span>' },
         { label: "Seen", render: (row) => fmtInt(row.seen) },
         { label: "Completed", render: (row) => fmt(row.completed, 2) },
         { label: "Sample", render: (row) => fmt(row.winrateSample ?? row.completed, 2) },
@@ -2093,6 +2227,8 @@
             <div class="metric-extra">actieve true micro-families</div>
           </div>
         </div>
+
+        ${rotationDiagnosticsHtml(data, data.activeRotation || {})}
 
         <div class="card">
           <h3>Active Rotation</h3>
@@ -2397,10 +2533,13 @@
       const active = data.activeRotation || data.active || {};
       const activeMicroIds = extractIdsFromRotation(active);
       const activeMacroIds = extractMacroIdsFromRotation(active);
+      const selectedTier = data.selectedTier || active.selectedTier || "NA";
+      const missing = missingSidesArray(data, active);
 
       if (data.skipped) {
         setMessage(
           `Geen ${normalizedSide} micro-family geactiveerd. Reden: ${data.emptyReason || "NO_SIDE_MICRO_FOUND"}.\n` +
+          `Side rows=${data.sideCount ?? "-"}, hard=${data.hardCount ?? "-"}, soft=${data.softCount ?? "-"}, obs=${data.observationCount ?? "-"}.\n` +
           `Active true micro=${activeMicroIds.length}, active macro=${activeMacroIds.length}.`,
           "warn"
         );
@@ -2462,6 +2601,10 @@
         `${normalizedSide} micro-family actief gezet voor TradeSystem.\n` +
         `True micro: ${selectedMicroId}\n` +
         `Macro: ${selectedMacroId}\n` +
+        `Selected tier: ${selectedTier}\n` +
+        `Side rows=${data.sideCount ?? "-"}, hard=${data.hardCount ?? "-"}, soft=${data.softCount ?? "-"}, obs=${data.observationCount ?? "-"}.\n` +
+        `Soft fallback=${boolText(data.usedSoftFallback || active.usedSoftFallback)}, observation fallback=${boolText(data.usedObservationFallback || active.usedObservationFallback)}.\n` +
+        `Missing sides=${missing.length ? missing.join(", ") : "NONE"}.\n` +
         `Active true micro=${activeMicroIds.length}, active macro=${activeMacroIds.length}.\n` +
         `Route actief: scanner coin → TradeSystem fingerprint → active true micro match → Discord melding.`,
         "ok"
@@ -2629,6 +2772,9 @@
         ? activeRowsRaw
         : activeIds.map((id, index) => ({ rank: index + 1, microFamilyId: id }));
 
+      const selectedTier = active.selectedTier || data.selectedTier || "NA";
+      const missing = missingSidesArray(data, active);
+
       $("rotation").innerHTML = `
         <div class="section-title">
           <div>
@@ -2658,7 +2804,13 @@
           ${metricCard("Mode", active.mode || data.mode || "NA")}
           ${metricCard("Eligible", fmtInt(active.eligibleCount || 0))}
           ${metricCard("Rotation ID", active.rotationId || "NA")}
+          ${metricCard("Selected tier", selectedTier)}
+          ${metricCard("Missing sides", missing.length ? missing.join(", ") : "NONE")}
+          ${metricCard("Soft fallback", boolText(active.usedSoftFallback || data.usedSoftFallback))}
+          ${metricCard("Observation fallback", boolText(active.usedObservationFallback || data.usedObservationFallback))}
         </div>
+
+        ${rotationDiagnosticsHtml(data, active)}
 
         <div class="section-title">
           <div>
@@ -2671,6 +2823,7 @@
           { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
           { label: "IDs", render: idStack },
           { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
+          { label: "Tier", render: (row) => tierValue(row) ? tierPill(tierValue(row)) : tierPill(active.selectedTier || "NA") },
           { label: "Completed", render: (row) => fmt(row.completed, 2) },
           { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
           { label: "AvgR", render: (row) => fmt(row.avgR, 3) },
