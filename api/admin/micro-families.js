@@ -9,8 +9,6 @@ import {
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
 import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 
-const TARGET_TRADE_SIDE = 'SHORT';
-
 const VALID_MODES = new Set([
   'balanced',
   'winrate',
@@ -20,31 +18,37 @@ const VALID_MODES = new Set([
   'observed'
 ]);
 
+const ENABLE_LONG_SIDE = false;
+
 const WINRATE_Z = 1.96;
 const WINRATE_BAYES_ALPHA = 1;
 const WINRATE_BAYES_BETA = 1;
 const SAMPLE_RELIABILITY_CAP = 50;
 const TRADABLE_SAMPLE_MIN = 5;
 
-const DEFAULT_LIMIT = 160;
-const MAX_LIMIT = 300;
+const DEFAULT_LIMIT = 80;
+const MAX_LIMIT = 160;
 
-const DEFAULT_SIDE_LIMIT = 25;
-const MAX_SIDE_LIMIT = 80;
+const DEFAULT_SIDE_LIMIT = 50;
+const MAX_SIDE_LIMIT = 120;
 
-const WEEK_MICROS_CACHE_TTL_MS = 60_000;
-const ACTIVE_ROTATION_TIMEOUT_MS = 2_500;
-const WEEK_MICROS_TIMEOUT_MS = 28_000;
-const FALLBACK_WEEK_TIMEOUT_MS = 22_000;
+const SIDE_ROWS_CACHE_TTL_MS = 60_000;
+const ACTIVE_ROTATION_TIMEOUT_MS = 1_200;
+const WEEK_MICROS_TIMEOUT_MS = 12_000;
+const NORMALIZE_BUDGET_MS = 5_500;
 
 const CACHE_MAX_KEYS = 12;
 
 const cache = globalThis.__ADMIN_MICRO_FAMILIES_SHORT_ONLY_CACHE__ ||= {
-  weekMicros: new Map()
+  sideRows: new Map()
 };
 
 function now() {
   return Date.now();
+}
+
+function elapsed(startedAt) {
+  return now() - startedAt;
 }
 
 function methodNotAllowed(res) {
@@ -64,15 +68,6 @@ function firstQueryValue(value, fallback = null) {
   return value;
 }
 
-function toSafeLimit(value, fallback = DEFAULT_LIMIT, max = MAX_LIMIT) {
-  const n = Number(value);
-
-  if (!Number.isFinite(n)) return fallback;
-  if (n < 1) return fallback;
-
-  return Math.min(Math.floor(n), max);
-}
-
 function isTrue(value) {
   return (
     value === true ||
@@ -83,6 +78,15 @@ function isTrue(value) {
     value === 'yes' ||
     value === 'YES'
   );
+}
+
+function toSafeLimit(value, fallback = DEFAULT_LIMIT, max = MAX_LIMIT) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return fallback;
+  if (n < 1) return fallback;
+
+  return Math.min(Math.floor(n), max);
 }
 
 function num(value, fallback = 0) {
@@ -167,6 +171,121 @@ function normalizeSideToken(value) {
   if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
 
   return 'UNKNOWN';
+}
+
+function requestedSide(req = {}) {
+  const raw = firstQueryValue(req.query?.side, 'SHORT');
+  const side = normalizeSideToken(raw);
+
+  if (side === 'LONG') return 'LONG';
+  if (side === 'SHORT') return 'SHORT';
+
+  return 'SHORT';
+}
+
+function longDisabledResponse({
+  req,
+  res,
+  startedAt,
+  requestedWeekKey,
+  currentWeekKey,
+  previousWeekKey,
+  mode,
+  requestedMode,
+  limit,
+  sideLimit,
+  compact
+}) {
+  return res.status(200).json({
+    ok: true,
+    fixed: true,
+    shortOnly: true,
+    longDisabled: true,
+
+    weekKey: requestedWeekKey,
+    requestedWeekKey,
+    sourceWeekKeyUsed: requestedWeekKey,
+    source: 'longDisabledFastReturn',
+
+    currentWeekKey,
+    previousWeekKey,
+
+    mode,
+    requestedMode,
+
+    requestedLimit: limit,
+    limit,
+    limitCapped: false,
+    sideLimit,
+    sideEnsureLimit: sideLimit,
+
+    filters: {
+      side: 'LONG',
+      requestedSide: 'LONG',
+      enforcedSide: 'SHORT',
+      q: String(firstQueryValue(req.query?.q, '') || '').trim(),
+      activeOnly: false,
+      macroActiveOnly: false,
+      minCompleted: 0,
+      minSample: 0,
+      minSeen: 0
+    },
+
+    compact,
+
+    count: 0,
+    filtered: 0,
+    totalAvailable: 0,
+    weekRows: 0,
+    activeFallbackRows: 0,
+
+    rawSideCounts: {
+      long: 0,
+      short: 0,
+      unknown: 0
+    },
+
+    filteredSideCounts: {
+      long: 0,
+      short: 0,
+      unknown: 0
+    },
+
+    responseSideCounts: {
+      long: 0,
+      short: 0,
+      unknown: 0
+    },
+
+    activeRotationId: null,
+    activeRotation: null,
+    activeMicroFamilyIds: [],
+    activeMacroFamilyIds: [],
+
+    bestShort: null,
+    bestLong: null,
+
+    shortRows: [],
+    longRows: [],
+    unknownRows: [],
+
+    summary: buildSummary([], new Set()),
+
+    rows: [],
+
+    warnings: [
+      'LONG_SIDE_DISABLED',
+      'NO_GET_WEEK_MICROS_CALL_FOR_LONG'
+    ],
+
+    perf: {
+      durationMs: elapsed(startedAt),
+      path: 'longDisabledFastReturn',
+      avoidedGetWeekMicros: true
+    },
+
+    serverTs: Date.now()
+  });
 }
 
 function getDefinitionParts(row = {}) {
@@ -302,24 +421,6 @@ function hasShortSignal(text = '') {
 }
 
 function inferTradeSide(input = {}) {
-  if (typeof input === 'string') {
-    const direct = normalizeSideToken(input);
-
-    if (direct === 'LONG' || direct === 'SHORT') return direct;
-
-    const text = upper(input);
-    const longSignal = hasLongSignal(text);
-    const shortSignal = hasShortSignal(text);
-
-    if (shortSignal && !longSignal) return 'SHORT';
-    if (longSignal && !shortSignal) return 'LONG';
-
-    if (text.includes('MICRO_SHORT_') || text.includes('SHORT')) return 'SHORT';
-    if (text.includes('MICRO_LONG_') || text.includes('LONG')) return 'LONG';
-
-    return 'UNKNOWN';
-  }
-
   const directSources = [
     input.tradeSide,
     input.side,
@@ -353,35 +454,31 @@ function inferTradeSide(input = {}) {
     input.key
   );
 
-  if (familyId.startsWith('SHORT_')) return 'SHORT';
   if (familyId.startsWith('LONG_')) return 'LONG';
+  if (familyId.startsWith('SHORT_')) return 'SHORT';
 
-  if (macroFamilyId.includes('SHORT')) return 'SHORT';
   if (macroFamilyId.includes('LONG')) return 'LONG';
+  if (macroFamilyId.includes('SHORT')) return 'SHORT';
 
-  if (microFamilyId.includes('MICRO_SHORT_')) return 'SHORT';
   if (microFamilyId.includes('MICRO_LONG_')) return 'LONG';
+  if (microFamilyId.includes('MICRO_SHORT_')) return 'SHORT';
 
   const text = collectSideText(input);
   const longSignal = hasLongSignal(text);
   const shortSignal = hasShortSignal(text);
 
-  if (shortSignal && !longSignal) return 'SHORT';
   if (longSignal && !shortSignal) return 'LONG';
+  if (shortSignal && !longSignal) return 'SHORT';
 
-  if (microFamilyId.includes('SHORT')) return 'SHORT';
   if (microFamilyId.includes('LONG')) return 'LONG';
+  if (microFamilyId.includes('SHORT')) return 'SHORT';
 
   return 'UNKNOWN';
 }
 
-function isTargetSide(row = {}) {
-  return inferTradeSide(row) === TARGET_TRADE_SIDE;
-}
-
 function dashboardSideFromTradeSide(tradeSide) {
-  if (tradeSide === 'SHORT') return 'bear';
   if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
 
   return 'unknown';
 }
@@ -700,7 +797,7 @@ function sourceEntriesFromMicros(micros = {}) {
   return Object.entries(micros);
 }
 
-function buildRawMicroRow(row = {}, key = '', index = 0, forcedTradeSide = null) {
+function buildRawMicroRow(row = {}, key = '', index = 0) {
   const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || key || null;
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId({
@@ -712,7 +809,7 @@ function buildRawMicroRow(row = {}, key = '', index = 0, forcedTradeSide = null)
   const definitionParts = getDefinitionParts(row);
   const macroDefinitionParts = getMacroDefinitionParts(row);
 
-  const inferredTradeSide = inferTradeSide({
+  const tradeSide = inferTradeSide({
     ...row,
     microFamilyId,
     familyId,
@@ -720,8 +817,6 @@ function buildRawMicroRow(row = {}, key = '', index = 0, forcedTradeSide = null)
     definitionParts,
     macroDefinitionParts
   });
-
-  const tradeSide = forcedTradeSide || inferredTradeSide;
 
   return {
     sourceIndex: index,
@@ -856,13 +951,35 @@ function decorateMicroRow(row = {}) {
   };
 }
 
-function buildRowsFromMicros(micros = {}) {
-  return sourceEntriesFromMicros(micros)
-    .map(([key, row], index) => decorateMicroRow(
-      buildRawMicroRow(row || {}, key, index)
-    ))
-    .filter((row) => row.microFamilyId)
-    .filter(isTargetSide);
+function buildRowsFromMicrosForSide({
+  micros = {},
+  side = 'SHORT',
+  startedAt = now(),
+  warnings = []
+} = {}) {
+  const targetSide = normalizeSideToken(side);
+  const entries = sourceEntriesFromMicros(micros);
+  const rows = [];
+
+  for (let index = 0; index < entries.length; index += 1) {
+    if (elapsed(startedAt) > NORMALIZE_BUDGET_MS) {
+      warnings.push(`NORMALIZE_BUDGET_EXCEEDED_AT_INDEX:${index}`);
+      break;
+    }
+
+    const [key, row] = entries[index];
+
+    if (!row) continue;
+
+    const rawRow = buildRawMicroRow(row || {}, key, index);
+
+    if (rawRow.tradeSide !== targetSide) continue;
+    if (!rawRow.microFamilyId) continue;
+
+    rows.push(decorateMicroRow(rawRow));
+  }
+
+  return rows;
 }
 
 function rowKey(row = {}) {
@@ -875,41 +992,146 @@ function rowKey(row = {}) {
   ).trim();
 }
 
-function mergeRows(primaryRows = [], fallbackRows = []) {
-  const byKey = new Map();
-
-  for (const row of primaryRows.filter(isTargetSide)) {
-    const key = rowKey(row);
-    if (!key) continue;
-
-    byKey.set(key, row);
-  }
-
-  for (const fallback of fallbackRows.filter(isTargetSide)) {
-    const key = rowKey(fallback);
-    if (!key) continue;
-
-    const existing = byKey.get(key);
-
-    if (!existing) {
-      byKey.set(key, fallback);
-      continue;
-    }
-
-    byKey.set(key, {
-      ...existing,
-      tradeSide: TARGET_TRADE_SIDE,
-      side: 'bear',
-      selectedTier: existing.selectedTier || fallback.selectedTier,
-      rotationEligibilityTier: existing.rotationEligibilityTier || fallback.rotationEligibilityTier
-    });
-  }
-
-  return [...byKey.values()].filter(isTargetSide);
+function getSideRowsCacheKey({
+  weekKey,
+  side
+}) {
+  return `${weekKey}|${side}`;
 }
 
-function manualRowFromId(id, index = 0) {
-  if (inferTradeSide(id) !== TARGET_TRADE_SIDE) return null;
+function getCachedSideRows({
+  weekKey,
+  side,
+  allowStale = false
+}) {
+  const cacheKey = getSideRowsCacheKey({
+    weekKey,
+    side
+  });
+
+  const cached = cache.sideRows.get(cacheKey);
+
+  if (!cached) return null;
+
+  const ageMs = now() - num(cached.ts, 0);
+
+  if (!allowStale && ageMs > SIDE_ROWS_CACHE_TTL_MS) {
+    return null;
+  }
+
+  return {
+    ...cached,
+    cacheKey,
+    cacheAgeMs: ageMs,
+    stale: ageMs > SIDE_ROWS_CACHE_TTL_MS
+  };
+}
+
+async function getWeekSideRows({
+  weekKey,
+  side,
+  startedAt
+}) {
+  const fresh = getCachedSideRows({
+    weekKey,
+    side,
+    allowStale: false
+  });
+
+  if (fresh) {
+    return {
+      weekKey,
+      rows: fresh.rows || [],
+      cacheHit: true,
+      stale: false,
+      warning: null,
+      source: 'sideRowsCache',
+      cacheKey: fresh.cacheKey,
+      cacheAgeMs: fresh.cacheAgeMs
+    };
+  }
+
+  const warnings = [];
+
+  try {
+    const micros = await withTimeout(
+      getWeekMicros(weekKey),
+      WEEK_MICROS_TIMEOUT_MS,
+      `GET_WEEK_MICROS_TIMEOUT_${weekKey}`
+    );
+
+    const rows = buildRowsFromMicrosForSide({
+      micros,
+      side,
+      startedAt,
+      warnings
+    });
+
+    const cacheKey = getSideRowsCacheKey({
+      weekKey,
+      side
+    });
+
+    cache.sideRows.set(cacheKey, {
+      ts: now(),
+      rows,
+      microsCount: sourceEntriesFromMicros(micros).length
+    });
+
+    pruneCacheMap(cache.sideRows);
+
+    return {
+      weekKey,
+      rows,
+      cacheHit: false,
+      stale: false,
+      warning: warnings.join('|') || null,
+      source: 'weekMicrosSideFiltered',
+      cacheKey,
+      cacheAgeMs: 0,
+      microsCount: sourceEntriesFromMicros(micros).length
+    };
+  } catch (error) {
+    const stale = getCachedSideRows({
+      weekKey,
+      side,
+      allowStale: true
+    });
+
+    if (stale?.rows) {
+      return {
+        weekKey,
+        rows: stale.rows || [],
+        cacheHit: true,
+        stale: true,
+        warning: error?.message || String(error),
+        source: 'staleSideRowsCache',
+        cacheKey: stale.cacheKey,
+        cacheAgeMs: stale.cacheAgeMs,
+        microsCount: stale.microsCount || null
+      };
+    }
+
+    return {
+      weekKey,
+      rows: [],
+      cacheHit: false,
+      stale: false,
+      warning: error?.message || String(error),
+      source: 'emptyAfterWeekMicrosFailure',
+      cacheKey: null,
+      cacheAgeMs: null,
+      microsCount: null
+    };
+  }
+}
+
+function manualRowFromActiveId(id, index = 0) {
+  const tradeSide = inferTradeSide({
+    microFamilyId: id
+  });
+
+  if (tradeSide !== 'SHORT') return null;
 
   return decorateMicroRow(
     buildRawMicroRow({
@@ -929,7 +1151,7 @@ function manualRowFromId(id, index = 0) {
       avgCostR: 0,
       selectedTier: 'ACTIVE_FALLBACK',
       rotationEligibilityTier: 'ACTIVE_FALLBACK'
-    }, id, index, TARGET_TRADE_SIDE)
+    }, id, index)
   );
 }
 
@@ -942,29 +1164,25 @@ function extractActiveIds(activeRotation) {
     ...(Array.isArray(activeRotation.trueMicroFamilyIds) ? activeRotation.trueMicroFamilyIds : []),
     ...(Array.isArray(activeRotation.ids) ? activeRotation.ids : []),
     ...(Array.isArray(activeRotation.microFamilies)
-      ? activeRotation.microFamilies.map((row) => row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)
+      ? activeRotation.microFamilies.map((row) => row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key)
       : [])
   ];
 
-  return uniqueStrings(ids)
-    .filter((id) => inferTradeSide(id) === TARGET_TRADE_SIDE);
+  return uniqueStrings(ids);
 }
 
 function extractActiveMacroIds(activeRotation) {
   if (!activeRotation) return [];
 
-  const rows = Array.isArray(activeRotation.microFamilies)
-    ? activeRotation.microFamilies.filter(isTargetSide)
-    : [];
-
   const ids = [
     ...(Array.isArray(activeRotation.macroFamilyIds) ? activeRotation.macroFamilyIds : []),
     ...(Array.isArray(activeRotation.activeMacroFamilyIds) ? activeRotation.activeMacroFamilyIds : []),
-    ...rows.map((row) => getMacroFamilyId(row))
+    ...(Array.isArray(activeRotation.microFamilies)
+      ? activeRotation.microFamilies.map((row) => getMacroFamilyId(row))
+      : [])
   ];
 
-  return uniqueStrings(ids)
-    .filter((id) => inferTradeSide(id) === TARGET_TRADE_SIDE || upper(id).includes('SHORT'));
+  return uniqueStrings(ids);
 }
 
 function buildRowsFromActiveRotation(activeRotation) {
@@ -973,43 +1191,16 @@ function buildRowsFromActiveRotation(activeRotation) {
   const rows = [];
 
   if (Array.isArray(activeRotation.microFamilies)) {
-    rows.push(
-      ...activeRotation.microFamilies
-        .filter(isTargetSide)
-        .map((row, index) => decorateMicroRow(
-          buildRawMicroRow({
-            ...row,
-            selectedTier: row.selectedTier || row.rotationEligibilityTier || activeRotation.selectedTier || 'ACTIVE'
-          }, row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || `active_${index}`, index, TARGET_TRADE_SIDE)
-        ))
-    );
-  }
+    for (const row of activeRotation.microFamilies) {
+      const raw = decorateMicroRow(
+        buildRawMicroRow({
+          ...row,
+          selectedTier: row.selectedTier || row.rotationEligibilityTier || activeRotation.selectedTier || 'ACTIVE'
+        }, row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || `active_${rows.length}`, rows.length)
+      );
 
-  if (activeRotation.bestShort && isTargetSide(activeRotation.bestShort)) {
-    rows.push(decorateMicroRow(
-      buildRawMicroRow({
-        ...activeRotation.bestShort,
-        selectedTier: activeRotation.bestShort.selectedTier || activeRotation.selectedTier || 'ACTIVE_BEST'
-      }, activeRotation.bestShort.microFamilyId || activeRotation.bestShort.trueMicroFamilyId || 'bestShort', rows.length, TARGET_TRADE_SIDE)
-    ));
-  }
-
-  if (activeRotation.selectedRow && isTargetSide(activeRotation.selectedRow)) {
-    rows.push(decorateMicroRow(
-      buildRawMicroRow({
-        ...activeRotation.selectedRow,
-        selectedTier: activeRotation.selectedRow.selectedTier || activeRotation.selectedTier || 'ACTIVE_SELECTED'
-      }, activeRotation.selectedRow.microFamilyId || activeRotation.selectedRow.trueMicroFamilyId || 'selectedRow', rows.length, TARGET_TRADE_SIDE)
-    ));
-  }
-
-  if (activeRotation.preservedOppositeRow && isTargetSide(activeRotation.preservedOppositeRow)) {
-    rows.push(decorateMicroRow(
-      buildRawMicroRow({
-        ...activeRotation.preservedOppositeRow,
-        selectedTier: activeRotation.preservedOppositeRow.selectedTier || activeRotation.selectedTier || 'ACTIVE_PRESERVED'
-      }, activeRotation.preservedOppositeRow.microFamilyId || activeRotation.preservedOppositeRow.trueMicroFamilyId || 'preservedOppositeRow', rows.length, TARGET_TRADE_SIDE)
-    ));
+      if (raw.tradeSide === 'SHORT') rows.push(raw);
+    }
   }
 
   const existing = new Set(rows.map(rowKey).filter(Boolean));
@@ -1017,14 +1208,48 @@ function buildRowsFromActiveRotation(activeRotation) {
   for (const id of extractActiveIds(activeRotation)) {
     if (existing.has(id)) continue;
 
-    const manual = manualRowFromId(id, rows.length);
-    if (!manual) continue;
+    const row = manualRowFromActiveId(id, rows.length);
 
-    rows.push(manual);
+    if (!row) continue;
+
+    rows.push(row);
     existing.add(id);
   }
 
-  return mergeRows([], rows);
+  return rows;
+}
+
+function mergeRows(primaryRows = [], fallbackRows = []) {
+  const byKey = new Map();
+
+  for (const row of primaryRows) {
+    const key = rowKey(row);
+    if (!key) continue;
+
+    byKey.set(key, row);
+  }
+
+  for (const fallback of fallbackRows) {
+    const key = rowKey(fallback);
+    if (!key) continue;
+
+    const existing = byKey.get(key);
+
+    if (!existing) {
+      byKey.set(key, fallback);
+      continue;
+    }
+
+    byKey.set(key, {
+      ...fallback,
+      ...existing,
+      active: existing.active || fallback.active,
+      selectedTier: existing.selectedTier || fallback.selectedTier,
+      rotationEligibilityTier: existing.rotationEligibilityTier || fallback.rotationEligibilityTier
+    });
+  }
+
+  return [...byKey.values()];
 }
 
 function normalizeMicroRow(
@@ -1039,7 +1264,7 @@ function normalizeMicroRow(
   const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null;
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId(row);
-  const tradeSide = TARGET_TRADE_SIDE;
+  const tradeSide = inferTradeSide(row);
 
   const active = microFamilyId
     ? activeSet.has(microFamilyId)
@@ -1060,11 +1285,11 @@ function normalizeMicroRow(
     parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
-    side: 'bear',
+    side: dashboardSideFromTradeSide(tradeSide),
     tradeSide,
 
-    active,
-    macroActive,
+    active: Boolean(row.active || active),
+    macroActive: Boolean(row.macroActive || macroActive),
 
     seen: num(row.seen, 0),
     observations: num(row.observations, 0),
@@ -1172,9 +1397,6 @@ function normalizeMicroRow(
     ...row,
     ...base,
 
-    side: 'bear',
-    tradeSide: TARGET_TRADE_SIDE,
-
     realTotalPnlPct: round(row.realTotalPnlPct, 4),
     shadowTotalPnlPct: round(row.shadowTotalPnlPct, 4),
     grossWinR: round(row.grossWinR, 4),
@@ -1189,18 +1411,13 @@ function normalizeMicroRow(
     shadowTotalCostR: round(row.shadowTotalCostR, 4),
 
     counters: row.counters || {},
-    examples: Array.isArray(row.examples)
-      ? row.examples.filter(isTargetSide).slice(-8)
-      : [],
-    recentOutcomes: Array.isArray(row.recentOutcomes)
-      ? row.recentOutcomes.filter(isTargetSide).slice(-8)
-      : []
+    examples: Array.isArray(row.examples) ? row.examples.slice(-8) : [],
+    recentOutcomes: Array.isArray(row.recentOutcomes) ? row.recentOutcomes.slice(-8) : []
   };
 }
 
 function compactBestRow(row) {
   if (!row) return null;
-  if (!isTargetSide(row)) return null;
 
   return {
     microFamilyId: row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null,
@@ -1208,8 +1425,8 @@ function compactBestRow(row) {
     familyId: getFamilyId(row),
     macroFamilyId: getMacroFamilyId(row),
 
-    side: 'bear',
-    tradeSide: TARGET_TRADE_SIDE,
+    side: normalizeDashboardSide(row),
+    tradeSide: inferTradeSide(row),
 
     active: Boolean(row.active),
     macroActive: Boolean(row.macroActive),
@@ -1235,16 +1452,18 @@ function compactBestRow(row) {
     avgCostR: round(row.avgCostR, 4),
 
     balancedScore: round(row.balancedScore, 4),
-    dashboardBalancedScore: round(row.dashboardBalancedScore, 4)
+    dashboardBalancedScore: round(row.dashboardBalancedScore, 4),
+
+    selectedTier: row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || null,
+    rotationEligibilityTier: row.rotationEligibilityTier || row.selectedTier || row.eligibilityTier || null
   };
 }
 
 function compactActiveRotation(activeRotation) {
   if (!activeRotation) return null;
 
-  const shortRows = buildRowsFromActiveRotation(activeRotation);
-  const activeMicroFamilyIds = uniqueStrings(shortRows.map(rowKey));
-  const activeMacroFamilyIds = uniqueStrings(shortRows.map(getMacroFamilyId));
+  const activeMicroFamilyIds = extractActiveIds(activeRotation);
+  const activeMacroFamilyIds = extractActiveMacroIds(activeRotation);
 
   return {
     rotationId: activeRotation.rotationId || null,
@@ -1255,17 +1474,15 @@ function compactActiveRotation(activeRotation) {
     generatedAt: activeRotation.generatedAt || null,
     activatedAt: activeRotation.activatedAt || null,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    shortOnly: true,
-    longDisabled: true,
-
     trueMicroOnly: activeRotation.trueMicroOnly !== false,
     usedLegacyFallback: Boolean(activeRotation.usedLegacyFallback),
     usedSoftFallback: Boolean(activeRotation.usedSoftFallback),
     usedObservationFallback: Boolean(activeRotation.usedObservationFallback),
 
     selectedTier: activeRotation.selectedTier || null,
-    missingSides: activeMicroFamilyIds.length > 0 ? [] : [TARGET_TRADE_SIDE],
+    missingSides: Array.isArray(activeRotation.missingSides)
+      ? activeRotation.missingSides
+      : [],
 
     microFamilyIds: activeMicroFamilyIds,
     activeMicroFamilyIds,
@@ -1274,26 +1491,24 @@ function compactActiveRotation(activeRotation) {
     macroFamilyIds: activeMacroFamilyIds,
     activeMacroFamilyIds,
 
-    bestLong: null,
-    bestShort: compactBestRow(
-      shortRows.find((row) => rowKey(row) === rowKey(activeRotation.bestShort)) ||
-      shortRows[0] ||
-      null
-    )
+    bestShort: activeRotation.bestShort
+      ? compactBestRow(activeRotation.bestShort)
+      : null,
+
+    bestLong: null
   };
 }
 
-function parseFilters(req) {
-  const requestedSide = String(firstQueryValue(req.query?.side, '') || '').toUpperCase();
-  const familyId = String(firstQueryValue(req.query?.familyId, '') || '').trim();
-  const macroFamilyId = String(firstQueryValue(req.query?.macroFamilyId, '') || '').trim();
+function parseFilters(req, enforcedSide = 'SHORT') {
   const q = String(firstQueryValue(req.query?.q, '') || '').trim().toUpperCase();
 
   return {
-    side: requestedSide,
-    forcedSide: TARGET_TRADE_SIDE,
-    familyId,
-    macroFamilyId,
+    side: enforcedSide,
+    requestedSide: requestedSide(req),
+    enforcedSide,
+
+    familyId: String(firstQueryValue(req.query?.familyId, '') || '').trim(),
+    macroFamilyId: String(firstQueryValue(req.query?.macroFamilyId, '') || '').trim(),
     q,
 
     activeOnly: isTrue(firstQueryValue(req.query?.activeOnly, false)),
@@ -1303,15 +1518,6 @@ function parseFilters(req) {
     minSample: num(firstQueryValue(req.query?.minSample, 0), 0),
     minSeen: num(firstQueryValue(req.query?.minSeen, 0), 0)
   };
-}
-
-function wantedTradeSide(side) {
-  const raw = upper(side);
-
-  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
-  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
-
-  return raw || '';
 }
 
 function rowMatchesSearch(row = {}, q = '') {
@@ -1344,13 +1550,7 @@ function rowMatchesSearch(row = {}, q = '') {
 }
 
 function rowPassesFilters(row = {}, filters, activeSet, activeMacroSet) {
-  if (!isTargetSide(row)) return false;
-
-  if (filters.side) {
-    const wantedSide = wantedTradeSide(filters.side);
-
-    if (wantedSide !== TARGET_TRADE_SIDE) return false;
-  }
+  if (inferTradeSide(row) !== 'SHORT') return false;
 
   if (filters.familyId && String(row.familyId || '') !== filters.familyId) {
     return false;
@@ -1395,8 +1595,8 @@ function sideCounts(rows = []) {
     (acc, row) => {
       const side = inferTradeSide(row);
 
-      if (side === 'SHORT') acc.short += 1;
-      else if (side === 'LONG') acc.long += 1;
+      if (side === 'LONG') acc.long += 1;
+      else if (side === 'SHORT') acc.short += 1;
       else acc.unknown += 1;
 
       return acc;
@@ -1427,10 +1627,9 @@ function buildSideSummary(rows = [], side) {
 }
 
 function buildSummary(rows = [], activeSet = new Set()) {
-  const shortRows = rows.filter(isTargetSide);
-  const completedRows = shortRows.filter((row) => num(row.completed, 0) > 0);
-  const tradableRows = shortRows.filter((row) => num(row.winrateSample, 0) >= TRADABLE_SAMPLE_MIN);
-  const activeRows = shortRows.filter((row) => activeSet.has(row.microFamilyId || row.trueMicroFamilyId || row.id || row.key));
+  const completedRows = rows.filter((row) => num(row.completed, 0) > 0);
+  const tradableRows = rows.filter((row) => num(row.winrateSample, 0) >= TRADABLE_SAMPLE_MIN);
+  const activeRows = rows.filter((row) => activeSet.has(row.microFamilyId || row.trueMicroFamilyId || row.id || row.key));
 
   let totalR = 0;
   let totalSeen = 0;
@@ -1438,7 +1637,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
   let totalWinrateSample = 0;
   let totalCostR = 0;
 
-  for (const row of shortRows) {
+  for (const row of rows) {
     totalR += num(row.totalR, 0);
     totalSeen += num(row.seen, 0);
     totalCompleted += num(row.completed, 0);
@@ -1447,11 +1646,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
   }
 
   return {
-    targetTradeSide: TARGET_TRADE_SIDE,
-    shortOnly: true,
-    longDisabled: true,
-
-    rows: shortRows.length,
+    rows: rows.length,
     activeRows: activeRows.length,
     activeIds: activeSet.size,
 
@@ -1467,11 +1662,11 @@ function buildSummary(rows = [], activeSet = new Set()) {
     avgR: totalCompleted > 0 ? round(totalR / totalCompleted, 4) : 0,
     avgCostR: totalCompleted > 0 ? round(totalCostR / totalCompleted, 4) : 0,
 
-    bestBalanced: compactBestRow(bestBy(shortRows, compareRowsBalanced)),
-    bestTotalR: compactBestRow(bestBy(shortRows, compareRowsTotalR)),
-    bestAvgR: compactBestRow(bestBy(shortRows, compareRowsAvgR)),
-    bestWinrate: compactBestRow(bestBy(shortRows, compareRowsWinrate)),
-    lowestDirectSL: compactBestRow(bestBy(shortRows, compareRowsDirectSL)),
+    bestBalanced: compactBestRow(bestBy(rows, compareRowsBalanced)),
+    bestTotalR: compactBestRow(bestBy(rows, compareRowsTotalR)),
+    bestAvgR: compactBestRow(bestBy(rows, compareRowsAvgR)),
+    bestWinrate: compactBestRow(bestBy(rows, compareRowsWinrate)),
+    lowestDirectSL: compactBestRow(bestBy(rows, compareRowsDirectSL)),
 
     long: {
       rows: 0,
@@ -1482,11 +1677,13 @@ function buildSummary(rows = [], activeSet = new Set()) {
       lowestDirectSL: null
     },
 
-    short: buildSideSummary(shortRows, TARGET_TRADE_SIDE)
+    short: buildSideSummary(rows, 'SHORT')
   };
 }
 
-async function getActiveRotationSafe() {
+async function getActiveRotationSafe(includeActiveRotation = false) {
+  if (!includeActiveRotation) return null;
+
   try {
     return await withTimeout(
       getActiveRotation(),
@@ -1498,144 +1695,25 @@ async function getActiveRotationSafe() {
   }
 }
 
-function getCachedWeekMicros(weekKey) {
-  const cached = cache.weekMicros.get(weekKey);
-
-  if (!cached) return null;
-  if (now() - cached.ts > WEEK_MICROS_CACHE_TTL_MS) return null;
-
-  return cached.micros || {};
-}
-
-async function getWeekMicrosCached(weekKey, timeoutMs) {
-  const cached = getCachedWeekMicros(weekKey);
-
-  if (cached) {
-    return {
-      weekKey,
-      micros: cached,
-      cacheHit: true,
-      stale: false,
-      warning: null
-    };
-  }
-
-  try {
-    const micros = await withTimeout(
-      getWeekMicros(weekKey),
-      timeoutMs,
-      `GET_WEEK_MICROS_TIMEOUT_${weekKey}`
-    );
-
-    cache.weekMicros.set(weekKey, {
-      ts: now(),
-      micros: micros || {}
-    });
-
-    pruneCacheMap(cache.weekMicros);
-
-    return {
-      weekKey,
-      micros: micros || {},
-      cacheHit: false,
-      stale: false,
-      warning: null
-    };
-  } catch (error) {
-    const stale = cache.weekMicros.get(weekKey);
-
-    if (stale?.micros) {
-      return {
-        weekKey,
-        micros: stale.micros,
-        cacheHit: true,
-        stale: true,
-        warning: error?.message || String(error)
-      };
-    }
-
-    return {
-      weekKey,
-      micros: {},
-      cacheHit: false,
-      stale: false,
-      warning: error?.message || String(error)
-    };
-  }
-}
-
-function hasMicros(micros = {}) {
-  return sourceEntriesFromMicros(micros).length > 0;
-}
-
-async function getWeekMicrosWithFallback(requestedWeekKey, currentWeekKey, previousWeekKey) {
-  const primary = await getWeekMicrosCached(requestedWeekKey, WEEK_MICROS_TIMEOUT_MS);
-
-  if (hasMicros(primary.micros)) {
-    return {
-      ...primary,
-      source: 'requestedWeek',
-      warnings: primary.warning ? [primary.warning] : []
-    };
-  }
-
-  const warnings = primary.warning ? [primary.warning] : [];
-
-  if (requestedWeekKey !== previousWeekKey) {
-    const fallback = await getWeekMicrosCached(previousWeekKey, FALLBACK_WEEK_TIMEOUT_MS);
-
-    if (hasMicros(fallback.micros)) {
-      return {
-        ...fallback,
-        source: 'previousWeekFallback',
-        warnings: [
-          ...warnings,
-          `REQUESTED_WEEK_EMPTY:${requestedWeekKey}`,
-          ...(fallback.warning ? [fallback.warning] : [])
-        ]
-      };
-    }
-
-    if (fallback.warning) warnings.push(fallback.warning);
-  }
-
-  return {
-    ...primary,
-    source: 'empty',
-    warnings: [
-      ...warnings,
-      `NO_MICROS_FOUND_FOR_REQUESTED_OR_PREVIOUS_WEEK:${requestedWeekKey}`
-    ]
-  };
-}
-
 function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
-  return rows
-    .filter(isTargetSide)
-    .map((row, index) => normalizeMicroRow(row, index, {
-      activeSet,
-      activeMacroSet,
-      compact
-    }));
+  return rows.map((row, index) => normalizeMicroRow(row, index, {
+    activeSet,
+    activeMacroSet,
+    compact
+  }));
 }
 
 function selectResponseRows({
   rankedRows = [],
-  limit = DEFAULT_LIMIT,
-  sideLimit = DEFAULT_SIDE_LIMIT,
-  filters = {}
+  limit = DEFAULT_LIMIT
 } = {}) {
-  const shortRows = rankedRows
-    .filter(isTargetSide)
-    .slice(0, filters.side ? limit : sideLimit);
-
-  return shortRows.slice(0, limit);
+  return rankedRows.slice(0, limit);
 }
 
 function splitSideRows(rows = [], sideLimit = DEFAULT_SIDE_LIMIT) {
   return {
     shortRows: rows
-      .filter(isTargetSide)
+      .filter((row) => inferTradeSide(row) === 'SHORT')
       .slice(0, sideLimit),
 
     longRows: [],
@@ -1644,13 +1722,17 @@ function splitSideRows(rows = [], sideLimit = DEFAULT_SIDE_LIMIT) {
   };
 }
 
+function normalizeMode(value, fallback = 'balanced') {
+  const mode = String(value || fallback).trim();
+
+  return VALID_MODES.has(mode) ? mode : fallback;
+}
+
 export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only');
-  res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
-  res.setHeader('X-Long-Disabled', 'true');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-fast-v3');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -1660,12 +1742,13 @@ export default async function handler(req, res) {
     const currentWeekKey = getIsoWeekKey();
     const previousWeekKey = getPreviousIsoWeekKey();
 
-    const requestedWeekKey = firstQueryValue(req.query?.weekKey, currentWeekKey);
-    const requestedMode = String(firstQueryValue(req.query?.mode, 'balanced') || 'balanced');
+    const requestedWeekKey = String(
+      firstQueryValue(req.query?.weekKey, currentWeekKey) ||
+      currentWeekKey
+    ).trim();
 
-    const mode = VALID_MODES.has(requestedMode)
-      ? requestedMode
-      : 'balanced';
+    const requestedMode = String(firstQueryValue(req.query?.mode, 'balanced') || 'balanced');
+    const mode = normalizeMode(requestedMode, 'balanced');
 
     const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
     const requestedLimitNumber = Number(requestedLimitRaw) || DEFAULT_LIMIT;
@@ -1690,33 +1773,51 @@ export default async function handler(req, res) {
         ? true
         : isTrue(compactRaw);
 
-    const filters = parseFilters(req);
+    const side = requestedSide(req);
+
+    if (side === 'LONG' && !ENABLE_LONG_SIDE) {
+      return longDisabledResponse({
+        req,
+        res,
+        startedAt,
+        requestedWeekKey,
+        currentWeekKey,
+        previousWeekKey,
+        mode,
+        requestedMode,
+        limit,
+        sideLimit,
+        compact
+      });
+    }
+
+    const enforcedSide = 'SHORT';
+    const filters = parseFilters(req, enforcedSide);
 
     const [activeRotation, weekResult] = await Promise.all([
-      getActiveRotationSafe(),
-      getWeekMicrosWithFallback(requestedWeekKey, currentWeekKey, previousWeekKey)
+      getActiveRotationSafe(includeActiveRotation),
+      getWeekSideRows({
+        weekKey: requestedWeekKey,
+        side: enforcedSide,
+        startedAt
+      })
     ]);
 
-    const activeFallbackRows = buildRowsFromActiveRotation(activeRotation);
-
-    const activeMicroFamilyIds = uniqueStrings(
-      activeFallbackRows.map(rowKey)
-    );
-
-    const activeMacroFamilyIds = uniqueStrings(
-      activeFallbackRows.map(getMacroFamilyId)
-    );
+    const activeMicroFamilyIds = extractActiveIds(activeRotation);
+    const activeMacroFamilyIds = extractActiveMacroIds(activeRotation);
 
     const activeSet = new Set(activeMicroFamilyIds);
     const activeMacroSet = new Set(activeMacroFamilyIds);
 
-    const weekRows = buildRowsFromMicros(weekResult.micros);
+    const weekRows = Array.isArray(weekResult.rows)
+      ? weekResult.rows
+      : [];
 
-    let mergedRows = mergeRows(weekRows, activeFallbackRows);
+    const activeFallbackRows = includeActiveRotation
+      ? buildRowsFromActiveRotation(activeRotation)
+      : [];
 
-    if (mergedRows.length === 0 && activeFallbackRows.length > 0) {
-      mergedRows = activeFallbackRows.filter(isTargetSide);
-    }
+    const mergedRows = mergeRows(weekRows, activeFallbackRows);
 
     const filteredRows = mergedRows.filter((row) => (
       rowPassesFilters(row, filters, activeSet, activeMacroSet)
@@ -1725,56 +1826,44 @@ export default async function handler(req, res) {
     const rankedRows = sortRowsByMode(filteredRows, mode)
       .map((row, index) => ({
         ...row,
-        rank: index + 1,
-        side: 'bear',
-        tradeSide: TARGET_TRADE_SIDE
+        rank: index + 1
       }));
 
     const responseRows = selectResponseRows({
       rankedRows,
-      limit,
-      sideLimit,
-      filters
+      limit
     });
 
     const split = splitSideRows(rankedRows, sideLimit);
 
     const normalizedRows = normalizeRows(responseRows, activeSet, activeMacroSet, compact);
     const normalizedShortRows = normalizeRows(split.shortRows, activeSet, activeMacroSet, compact);
-    const normalizedLongRows = [];
-    const normalizedUnknownRows = [];
 
     const summary = buildSummary(rankedRows, activeSet);
-
-    const bestShort = split.shortRows[0] || null;
-    const bestLong = null;
+    const bestShort = split.shortRows[0] || rankedRows[0] || null;
 
     const warnings = uniqueStrings([
-      ...(weekResult.warnings || []),
+      weekResult.warning,
+      weekResult.stale ? 'USED_STALE_SIDE_ROWS_CACHE' : null,
       weekRows.length === 0 && activeFallbackRows.length > 0
         ? 'USED_ACTIVE_ROTATION_FALLBACK_ROWS'
         : null,
       rankedRows.length === 0
         ? 'NO_SHORT_ROWS_AFTER_FILTERS'
         : null,
-      'SHORT_ONLY_FILTER_APPLIED',
-      filters.side && wantedTradeSide(filters.side) !== TARGET_TRADE_SIDE
-        ? `REQUESTED_SIDE_DISABLED:${filters.side}`
-        : null
+      'LONG_SIDE_DISABLED'
     ].filter(Boolean));
 
     return res.status(200).json({
       ok: true,
       fixed: true,
-
-      targetTradeSide: TARGET_TRADE_SIDE,
       shortOnly: true,
-      longDisabled: true,
+      longDisabled: !ENABLE_LONG_SIDE,
 
       weekKey: weekResult.weekKey || requestedWeekKey,
       requestedWeekKey,
       sourceWeekKeyUsed: weekResult.weekKey || requestedWeekKey,
-      source: weekResult.source || 'unknown',
+      source: weekResult.source || 'shortOnlySideRows',
 
       currentWeekKey,
       previousWeekKey,
@@ -1803,32 +1892,18 @@ export default async function handler(req, res) {
 
       activeRotationId: activeRotation?.rotationId || null,
       activeRotation: includeActiveRotation
-        ? {
-          ...activeRotation,
-          targetTradeSide: TARGET_TRADE_SIDE,
-          shortOnly: true,
-          longDisabled: true,
-          bestLong: null,
-          microFamilies: Array.isArray(activeRotation?.microFamilies)
-            ? activeRotation.microFamilies.filter(isTargetSide)
-            : [],
-          microFamilyIds: activeMicroFamilyIds,
-          activeMicroFamilyIds,
-          trueMicroFamilyIds: activeMicroFamilyIds,
-          macroFamilyIds: activeMacroFamilyIds,
-          activeMacroFamilyIds
-        }
+        ? activeRotation
         : compactActiveRotation(activeRotation),
 
       activeMicroFamilyIds,
       activeMacroFamilyIds,
 
       bestShort: compactBestRow(bestShort),
-      bestLong,
+      bestLong: null,
 
       shortRows: normalizedShortRows,
-      longRows: normalizedLongRows,
-      unknownRows: normalizedUnknownRows,
+      longRows: [],
+      unknownRows: [],
 
       summary,
       rows: normalizedRows,
@@ -1836,11 +1911,15 @@ export default async function handler(req, res) {
       warnings,
 
       perf: {
-        durationMs: now() - startedAt,
+        durationMs: elapsed(startedAt),
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
-        weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnlyWeekMicrosWithPreviousWeekAndActiveRotationFallback'
+        weekMicrosCacheKey: weekResult.cacheKey || null,
+        weekMicrosCacheAgeMs: weekResult.cacheAgeMs ?? null,
+        weekMicrosCacheSize: cache.sideRows.size,
+        microsCount: weekResult.microsCount ?? null,
+        path: 'shortOnlyWeekMicrosSideFilter',
+        avoidedLongProcessing: true
       },
 
       serverTs: Date.now()
@@ -1848,15 +1927,12 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(500).json({
       ok: false,
-
-      targetTradeSide: TARGET_TRADE_SIDE,
       shortOnly: true,
-      longDisabled: true,
-
       error: error?.message || String(error),
       stack: process.env.NODE_ENV === 'production'
         ? undefined
-        : error?.stack
+        : error?.stack,
+      serverTs: Date.now()
     });
   }
 }
