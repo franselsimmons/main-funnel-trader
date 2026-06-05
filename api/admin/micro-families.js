@@ -24,7 +24,11 @@ const WINRATE_BAYES_ALPHA = 1;
 const WINRATE_BAYES_BETA = 1;
 const SAMPLE_RELIABILITY_CAP = 50;
 const TRADABLE_SAMPLE_MIN = 5;
-const DEFAULT_SIDE_ENSURE_LIMIT = 50;
+
+const DEFAULT_LIMIT = 160;
+const MAX_LIMIT = 300;
+const DEFAULT_SIDE_ENSURE_LIMIT = 25;
+const MAX_SIDE_ENSURE_LIMIT = 60;
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET');
@@ -43,13 +47,13 @@ function firstQueryValue(value, fallback = null) {
   return value;
 }
 
-function toSafeLimit(value, fallback = 200) {
+function toSafeLimit(value, fallback = DEFAULT_LIMIT, max = MAX_LIMIT) {
   const n = Number(value);
 
   if (!Number.isFinite(n)) return fallback;
   if (n < 1) return fallback;
 
-  return Math.min(Math.floor(n), 1000);
+  return Math.min(Math.floor(n), max);
 }
 
 function isTrue(value) {
@@ -106,17 +110,10 @@ function normalizeSideToken(value) {
 
   const converted = sideToTradeSide(raw);
 
-  if (converted === 'LONG' || converted === 'SHORT') {
-    return converted;
-  }
+  if (converted === 'LONG' || converted === 'SHORT') return converted;
 
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) {
-    return 'LONG';
-  }
-
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) {
-    return 'SHORT';
-  }
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
 
   return 'UNKNOWN';
 }
@@ -151,10 +148,12 @@ function collectSideText(input = {}) {
     input.definition,
     input.microDefinition,
     input.macroDefinition,
+    input.parentDefinition,
 
     ...(Array.isArray(input.definitionParts) ? input.definitionParts : []),
     ...(Array.isArray(input.microDefinitionParts) ? input.microDefinitionParts : []),
-    ...(Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts : [])
+    ...(Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts : []),
+    ...(Array.isArray(input.parentDefinitionParts) ? input.parentDefinitionParts : [])
   ]
     .map((value) => upper(value))
     .filter(Boolean)
@@ -253,15 +252,8 @@ function inferTradeSide(input = {}) {
   for (const source of directSources) {
     const normalized = normalizeSideToken(source);
 
-    if (normalized === 'LONG' || normalized === 'SHORT') {
-      return normalized;
-    }
+    if (normalized === 'LONG' || normalized === 'SHORT') return normalized;
   }
-
-  const rawSide = upper(input.side);
-
-  if (['BULL', 'LONG', 'BUY'].includes(rawSide)) return 'LONG';
-  if (['BEAR', 'SHORT', 'SELL'].includes(rawSide)) return 'SHORT';
 
   const familyId = upper(input.familyId || input.family || input.baseFamilyId);
   const macroFamilyId = upper(
@@ -651,7 +643,8 @@ function normalizeMicroRow(
   index = 0,
   {
     activeSet = new Set(),
-    activeMacroSet = new Set()
+    activeMacroSet = new Set(),
+    compact = true
   } = {}
 ) {
   const microFamilyId = row.microFamilyId || row.id || row.key || null;
@@ -689,14 +682,15 @@ function normalizeMicroRow(
     ? activeMacroSet.has(macroFamilyId)
     : false;
 
-  return {
-    ...row,
-
+  const base = {
     rank: index + 1,
 
     microFamilyId,
     familyId,
     macroFamilyId,
+
+    parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
+    parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
     side: tradeSide === 'LONG'
       ? 'bull'
@@ -743,23 +737,9 @@ function normalizeMicroRow(
     realTotalR: round(row.realTotalR, 4),
     shadowTotalR: round(row.shadowTotalR, 4),
 
-    realTotalPnlPct: round(row.realTotalPnlPct, 4),
-    shadowTotalPnlPct: round(row.shadowTotalPnlPct, 4),
-
-    grossWinR: round(row.grossWinR, 4),
-    grossLossR: round(row.grossLossR, 4),
-
-    realGrossWinR: round(row.realGrossWinR, 4),
-    realGrossLossR: round(row.realGrossLossR, 4),
-    shadowGrossWinR: round(row.shadowGrossWinR, 4),
-    shadowGrossLossR: round(row.shadowGrossLossR, 4),
-
     avgR: round(row.avgR, 4),
     avgWinR: round(row.avgWinR, 4),
     avgLossR: round(row.avgLossR, 4),
-
-    totalPnlPct: round(row.totalPnlPct, 4),
-    avgPnlPct: round(row.avgPnlPct, 4),
 
     profitFactor: round(row.profitFactor, 4),
 
@@ -787,8 +767,6 @@ function normalizeMicroRow(
 
     totalCostR: round(row.totalCostR, 4),
     avgCostR: round(row.avgCostR, 4),
-    realTotalCostR: round(row.realTotalCostR, 4),
-    shadowTotalCostR: round(row.shadowTotalCostR, 4),
 
     sampleReliabilityOld: round(row.sampleReliability, 4),
     balancedScore: round(row.balancedScore, 4),
@@ -797,7 +775,7 @@ function normalizeMicroRow(
     definition: row.definition || null,
     definitionParts,
 
-    macroDefinition: row.macroDefinition || null,
+    macroDefinition: row.macroDefinition || row.parentDefinition || null,
     macroDefinitionParts,
 
     microDefinition: row.microDefinition || row.definition || null,
@@ -805,12 +783,48 @@ function normalizeMicroRow(
       ? row.microDefinitionParts
       : definitionParts,
 
-    counters: row.counters || {},
-    examples: Array.isArray(row.examples) ? row.examples : [],
-    recentOutcomes: Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [],
+    assetClass: row.assetClass || null,
+    rsiZone: row.rsiZone || null,
+    rsiCoarse: row.rsiCoarse || null,
+    flow: row.flow || null,
+    flowCoarse: row.flowCoarse || null,
+    obRelation: row.obRelation || null,
+    btcState: row.btcState || null,
+    btcRelation: row.btcRelation || null,
+    regime: row.regime || null,
+    regimeCoarse: row.regimeCoarse || null,
+    scannerReason: row.scannerReason || null,
+    scannerReasonCoarse: row.scannerReasonCoarse || null,
+
+    selectedTier: row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || null,
+    rotationEligibilityTier: row.rotationEligibilityTier || row.selectedTier || row.eligibilityTier || null,
 
     createdAt: row.createdAt || null,
     updatedAt: row.updatedAt || null
+  };
+
+  if (compact) return base;
+
+  return {
+    ...row,
+    ...base,
+
+    realTotalPnlPct: round(row.realTotalPnlPct, 4),
+    shadowTotalPnlPct: round(row.shadowTotalPnlPct, 4),
+    grossWinR: round(row.grossWinR, 4),
+    grossLossR: round(row.grossLossR, 4),
+    realGrossWinR: round(row.realGrossWinR, 4),
+    realGrossLossR: round(row.realGrossLossR, 4),
+    shadowGrossWinR: round(row.shadowGrossWinR, 4),
+    shadowGrossLossR: round(row.shadowGrossLossR, 4),
+    totalPnlPct: round(row.totalPnlPct, 4),
+    avgPnlPct: round(row.avgPnlPct, 4),
+    realTotalCostR: round(row.realTotalCostR, 4),
+    shadowTotalCostR: round(row.shadowTotalCostR, 4),
+
+    counters: row.counters || {},
+    examples: Array.isArray(row.examples) ? row.examples.slice(-8) : [],
+    recentOutcomes: Array.isArray(row.recentOutcomes) ? row.recentOutcomes.slice(-8) : []
   };
 }
 
@@ -818,37 +832,37 @@ function compactBestRow(row) {
   if (!row) return null;
 
   return {
-    microFamilyId: row.microFamilyId,
-    familyId: row.familyId,
-    macroFamilyId: row.macroFamilyId,
+    microFamilyId: row.microFamilyId || row.id || row.key || null,
+    familyId: getFamilyId(row),
+    macroFamilyId: getMacroFamilyId(row),
 
-    side: row.side,
-    tradeSide: row.tradeSide,
+    side: normalizeDashboardSide(row),
+    tradeSide: inferTradeSide(row),
 
     active: Boolean(row.active),
     macroActive: Boolean(row.macroActive),
 
-    seen: row.seen,
-    completed: row.completed,
-    realCompleted: row.realCompleted,
-    shadowCompleted: row.shadowCompleted,
+    seen: num(row.seen, 0),
+    completed: round(row.completed, 4),
+    realCompleted: num(row.realCompleted, 0),
+    shadowCompleted: num(row.shadowCompleted, 0),
 
-    winrateSample: row.winrateSample,
-    winrate: row.winrate,
-    fairWinrate: row.fairWinrate,
-    sampleAdjustedWinrate: row.sampleAdjustedWinrate,
-    sampleWilsonLowerBound: row.sampleWilsonLowerBound,
-    sampleReliability: row.sampleReliability,
+    winrateSample: round(row.winrateSample ?? getSampleAdjustedWinrate(row).sample, 4),
+    winrate: round(row.winrate, 4),
+    fairWinrate: round(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound, 4),
+    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate ?? getSampleAdjustedWinrate(row).score, 4),
+    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound ?? row.wilsonLowerBound, 4),
+    sampleReliability: round(row.sampleReliability ?? getSampleAdjustedWinrate(row).reliability, 4),
 
-    avgR: row.avgR,
-    totalR: row.totalR,
-    profitFactor: row.profitFactor,
+    avgR: round(row.avgR, 4),
+    totalR: round(row.totalR, 4),
+    profitFactor: round(row.profitFactor, 4),
 
-    directSLPct: row.directSLPct,
-    avgCostR: row.avgCostR,
+    directSLPct: round(row.directSLPct, 4),
+    avgCostR: round(row.avgCostR, 4),
 
-    balancedScore: row.balancedScore,
-    dashboardBalancedScore: row.dashboardBalancedScore
+    balancedScore: round(row.balancedScore, 4),
+    dashboardBalancedScore: round(row.dashboardBalancedScore ?? getDashboardBalancedScore(row), 4)
   };
 }
 
@@ -898,8 +912,16 @@ function bestBy(rows = [], comparator) {
   return [...rows].sort(comparator)[0] || null;
 }
 
+function normalizeRowsForBest(rows = []) {
+  return rows.map((row, index) => normalizeMicroRow(row, index, {
+    compact: true
+  }));
+}
+
 function buildSideSummary(rows = [], side) {
-  const sideRows = rows.filter((row) => row.tradeSide === side);
+  const sideRows = normalizeRowsForBest(
+    rows.filter((row) => inferTradeSide(row) === side)
+  );
 
   return {
     rows: sideRows.length,
@@ -911,22 +933,24 @@ function buildSideSummary(rows = [], side) {
   };
 }
 
-function buildSummary(rows, activeSet) {
+function buildSummary(rows = [], activeSet = new Set()) {
   const completedRows = rows.filter((row) => num(row.completed, 0) > 0);
-  const tradableRows = rows.filter((row) => num(row.winrateSample, 0) >= TRADABLE_SAMPLE_MIN);
-  const activeRows = rows.filter((row) => activeSet.has(row.microFamilyId));
+  const tradableRows = rows.filter((row) => num(row.winrateSample ?? getSampleAdjustedWinrate(row).sample, 0) >= TRADABLE_SAMPLE_MIN);
+  const activeRows = rows.filter((row) => activeSet.has(row.microFamilyId || row.id || row.key));
 
   const totalR = rows.reduce((sum, row) => sum + num(row.totalR, 0), 0);
   const totalSeen = rows.reduce((sum, row) => sum + num(row.seen, 0), 0);
   const totalCompleted = rows.reduce((sum, row) => sum + num(row.completed, 0), 0);
-  const totalWinrateSample = rows.reduce((sum, row) => sum + num(row.winrateSample, 0), 0);
+  const totalWinrateSample = rows.reduce((sum, row) => sum + num(row.winrateSample ?? getSampleAdjustedWinrate(row).sample, 0), 0);
   const totalCostR = rows.reduce((sum, row) => sum + num(row.totalCostR, 0), 0);
 
-  const bestBalanced = bestBy(rows, compareNormalizedBalanced);
-  const bestTotalR = bestBy(rows, compareNormalizedTotalR);
-  const bestAvgR = bestBy(rows, compareNormalizedAvgR);
-  const bestWinrate = bestBy(rows, compareNormalizedWinrate);
-  const lowestDirectSL = bestBy(rows, compareNormalizedDirectSL);
+  const normalizedForBest = normalizeRowsForBest(rows);
+
+  const bestBalanced = bestBy(normalizedForBest, compareNormalizedBalanced);
+  const bestTotalR = bestBy(normalizedForBest, compareNormalizedTotalR);
+  const bestAvgR = bestBy(normalizedForBest, compareNormalizedAvgR);
+  const bestWinrate = bestBy(normalizedForBest, compareNormalizedWinrate);
+  const lowestDirectSL = bestBy(normalizedForBest, compareNormalizedDirectSL);
 
   return {
     rows: rows.length,
@@ -986,6 +1010,43 @@ function extractActiveMacroIds(activeRotation) {
   return uniqueStrings(ids);
 }
 
+function compactActiveRotation(activeRotation) {
+  if (!activeRotation) return null;
+
+  return {
+    rotationId: activeRotation.rotationId || null,
+    source: activeRotation.source || null,
+    mode: activeRotation.mode || null,
+    sourceWeekKey: activeRotation.sourceWeekKey || null,
+    activeWeekKey: activeRotation.activeWeekKey || null,
+    generatedAt: activeRotation.generatedAt || null,
+    activatedAt: activeRotation.activatedAt || null,
+
+    trueMicroOnly: activeRotation.trueMicroOnly !== false,
+    usedLegacyFallback: Boolean(activeRotation.usedLegacyFallback),
+    usedSoftFallback: Boolean(activeRotation.usedSoftFallback),
+    usedObservationFallback: Boolean(activeRotation.usedObservationFallback),
+
+    selectedTier: activeRotation.selectedTier || null,
+    missingSides: Array.isArray(activeRotation.missingSides)
+      ? activeRotation.missingSides
+      : [],
+
+    microFamilyIds: extractActiveIds(activeRotation),
+    activeMicroFamilyIds: extractActiveIds(activeRotation),
+    macroFamilyIds: extractActiveMacroIds(activeRotation),
+    activeMacroFamilyIds: extractActiveMacroIds(activeRotation),
+
+    bestLong: activeRotation.bestLong
+      ? compactBestRow(activeRotation.bestLong)
+      : null,
+
+    bestShort: activeRotation.bestShort
+      ? compactBestRow(activeRotation.bestShort)
+      : null
+  };
+}
+
 function parseFilters(req) {
   const side = String(firstQueryValue(req.query?.side, '') || '').toUpperCase();
   const familyId = String(firstQueryValue(req.query?.familyId, '') || '').trim();
@@ -1033,9 +1094,11 @@ function rowMatchesSearch(row = {}, q = '') {
     row.definition,
     row.microDefinition,
     row.macroDefinition,
+    row.parentDefinition,
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
-    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : [])
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
   ]
     .map((value) => upper(value))
     .join(' | ');
@@ -1149,7 +1212,7 @@ function ensureSideRows({
 
 function selectResponseRows({
   filteredRows = [],
-  limit = 200,
+  limit = DEFAULT_LIMIT,
   sideEnsureLimit = DEFAULT_SIDE_ENSURE_LIMIT,
   filters = {}
 } = {}) {
@@ -1186,10 +1249,11 @@ function selectResponseRows({
   ];
 }
 
-function normalizeRows(rows = [], activeSet, activeMacroSet) {
+function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
   return rows.map((row, index) => normalizeMicroRow(row, index, {
     activeSet,
-    activeMacroSet
+    activeMacroSet,
+    compact
   }));
 }
 
@@ -1211,18 +1275,20 @@ export default async function handler(req, res) {
       ? requestedMode
       : 'balanced';
 
-    const limit = toSafeLimit(
-      firstQueryValue(req.query?.limit, 200),
-      200
-    );
+    const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
+    const limit = toSafeLimit(requestedLimitRaw, DEFAULT_LIMIT, MAX_LIMIT);
 
     const sideEnsureLimit = toSafeLimit(
       firstQueryValue(
         req.query?.sideEnsureLimit,
         firstQueryValue(req.query?.sideLimit, DEFAULT_SIDE_ENSURE_LIMIT)
       ),
-      DEFAULT_SIDE_ENSURE_LIMIT
+      DEFAULT_SIDE_ENSURE_LIMIT,
+      MAX_SIDE_ENSURE_LIMIT
     );
+
+    const includeActiveRotation = isTrue(firstQueryValue(req.query?.includeActiveRotation, false));
+    const compact = !isTrue(firstQueryValue(req.query?.details, false));
 
     const filters = parseFilters(req);
 
@@ -1251,10 +1317,9 @@ export default async function handler(req, res) {
       filters
     });
 
-    const normalizedRows = normalizeRows(responseRows, activeSet, activeMacroSet);
-    const normalizedAllFilteredRows = normalizeRows(filteredRows, activeSet, activeMacroSet);
-
-    const summary = buildSummary(normalizedAllFilteredRows, activeSet);
+    const normalizedRows = normalizeRows(responseRows, activeSet, activeMacroSet, compact);
+    const summary = buildSummary(filteredRows, activeSet);
+    const activeRotationCompact = compactActiveRotation(activeRotation);
 
     return res.status(200).json({
       ok: true,
@@ -1265,9 +1330,14 @@ export default async function handler(req, res) {
 
       mode,
       requestedMode,
+
+      requestedLimit: Number(requestedLimitRaw) || DEFAULT_LIMIT,
       limit,
+      limitCapped: Number(requestedLimitRaw) > limit,
+
       sideEnsureLimit,
       filters,
+      compact,
 
       count: normalizedRows.length,
       filtered: filteredRows.length,
@@ -1278,7 +1348,7 @@ export default async function handler(req, res) {
       responseSideCounts: sideCounts(normalizedRows),
 
       activeRotationId: activeRotation?.rotationId || null,
-      activeRotation,
+      activeRotation: includeActiveRotation ? activeRotation : activeRotationCompact,
       activeMicroFamilyIds,
       activeMacroFamilyIds,
 
