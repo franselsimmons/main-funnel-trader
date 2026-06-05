@@ -1,8 +1,6 @@
 // ================= FILE: src/trade/positionSizing.js =================
 //
-// Decides how much risk a new entry may take, and whether portfolio-level risk
-// caps allow it at all.
-//
+// Short-only position sizing.
 // Risk contribution = fraction of equity lost if position hits initial SL.
 // Example: 0.0025 = 0.25% equity risk.
 
@@ -12,6 +10,8 @@ import {
   safeNumber,
   sideToTradeSide
 } from '../utils.js';
+
+const TARGET_TRADE_SIDE = 'SHORT';
 
 function round6(value) {
   return Number(safeNumber(value, 0).toFixed(6));
@@ -27,6 +27,97 @@ function sizingConfig() {
     maxSameSideRiskPct: Math.max(0, safeNumber(CONFIG.sizing?.maxSameSideRiskPct, 0.015)),
     maxCounterBtcRiskPct: Math.max(0, safeNumber(CONFIG.sizing?.maxCounterBtcRiskPct, 0.0075))
   };
+}
+
+function normalizeTradeSide(value) {
+  const direct = sideToTradeSide(value);
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSideFromIds(row = {}) {
+  const haystack = [
+    row.tradeSide,
+    row.side,
+    row.positionSide,
+    row.direction,
+
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (
+    haystack.includes('SHORT') ||
+    haystack.includes('BEAR') ||
+    haystack.includes('SELL') ||
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('TRADE_SIDE=SHORT') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('SIDE=BEAR') ||
+    haystack.includes('DIRECTION=SHORT') ||
+    haystack.includes('DIRECTION=BEAR')
+  ) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSide(row = {}) {
+  if (typeof row !== 'object' || row === null) {
+    return normalizeTradeSide(row);
+  }
+
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction ||
+    row.signalSide ||
+    row.scannerSide ||
+    row.actualScannerSide ||
+    row.analysisSide
+  );
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+
+  return inferTradeSideFromIds(row);
 }
 
 function normalizeBtcRelation(value) {
@@ -93,9 +184,23 @@ export function riskFractionForEntry({ weeklyStats } = {}) {
     return round6(cfg.baseRiskPct);
   }
 
+  const statsSide = inferTradeSide(weeklyStats || {});
+
+  if (weeklyStats && statsSide !== TARGET_TRADE_SIDE) {
+    return round6(cfg.baseRiskPct * cfg.minMult);
+  }
+
   const completed = safeNumber(weeklyStats?.completed, 0);
-  const balanced = safeNumber(weeklyStats?.balancedScore, 0);
-  const fairWinrate = safeNumber(weeklyStats?.fairWinrate, 0);
+  const balanced = safeNumber(
+    weeklyStats?.balancedScore ??
+    weeklyStats?.dashboardBalancedScore,
+    0
+  );
+  const fairWinrate = safeNumber(
+    weeklyStats?.fairWinrate ??
+    weeklyStats?.sampleAdjustedWinrate,
+    0
+  );
 
   const sampleConf = clamp(
     completed / Math.max(1, safeNumber(CONFIG.rotation?.priorTrades, 24)),
@@ -129,23 +234,24 @@ export function summarizeOpenRisk(openPositions = []) {
   const rows = Array.isArray(openPositions) ? openPositions : [];
 
   let total = 0;
-  let longRisk = 0;
   let shortRisk = 0;
+  let nonShortRisk = 0;
   let unknownSideRisk = 0;
   let counterBtcRisk = 0;
 
   for (const position of rows) {
     const risk = positionRiskFraction(position);
-    const tradeSide = sideToTradeSide(position.side);
+    const tradeSide = inferTradeSide(position);
 
     total += risk;
 
-    if (tradeSide === 'LONG') {
-      longRisk += risk;
-    } else if (tradeSide === 'SHORT') {
+    if (tradeSide === TARGET_TRADE_SIDE) {
       shortRisk += risk;
-    } else {
+    } else if (tradeSide === 'UNKNOWN') {
       unknownSideRisk += risk;
+      nonShortRisk += risk;
+    } else {
+      nonShortRisk += risk;
     }
 
     if (btcRelationFromRow(position) === 'BTC_AGAINST') {
@@ -155,10 +261,18 @@ export function summarizeOpenRisk(openPositions = []) {
 
   return {
     total: round6(total),
-    longRisk: round6(longRisk),
+
     shortRisk: round6(shortRisk),
+
+    // Backward-compatible keys. Long wordt niet meer gebruikt voor nieuwe sizing.
+    longRisk: 0,
+
+    nonShortRisk: round6(nonShortRisk),
     unknownSideRisk: round6(unknownSideRisk),
-    counterBtcRisk: round6(counterBtcRisk)
+    counterBtcRisk: round6(counterBtcRisk),
+
+    shortOnly: true,
+    longDisabled: true
   };
 }
 
@@ -171,8 +285,21 @@ export function checkRiskCaps({
   const cfg = sizingConfig();
   const want = normalizeRiskFraction(riskFraction);
   const open = summarizeOpenRisk(openPositions);
-  const tradeSide = sideToTradeSide(side);
+  const tradeSide = inferTradeSide({ side, tradeSide: side });
   const relation = normalizeBtcRelation(btcRelation);
+
+  if (tradeSide !== TARGET_TRADE_SIDE) {
+    return {
+      ok: false,
+      reason: 'SHORT_ONLY_SYSTEM_REJECTED_NON_SHORT_RISK',
+      side,
+      tradeSide,
+      want,
+      riskState: open,
+      shortOnly: true,
+      longDisabled: true
+    };
+  }
 
   if (!cfg.enabled) {
     return {
@@ -181,17 +308,10 @@ export function checkRiskCaps({
       riskFraction: want,
       openRiskBefore: open.total,
       openRiskAfter: round6(open.total + want),
-      riskState: open
-    };
-  }
-
-  if (tradeSide === 'UNKNOWN') {
-    return {
-      ok: false,
-      reason: 'UNKNOWN_SIDE_FOR_RISK_CAP',
-      side,
-      want,
-      riskState: open
+      sideRiskAfter: round6(open.shortRisk + want),
+      riskState: open,
+      shortOnly: true,
+      longDisabled: true
     };
   }
 
@@ -202,23 +322,23 @@ export function checkRiskCaps({
       open: open.total,
       want,
       cap: cfg.maxTotalRiskPct,
-      riskState: open
+      riskState: open,
+      shortOnly: true,
+      longDisabled: true
     };
   }
 
-  const sideRisk = tradeSide === 'LONG'
-    ? open.longRisk
-    : open.shortRisk;
-
-  if (sideRisk + want > cfg.maxSameSideRiskPct) {
+  if (open.shortRisk + want > cfg.maxSameSideRiskPct) {
     return {
       ok: false,
-      reason: 'MAX_SAME_SIDE_RISK',
-      side: tradeSide,
-      open: sideRisk,
+      reason: 'MAX_SHORT_SIDE_RISK',
+      side: TARGET_TRADE_SIDE,
+      open: open.shortRisk,
       want,
       cap: cfg.maxSameSideRiskPct,
-      riskState: open
+      riskState: open,
+      shortOnly: true,
+      longDisabled: true
     };
   }
 
@@ -232,7 +352,9 @@ export function checkRiskCaps({
       open: open.counterBtcRisk,
       want,
       cap: cfg.maxCounterBtcRiskPct,
-      riskState: open
+      riskState: open,
+      shortOnly: true,
+      longDisabled: true
     };
   }
 
@@ -241,10 +363,12 @@ export function checkRiskCaps({
     riskFraction: want,
     openRiskBefore: open.total,
     openRiskAfter: round6(open.total + want),
-    sideRiskAfter: round6(sideRisk + want),
+    sideRiskAfter: round6(open.shortRisk + want),
     counterBtcRiskAfter: relation === 'BTC_AGAINST'
       ? round6(open.counterBtcRisk + want)
       : open.counterBtcRisk,
-    riskState: open
+    riskState: open,
+    shortOnly: true,
+    longDisabled: true
   };
 }
