@@ -383,6 +383,147 @@
       word-break: break-word;
     }
 
+    .micro-connect-card {
+      position: relative;
+      overflow: hidden;
+      border-radius: 22px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96));
+      box-shadow: var(--shadow-soft);
+      padding: 16px;
+    }
+
+    .micro-connect-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 5px;
+      background: #94a3b8;
+    }
+
+    .micro-connect-card.short::before {
+      background: linear-gradient(90deg, #dc2626, #fb7185);
+    }
+
+    .micro-connect-card.long::before {
+      background: linear-gradient(90deg, #16a34a, #22c55e);
+    }
+
+    .micro-connect-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .micro-connect-title {
+      min-width: 0;
+    }
+
+    .micro-connect-title h3 {
+      margin: 0 0 5px;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+
+    .micro-connect-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .micro-connect-score {
+      text-align: right;
+      min-width: 88px;
+    }
+
+    .micro-connect-score strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .micro-connect-score span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .micro-connect-id {
+      display: grid;
+      gap: 6px;
+      margin: 12px 0;
+    }
+
+    .micro-connect-id code {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .micro-performance-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .micro-performance-stat {
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      padding: 10px;
+      background: #ffffff;
+    }
+
+    .micro-performance-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+
+    .micro-performance-stat strong {
+      display: block;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+
+    .micro-connect-narrative {
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      border-radius: 16px;
+      padding: 11px;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 12px 0;
+    }
+
+    .micro-connect-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .micro-connect-route {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      margin-top: 8px;
+    }
+
     .coin-card {
       position: relative;
       overflow: hidden;
@@ -790,12 +931,21 @@
         min-width: 100%;
       }
 
-      .coin-stats {
+      .coin-stats,
+      .micro-performance-grid {
         grid-template-columns: repeat(2, 1fr);
       }
 
       .id-stack {
         min-width: 260px;
+      }
+
+      .micro-connect-head {
+        flex-direction: column;
+      }
+
+      .micro-connect-score {
+        text-align: left;
       }
     }
   </style>
@@ -1303,7 +1453,14 @@
 
     function uniqueStrings(values = []) {
       return [...new Set(
-        (Array.isArray(values) ? values : [])
+        (Array.isArray(values) ? values : [values])
+          .flatMap((value) => {
+            if (Array.isArray(value)) return value;
+
+            return String(value || "")
+              .split(/[\s,]+/g)
+              .map((part) => part.trim());
+          })
           .map((value) => String(value || "").trim())
           .filter(Boolean)
       )];
@@ -1333,6 +1490,7 @@
       return uniqueStrings(
         rotation?.microFamilyIds ||
         rotation?.activeMicroFamilyIds ||
+        rotation?.trueMicroFamilyIds ||
         rotation?.ids ||
         (
           Array.isArray(rotation?.microFamilies)
@@ -1356,41 +1514,31 @@
     }
 
     function activeIdsFromState() {
-      return extractIdsFromRotation(
-        state.micros?.activeRotation ||
-        state.rotation?.active ||
-        state.rotation?.activeRotation ||
-        state.overview?.activeRotation ||
-        {}
-      );
+      return uniqueStrings([
+        extractIdsFromRotation(state.rotation?.active || {}),
+        extractIdsFromRotation(state.rotation?.activeRotation || {}),
+        extractIdsFromRotation(state.micros?.activeRotation || {}),
+        state.micros?.activeMicroFamilyIds || [],
+        extractIdsFromRotation(state.overview?.activeRotation || {})
+      ]);
     }
 
     function activeMacroIdsFromState() {
-      return extractMacroIdsFromRotation(
-        state.micros?.activeRotation ||
-        state.rotation?.active ||
-        state.rotation?.activeRotation ||
-        state.overview?.activeRotation ||
-        {}
-      );
+      return uniqueStrings([
+        extractMacroIdsFromRotation(state.rotation?.active || {}),
+        extractMacroIdsFromRotation(state.rotation?.activeRotation || {}),
+        extractMacroIdsFromRotation(state.micros?.activeRotation || {}),
+        state.micros?.activeMacroFamilyIds || [],
+        extractMacroIdsFromRotation(state.overview?.activeRotation || {})
+      ]);
     }
 
     function activeMicroSet() {
-      const microIds =
-        state.micros?.activeMicroFamilyIds ||
-        extractIdsFromRotation(state.micros?.activeRotation || {}) ||
-        activeIdsFromState();
-
-      return new Set(microIds || []);
+      return new Set(activeIdsFromState());
     }
 
     function activeMacroSet() {
-      const macroIds =
-        state.micros?.activeMacroFamilyIds ||
-        extractMacroIdsFromRotation(state.micros?.activeRotation || {}) ||
-        activeMacroIdsFromState();
-
-      return new Set(macroIds || []);
+      return new Set(activeMacroIdsFromState());
     }
 
     function idStack(row) {
@@ -1609,6 +1757,183 @@
       const rows = filterMicroRows(currentMicroRows());
 
       return splitTopMicroRows(rows).visibleRows;
+    }
+
+    function microTrades(row = {}) {
+      return Number(row.winrateSample ?? row.completed ?? 0);
+    }
+
+    function microWinrateText(row = {}) {
+      return fmtPctRatio(row.winrate);
+    }
+
+    function microFairWinrateText(row = {}) {
+      return fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound);
+    }
+
+    function microPnlText(row = {}) {
+      const r = Number(row.totalR);
+
+      if (!Number.isFinite(r)) return "-";
+
+      return `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`;
+    }
+
+    function microNarrative(row = {}, side = "SHORT") {
+      const normalizedSide = normalizeSide(side);
+      const trades = microTrades(row);
+      const winrate = Number(row.winrate);
+      const totalR = Number(row.totalR);
+      const avgR = Number(row.avgR);
+      const directSL = Number(row.directSLPct);
+
+      const sampleText = trades < 5
+        ? "lage sample, dus behandelen als vroege sniper-fingerprint"
+        : trades < 15
+          ? "bruikbare sample, maar nog niet zwaar bewezen"
+          : "sterkere sample met genoeg observaties";
+
+      const winrateText = Number.isFinite(winrate)
+        ? `winrate ${(winrate * 100).toFixed(1)}%`
+        : "winrate onbekend";
+
+      const pnlText = Number.isFinite(totalR)
+        ? `netto ${totalR >= 0 ? "+" : ""}${totalR.toFixed(2)}R`
+        : "PnL onbekend";
+
+      const avgText = Number.isFinite(avgR)
+        ? `gemiddeld ${avgR.toFixed(2)}R per trade`
+        : "gemiddelde R onbekend";
+
+      const slText = Number.isFinite(directSL)
+        ? `direct SL ${(directSL * 100).toFixed(1)}%`
+        : "direct SL onbekend";
+
+      return `Deze ${normalizedSide} micro-family is momenteel de sterkste execution fingerprint binnen de ${normalizedSide}-kant. De set heeft ${sampleText}: ${winrateText}, ${pnlText}, ${avgText}, ${slText}. Als een nieuwe coin exact op deze true micro-family matched, mag TradeSystem hem doorlaten naar de entry/Discord-flow.`;
+    }
+
+    function microConnectCard(row, side = "SHORT", scope = "micros") {
+      const normalizedSide = normalizeSide(side);
+      const cardClass = normalizedSide === "LONG" ? "long" : "short";
+      const buttonClass = normalizedSide === "LONG" ? "long-action" : "short-action";
+      const buttonId = scope === "rotation"
+        ? `activateBest${normalizedSide === "LONG" ? "Long" : "Short"}RotationBtn`
+        : `activateBest${normalizedSide === "LONG" ? "Long" : "Short"}Btn`;
+
+      if (!row) {
+        return `
+          <div class="micro-connect-card ${escapeAttr(cardClass)}">
+            <div class="micro-connect-head">
+              <div class="micro-connect-title">
+                <h3>Beste ${escapeHtml(normalizedSide)} micro-family</h3>
+                <p>Geen ${escapeHtml(normalizedSide)} micro-family gevonden in de huidige analyse.</p>
+              </div>
+              <span class="pill warn">Niet beschikbaar</span>
+            </div>
+
+            <div class="micro-connect-narrative">
+              Er is geen actieve kandidaat voor deze kant. De knop blijft uitgeschakeld zodat TradeSystem niet per ongeluk een lege of verkeerde side activeert.
+            </div>
+
+            <div class="micro-connect-actions">
+              <button type="button" class="${escapeAttr(buttonClass)}" id="${escapeAttr(buttonId)}" disabled>
+                Selecteer ${escapeHtml(normalizedSide)} micro-family
+              </button>
+            </div>
+          </div>
+        `;
+      }
+
+      const micro = microId(row);
+      const macro = macroId(row);
+      const family = familyId(row);
+      const active = activeMicroSet().has(micro);
+      const score = row.dashboardBalancedScore ?? row.balancedScore;
+      const trades = microTrades(row);
+
+      return `
+        <div class="micro-connect-card ${escapeAttr(cardClass)}">
+          <div class="micro-connect-head">
+            <div class="micro-connect-title">
+              <h3>Beste ${escapeHtml(normalizedSide)} micro-family</h3>
+              <p>
+                ${active ? "Deze fingerprint staat al actief voor TradeSystem." : "Kandidaat om als actieve TradeSystem-filter te gebruiken."}
+              </p>
+            </div>
+
+            <div class="micro-connect-score">
+              <strong>${escapeHtml(fmt(score, 2))}</strong>
+              <span>Balanced</span>
+            </div>
+          </div>
+
+          <div class="micro-connect-id">
+            <div>
+              <span class="id-label">True micro</span>
+              <code>${escapeHtml(micro || "NO_MICRO_ID")}</code>
+            </div>
+            <div>
+              <span class="id-label">Macro parent</span>
+              <code>${escapeHtml(macro || "NO_MACRO_ID")}</code>
+            </div>
+            <div>
+              <span class="id-label">Family</span>
+              <code>${escapeHtml(family || "NO_FAMILY")}</code>
+            </div>
+          </div>
+
+          <div class="micro-performance-grid">
+            <div class="micro-performance-stat">
+              <span>Trades</span>
+              <strong>${escapeHtml(fmt(trades, 2))}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Winrate</span>
+              <strong>${escapeHtml(microWinrateText(row))}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Fair WR</span>
+              <strong>${escapeHtml(microFairWinrateText(row))}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Net PnL</span>
+              <strong>${escapeHtml(microPnlText(row))}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Avg R</span>
+              <strong>${escapeHtml(fmt(row.avgR, 3))}R</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>PF</span>
+              <strong>${escapeHtml(fmt(row.profitFactor, 2))}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Direct SL</span>
+              <strong>${escapeHtml(fmtPctRatio(row.directSLPct))}</strong>
+            </div>
+            <div class="micro-performance-stat">
+              <span>Cost R</span>
+              <strong>${escapeHtml(fmt(row.avgCostR, 3))}</strong>
+            </div>
+          </div>
+
+          <div class="micro-connect-narrative">
+            ${escapeHtml(microNarrative(row, normalizedSide))}
+          </div>
+
+          <div class="micro-connect-actions">
+            <span class="pill ${escapeAttr(cardClass)}">${escapeHtml(normalizedSide)}</span>
+            ${active ? '<span class="pill active">Actief</span>' : '<span class="pill info">Beschikbaar</span>'}
+            <button type="button" class="${escapeAttr(buttonClass)}" id="${escapeAttr(buttonId)}">
+              ${active ? `Herselecteer ${escapeHtml(normalizedSide)} micro-family` : `Selecteer ${escapeHtml(normalizedSide)} micro-family`}
+            </button>
+          </div>
+
+          <div class="micro-connect-route">
+            Route: scanner coin → TradeSystem fingerprint → active true micro match → Discord melding.
+          </div>
+        </div>
+      `;
     }
 
     function microRowsTable(rows, activeIdsInput = [], activeMacroIdsInput = []) {
@@ -1939,21 +2264,8 @@
         </div>
 
         <div class="split-toolbar">
-          <div class="side-action-card">
-            <h3>Beste SHORT micro connecten</h3>
-            <p>${bestShort ? `${microId(bestShort)} · balanced ${fmt(bestShort.dashboardBalancedScore ?? bestShort.balancedScore, 2)} · trades ${fmt(bestShort.winrateSample ?? bestShort.completed, 2)}` : "Geen short micro-family gevonden in de analyse."}</p>
-            <button type="button" class="short-action" id="activateBestShortBtn" ${bestShort ? "" : "disabled"}>
-              Activate best SHORT micro
-            </button>
-          </div>
-
-          <div class="side-action-card">
-            <h3>Beste LONG micro connecten</h3>
-            <p>${bestLong ? `${microId(bestLong)} · balanced ${fmt(bestLong.dashboardBalancedScore ?? bestLong.balancedScore, 2)} · trades ${fmt(bestLong.winrateSample ?? bestLong.completed, 2)}` : "Geen long micro-family gevonden in de analyse."}</p>
-            <button type="button" class="long-action" id="activateBestLongBtn" ${bestLong ? "" : "disabled"}>
-              Activate best LONG micro
-            </button>
-          </div>
+          ${microConnectCard(bestShort, "SHORT", "micros")}
+          ${microConnectCard(bestLong, "LONG", "micros")}
         </div>
 
         <div class="grid">
@@ -2241,6 +2553,17 @@
       const data = await api(endpoints.rotation);
       state.rotation = data;
 
+      let rotationMicroRows = currentMicroRows();
+
+      try {
+        rotationMicroRows = await ensureMicroRows();
+      } catch {
+        rotationMicroRows = currentMicroRows();
+      }
+
+      const rotationBestShort = bestMicroRowForSide(rotationMicroRows, "SHORT");
+      const rotationBestLong = bestMicroRowForSide(rotationMicroRows, "LONG");
+
       const active = data.active || data.activeRotation || {};
       const next = data.next || data.nextRotation || {};
 
@@ -2257,17 +2580,8 @@
 
       $("rotation").innerHTML = `
         <div class="split-toolbar">
-          <div class="side-action-card">
-            <h3>Beste SHORT micro connecten</h3>
-            <p>Activeert alleen de beste SHORT micro. Bestaande LONG blijft behouden als die actief is.</p>
-            <button type="button" class="short-action" id="activateBestShortRotationBtn">Activate best SHORT micro</button>
-          </div>
-
-          <div class="side-action-card">
-            <h3>Beste LONG micro connecten</h3>
-            <p>Activeert alleen de beste LONG micro. Bestaande SHORT blijft behouden als die actief is.</p>
-            <button type="button" class="long-action" id="activateBestLongRotationBtn">Activate best LONG micro</button>
-          </div>
+          ${microConnectCard(rotationBestShort, "SHORT", "rotation")}
+          ${microConnectCard(rotationBestLong, "LONG", "rotation")}
         </div>
 
         <div class="toolbar">
