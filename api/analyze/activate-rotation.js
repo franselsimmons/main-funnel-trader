@@ -11,6 +11,8 @@ import {
   buildRotationFromWeek
 } from '../../src/analyze/rotationEngine.js';
 
+const TARGET_TRADE_SIDE = 'SHORT';
+
 function now() {
   return Date.now();
 }
@@ -30,10 +32,12 @@ function isAllowedMethod(method) {
 }
 
 function parseJson(text) {
-  if (!text) return {};
+  const raw = String(text || '').trim();
+
+  if (!raw) return {};
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(raw);
   } catch {
     const error = new Error('INVALID_JSON_BODY');
     error.statusCode = 400;
@@ -90,6 +94,7 @@ function getParam(req, body, key, fallback = undefined) {
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [])
+      .flatMap((value) => Array.isArray(value) ? value : [value])
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -142,11 +147,127 @@ function extractMicroFamilyIds(req, body = {}) {
   ]);
 }
 
+function normalizeTradeSide(value) {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSideFromText(value) {
+  const text = String(value || '').toUpperCase();
+
+  if (!text) return 'UNKNOWN';
+
+  if (
+    text.includes('MICRO_SHORT_') ||
+    text.includes('TRADESIDE=SHORT') ||
+    text.includes('TRADE_SIDE=SHORT') ||
+    text.includes('SIDE=SHORT') ||
+    text.includes('SIDE=BEAR') ||
+    text.includes('DIRECTION=SHORT') ||
+    text.includes('DIRECTION=BEAR') ||
+    text.startsWith('SHORT_') ||
+    text.includes('_SHORT_') ||
+    text.endsWith('_SHORT') ||
+    text.startsWith('BEAR_') ||
+    text.includes('_BEAR_') ||
+    text.endsWith('_BEAR')
+  ) {
+    return 'SHORT';
+  }
+
+  if (
+    text.includes('MICRO_LONG_') ||
+    text.includes('TRADESIDE=LONG') ||
+    text.includes('TRADE_SIDE=LONG') ||
+    text.includes('SIDE=LONG') ||
+    text.includes('SIDE=BULL') ||
+    text.includes('DIRECTION=LONG') ||
+    text.includes('DIRECTION=BULL') ||
+    text.startsWith('LONG_') ||
+    text.includes('_LONG_') ||
+    text.endsWith('_LONG') ||
+    text.startsWith('BULL_') ||
+    text.includes('_BULL_') ||
+    text.endsWith('_BULL')
+  ) {
+    return 'LONG';
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferRowTradeSide(row = {}) {
+  if (typeof row === 'string') {
+    return inferTradeSideFromText(row);
+  }
+
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction ||
+    row.signalSide ||
+    row.scannerSide ||
+    row.analysisSide
+  );
+
+  if (direct !== 'UNKNOWN') return direct;
+
+  const values = [
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ];
+
+  for (const value of values) {
+    const side = inferTradeSideFromText(value);
+
+    if (side !== 'UNKNOWN') return side;
+  }
+
+  return 'UNKNOWN';
+}
+
+function isTargetSideRow(row = {}) {
+  return inferRowTradeSide(row) === TARGET_TRADE_SIDE;
+}
+
+function filterTargetIds(ids = []) {
+  return uniqueStrings(ids).filter((id) => (
+    inferRowTradeSide(id) === TARGET_TRADE_SIDE
+  ));
+}
+
 function getActivateLockTtlSec() {
   const ttl = Number(CONFIG.analyze?.activateLockTtlSec || 600);
 
   return Number.isFinite(ttl) && ttl > 0
-    ? ttl
+    ? Math.floor(ttl)
     : 600;
 }
 
@@ -218,6 +339,147 @@ function unwrapLockResult(lockResult) {
   return lockResult || null;
 }
 
+function parentMacroFamilyId(row = {}) {
+  return String(
+    row.parentMacroFamilyId ||
+    row.parentMicroFamilyId ||
+    row.macroFamilyId ||
+    row.familyId ||
+    ''
+  ).trim();
+}
+
+function buildSelectionIndexes(microFamilies = []) {
+  const microFamilyIds = uniqueStrings(
+    microFamilies.map((row) => row.microFamilyId || row.trueMicroFamilyId || row.id)
+  );
+
+  const macroFamilyIds = uniqueStrings(
+    microFamilies.map(parentMacroFamilyId)
+  );
+
+  const microToMacroFamilyId = {};
+  const macroToMicroFamilyIds = {};
+
+  for (const row of microFamilies) {
+    const microId = String(row.microFamilyId || row.trueMicroFamilyId || row.id || '').trim();
+    const macroId = parentMacroFamilyId(row);
+
+    if (!microId || !macroId) continue;
+
+    microToMacroFamilyId[microId] = macroId;
+
+    if (!macroToMicroFamilyIds[macroId]) {
+      macroToMicroFamilyIds[macroId] = [];
+    }
+
+    macroToMicroFamilyIds[macroId].push(microId);
+  }
+
+  for (const macroId of Object.keys(macroToMicroFamilyIds)) {
+    macroToMicroFamilyIds[macroId] = uniqueStrings(macroToMicroFamilyIds[macroId]);
+  }
+
+  return {
+    microFamilyIds,
+    activeMicroFamilyIds: microFamilyIds,
+    trueMicroFamilyIds: microFamilyIds,
+
+    macroFamilyIds,
+    activeMacroFamilyIds: macroFamilyIds,
+
+    microToMacroFamilyId,
+    macroToMicroFamilyIds
+  };
+}
+
+function bestShort(rows = []) {
+  return rows.find(isTargetSideRow) || rows[0] || null;
+}
+
+function sanitizeRankingRows(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(isTargetSideRow)
+    .map((row, index) => ({
+      ...row,
+      rank: index + 1,
+      side: 'bear',
+      tradeSide: TARGET_TRADE_SIDE
+    }));
+}
+
+function sanitizeRankings(rankings = {}) {
+  if (!rankings || typeof rankings !== 'object') return {};
+
+  return Object.fromEntries(
+    Object.entries(rankings).map(([mode, rows]) => [
+      mode,
+      sanitizeRankingRows(rows)
+    ])
+  );
+}
+
+function sanitizeRotationForShortOnly(rotation = {}, source = null) {
+  const originalRows = Array.isArray(rotation?.microFamilies)
+    ? rotation.microFamilies
+    : [];
+
+  const microFamilies = originalRows
+    .filter(isTargetSideRow)
+    .map((row, index) => ({
+      ...row,
+      rank: index + 1,
+      side: 'bear',
+      tradeSide: TARGET_TRADE_SIDE
+    }));
+
+  const indexes = buildSelectionIndexes(microFamilies);
+  const empty = microFamilies.length === 0;
+
+  return {
+    ...rotation,
+
+    source: source || rotation.source || null,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    shortOnly: true,
+    longDisabled: true,
+
+    trueMicroOnly: true,
+    usedLegacyFallback: false,
+
+    bestLong: null,
+    bestShort: bestShort(microFamilies),
+
+    missingSides: empty ? [TARGET_TRADE_SIDE] : [],
+
+    empty,
+    emptyReason: empty
+      ? rotation.emptyReason || 'NO_SHORT_MICRO_FAMILIES_AVAILABLE_FOR_ROTATION'
+      : null,
+
+    ...indexes,
+
+    microFamilies,
+
+    rankings: sanitizeRankings(rotation.rankings),
+    macroRankings: sanitizeRankings(rotation.macroRankings),
+    allRankings: sanitizeRankings(rotation.allRankings)
+  };
+}
+
+async function persistActiveShortRotation(redis, rotation = {}, source = null) {
+  const activeRotation = sanitizeRotationForShortOnly(rotation, source);
+
+  await setJson(
+    redis,
+    KEYS.analyze.activeRotation,
+    activeRotation
+  );
+
+  return activeRotation;
+}
+
 function responseRotationId(payload) {
   return (
     payload?.activeRotation?.rotationId ||
@@ -277,11 +539,24 @@ async function buildFreshRotationAndActivate({
   activeWeekKey,
   mode
 }) {
-  const builtRotation = await buildRotationFromWeek({
+  const builtRotationRaw = await buildRotationFromWeek({
     weekKey,
     activeWeekKey,
-    mode
+    mode,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    side: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    disableLong: true
   });
+
+  const builtRotation = sanitizeRotationForShortOnly(
+    builtRotationRaw,
+    'ANALYZE_WEEKLY_RANKING_SHORT_ONLY'
+  );
 
   await setJson(
     redis,
@@ -298,53 +573,91 @@ async function buildFreshRotationAndActivate({
       sourceWeekKey: weekKey,
       activeWeekKey,
       rotationId: builtRotation.rotationId,
-      mode
+      mode,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+
+      selectedMicroFamilies: builtRotation.microFamilyIds?.length || 0,
+      selectedMacroFamilies: builtRotation.macroFamilyIds?.length || 0,
+      bestShort: builtRotation.bestShort?.microFamilyId || null,
+      bestLong: null,
+      missingSides: builtRotation.missingSides || []
     }
   );
 
   const activated = await activateNextRotation();
+  const activeRotation = await persistActiveShortRotation(
+    redis,
+    activated?.activeRotation || builtRotation,
+    'ANALYZE_NEXT_ROTATION_ACTIVATED_SHORT_ONLY'
+  );
 
   return {
     ok: activated?.ok !== false,
     type: 'BUILT_AND_ACTIVATED_ROTATION',
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    shortOnly: true,
+    longDisabled: true,
 
     weekKey,
     activeWeekKey,
     mode,
 
     rotationId:
+      activeRotation.rotationId ||
       activated?.rotationId ||
-      activated?.activeRotation?.rotationId ||
       builtRotation.rotationId,
 
-    activatedCount:
-      activated?.activatedCount ||
-      activated?.activeRotation?.microFamilyIds?.length ||
-      builtRotation.microFamilyIds?.length ||
-      0,
+    activatedCount: activeRotation.microFamilyIds?.length || 0,
 
     builtRotation,
-    activeRotation: activated?.activeRotation || null,
-    reason: activated?.reason || builtRotation.emptyReason || null,
+    activeRotation,
+    reason: activeRotation.emptyReason || activated?.reason || null,
 
     result: activated
   };
 }
 
 async function activateManualSelection({
+  redis,
   microFamilyIds,
+  requestedMicroFamilyIds,
   weekKey,
   mode
 }) {
-  const activeRotation = await activateSelectedMicroFamilies({
+  const activeRotationRaw = await activateSelectedMicroFamilies({
     microFamilyIds,
     weekKey,
-    mode
+    mode,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    side: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    disableLong: true
   });
+
+  const activeRotation = await persistActiveShortRotation(
+    redis,
+    activeRotationRaw,
+    'ADMIN_MANUAL_SELECTION_SHORT_ONLY'
+  );
+
+  const ignoredLongOrUnknownIds = uniqueStrings(requestedMicroFamilyIds)
+    .filter((id) => !microFamilyIds.includes(id));
 
   return {
     ok: true,
     type: 'MANUAL_MICRO_FAMILY_ROTATION_ACTIVATED',
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    shortOnly: true,
+    longDisabled: true,
 
     weekKey,
     activeWeekKey: activeRotation.activeWeekKey || getIsoWeekKey(),
@@ -352,6 +665,10 @@ async function activateManualSelection({
 
     rotationId: activeRotation.rotationId,
     activatedCount: activeRotation.microFamilyIds?.length || 0,
+
+    requestedMicroFamilyIds,
+    acceptedMicroFamilyIds: microFamilyIds,
+    ignoredLongOrUnknownIds,
 
     activeRotation,
     reason: activeRotation.emptyReason || null
@@ -380,26 +697,35 @@ async function activateExistingNextRotation({
     });
   }
 
+  const activeRotation = activated?.activeRotation
+    ? await persistActiveShortRotation(
+      redis,
+      activated.activeRotation,
+      'NEXT_ROTATION_ACTIVATED_SHORT_ONLY'
+    )
+    : null;
+
   return {
     ok: activated?.ok !== false,
     type: 'NEXT_ROTATION_ACTIVATED',
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    shortOnly: true,
+    longDisabled: true,
 
     weekKey,
     activeWeekKey,
     mode,
 
     rotationId:
+      activeRotation?.rotationId ||
       activated?.rotationId ||
-      activated?.activeRotation?.rotationId ||
       null,
 
-    activatedCount:
-      activated?.activatedCount ||
-      activated?.activeRotation?.microFamilyIds?.length ||
-      0,
+    activatedCount: activeRotation?.microFamilyIds?.length || 0,
 
-    activeRotation: activated?.activeRotation || null,
-    reason: activated?.reason || null,
+    activeRotation,
+    reason: activeRotation?.emptyReason || activated?.reason || null,
 
     result: activated
   };
@@ -410,14 +736,18 @@ async function runActivation({
   body,
   redis
 }) {
-  const microFamilyIds = extractMicroFamilyIds(req, body);
+  const requestedMicroFamilyIds = extractMicroFamilyIds(req, body);
+  const microFamilyIds = filterTargetIds(requestedMicroFamilyIds);
+
   const weekKey = getWeekKey(req, body);
   const activeWeekKey = getActiveWeekKey(req, body, weekKey);
   const mode = getMode(req, body);
 
-  if (microFamilyIds.length > 0) {
+  if (requestedMicroFamilyIds.length > 0) {
     return activateManualSelection({
+      redis,
       microFamilyIds,
+      requestedMicroFamilyIds,
       weekKey,
       mode: mode || 'manual'
     });
@@ -443,6 +773,8 @@ async function runActivation({
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Rotation-Target-Side', TARGET_TRADE_SIDE);
+  res.setHeader('X-Long-Disabled', 'true');
 
   const startedAt = now();
 
@@ -457,7 +789,8 @@ export default async function handler(req, res) {
     const lockKey = KEYS.analyze?.activateLock || 'ANALYZE:ROTATION_ACTIVATE_LOCK';
     const lockTtlSec = getActivateLockTtlSec();
 
-    const microFamilyIds = extractMicroFamilyIds(req, body);
+    const requestedMicroFamilyIds = extractMicroFamilyIds(req, body);
+    const acceptedShortMicroFamilyIds = filterTargetIds(requestedMicroFamilyIds);
 
     const lockResult = await withRedisLock(
       redis,
@@ -476,11 +809,15 @@ export default async function handler(req, res) {
       ok: lockOk(lockResult, payload),
       skipped: Boolean(lockResult?.skipped || payload?.skipped),
 
-      source: isManualRun(req, body, microFamilyIds)
+      source: isManualRun(req, body, requestedMicroFamilyIds)
         ? 'ADMIN_MANUAL_ACTIVATE_ROTATION'
         : 'CRON_OR_API_ACTIVATE_ROTATION',
 
       type: payload?.type || null,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
 
       weekKey: payload?.weekKey || getWeekKey(req, body),
       activeWeekKey: payload?.activeWeekKey || null,
@@ -489,6 +826,9 @@ export default async function handler(req, res) {
       rotationId: responseRotationId(payload),
       activatedCount: responseActivatedCount(payload),
       reason: responseReason(lockResult, payload),
+
+      requestedMicroFamilyIds,
+      acceptedShortMicroFamilyIds,
 
       durationMs: now() - startedAt,
 
@@ -502,6 +842,11 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(errorStatus(error)).json({
       ok: false,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+
       error: error?.message || String(error),
       durationMs: now() - startedAt,
       stack: process.env.NODE_ENV === 'production'
