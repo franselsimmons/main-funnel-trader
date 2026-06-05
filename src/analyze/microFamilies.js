@@ -15,6 +15,28 @@ import {
 const FALLBACK_MACRO_SCHEMA = 'MF_V1';
 const FALLBACK_MICRO_SCHEMA = 'MF_V2';
 
+const LONG_TOKENS = new Set([
+  'LONG',
+  'BULL',
+  'BULLISH',
+  'BUY',
+  'BID',
+  'UP',
+  'UPSIDE',
+  'GREEN'
+]);
+
+const SHORT_TOKENS = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL',
+  'ASK',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
+]);
+
 function getMacroSchema() {
   return String(
     CONFIG?.analyze?.macroSchema ||
@@ -42,8 +64,132 @@ function boolToken(value) {
   return Boolean(value) ? 'true' : 'false';
 }
 
-function normalizeSide(side) {
-  const tradeSide = sideToTradeSide(side);
+function normalizeTradeSideValue(value) {
+  const direct = sideToTradeSide(value);
+
+  if (direct === 'LONG') return 'LONG';
+  if (direct === 'SHORT') return 'SHORT';
+
+  const raw = toUpper(value, '');
+
+  if (!raw) return 'UNKNOWN';
+  if (LONG_TOKENS.has(raw)) return 'LONG';
+  if (SHORT_TOKENS.has(raw)) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function inferSideFromIds(metrics = {}) {
+  const haystack = [
+    metrics.familyId,
+    metrics.microFamilyId,
+    metrics.macroFamilyId,
+    metrics.parentMacroFamilyId,
+    metrics.parentMicroFamilyId,
+    metrics.trueMicroFamilyId,
+    metrics.id,
+    metrics.key
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (
+    haystack.startsWith('LONG_') ||
+    haystack.includes('_LONG_') ||
+    haystack.includes('|LONG_') ||
+    haystack.includes('MICRO_LONG_') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('BULL')
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    haystack.startsWith('SHORT_') ||
+    haystack.includes('_SHORT_') ||
+    haystack.includes('|SHORT_') ||
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('BEAR')
+  ) {
+    return 'SHORT';
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferSideFromScannerReason(metrics = {}) {
+  const reason = toUpper(
+    metrics.scannerReason ||
+    metrics.reason ||
+    metrics.signalReason ||
+    '',
+    ''
+  );
+
+  if (!reason) return 'UNKNOWN';
+
+  if (
+    reason.includes('LONG') ||
+    reason.includes('BULL') ||
+    reason.includes('BUY') ||
+    reason.includes('UPSIDE')
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    reason.includes('SHORT') ||
+    reason.includes('BEAR') ||
+    reason.includes('SELL') ||
+    reason.includes('DOWNSIDE')
+  ) {
+    return 'SHORT';
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSide(metrics = {}) {
+  const sideCandidates = [
+    metrics.tradeSide,
+    metrics.side,
+    metrics.positionSide,
+    metrics.direction,
+    metrics.signalSide,
+    metrics.scannerSide,
+    metrics.expectedSide,
+    metrics.predictedSide,
+    metrics.intentSide,
+    metrics.biasSide
+  ];
+
+  for (const value of sideCandidates) {
+    const side = normalizeTradeSideValue(value);
+
+    if (side !== 'UNKNOWN') return side;
+  }
+
+  const fromIds = inferSideFromIds(metrics);
+
+  if (fromIds !== 'UNKNOWN') return fromIds;
+
+  const fromReason = inferSideFromScannerReason(metrics);
+
+  if (fromReason !== 'UNKNOWN') return fromReason;
+
+  return 'UNKNOWN';
+}
+
+function normalizeSide(input) {
+  const tradeSide = input && typeof input === 'object'
+    ? inferTradeSide(input)
+    : normalizeTradeSideValue(input);
 
   if (tradeSide === 'LONG') return 'bull';
   if (tradeSide === 'SHORT') return 'bear';
@@ -69,6 +215,14 @@ function formatBucketNumber(value, decimals = 0) {
     .replace(/\.?0+$/u, '')
     .replace('-', 'M')
     .replace('.', 'P');
+}
+
+function numericBps(value) {
+  const bps = ratioToBps(value);
+
+  if (!Number.isFinite(bps)) return null;
+
+  return Number(formatBucketNumber(bps, 3));
 }
 
 function coarseRsi(zone) {
@@ -217,8 +371,15 @@ function entryQuality(metrics = {}) {
   return 'RAW';
 }
 
-function btcRelation(side, btcState) {
-  const tradeSide = sideToTradeSide(side);
+function btcRelation(sideOrMetrics, btcStateInput = null) {
+  const tradeSide = sideOrMetrics && typeof sideOrMetrics === 'object'
+    ? inferTradeSide(sideOrMetrics)
+    : normalizeTradeSideValue(sideOrMetrics);
+
+  const btcState = sideOrMetrics && typeof sideOrMetrics === 'object'
+    ? sideOrMetrics.btcState
+    : btcStateInput;
+
   const btc = toUpper(btcState, 'NEUTRAL');
 
   if (btc === 'NEUTRAL' || btc === 'UNKNOWN') return 'BTC_NEUTRAL';
@@ -236,8 +397,8 @@ function btcRelation(side, btcState) {
   return 'BTC_AGAINST';
 }
 
-function coarseBtcState(side, btcState) {
-  return btcRelation(side, btcState);
+function coarseBtcState(sideOrMetrics, btcStateInput = null) {
+  return btcRelation(sideOrMetrics, btcStateInput);
 }
 
 function coarseRegime(regime) {
@@ -297,8 +458,14 @@ function exactScannerReason(reason) {
 }
 
 function normalizeObRelation(metrics = {}) {
+  const explicit = toUpper(metrics.obRelation || '', '');
+
+  if (explicit) return explicit;
+
+  const tradeSide = inferTradeSide(metrics);
+
   return toUpper(
-    metrics.obRelation ||
+    getObRelation(tradeSide, metrics.obBias) ||
     getObRelation(metrics.side, metrics.obBias) ||
     'UNKNOWN'
   );
@@ -436,9 +603,9 @@ function costBucket(costR) {
 }
 
 function buildMacroDefinitionParts(metrics = {}, familyId) {
-  const normalizedSide = normalizeSide(metrics.side);
+  const normalizedSide = normalizeSide(metrics);
   const obRelation = normalizeObRelation(metrics);
-  const btcRel = btcRelation(metrics.side, metrics.btcState);
+  const btcRel = btcRelation(metrics);
   const regime = coarseRegime(metrics.regime);
   const flow = coarseFlow(metrics.flow);
   const scannerReason = coarseScannerReason(metrics.scannerReason);
@@ -502,7 +669,7 @@ function buildMicroDefinitionParts(metrics = {}, parent) {
     `spoofBucket=${scoreBucket(spoofScore, 'SPOOF')}`,
 
     `btcState=${toUpper(metrics.btcState, 'NEUTRAL')}`,
-    `btcRelation=${btcRelation(metrics.side, metrics.btcState)}`,
+    `btcRelation=${btcRelation(parent.tradeSide, metrics.btcState)}`,
 
     `regime=${exactRegime(metrics.regime)}`,
     `regimeCoarse=${coarseRegime(metrics.regime)}`,
@@ -537,14 +704,14 @@ function buildMicroDefinitionParts(metrics = {}, parent) {
 }
 
 export function classifyFamily(metrics = {}) {
-  const tradeSide = sideToTradeSide(metrics.side);
+  const tradeSide = inferTradeSide(metrics);
 
   const seedParts = [
     tradeSide,
     coarseFlow(metrics.flow),
     coarseRsi(metrics.rsiZone),
     normalizeObRelation(metrics),
-    coarseBtcState(metrics.side, metrics.btcState),
+    coarseBtcState(tradeSide, metrics.btcState),
     coarseRegime(metrics.regime)
   ];
 
@@ -554,15 +721,21 @@ export function classifyFamily(metrics = {}) {
 }
 
 export function buildMicroFamilyV1(metrics = {}) {
-  const familyId = metrics.familyId || classifyFamily(metrics);
-  const tradeSide = sideToTradeSide(metrics.side);
-  const normalizedSide = normalizeSide(metrics.side);
-  const obRelation = normalizeObRelation(metrics);
-  const btcRel = btcRelation(metrics.side, metrics.btcState);
+  const tradeSide = inferTradeSide(metrics);
+  const sideSafeMetrics = {
+    ...metrics,
+    side: tradeSide,
+    tradeSide
+  };
+
+  const familyId = metrics.familyId || classifyFamily(sideSafeMetrics);
+  const normalizedSide = normalizeSide(sideSafeMetrics);
+  const obRelation = normalizeObRelation(sideSafeMetrics);
+  const btcRel = btcRelation(tradeSide, metrics.btcState);
   const regime = coarseRegime(metrics.regime);
   const flow = coarseFlow(metrics.flow);
   const scannerReason = coarseScannerReason(metrics.scannerReason);
-  const definitionParts = buildMacroDefinitionParts(metrics, familyId);
+  const definitionParts = buildMacroDefinitionParts(sideSafeMetrics, familyId);
   const hash = stableHash(definitionParts.join('|'), 8);
   const schema = getMacroSchema();
 
@@ -594,8 +767,15 @@ export function buildMicroFamilyV1(metrics = {}) {
 }
 
 export function buildMicroFamilyV2(metrics = {}) {
-  const parent = buildMicroFamilyV1(metrics);
-  const definitionParts = buildMicroDefinitionParts(metrics, parent);
+  const tradeSide = inferTradeSide(metrics);
+  const sideSafeMetrics = {
+    ...metrics,
+    side: tradeSide,
+    tradeSide
+  };
+
+  const parent = buildMicroFamilyV1(sideSafeMetrics);
+  const definitionParts = buildMicroDefinitionParts(sideSafeMetrics, parent);
   const hash = stableHash(definitionParts.join('|'), 8);
   const schema = getMicroSchema();
 
@@ -620,10 +800,10 @@ export function buildMicroFamilyV2(metrics = {}) {
     side: parent.side,
     tradeSide: parent.tradeSide,
 
-    assetClass: assetClass(metrics),
+    assetClass: assetClass(sideSafeMetrics),
 
-    obRelation: normalizeObRelation(metrics),
-    btcRelation: btcRelation(metrics.side, metrics.btcState),
+    obRelation: normalizeObRelation(sideSafeMetrics),
+    btcRelation: btcRelation(parent.tradeSide, metrics.btcState),
     btcState: toUpper(metrics.btcState, 'NEUTRAL'),
 
     regime: exactRegime(metrics.regime),
@@ -639,10 +819,10 @@ export function buildMicroFamilyV2(metrics = {}) {
     rsiCoarse: coarseRsi(metrics.rsiZone),
 
     spreadBps: Number((safeNumber(metrics.spreadPct, 0) * 10000).toFixed(3)),
-    entryDistanceBps: Number(formatBucketNumber(ratioToBps(getEntryDistancePct(metrics)), 3)),
-    slDistanceBps: Number(formatBucketNumber(ratioToBps(getSlDistancePct(metrics)), 3)),
-    tpDistanceBps: Number(formatBucketNumber(ratioToBps(getTpDistancePct(metrics)), 3)),
-    liqDistanceBps: Number(formatBucketNumber(ratioToBps(getLiquidationDistancePct(metrics)), 3))
+    entryDistanceBps: numericBps(getEntryDistancePct(metrics)),
+    slDistanceBps: numericBps(getSlDistancePct(metrics)),
+    tpDistanceBps: numericBps(getTpDistancePct(metrics)),
+    liqDistanceBps: numericBps(getLiquidationDistancePct(metrics))
   };
 }
 
@@ -654,6 +834,23 @@ export function buildMicroFamily(metrics = {}, options = {}) {
   }
 
   return buildMicroFamilyV2(metrics);
+}
+
+export function buildMicroFamilyForSide(metrics = {}, side = 'LONG', options = {}) {
+  const tradeSide = normalizeTradeSideValue(side);
+
+  if (!['LONG', 'SHORT'].includes(tradeSide)) {
+    throw new Error(`INVALID_MICRO_FAMILY_SIDE:${side}`);
+  }
+
+  return buildMicroFamily(
+    {
+      ...metrics,
+      side: tradeSide,
+      tradeSide
+    },
+    options
+  );
 }
 
 export function classifyMacroFamily(metrics = {}) {
@@ -681,11 +878,21 @@ export function isMicroFamilyV2Id(id) {
 }
 
 export function attachMicroFamilies(metrics = {}) {
-  const macro = buildMicroFamilyV1(metrics);
-  const micro = buildMicroFamilyV2(metrics);
+  const tradeSide = inferTradeSide(metrics);
+  const sideSafeMetrics = {
+    ...metrics,
+    side: tradeSide,
+    tradeSide
+  };
+
+  const macro = buildMicroFamilyV1(sideSafeMetrics);
+  const micro = buildMicroFamilyV2(sideSafeMetrics);
 
   return {
     ...metrics,
+
+    side: micro.side,
+    tradeSide: micro.tradeSide,
 
     familyId: micro.familyId,
 
@@ -701,5 +908,20 @@ export function attachMicroFamilies(metrics = {}) {
 
     macroFamilyDefinition: macro.definition,
     macroFamilyDefinitionParts: macro.definitionParts
+  };
+}
+
+export function attachMicroFamiliesForBothSides(metrics = {}) {
+  return {
+    long: attachMicroFamilies({
+      ...metrics,
+      side: 'LONG',
+      tradeSide: 'LONG'
+    }),
+    short: attachMicroFamilies({
+      ...metrics,
+      side: 'SHORT',
+      tradeSide: 'SHORT'
+    })
   };
 }
