@@ -21,6 +21,10 @@ import {
 
 const ALLOWED_ACTIONS = [
   'activateBestBalanced',
+  'activateBestSideMicro',
+  'activateBestSideMicroFamily',
+  'activateBestLongMicroFamily',
+  'activateBestShortMicroFamily',
   'activateSelected',
   'activateSelectedMicroFamilies',
   'activateSelectedMacroFamilies'
@@ -34,6 +38,8 @@ const ALLOWED_MODES = new Set([
   'directSL',
   'observed'
 ]);
+
+const TRADE_SIDES = new Set(['LONG', 'SHORT']);
 
 function now() {
   return Date.now();
@@ -122,6 +128,26 @@ function num(value, fallback = 0) {
 
 function round(value, decimals = 4) {
   return Number(num(value, 0).toFixed(decimals));
+}
+
+function normalizeRequestedTradeSide(value) {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (raw === 'LONG' || raw === 'BULL' || raw === 'BUY') return 'LONG';
+  if (raw === 'SHORT' || raw === 'BEAR' || raw === 'SELL') return 'SHORT';
+
+  const converted = sideToTradeSide(raw);
+
+  if (TRADE_SIDES.has(converted)) return converted;
+
+  return 'UNKNOWN';
+}
+
+function oppositeTradeSide(side) {
+  if (side === 'LONG') return 'SHORT';
+  if (side === 'SHORT') return 'LONG';
+
+  return 'UNKNOWN';
 }
 
 function inferTradeSide(row = {}) {
@@ -546,6 +572,122 @@ function dedupeRows(rows = []) {
   return output.map((row, index) => normalizeRotationRow(row, index));
 }
 
+function scoreByMode(row = {}, mode = 'balanced') {
+  if (mode === 'winrate') {
+    return num(
+      row.fairWinrate ??
+      row.bayesianWinrate ??
+      row.wilsonLowerBound ??
+      row.winrate,
+      0
+    );
+  }
+
+  if (mode === 'totalR') {
+    return num(row.totalR, 0);
+  }
+
+  if (mode === 'avgR') {
+    return num(row.avgR, 0);
+  }
+
+  if (mode === 'directSL') {
+    return -num(row.directSLPct, 1);
+  }
+
+  if (mode === 'observed') {
+    return num(
+      row.completed ??
+      row.winrateSample ??
+      row.realCompleted ??
+      row.seen ??
+      row.observations,
+      0
+    );
+  }
+
+  return num(row.dashboardBalancedScore ?? row.balancedScore, 0);
+}
+
+function compareRowsByMode(a = {}, b = {}, mode = 'balanced') {
+  const scoreDiff = scoreByMode(b, mode) - scoreByMode(a, mode);
+
+  if (Math.abs(scoreDiff) > 1e-12) return scoreDiff;
+
+  const completedDiff = num(b.completed, 0) - num(a.completed, 0);
+  if (Math.abs(completedDiff) > 1e-12) return completedDiff;
+
+  const totalRDiff = num(b.totalR, 0) - num(a.totalR, 0);
+  if (Math.abs(totalRDiff) > 1e-12) return totalRDiff;
+
+  const avgRDiff = num(b.avgR, 0) - num(a.avgR, 0);
+  if (Math.abs(avgRDiff) > 1e-12) return avgRDiff;
+
+  const seenDiff = num(b.seen, 0) - num(a.seen, 0);
+  if (Math.abs(seenDiff) > 1e-12) return seenDiff;
+
+  return String(a.microFamilyId || '').localeCompare(String(b.microFamilyId || ''));
+}
+
+function sortRowsByMode(rows = [], mode = 'balanced') {
+  return [...rows].sort((a, b) => compareRowsByMode(a, b, mode));
+}
+
+function bestRowForSide(rows = [], tradeSide, mode = 'balanced') {
+  const sideRows = rows.filter((row) => row.tradeSide === tradeSide);
+
+  if (sideRows.length === 0) return null;
+
+  return sortRowsByMode(sideRows, mode)[0] || null;
+}
+
+async function getWeekRows(weekKey) {
+  const micros = await getWeekMicros(weekKey);
+
+  return Object.entries(micros || {})
+    .map(([key, row], index) => normalizeRotationRow({
+      ...row,
+      key,
+      microFamilyId: row?.microFamilyId || key
+    }, index))
+    .filter((row) => row.microFamilyId);
+}
+
+async function findBestWeekSideRow({
+  weekKey,
+  tradeSide,
+  mode
+} = {}) {
+  const rows = await getWeekRows(weekKey);
+
+  const sideRows = rows.filter((row) => row.tradeSide === tradeSide);
+
+  const tradableRows = sideRows.filter((row) => {
+    return (
+      num(row.completed, 0) > 0 ||
+      num(row.realCompleted, 0) > 0 ||
+      num(row.shadowCompleted, 0) > 0 ||
+      num(row.seen, 0) > 0
+    );
+  });
+
+  const candidateRows = tradableRows.length > 0
+    ? tradableRows
+    : sideRows;
+
+  const best = sortRowsByMode(candidateRows, mode)[0] || null;
+
+  return {
+    best,
+    rows,
+    sideRows,
+    candidateRows,
+    sideCount: sideRows.length,
+    candidateCount: candidateRows.length,
+    tradableCount: tradableRows.length
+  };
+}
+
 async function buildSelectedRotationRows({
   weekKey,
   microFamilyIds = [],
@@ -599,9 +741,6 @@ async function persistActiveRotation(active) {
 }
 
 async function activateBestBalanced(body) {
-  // Belangrijk:
-  // "Activate best balanced now" moet de huidige analyse-week pakken.
-  // Anders kijk je naar vorige week en activeer je vaak 0 families.
   const sourceWeekKey = firstValue(
     body.weekKey,
     getIsoWeekKey()
@@ -659,6 +798,193 @@ async function activateBestBalanced(body) {
     empty: Boolean(active.empty),
     emptyReason: active.emptyReason || null,
     usedSoftFallback: Boolean(active.usedSoftFallback)
+  };
+}
+
+async function activateBestSideMicro(body, forcedTradeSide = null) {
+  const sourceWeekKey = firstValue(
+    body.weekKey,
+    getIsoWeekKey()
+  );
+
+  const activeWeekKey = firstValue(
+    body.activeWeekKey,
+    getIsoWeekKey()
+  );
+
+  const mode = normalizeMode(
+    firstValue(body.mode, 'balanced'),
+    'balanced'
+  );
+
+  const requestedTradeSide = forcedTradeSide || normalizeRequestedTradeSide(
+    firstValue(
+      body.tradeSide,
+      firstValue(body.side, firstValue(body.direction, null))
+    )
+  );
+
+  if (!TRADE_SIDES.has(requestedTradeSide)) {
+    const error = new Error('VALID_SIDE_REQUIRED_LONG_OR_SHORT');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const oppositeSide = oppositeTradeSide(requestedTradeSide);
+
+  const dashboard = normalizeDashboard(await getRotationDashboard());
+  const previousActive = normalizeRotation(
+    dashboard.active ||
+    dashboard.activeRotation ||
+    {}
+  );
+
+  const previousRows = Array.isArray(previousActive.microFamilies)
+    ? previousActive.microFamilies.map((row, index) => normalizeRotationRow(row, index))
+    : [];
+
+  const preservedOppositeRow = bestRowForSide(previousRows, oppositeSide, mode);
+
+  const {
+    best: selectedRow,
+    sideCount,
+    candidateCount,
+    tradableCount
+  } = await findBestWeekSideRow({
+    weekKey: sourceWeekKey,
+    tradeSide: requestedTradeSide,
+    mode
+  });
+
+  if (!selectedRow) {
+    return {
+      action: 'activateBestSideMicro',
+
+      sourceWeekKey,
+      activeWeekKey,
+      mode,
+
+      requestedTradeSide,
+      preservedTradeSide: oppositeSide,
+
+      skipped: true,
+      changed: false,
+      empty: previousActive.microFamilyIds.length === 0,
+      emptyReason: `NO_${requestedTradeSide}_MICRO_FAMILY_FOUND`,
+
+      sideCount,
+      candidateCount,
+      tradableCount,
+
+      activeRotation: previousActive,
+      active: previousActive,
+
+      activatedCount: previousActive.microFamilyIds.length,
+      activatedMicroCount: previousActive.microFamilyIds.length,
+      activatedMacroCount: previousActive.macroFamilyIds.length,
+
+      activeMicroFamilyIds: previousActive.microFamilyIds,
+      activeMacroFamilyIds: previousActive.macroFamilyIds,
+
+      selectedMicroFamilyId: null,
+      selectedMacroFamilyId: null,
+
+      selectedRow: null,
+
+      bestLong: previousActive.bestLong,
+      bestShort: previousActive.bestShort
+    };
+  }
+
+  const combinedRows = sortRowsByMode(
+    dedupeRows([
+      selectedRow,
+      preservedOppositeRow
+    ].filter(Boolean)),
+    mode
+  ).map((row, index) => normalizeRotationRow(row, index));
+
+  const microFamilyIds = normalizeFamilyIds(
+    combinedRows.map((row) => row.microFamilyId)
+  );
+
+  const macroFamilyIds = normalizeFamilyIds(
+    combinedRows.map((row) => row.macroFamilyId)
+  );
+
+  const active = await persistActiveRotation({
+    rotationId: randomId(`ROT_${sourceWeekKey}_${requestedTradeSide.toLowerCase()}_side`),
+
+    source: `ADMIN_ACTIVATE_BEST_${requestedTradeSide}_MICRO`,
+
+    mode,
+    sideMode: 'single_side_plus_preserved_opposite',
+
+    sourceWeekKey,
+    activeWeekKey,
+
+    generatedAt: now(),
+    activatedAt: now(),
+    strategyVersion: CONFIG.strategyVersion,
+
+    requestedTradeSide,
+    preservedTradeSide: oppositeSide,
+
+    replacedSide: requestedTradeSide,
+    preservedSide: oppositeSide,
+
+    empty: combinedRows.length === 0,
+    emptyReason: combinedRows.length === 0
+      ? 'NO_SIDE_ROWS_ACTIVE'
+      : null,
+
+    microFamilyIds,
+    macroFamilyIds,
+    microFamilies: combinedRows,
+
+    selectedMicroFamilyId: selectedRow.microFamilyId,
+    selectedMacroFamilyId: selectedRow.macroFamilyId,
+
+    selectedRow,
+
+    previousActiveMicroFamilyIds: previousActive.microFamilyIds,
+    previousActiveMacroFamilyIds: previousActive.macroFamilyIds
+  });
+
+  return {
+    action: 'activateBestSideMicro',
+
+    sourceWeekKey,
+    activeWeekKey,
+    mode,
+
+    requestedTradeSide,
+    preservedTradeSide: oppositeSide,
+
+    skipped: false,
+    changed: true,
+
+    sideCount,
+    candidateCount,
+    tradableCount,
+
+    activeRotation: active,
+    active,
+
+    activatedCount: active.microFamilyIds.length,
+    activatedMicroCount: active.microFamilyIds.length,
+    activatedMacroCount: active.macroFamilyIds.length,
+
+    activeMicroFamilyIds: active.microFamilyIds,
+    activeMacroFamilyIds: active.macroFamilyIds,
+
+    selectedMicroFamilyId: selectedRow.microFamilyId,
+    selectedMacroFamilyId: selectedRow.macroFamilyId,
+
+    selectedRow,
+
+    bestLong: active.bestLong,
+    bestShort: active.bestShort
   };
 }
 
@@ -785,6 +1111,39 @@ async function handlePost(req, res) {
 
   if (action === 'activateBestBalanced') {
     const result = await activateBestBalanced(body);
+
+    return res.status(200).json({
+      ok: true,
+      ...result,
+      serverTs: Date.now()
+    });
+  }
+
+  if (
+    action === 'activateBestSideMicro' ||
+    action === 'activateBestSideMicroFamily'
+  ) {
+    const result = await activateBestSideMicro(body);
+
+    return res.status(200).json({
+      ok: true,
+      ...result,
+      serverTs: Date.now()
+    });
+  }
+
+  if (action === 'activateBestLongMicroFamily') {
+    const result = await activateBestSideMicro(body, 'LONG');
+
+    return res.status(200).json({
+      ok: true,
+      ...result,
+      serverTs: Date.now()
+    });
+  }
+
+  if (action === 'activateBestShortMicroFamily') {
+    const result = await activateBestSideMicro(body, 'SHORT');
 
     return res.status(200).json({
       ok: true,
