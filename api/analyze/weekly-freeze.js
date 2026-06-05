@@ -10,6 +10,8 @@ import {
 } from '../../src/utils.js';
 import { freezeWeeklyRotation } from '../../src/analyze/rotationEngine.js';
 
+const TARGET_TRADE_SIDE = 'SHORT';
+
 function now() {
   return Date.now();
 }
@@ -29,10 +31,12 @@ function isAllowedMethod(method) {
 }
 
 function parseJson(text) {
-  if (!text) return {};
+  const raw = String(text || '').trim();
+
+  if (!raw) return {};
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(raw);
   } catch {
     const error = new Error('INVALID_JSON_BODY');
     error.statusCode = 400;
@@ -104,7 +108,7 @@ function getFreezeLockTtlSec() {
   const ttl = Number(CONFIG.analyze?.freezeLockTtlSec || 600);
 
   return Number.isFinite(ttl) && ttl > 0
-    ? ttl
+    ? Math.floor(ttl)
     : 600;
 }
 
@@ -172,6 +176,116 @@ function payloadOk(lockResult, payload) {
   return true;
 }
 
+function normalizeTradeSide(value) {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+
+  return 'UNKNOWN';
+}
+
+function inferRowTradeSide(row = {}) {
+  if (typeof row === 'string') {
+    return inferRowTradeSide({ microFamilyId: row });
+  }
+
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction ||
+    row.signalSide ||
+    row.scannerSide ||
+    row.analysisSide
+  );
+
+  if (direct !== 'UNKNOWN') return direct;
+
+  const haystack = [
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('TRADE_SIDE=SHORT') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('SIDE=BEAR') ||
+    haystack.includes('DIRECTION=SHORT') ||
+    haystack.includes('DIRECTION=BEAR') ||
+    haystack.includes('SHORT_') ||
+    haystack.includes('_SHORT')
+  ) {
+    return 'SHORT';
+  }
+
+  if (
+    haystack.includes('MICRO_LONG_') ||
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('TRADE_SIDE=LONG') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('SIDE=BULL') ||
+    haystack.includes('DIRECTION=LONG') ||
+    haystack.includes('DIRECTION=BULL') ||
+    haystack.includes('LONG_') ||
+    haystack.includes('_LONG')
+  ) {
+    return 'LONG';
+  }
+
+  return 'UNKNOWN';
+}
+
+function isShortRow(row = {}) {
+  return inferRowTradeSide(row) === TARGET_TRADE_SIDE;
+}
+
+function rotationFromPayload(payload = {}) {
+  return (
+    payload?.rotation ||
+    payload?.nextRotation ||
+    payload?.activeRotation ||
+    payload ||
+    {}
+  );
+}
+
+function shortRotationRows(payload = {}) {
+  const rotation = rotationFromPayload(payload);
+  const rows = Array.isArray(rotation?.microFamilies)
+    ? rotation.microFamilies
+    : [];
+
+  return rows.filter(isShortRow);
+}
+
 function responseWeekKey(payload, fallbackWeekKey = null) {
   return (
     payload?.weekKey ||
@@ -198,17 +312,55 @@ function responseRotationId(payload) {
   );
 }
 
+function responseMicroFamilyIds(payload) {
+  const rotation = rotationFromPayload(payload);
+  const rows = shortRotationRows(payload);
+
+  if (rows.length > 0) {
+    return rows
+      .map((row) => row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)
+      .filter(Boolean);
+  }
+
+  const ids = Array.isArray(rotation?.microFamilyIds)
+    ? rotation.microFamilyIds
+    : [];
+
+  return ids.filter((id) => inferRowTradeSide(id) === TARGET_TRADE_SIDE);
+}
+
+function responseMacroFamilyIds(payload) {
+  const rotation = rotationFromPayload(payload);
+  const rows = shortRotationRows(payload);
+
+  if (rows.length > 0) {
+    return [...new Set(
+      rows
+        .map((row) => (
+          row.parentMacroFamilyId ||
+          row.parentMicroFamilyId ||
+          row.macroFamilyId ||
+          row.familyId
+        ))
+        .filter(Boolean)
+    )];
+  }
+
+  const ids = Array.isArray(rotation?.macroFamilyIds)
+    ? rotation.macroFamilyIds
+    : [];
+
+  return ids.filter((id) => inferRowTradeSide(id) === TARGET_TRADE_SIDE);
+}
+
 function responseSelectedCount(payload) {
-  return (
-    payload?.selectedMicroFamilies ||
-    payload?.rotation?.microFamilyIds?.length ||
-    payload?.rotation?.microFamilies?.length ||
-    0
-  );
+  return responseMicroFamilyIds(payload).length;
 }
 
 function responseEligibleCount(payload) {
   return (
+    payload?.rotation?.shortEligibleCount ||
+    payload?.rotation?.eligibleShortCount ||
     payload?.rotation?.eligibleCount ||
     0
   );
@@ -216,6 +368,8 @@ function responseEligibleCount(payload) {
 
 function responseRankedCount(payload) {
   return (
+    payload?.rotation?.shortRankedCount ||
+    payload?.rotation?.rankedShortCount ||
     payload?.rotation?.rankedCount ||
     0
   );
@@ -228,12 +382,6 @@ function responseEmptyReason(payload) {
     payload?.reason ||
     null
   );
-}
-
-function responseMicroFamilyIds(payload) {
-  return Array.isArray(payload?.rotation?.microFamilyIds)
-    ? payload.rotation.microFamilyIds
-    : [];
 }
 
 function errorStatus(error) {
@@ -263,12 +411,22 @@ async function runFreeze({
   return freezeWeeklyRotation({
     weekKey,
     activeWeekKey,
-    mode
+    mode,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    side: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    disableLong: true
   });
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Rotation-Target-Side', TARGET_TRADE_SIDE);
+  res.setHeader('X-Long-Disabled', 'true');
 
   const startedAt = now();
 
@@ -298,6 +456,8 @@ export default async function handler(req, res) {
     );
 
     const payload = unwrapLockResult(lockResult);
+    const microFamilyIds = responseMicroFamilyIds(payload);
+    const macroFamilyIds = responseMacroFamilyIds(payload);
 
     return res.status(200).json({
       ok: payloadOk(lockResult, payload),
@@ -309,6 +469,10 @@ export default async function handler(req, res) {
 
       type: payload?.type || 'NEXT_ROTATION_READY',
 
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+
       weekKey: responseWeekKey(payload, weekKey),
       activeWeekKey: responseActiveWeekKey(payload, activeWeekKey),
       mode,
@@ -316,13 +480,16 @@ export default async function handler(req, res) {
       rotationId: responseRotationId(payload),
 
       selectedMicroFamilies: responseSelectedCount(payload),
+      selectedMacroFamilies: macroFamilyIds.length,
+
       eligibleCount: responseEligibleCount(payload),
       rankedCount: responseRankedCount(payload),
 
-      empty: Boolean(payload?.rotation?.empty),
+      empty: microFamilyIds.length === 0 || Boolean(payload?.rotation?.empty),
       emptyReason: responseEmptyReason(payload),
 
-      microFamilyIds: responseMicroFamilyIds(payload),
+      microFamilyIds,
+      macroFamilyIds,
 
       durationMs: now() - startedAt,
 
@@ -336,6 +503,11 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(errorStatus(error)).json({
       ok: false,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+
       error: error?.message || String(error),
       durationMs: now() - startedAt,
       stack: process.env.NODE_ENV === 'production'
