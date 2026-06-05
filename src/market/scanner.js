@@ -28,6 +28,12 @@ const DEFAULT_MAX_CANDIDATES = 300;
 const DEFAULT_MIN_QUOTE_VOLUME_24H = 50_000;
 const DEFAULT_SOFT_MIN_QUOTE_VOLUME_24H = 10_000;
 
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_SCANNER_SIDE = 'bear';
+
+const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
+const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
+
 const BLOCKED_BASE_SYMBOLS = new Set([
   'USDT',
   'USDC',
@@ -48,9 +54,16 @@ function cfgNumber(pathValue, fallback) {
 }
 
 function cfgBoolean(pathValue, fallback = false) {
-  if (pathValue === undefined || pathValue === null) return fallback;
+  if (pathValue === undefined || pathValue === null || pathValue === '') {
+    return fallback;
+  }
 
-  return Boolean(pathValue);
+  const normalized = String(pathValue).trim().toLowerCase();
+
+  if (TRUE_VALUES.has(normalized)) return true;
+  if (FALSE_VALUES.has(normalized)) return false;
+
+  return fallback;
 }
 
 function scannerConcurrency() {
@@ -204,25 +217,19 @@ function inferSide({ change1h, change24h, btcState }) {
   const ch24 = safeNumber(change24h, 0);
   const min24 = minAbsChange24h();
 
-  if (ch1 > 0 && ch24 > -0.5) return 'bull';
-  if (ch1 < 0 && ch24 < 0.5) return 'bear';
-
-  if (ch24 > min24) return 'bull';
-  if (ch24 < -min24) return 'bear';
-
-  if (ch1 > 0) return 'bull';
-  if (ch1 < 0) return 'bear';
+  if (ch1 < 0 && ch24 < 0.5) return TARGET_SCANNER_SIDE;
+  if (ch24 < -min24) return TARGET_SCANNER_SIDE;
+  if (ch1 < 0) return TARGET_SCANNER_SIDE;
 
   const state = String(btcState || '').toUpperCase();
 
-  if (state.includes('BULL')) return 'bull';
-  if (state.includes('BEAR')) return 'bear';
+  if (state.includes('BEAR')) return TARGET_SCANNER_SIDE;
 
   return 'neutral';
 }
 
 function sideConfidence({ side, change1h, change24h }) {
-  if (!['bull', 'bear'].includes(side)) return 'LOW';
+  if (side !== TARGET_SCANNER_SIDE) return 'LOW';
 
   const ch1 = Math.abs(safeNumber(change1h, 0));
   const ch24 = Math.abs(safeNumber(change24h, 0));
@@ -297,14 +304,14 @@ function scannerReasonFrom({
   passesMoveFilter,
   sideConfidenceLevel
 }) {
-  if (fake?.pullbackConfirmed && fake?.retestConfirmed) return 'MOMENTUM_PULLBACK_RETEST';
-  if (fake?.pullbackConfirmed) return 'MOMENTUM_PULLBACK';
-  if (fake?.breakoutType === 'VALID_BREAKOUT') return 'VALID_BREAKOUT';
-  if (volumeExpansion >= 1.5) return 'VOLUME_EXPANSION';
-  if (passesMoveFilter) return 'MOMENTUM_EXPANSION';
-  if (sideConfidenceLevel === 'LOW') return 'WEAK_DIRECTION_ANALYZE_ONLY';
+  if (fake?.pullbackConfirmed && fake?.retestConfirmed) return 'SHORT_MOMENTUM_PULLBACK_RETEST';
+  if (fake?.pullbackConfirmed) return 'SHORT_MOMENTUM_PULLBACK';
+  if (fake?.breakoutType === 'VALID_BREAKOUT') return 'SHORT_VALID_BREAKOUT';
+  if (volumeExpansion >= 1.5) return 'SHORT_VOLUME_EXPANSION';
+  if (passesMoveFilter) return 'SHORT_MOMENTUM_EXPANSION';
+  if (sideConfidenceLevel === 'LOW') return 'SHORT_WEAK_DIRECTION_ANALYZE_ONLY';
 
-  return 'ANALYZE_DISCOVERY';
+  return 'SHORT_ANALYZE_DISCOVERY';
 }
 
 function cleanFakeResult(fake = {}) {
@@ -364,6 +371,27 @@ function dedupeByBaseSymbol(tickers) {
   return [...byBase.values()];
 }
 
+function shortUniverseScore(ticker = {}) {
+  const change24h = safeNumber(ticker.change24h, 0);
+  const volume24h = safeNumber(ticker.volume24h, 0);
+
+  const bearishPressure = change24h < 0
+    ? Math.abs(change24h) * 100
+    : 0;
+
+  const volumeScore = Math.log10(Math.max(10, volume24h));
+
+  return bearishPressure + volumeScore;
+}
+
+function sortShortUniverse(a, b) {
+  const scoreDelta = shortUniverseScore(b) - shortUniverseScore(a);
+
+  if (scoreDelta !== 0) return scoreDelta;
+
+  return safeNumber(b.volume24h, 0) - safeNumber(a.volume24h, 0);
+}
+
 function buildTickerUniverse(rawTickers) {
   return dedupeByBaseSymbol(
     (Array.isArray(rawTickers) ? rawTickers : [])
@@ -371,7 +399,7 @@ function buildTickerUniverse(rawTickers) {
       .filter(Boolean)
       .filter(isTradableTicker)
   )
-    .sort((a, b) => safeNumber(b.volume24h, 0) - safeNumber(a.volume24h, 0))
+    .sort(sortShortUniverse)
     .slice(0, scannerMaxSymbols());
 }
 
@@ -459,7 +487,7 @@ function buildGateFlags({
     Math.abs(change24h) >= minAbsChange24h();
 
   const passesVolumeFilter = safeNumber(volume24h, 0) >= minQuoteVolume24h();
-  const hasDirectionalSide = ['bull', 'bear'].includes(side);
+  const hasDirectionalSide = side === TARGET_SCANNER_SIDE;
 
   const hardBlockedByDirection =
     blockNoDirectionEnabled() &&
@@ -489,8 +517,8 @@ function buildGateFlags({
     hardBlockedByFake,
 
     scannerGatePassed: !hardBlocked && passesMoveFilter && hasDirectionalSide && !fake.fakeBreakout,
-    analyzeEligible: !hardBlocked,
-    tradeDiscoveryOnly: !passesMoveFilter || !hasDirectionalSide || fake.fakeBreakout
+    analyzeEligible: !hardBlocked && hasDirectionalSide,
+    tradeDiscoveryOnly: !passesMoveFilter || fake.fakeBreakout
   };
 }
 
@@ -549,6 +577,13 @@ async function analyzeTickerCandidate({
     btcState
   });
 
+  if (side !== TARGET_SCANNER_SIDE) {
+    return {
+      candidate: null,
+      skippedReason: 'SHORT_ONLY_NOT_BEARISH'
+    };
+  }
+
   const fakeRaw = detectFakeBreakout({
     side,
     candles15m,
@@ -570,10 +605,10 @@ async function analyzeTickerCandidate({
     return {
       candidate: null,
       skippedReason: gates.hardBlockedByDirection
-        ? 'NO_DIRECTION'
+        ? 'NO_SHORT_DIRECTION'
         : gates.hardBlockedByMove
-          ? 'MOVE_TOO_SMALL'
-          : 'FAKE_BREAKOUT'
+          ? 'SHORT_MOVE_TOO_SMALL'
+          : 'SHORT_FAKE_BREAKOUT'
     };
   }
 
@@ -603,7 +638,14 @@ async function analyzeTickerCandidate({
       symbol: baseSymbol,
       baseSymbol,
       contractSymbol,
-      side,
+
+      side: TARGET_SCANNER_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+      positionSide: TARGET_TRADE_SIDE,
+      direction: TARGET_TRADE_SIDE,
+
+      shortOnly: true,
+      longDisabled: true,
 
       price,
 
@@ -646,6 +688,15 @@ function countSkipped(results) {
   }, {});
 }
 
+function isShortCandidate(candidate = {}) {
+  return (
+    candidate.side === TARGET_SCANNER_SIDE ||
+    candidate.tradeSide === TARGET_TRADE_SIDE ||
+    candidate.positionSide === TARGET_TRADE_SIDE ||
+    candidate.direction === TARGET_TRADE_SIDE
+  );
+}
+
 function sortCandidates(candidates = []) {
   return [...candidates].sort((a, b) => {
     const gateDelta = Number(Boolean(b.scannerGatePassed)) - Number(Boolean(a.scannerGatePassed));
@@ -653,6 +704,9 @@ function sortCandidates(candidates = []) {
 
     const scoreDelta = safeNumber(b.scannerScore, 0) - safeNumber(a.scannerScore, 0);
     if (scoreDelta !== 0) return scoreDelta;
+
+    const changeDelta = Math.abs(safeNumber(b.change1h, 0)) - Math.abs(safeNumber(a.change1h, 0));
+    if (changeDelta !== 0) return changeDelta;
 
     return safeNumber(b.volume24h, 0) - safeNumber(a.volume24h, 0);
   });
@@ -662,7 +716,7 @@ export async function runScanner() {
   const redis = getVolatileRedis();
 
   const startedAt = Date.now();
-  const snapshotId = randomId('scan');
+  const snapshotId = randomId('scan_short');
   const getCandles = createCandleCache();
 
   const rawTickers = await fetchBitgetTickers();
@@ -688,7 +742,8 @@ export async function runScanner() {
 
   const allCandidates = results
     .map((row) => row?.candidate)
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter(isShortCandidate);
 
   const cleanCandidates = sortCandidates(allCandidates)
     .slice(0, scannerMaxCandidates());
@@ -700,6 +755,12 @@ export async function runScanner() {
 
   const snapshot = {
     ok: true,
+
+    sideMode: 'SHORT_ONLY',
+    targetTradeSide: TARGET_TRADE_SIDE,
+    targetScannerSide: TARGET_SCANNER_SIDE,
+    shortOnly: true,
+    longDisabled: true,
 
     snapshotId,
     createdAt: startedAt,
@@ -754,6 +815,12 @@ export async function runScanner() {
     KEYS.scan.latest,
     {
       ok: true,
+
+      sideMode: 'SHORT_ONLY',
+      targetTradeSide: TARGET_TRADE_SIDE,
+      targetScannerSide: TARGET_SCANNER_SIDE,
+      shortOnly: true,
+      longDisabled: true,
 
       snapshotId,
       createdAt: startedAt,
