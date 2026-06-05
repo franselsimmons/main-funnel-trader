@@ -858,10 +858,12 @@
       microMode: "balanced",
       microSearch: "",
 
-      // Hard verlaagd tegen 504.
-      microFetchLimit: 160,
+      // Laag houden: frontend vraagt geen 1000+ rows meer op.
+      microFetchLimit: 60,
       microSideLimit: 25,
-      microSideEnsureLimit: 25
+      microSideEnsureLimit: 0,
+
+      apiTimeoutMs: 22000
     };
 
     const endpoints = {
@@ -937,6 +939,18 @@
     };
 
     const $ = (id) => document.getElementById(id);
+
+    class ApiError extends Error {
+      constructor(message, details = {}) {
+        super(message);
+        this.name = "ApiError";
+        this.status = details.status || 0;
+        this.url = details.url || "";
+        this.data = details.data || null;
+        this.raw = details.raw || "";
+        this.timeout = Boolean(details.timeout);
+      }
+    }
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -1258,6 +1272,39 @@
       return String(raw || fallback);
     }
 
+    function friendlyApiMessage(error) {
+      const status = Number(error?.status || 0);
+      const raw = String(error?.message || error || "");
+
+      if (error?.timeout) {
+        return "API-timeout: request is afgebroken door de admin UI. Verlaagde payload is actief; backend-cache of route-optimalisatie moet de rest doen.";
+      }
+
+      if (status === 504 || raw.includes("504") || raw.toLowerCase().includes("deployment")) {
+        return "Backend timeout op deze admin-route. De ruwe Vercel 504 dump wordt niet meer getoond. Gebruik Refresh opnieuw na deploy van de geoptimaliseerde backend-routes.";
+      }
+
+      if (status === 500) {
+        return "Backend error op deze admin-route. Check server logs voor stacktrace.";
+      }
+
+      if (status === 404) {
+        return "Admin endpoint niet gevonden. Controleer routepad/deploy.";
+      }
+
+      return raw || "Onbekende API fout.";
+    }
+
+    function timeoutSignal(timeoutMs = state.apiTimeoutMs) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      return {
+        signal: controller.signal,
+        clear: () => clearTimeout(timer)
+      };
+    }
+
     async function api(url, options = {}) {
       const headers = {
         accept: "application/json",
@@ -1268,27 +1315,57 @@
         headers["content-type"] = "application/json";
       }
 
-      const response = await fetch(url, {
-        cache: "no-store",
-        ...options,
-        headers
-      });
-
-      const rawText = await response.text();
-
-      let data = {};
+      const timeout = timeoutSignal(options.timeoutMs || state.apiTimeoutMs);
 
       try {
-        data = rawText ? JSON.parse(rawText) : {};
-      } catch {
-        data = { raw: rawText };
-      }
+        const response = await fetch(url, {
+          cache: "no-store",
+          ...options,
+          headers,
+          signal: options.signal || timeout.signal
+        });
 
-      if (!response.ok) {
-        throw new Error(`${response.status} ${errorReason(data, response.statusText)}\n${JSON.stringify(data, null, 2)}`);
-      }
+        const rawText = await response.text();
 
-      return data;
+        let data = {};
+
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          data = { raw: rawText };
+        }
+
+        if (!response.ok) {
+          throw new ApiError(
+            `${response.status} ${errorReason(data, response.statusText)}`,
+            {
+              status: response.status,
+              url,
+              data,
+              raw: rawText
+            }
+          );
+        }
+
+        return data;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          throw new ApiError("REQUEST_ABORTED_TIMEOUT", {
+            status: 0,
+            url,
+            timeout: true
+          });
+        }
+
+        if (error instanceof ApiError) throw error;
+
+        throw new ApiError(error?.message || String(error), {
+          status: 0,
+          url
+        });
+      } finally {
+        timeout.clear();
+      }
     }
 
     function table(rows, cols, emptyText = "Geen data.") {
@@ -1377,30 +1454,30 @@
     }
 
     function extractIdsFromRotation(rotation = {}) {
-      return uniqueStrings(
-        rotation?.microFamilyIds ||
-        rotation?.activeMicroFamilyIds ||
-        rotation?.trueMicroFamilyIds ||
-        rotation?.ids ||
+      return uniqueStrings([
+        rotation?.microFamilyIds || [],
+        rotation?.activeMicroFamilyIds || [],
+        rotation?.trueMicroFamilyIds || [],
+        rotation?.ids || [],
         (
           Array.isArray(rotation?.microFamilies)
             ? rotation.microFamilies.map((row) => microId(row))
             : []
         )
-      );
+      ]);
     }
 
     function extractMacroIdsFromRotation(rotation = {}) {
-      return uniqueStrings(
-        rotation?.macroFamilyIds ||
-        rotation?.activeMacroFamilyIds ||
-        rotation?.macroIds ||
+      return uniqueStrings([
+        rotation?.macroFamilyIds || [],
+        rotation?.activeMacroFamilyIds || [],
+        rotation?.macroIds || [],
         (
           Array.isArray(rotation?.microFamilies)
             ? rotation.microFamilies.map((row) => macroId(row))
             : []
         )
-      );
+      ]);
     }
 
     function activeIdsFromState() {
@@ -1652,14 +1729,81 @@
 
       params.set("mode", extra.mode || state.microMode);
       params.set("limit", String(extra.limit || state.microFetchLimit));
-      params.set("sideEnsureLimit", String(extra.sideEnsureLimit || state.microSideEnsureLimit));
+      params.set("sideEnsureLimit", String(extra.sideEnsureLimit ?? state.microSideEnsureLimit));
       params.set("includeActiveRotation", "0");
       params.set("compact", "1");
+      params.set("fast", "1");
 
       if (extra.side) params.set("side", extra.side);
       if (extra.q) params.set("q", extra.q);
 
       return `${endpoints.micros}?${params.toString()}`;
+    }
+
+    function rotationUrl(extra = {}) {
+      const params = new URLSearchParams();
+
+      params.set("activeRowsLimit", String(extra.activeRowsLimit || 30));
+      params.set("nextRowsLimit", String(extra.nextRowsLimit || 20));
+      params.set("compact", "1");
+
+      return `${endpoints.rotation}?${params.toString()}`;
+    }
+
+    async function fetchMicroSide(side, mode = state.microMode) {
+      return api(microUrl({
+        mode,
+        side,
+        limit: state.microSideLimit
+      }), {
+        timeoutMs: 18000
+      });
+    }
+
+    async function fetchMicroRows(mode = state.microMode) {
+      const [shortResult, longResult] = await Promise.allSettled([
+        fetchMicroSide("SHORT", mode),
+        fetchMicroSide("LONG", mode)
+      ]);
+
+      const shortData = shortResult.status === "fulfilled" ? shortResult.value : null;
+      const longData = longResult.status === "fulfilled" ? longResult.value : null;
+
+      const shortRows = getRows(shortData, ["rows", "microFamilies", "micros"]);
+      const longRows = getRows(longData, ["rows", "microFamilies", "micros"]);
+      const rows = [...shortRows, ...longRows];
+
+      const errors = [
+        shortResult.status === "rejected" ? friendlyApiMessage(shortResult.reason) : "",
+        longResult.status === "rejected" ? friendlyApiMessage(longResult.reason) : ""
+      ].filter(Boolean);
+
+      return {
+        ok: errors.length === 0,
+        mode,
+        sideMode: true,
+        shortData,
+        longData,
+        shortRows,
+        longRows,
+        rows,
+        errors,
+        activeRotation: shortData?.activeRotation || longData?.activeRotation || null,
+        activeMicroFamilyIds: uniqueStrings([
+          shortData?.activeMicroFamilyIds || [],
+          longData?.activeMicroFamilyIds || []
+        ]),
+        activeMacroFamilyIds: uniqueStrings([
+          shortData?.activeMacroFamilyIds || [],
+          longData?.activeMacroFamilyIds || []
+        ]),
+        summary: shortData?.summary || longData?.summary || null,
+        perf: {
+          short: shortData?.perf || null,
+          long: longData?.perf || null
+        },
+        serverTs: Date.now()
+      };
     }
 
     function filterMicroRows(rows = []) {
@@ -1699,10 +1843,10 @@
 
       if (!force && rows.length > 0) return rows;
 
-      const data = await api(microUrl());
+      const data = await fetchMicroRows(state.microMode);
       state.micros = data;
 
-      return getRows(data, ["rows", "microFamilies", "micros"]);
+      return data.rows || [];
     }
 
     function currentVisibleMicroRows() {
@@ -1784,7 +1928,7 @@
             </div>
 
             <div class="micro-connect-narrative">
-              Er is geen actieve kandidaat voor deze kant. De knop blijft uitgeschakeld zodat TradeSystem niet per ongeluk een lege of verkeerde side activeert.
+              Geen kandidaat beschikbaar voor deze kant. De knop blijft uitgeschakeld.
             </div>
 
             <div class="micro-connect-actions">
@@ -2102,9 +2246,13 @@
       `;
 
       $("runScannerBtn")?.addEventListener("click", async () => {
-        await api(endpoints.runScanner);
-        setMessage("Scanner handmatig gestart.", "ok");
-        await renderScanner();
+        try {
+          await api(endpoints.runScanner, { timeoutMs: 25000 });
+          setMessage("Scanner handmatig gestart.", "ok");
+          await renderScanner();
+        } catch (error) {
+          setMessage(friendlyApiMessage(error), "warn");
+        }
       });
 
       $("copyScannerJsonBtn")?.addEventListener("click", () => {
@@ -2178,10 +2326,14 @@
       `;
 
       $("runTradeBtn")?.addEventListener("click", async () => {
-        const result = await api(endpoints.runTrade);
-        const counts = result.counts || result.actionCounts || {};
-        setMessage(`TradeSystem run klaar. Entries=${counts.entries || counts.ENTRY || 0}, waits=${counts.waits || counts.WAIT || 0}.`, "ok");
-        await renderTrade();
+        try {
+          const result = await api(endpoints.runTrade, { timeoutMs: 25000 });
+          const counts = result.counts || result.actionCounts || {};
+          setMessage(`TradeSystem run klaar. Entries=${counts.entries || counts.ENTRY || 0}, waits=${counts.waits || counts.WAIT || 0}.`, "ok");
+          await renderTrade();
+        } catch (error) {
+          setMessage(friendlyApiMessage(error), "warn");
+        }
       });
 
       $("copyTradeJsonBtn")?.addEventListener("click", () => {
@@ -2193,10 +2345,14 @@
       state.microMode = mode || "balanced";
       showLoading("micros");
 
-      const data = await api(microUrl({ mode: state.microMode }));
+      const data = await fetchMicroRows(state.microMode);
       state.micros = data;
 
-      const rows = getRows(data, ["rows", "microFamilies", "micros"]);
+      if (data.errors.length) {
+        setMessage(data.errors.join("\n"), "warn");
+      }
+
+      const rows = data.rows || [];
       const filteredRows = filterMicroRows(rows);
       const split = splitTopMicroRows(filteredRows);
       const bestShort = bestMicroRowForSide(rows, "SHORT");
@@ -2220,7 +2376,7 @@
         <div class="section-title">
           <div>
             <h2>Beste micro-family selectie</h2>
-            <p>Selecteer apart de beste SHORT of LONG true micro-family voor TradeSystem en Discord-match flow.</p>
+            <p>De UI haalt SHORT en LONG apart op. Daardoor geen zware full-payload request meer.</p>
           </div>
         </div>
 
@@ -2237,14 +2393,14 @@
           ${metricCard("Active macro", fmtInt(activeMacroSet().size))}
           ${metricCard("SHORT visible", `${fmtInt(split.shortRows.length)} / ${fmtInt(split.totalShortRows)}`)}
           ${metricCard("LONG visible", `${fmtInt(split.longRows.length)} / ${fmtInt(split.totalLongRows)}`)}
-          ${metricCard("Tradable", fmtInt(data.summary?.tradableMicroFamilies || 0))}
+          ${metricCard("Side requests", data.ok ? "OK" : "Partial")}
         </div>
 
         <div class="card">
           <h3>Analyze view</h3>
           <div class="metric-extra">
-            Deze pagina vraagt nu maximaal ${state.microFetchLimit} rows op en forceert sideEnsureLimit=${state.microSideEnsureLimit}.
-            Dit voorkomt dat de admin-route 1000 rows + volledige activeRotation terugstuurt en in 504 loopt.
+            Frontend vraagt nu side-specifiek op: SHORT limit=${state.microSideLimit}, LONG limit=${state.microSideLimit}, includeActiveRotation=0.
+            De ruwe Vercel 504 JSON dump wordt niet meer gerenderd.
           </div>
         </div>
 
@@ -2320,6 +2476,7 @@
 
       const data = await api(endpoints.rotation, {
         method: "POST",
+        timeoutMs: 28000,
         body: JSON.stringify({
           action,
           side: normalizedSide,
@@ -2419,7 +2576,9 @@
       $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
 
       try {
-        const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}`);
+        const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}`, {
+          timeoutMs: 18000
+        });
         const row = data.row || data.microFamily || data;
 
         drawer.innerHTML = `
@@ -2507,11 +2666,11 @@
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="metric-extra">Detail API error</div>
+              <div class="metric-extra">Detail API niet geladen</div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
-          <div class="message error">${escapeHtml(error.message)}</div>
+          <div class="message warn">${escapeHtml(friendlyApiMessage(error))}</div>
         `;
 
         $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
@@ -2526,21 +2685,10 @@
     async function renderRotation() {
       showLoading("rotation");
 
-      const data = await api(endpoints.rotation);
+      const data = await api(rotationUrl(), {
+        timeoutMs: 18000
+      });
       state.rotation = data;
-
-      let rotationMicroRows = currentMicroRows();
-
-      if (rotationMicroRows.length === 0) {
-        try {
-          rotationMicroRows = await ensureMicroRows();
-        } catch {
-          rotationMicroRows = [];
-        }
-      }
-
-      const rotationBestShort = bestMicroRowForSide(rotationMicroRows, "SHORT");
-      const rotationBestLong = bestMicroRowForSide(rotationMicroRows, "LONG");
 
       const active = data.active || data.activeRotation || {};
       const next = data.next || data.nextRotation || {};
@@ -2559,11 +2707,23 @@
       const selectedTier = active.selectedTier || data.selectedTier || "NA";
       const missing = missingSidesArray(data, active);
 
+      const rotationBestShort =
+        data.bestShort ||
+        active.bestShort ||
+        next.bestShort ||
+        bestMicroRowForSide(currentMicroRows(), "SHORT");
+
+      const rotationBestLong =
+        data.bestLong ||
+        active.bestLong ||
+        next.bestLong ||
+        bestMicroRowForSide(currentMicroRows(), "LONG");
+
       $("rotation").innerHTML = `
         <div class="section-title">
           <div>
             <h2>Beste micro-family selectie</h2>
-            <p>Activeert alleen de gekozen side. De andere side blijft behouden als die al actief is.</p>
+            <p>Rotation tab doet geen extra zware micro-families fetch meer. Preview komt uit rotation/actieve cache.</p>
           </div>
         </div>
 
@@ -2639,13 +2799,18 @@
       $("activateBestLongRotationBtn")?.addEventListener("click", () => activateBestSideMicro("LONG"));
 
       $("freezeWeeklyBtn")?.addEventListener("click", async () => {
-        const result = await api(endpoints.weeklyFreeze, {
-          method: "POST",
-          body: JSON.stringify({ force: true, mode: "balanced" })
-        });
+        try {
+          const result = await api(endpoints.weeklyFreeze, {
+            method: "POST",
+            timeoutMs: 28000,
+            body: JSON.stringify({ force: true, mode: "balanced" })
+          });
 
-        setMessage(`Next rotation frozen. rotationId=${result.rotationId || result.result?.result?.rotationId || "NA"}`, "ok");
-        await renderRotation();
+          setMessage(`Next rotation frozen. rotationId=${result.rotationId || result.result?.result?.rotationId || "NA"}`, "ok");
+          await renderRotation();
+        } catch (error) {
+          setMessage(friendlyApiMessage(error), "warn");
+        }
       });
 
       $("copyActiveMicroIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} true micro IDs.`));
@@ -2665,7 +2830,9 @@
     async function renderDiscord() {
       showLoading("discord");
 
-      const data = await api(`${endpoints.discord}?limit=100`);
+      const data = await api(`${endpoints.discord}?limit=60`, {
+        timeoutMs: 18000
+      });
       state.discord = data;
 
       const logs = getRows(data, ["logs", "items"]);
@@ -2739,31 +2906,41 @@
 
       if (confirmValue !== "RESET_LEARNING") return;
 
-      const data = await api(endpoints.resetLearning, {
-        method: "POST",
-        body: JSON.stringify({
-          confirm: "RESET_LEARNING",
-          confirmed: "RESET_LEARNING"
-        })
-      });
+      try {
+        const data = await api(endpoints.resetLearning, {
+          method: "POST",
+          timeoutMs: 25000,
+          body: JSON.stringify({
+            confirm: "RESET_LEARNING",
+            confirmed: "RESET_LEARNING"
+          })
+        });
 
-      $("resetResult").textContent = JSON.stringify(data, null, 2);
-      setMessage("Learning reset uitgevoerd.", "ok");
+        $("resetResult").textContent = JSON.stringify(data, null, 2);
+        setMessage("Learning reset uitgevoerd.", "ok");
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
     }
 
     async function postResetRotation() {
       if (!confirm("Reset active/next rotation?")) return;
 
-      const data = await api(endpoints.resetRotation, {
-        method: "POST",
-        body: JSON.stringify({
-          confirm: true,
-          confirmed: true
-        })
-      });
+      try {
+        const data = await api(endpoints.resetRotation, {
+          method: "POST",
+          timeoutMs: 25000,
+          body: JSON.stringify({
+            confirm: true,
+            confirmed: true
+          })
+        });
 
-      $("resetResult").textContent = JSON.stringify(data, null, 2);
-      setMessage("Rotation reset uitgevoerd.", "ok");
+        $("resetResult").textContent = JSON.stringify(data, null, 2);
+        setMessage("Rotation reset uitgevoerd.", "ok");
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
     }
 
     async function postFactoryReset() {
@@ -2777,18 +2954,23 @@
 
       if (!confirm("FACTORY RESET wist alles. Doorgaan?")) return;
 
-      const data = await api(endpoints.factoryReset, {
-        method: "POST",
-        body: JSON.stringify({
-          confirm: "FACTORY_RESET_CONFIRMED",
-          confirmed: "FACTORY_RESET_CONFIRMED",
-          force: forceValue,
-          forceClosePositions: forceValue
-        })
-      });
+      try {
+        const data = await api(endpoints.factoryReset, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            confirm: "FACTORY_RESET_CONFIRMED",
+            confirmed: "FACTORY_RESET_CONFIRMED",
+            force: forceValue,
+            forceClosePositions: forceValue
+          })
+        });
 
-      $("resetResult").textContent = JSON.stringify(data, null, 2);
-      setMessage("Factory reset uitgevoerd.", "ok");
+        $("resetResult").textContent = JSON.stringify(data, null, 2);
+        setMessage("Factory reset uitgevoerd.", "ok");
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
     }
 
     function showTab(id) {
@@ -2806,6 +2988,21 @@
       refresh(id);
     }
 
+    function renderSoftError(tab, error) {
+      const message = friendlyApiMessage(error);
+
+      setMessage(message, "warn");
+
+      $(tab).innerHTML = `
+        <div class="card">
+          <h3>Niet geladen</h3>
+          <div class="empty">
+            ${escapeHtml(message)}
+          </div>
+        </div>
+      `;
+    }
+
     async function refresh(tab = state.activeTab) {
       setMessage("");
       $("liveLabel").textContent = `Last refresh ${new Date().toLocaleTimeString()}`;
@@ -2819,11 +3016,7 @@
         if (tab === "discord") return await renderDiscord();
         if (tab === "reset") return renderReset();
       } catch (error) {
-        const message = error?.message || String(error);
-
-        setMessage(message, "error");
-
-        $(tab).innerHTML = `<div class="card"><h3>Error</h3>${jsonBlock({ message })}</div>`;
+        renderSoftError(tab, error);
       }
     }
 
@@ -2838,7 +3031,7 @@
     });
 
     window.addEventListener("unhandledrejection", (event) => {
-      setMessage(event.reason?.message || String(event.reason || "Unhandled promise rejection"), "error");
+      setMessage(friendlyApiMessage(event.reason), "warn");
     });
 
     const initialTab = location.hash.replace("#", "") || "overview";
