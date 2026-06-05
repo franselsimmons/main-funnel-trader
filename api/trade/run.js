@@ -6,6 +6,8 @@ import { getDurableRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
 import { runTradeSystem } from '../../src/trade/tradeSystem.js';
 
+const TARGET_TRADE_SIDE = 'SHORT';
+
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET, POST');
 
@@ -152,8 +154,100 @@ function responseSnapshotId(lockResult) {
 
 function responseActionCounts(lockResult) {
   const payload = unwrapLockResult(lockResult);
+  const counts = payload?.actionCounts || {};
 
-  return payload?.actionCounts || {};
+  return {
+    ...counts,
+    targetTradeSide: TARGET_TRADE_SIDE,
+    shortOnly: true,
+    longDisabled: true
+  };
+}
+
+function normalizeTradeSide(value) {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+
+  return 'UNKNOWN';
+}
+
+function inferActionTradeSide(row = {}) {
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction ||
+    row.scannerSide ||
+    row.analysisSide
+  );
+
+  if (direct !== 'UNKNOWN') return direct;
+
+  const haystack = [
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('TRADE_SIDE=SHORT') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('SIDE=BEAR') ||
+    haystack.includes('DIRECTION=SHORT') ||
+    haystack.includes('DIRECTION=BEAR') ||
+    haystack.includes('SHORT_') ||
+    haystack.includes('_SHORT')
+  ) {
+    return 'SHORT';
+  }
+
+  if (
+    haystack.includes('MICRO_LONG_') ||
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('TRADE_SIDE=LONG') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('SIDE=BULL') ||
+    haystack.includes('DIRECTION=LONG') ||
+    haystack.includes('DIRECTION=BULL') ||
+    haystack.includes('LONG_') ||
+    haystack.includes('_LONG')
+  ) {
+    return 'LONG';
+  }
+
+  return 'UNKNOWN';
+}
+
+function isShortAction(row = {}) {
+  return inferActionTradeSide(row) === TARGET_TRADE_SIDE;
 }
 
 function responseCounts(lockResult) {
@@ -162,6 +256,9 @@ function responseCounts(lockResult) {
   const actions = Array.isArray(payload?.actions)
     ? payload.actions
     : [];
+
+  const shortActions = actions.filter(isShortAction);
+  const longActions = actions.filter((row) => inferActionTradeSide(row) === 'LONG');
 
   const realExits = Array.isArray(payload?.realExits)
     ? payload.realExits
@@ -172,12 +269,19 @@ function responseCounts(lockResult) {
     : [];
 
   return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    shortOnly: true,
+    longDisabled: true,
+
     candidates: Number(payload?.candidates || 0),
     liveRows: Number(payload?.liveRows || 0),
 
     actions: actions.length || Number(payload?.actionsCount || 0),
-    entries: actions.filter((row) => row?.action === 'ENTRY').length,
-    waits: actions.filter((row) => row?.action === 'WAIT').length,
+    shortActions: shortActions.length,
+    longActionsBlockedOrIgnored: longActions.length,
+
+    entries: shortActions.filter((row) => row?.action === 'ENTRY').length,
+    waits: shortActions.filter((row) => row?.action === 'WAIT').length,
 
     realExits: realExits.length || Number(payload?.realExitsCount || 0),
     shadowExits: shadowExits.length || Number(payload?.shadowExitsCount || 0),
@@ -205,12 +309,22 @@ function resolveStatus(error) {
 
 function buildRunOptions(req, body = {}) {
   return {
-    forceProcessSnapshot: shouldForceProcessSnapshot(req, body)
+    forceProcessSnapshot: shouldForceProcessSnapshot(req, body),
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    side: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    disableLong: true
   };
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Trade-Target-Side', TARGET_TRADE_SIDE);
+  res.setHeader('X-Long-Disabled', 'true');
 
   const startedAt = Date.now();
 
@@ -242,6 +356,10 @@ export default async function handler(req, res) {
 
       source: getRunSource(req, body),
 
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+
       forceProcessSnapshot: runOptions.forceProcessSnapshot,
 
       runId: responseRunId(result),
@@ -262,6 +380,11 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(resolveStatus(error)).json({
       ok: false,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+
       error: error?.message || String(error),
       durationMs: Date.now() - startedAt,
       stack: process.env.NODE_ENV === 'production'
