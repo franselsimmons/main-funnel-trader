@@ -50,6 +50,7 @@ import {
 import { sendEntryAlert } from '../discord/discord.js';
 
 const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 300;
+const VALID_TRADE_SIDES = new Set(['LONG', 'SHORT']);
 
 function now() {
   return Date.now();
@@ -232,12 +233,101 @@ function normalizeCandidate(candidate = {}) {
   };
 }
 
+function normalizeTradeSide(side) {
+  const direct = sideToTradeSide(side);
+
+  if (VALID_TRADE_SIDES.has(direct)) return direct;
+
+  const raw = String(side || '').trim().toUpperCase();
+
+  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function oppositeTradeSide(side) {
+  const tradeSide = normalizeTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'SHORT';
+  if (tradeSide === 'SHORT') return 'LONG';
+
+  return 'UNKNOWN';
+}
+
 function isLong(side) {
   return sideToTradeSide(side) === 'LONG';
 }
 
 function isShort(side) {
   return sideToTradeSide(side) === 'SHORT';
+}
+
+function isMirrorAnalysisRow(row = {}) {
+  return Boolean(
+    row.isMirrorMicroFamily ||
+    row.observationMirror ||
+    row.analysisMirror ||
+    row.mirrorAnalysisOnly
+  );
+}
+
+function buildCandidateVariants(candidate = {}) {
+  const normalized = normalizeCandidate(candidate);
+  const tradeSide = normalizeTradeSide(normalized.tradeSide || normalized.side);
+  const variants = [
+    {
+      ...normalized,
+      side: tradeSide !== 'UNKNOWN' ? tradeSide : normalized.side,
+      tradeSide: tradeSide !== 'UNKNOWN' ? tradeSide : normalized.tradeSide,
+
+      actualScannerSide: tradeSide !== 'UNKNOWN' ? tradeSide : null,
+      scannerSide: tradeSide !== 'UNKNOWN' ? tradeSide : null,
+      analysisSide: tradeSide !== 'UNKNOWN' ? tradeSide : null,
+
+      isMirrorMicroFamily: false,
+      observationMirror: false,
+      analysisMirror: false,
+      mirrorAnalysisOnly: false
+    }
+  ];
+
+  if (!VALID_TRADE_SIDES.has(tradeSide)) {
+    return variants;
+  }
+
+  const mirrorSide = oppositeTradeSide(tradeSide);
+
+  variants.push({
+    ...normalized,
+
+    side: mirrorSide,
+    tradeSide: mirrorSide,
+
+    actualScannerSide: tradeSide,
+    scannerSide: tradeSide,
+    analysisSide: mirrorSide,
+    mirrorOfSide: tradeSide,
+
+    isMirrorMicroFamily: true,
+    observationMirror: true,
+    analysisMirror: true,
+    mirrorAnalysisOnly: true,
+
+    analyzeOnly: true,
+    discoveryOnly: true,
+    tradeDiscoveryOnly: true,
+
+    liveEntryBlockedReason: 'MIRROR_ANALYSIS_ONLY',
+
+    scannerReason: normalized.scannerReason
+      ? `${normalized.scannerReason}_MIRROR_${mirrorSide}`
+      : `MIRROR_${mirrorSide}`,
+
+    scannerGateReason: normalized.scannerGateReason || 'MIRROR_ANALYSIS_PAIR'
+  });
+
+  return variants;
 }
 
 function waitAction(candidate, reason, extra = {}) {
@@ -247,8 +337,11 @@ function waitAction(candidate, reason, extra = {}) {
     symbol: candidate?.symbol || null,
     contractSymbol: candidate?.contractSymbol || null,
     side: candidate?.side || null,
+    tradeSide: candidate?.tradeSide || sideToTradeSide(candidate?.side),
     snapshotId: candidate?.snapshotId || null,
     scannerScore: candidate?.scannerScore ?? candidate?.moveScore ?? null,
+    isMirrorMicroFamily: Boolean(candidate?.isMirrorMicroFamily),
+    observationMirror: Boolean(candidate?.observationMirror),
     liveEligible: false,
     ...extra
   };
@@ -500,6 +593,14 @@ function validateLiveEntryGates(row = {}) {
     row.moveScore,
     0
   );
+
+  if (isMirrorAnalysisRow(row)) {
+    return {
+      ok: false,
+      reason: 'MIRROR_ANALYSIS_ONLY',
+      mirrorOfSide: row.mirrorOfSide || null
+    };
+  }
 
   if (cfg.requireScannerGateForLiveEntries && !scannerGatePassed(row)) {
     return {
@@ -838,6 +939,9 @@ function enrichMetricsWithScannerAndLiveGates({
   return {
     ...metrics,
 
+    side: normalized.side || metrics.side,
+    tradeSide: normalized.tradeSide || sideToTradeSide(normalized.side || metrics.side),
+
     snapshotId: normalized.snapshotId || metrics.snapshotId || null,
 
     scannerScore: safeNumber(
@@ -862,6 +966,18 @@ function enrichMetricsWithScannerAndLiveGates({
 
     analyzeEligible: normalized.analyzeEligible !== false,
     tradeDiscoveryOnly: Boolean(normalized.tradeDiscoveryOnly),
+    discoveryOnly: Boolean(normalized.discoveryOnly),
+    analyzeOnly: Boolean(normalized.analyzeOnly),
+
+    isMirrorMicroFamily: Boolean(normalized.isMirrorMicroFamily),
+    observationMirror: Boolean(normalized.observationMirror),
+    analysisMirror: Boolean(normalized.analysisMirror),
+    mirrorAnalysisOnly: Boolean(normalized.mirrorAnalysisOnly),
+    mirrorOfSide: normalized.mirrorOfSide || null,
+    scannerSide: normalized.scannerSide || null,
+    actualScannerSide: normalized.actualScannerSide || null,
+    analysisSide: normalized.analysisSide || null,
+    liveEntryBlockedReason: normalized.liveEntryBlockedReason || null,
 
     passesMoveFilter: normalized.passesMoveFilter !== false,
     passesVolumeFilter: normalized.passesVolumeFilter !== false,
@@ -887,64 +1003,43 @@ function enrichMetricsWithScannerAndLiveGates({
   };
 }
 
-async function processCandidate(candidate) {
-  const normalized = normalizeCandidate(candidate);
-
-  if (!normalized.symbol || !normalized.contractSymbol) {
-    return {
-      action: waitAction(normalized, 'INVALID_SYMBOL'),
-      metrics: null
-    };
-  }
-
-  const data = await fetchLiveCandidateData(normalized)
-    .catch((error) => ({ error }));
-
-  if (data.error || data.ob?.fetchFailed) {
-    return {
-      action: waitAction(normalized, 'LIVE_DATA_FAILED', {
-        error: data.error?.message || null
-      }),
-      metrics: null
-    };
-  }
-
-  if (!Array.isArray(data.candles15m) || data.candles15m.length < 30) {
-    return {
-      action: waitAction(normalized, 'INSUFFICIENT_LIVE_CANDLES_15M', {
-        candleCount: data.candles15m?.length || 0
-      }),
-      metrics: null
-    };
-  }
-
+function processCandidateVariant({
+  variant,
+  data,
+  snapshotBtcState,
+  snapshotRegime
+}) {
   const risk = buildRiskGeometry({
-    candidate: normalized,
+    candidate: variant,
     ob: data.ob,
     candles15m: data.candles15m
   });
 
-  if (!isValidRiskGeometry(risk, normalized.side)) {
+  if (!isValidRiskGeometry(risk, variant.side)) {
     return {
-      action: waitAction(normalized, 'RISK_INVALID'),
+      action: isMirrorAnalysisRow(variant)
+        ? null
+        : waitAction(variant, 'RISK_INVALID'),
       metrics: null
     };
   }
 
   const metrics = buildLiveMetrics({
-    candidate: normalized,
+    candidate: variant,
     ob: data.ob,
     funding: data.funding,
     candles15m: data.candles15m,
     candles1h: data.candles1h,
-    btcState: normalized.btcState || candidate.btcState,
-    regime: normalized.regime || candidate.regime,
+    btcState: variant.btcState || snapshotBtcState,
+    regime: variant.regime || snapshotRegime,
     risk
   });
 
   if (!metrics) {
     return {
-      action: waitAction(normalized, 'LIVE_METRICS_FAILED'),
+      action: isMirrorAnalysisRow(variant)
+        ? null
+        : waitAction(variant, 'LIVE_METRICS_FAILED'),
       metrics: null
     };
   }
@@ -953,9 +1048,58 @@ async function processCandidate(candidate) {
     action: null,
     metrics: enrichMetricsWithScannerAndLiveGates({
       metrics,
-      candidate: normalized,
+      candidate: variant,
       ob: data.ob
     })
+  };
+}
+
+async function processCandidate(candidate) {
+  const normalized = normalizeCandidate(candidate);
+
+  if (!normalized.symbol || !normalized.contractSymbol) {
+    return {
+      actions: [waitAction(normalized, 'INVALID_SYMBOL')],
+      metrics: []
+    };
+  }
+
+  const data = await fetchLiveCandidateData(normalized)
+    .catch((error) => ({ error }));
+
+  if (data.error || data.ob?.fetchFailed) {
+    return {
+      actions: [
+        waitAction(normalized, 'LIVE_DATA_FAILED', {
+          error: data.error?.message || null
+        })
+      ],
+      metrics: []
+    };
+  }
+
+  if (!Array.isArray(data.candles15m) || data.candles15m.length < 30) {
+    return {
+      actions: [
+        waitAction(normalized, 'INSUFFICIENT_LIVE_CANDLES_15M', {
+          candleCount: data.candles15m?.length || 0
+        })
+      ],
+      metrics: []
+    };
+  }
+
+  const variants = buildCandidateVariants(normalized);
+  const results = variants.map((variant) => processCandidateVariant({
+    variant,
+    data,
+    snapshotBtcState: normalized.btcState || candidate.btcState,
+    snapshotRegime: normalized.regime || candidate.regime
+  }));
+
+  return {
+    actions: results.map((row) => row.action).filter(Boolean),
+    metrics: results.map((row) => row.metrics).filter(Boolean)
   };
 }
 
@@ -966,10 +1110,12 @@ async function safeProcessCandidate(candidate) {
     const normalized = normalizeCandidate(candidate);
 
     return {
-      action: waitAction(normalized, 'CANDIDATE_PROCESS_ERROR', {
-        error: error?.message || String(error)
-      }),
-      metrics: null
+      actions: [
+        waitAction(normalized, 'CANDIDATE_PROCESS_ERROR', {
+          error: error?.message || String(error)
+        })
+      ],
+      metrics: []
     };
   }
 }
@@ -1118,11 +1264,11 @@ export async function runTradeSystem(options = {}) {
   );
 
   const earlyActions = processed
-    .map((row) => row?.action)
+    .flatMap((row) => Array.isArray(row?.actions) ? row.actions : [])
     .filter(Boolean);
 
   const liveRows = processed
-    .map((row) => row?.metrics)
+    .flatMap((row) => Array.isArray(row?.metrics) ? row.metrics : [])
     .filter(Boolean);
 
   const analyzedRows = await analyzeCandidatesBatch(liveRows);
@@ -1132,6 +1278,20 @@ export async function runTradeSystem(options = {}) {
 
   for (const row of analyzedRows) {
     await createShadowPosition(row).catch(() => null);
+
+    if (isMirrorAnalysisRow(row)) {
+      actions.push({
+        ...row,
+        action: 'WAIT',
+        reason: 'MIRROR_ANALYSIS_ONLY',
+        activeRotationId: activeContext.rotationId,
+        activeMacroFamilyId: parentMacroFamilyId(row) || null,
+        liveEligible: false,
+        shadowOnly: true
+      });
+
+      continue;
+    }
 
     const microFamilyId = row.microFamilyId;
     const trueMicroRow = isTrueMicroFamilyRow(row);
@@ -1251,6 +1411,9 @@ export async function runTradeSystem(options = {}) {
     actions.push(entry);
   }
 
+  const mirrorRows = liveRows.filter(isMirrorAnalysisRow).length;
+  const actualLiveRows = liveRows.length - mirrorRows;
+
   await setJson(
     durableRedis,
     KEYS.trade.lastProcessedSnapshot,
@@ -1262,7 +1425,11 @@ export async function runTradeSystem(options = {}) {
       candidates: candidates.length,
       processed: processed.length,
       earlyActions: earlyActions.length,
+
       liveRows: liveRows.length,
+      actualLiveRows,
+      mirrorRows,
+
       analyzedRows: analyzedRows.length,
       actions: actions.length,
 
@@ -1285,7 +1452,11 @@ export async function runTradeSystem(options = {}) {
     candidates: candidates.length,
     processed: processed.length,
     earlyActions: earlyActions.length,
+
     liveRows: liveRows.length,
+    actualLiveRows,
+    mirrorRows,
+
     analyzedRows: analyzedRows.length,
 
     actions,
