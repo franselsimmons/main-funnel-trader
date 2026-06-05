@@ -380,6 +380,7 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
+      word-break: break-word;
     }
 
     .coin-card {
@@ -1023,6 +1024,36 @@
       return s || "NA";
     }
 
+    function sideFromIds(row = {}) {
+      const raw = [
+        row.tradeSide,
+        row.side,
+        row.positionSide,
+        row.direction,
+        row.microFamilyId,
+        row.trueMicroFamilyId,
+        row.id,
+        row.key,
+        row.macroFamilyId,
+        row.parentMicroFamilyId,
+        row.familyId,
+        row.family
+      ].map((value) => String(value || "").toUpperCase());
+
+      if (raw.some((value) => value === "LONG" || value === "BULL" || value === "BUY" || value.includes("LONG_") || value.includes("_LONG"))) return "LONG";
+      if (raw.some((value) => value === "SHORT" || value === "BEAR" || value === "SELL" || value.includes("SHORT_") || value.includes("_SHORT"))) return "SHORT";
+
+      return "NA";
+    }
+
+    function rowSide(row = {}) {
+      const direct = normalizeSide(row?.tradeSide || row?.side || row?.positionSide || row?.direction);
+
+      if (direct === "LONG" || direct === "SHORT") return direct;
+
+      return sideFromIds(row);
+    }
+
     function sideClass(side) {
       const s = normalizeSide(side);
 
@@ -1032,12 +1063,20 @@
       return "neutral";
     }
 
+    function rowSideClass(row = {}) {
+      return sideClass(rowSide(row));
+    }
+
     function sideLabel(side) {
       return normalizeSide(side);
     }
 
+    function rowSideLabel(row = {}) {
+      return rowSide(row);
+    }
+
     function isSide(row, side) {
-      return normalizeSide(row?.side) === normalizeSide(side);
+      return rowSide(row) === normalizeSide(side);
     }
 
     function coinAvatar(row, size = "") {
@@ -1336,6 +1375,24 @@
       );
     }
 
+    function activeMicroSet() {
+      const microIds =
+        state.micros?.activeMicroFamilyIds ||
+        extractIdsFromRotation(state.micros?.activeRotation || {}) ||
+        activeIdsFromState();
+
+      return new Set(microIds || []);
+    }
+
+    function activeMacroSet() {
+      const macroIds =
+        state.micros?.activeMacroFamilyIds ||
+        extractMacroIdsFromRotation(state.micros?.activeRotation || {}) ||
+        activeMacroIdsFromState();
+
+      return new Set(macroIds || []);
+    }
+
     function idStack(row) {
       const micro = microId(row);
       const macro = macroId(row);
@@ -1362,7 +1419,7 @@
     }
 
     function coinCard(row) {
-      const side = sideClass(row.side);
+      const side = rowSideClass(row);
       const symbol = baseSymbol(row);
       const price = row.price ?? row.entry ?? row.currentPrice ?? row.markPrice;
       const score = row.scannerScore ?? row.moveScore ?? row.sniperScore ?? row.confluence ?? 0;
@@ -1378,7 +1435,7 @@
           </div>
 
           <div class="coin-foot">
-            <span class="pill ${escapeAttr(side)}">${escapeHtml(sideLabel(row.side))}</span>
+            <span class="pill ${escapeAttr(side)}">${escapeHtml(rowSideLabel(row))}</span>
             <span class="pill info">Score ${escapeHtml(fmt(score, 1))}</span>
           </div>
 
@@ -1419,7 +1476,7 @@
     }
 
     function positionCard(row) {
-      const side = sideClass(row.side);
+      const side = rowSideClass(row);
       const currentR = Number(row.currentR || 0);
       const rPillClass = currentR >= 0 ? "active" : "danger";
 
@@ -1434,7 +1491,7 @@
           </div>
 
           <div class="coin-foot">
-            <span class="pill ${escapeAttr(side)}">${escapeHtml(sideLabel(row.side))}</span>
+            <span class="pill ${escapeAttr(side)}">${escapeHtml(rowSideLabel(row))}</span>
             <span class="pill ${rPillClass}">${escapeHtml(fmt(currentR, 2))}R</span>
           </div>
 
@@ -1514,15 +1571,18 @@
     }
 
     function splitTopMicroRows(rows = []) {
-      const shortRows = rows.filter((row) => isSide(row, "SHORT")).slice(0, state.microSideLimit);
-      const longRows = rows.filter((row) => isSide(row, "LONG")).slice(0, state.microSideLimit);
+      const allShortRows = rows.filter((row) => isSide(row, "SHORT"));
+      const allLongRows = rows.filter((row) => isSide(row, "LONG"));
+
+      const shortRows = allShortRows.slice(0, state.microSideLimit);
+      const longRows = allLongRows.slice(0, state.microSideLimit);
 
       return {
         shortRows,
         longRows,
         visibleRows: [...shortRows, ...longRows],
-        totalShortRows: rows.filter((row) => isSide(row, "SHORT")).length,
-        totalLongRows: rows.filter((row) => isSide(row, "LONG")).length
+        totalShortRows: allShortRows.length,
+        totalLongRows: allLongRows.length
       };
     }
 
@@ -1532,6 +1592,17 @@
 
     function currentMicroRows() {
       return getRows(state.micros, ["rows", "microFamilies", "micros"]);
+    }
+
+    async function ensureMicroRows() {
+      const rows = currentMicroRows();
+
+      if (rows.length > 0) return rows;
+
+      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=${state.microFetchLimit}`);
+      state.micros = data;
+
+      return getRows(data, ["rows", "microFamilies", "micros"]);
     }
 
     function currentVisibleMicroRows() {
@@ -1560,7 +1631,7 @@
           return `<span class="pill ${isActive ? "active" : ""}">${escapeHtml(label)}</span>`;
         }},
         { label: "IDs", render: idStack },
-        { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+        { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
         { label: "Seen", render: (row) => fmtInt(row.seen) },
         { label: "Completed", render: (row) => fmt(row.completed, 2) },
         { label: "Sample", render: (row) => fmt(row.winrateSample ?? row.completed, 2) },
@@ -1591,22 +1662,6 @@
       document.querySelectorAll("[data-copy-macro]").forEach((btn) => {
         btn.addEventListener("click", () => copyText(btn.dataset.copyMacro, "MacroFamilyId gekopieerd."));
       });
-    }
-
-    function activeMicroSet() {
-      return new Set(
-        state.micros?.activeMicroFamilyIds ||
-        extractIdsFromRotation(state.micros?.activeRotation || {}) ||
-        activeIdsFromState()
-      );
-    }
-
-    function activeMacroSet() {
-      return new Set(
-        state.micros?.activeMacroFamilyIds ||
-        extractMacroIdsFromRotation(state.micros?.activeRotation || {}) ||
-        activeMacroIdsFromState()
-      );
     }
 
     function renderMicrosTableOnly() {
@@ -1755,7 +1810,7 @@
         ${table(candidates, [
           { label: "Coin", render: (row) => coinAvatar(row, "sm") },
           { label: "Contract", key: "contractSymbol" },
-          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
           { label: "Price", render: (row) => `$${escapeHtml(fmtPrice(row.price))}` },
           { label: "Score", render: (row) => `${escapeHtml(fmt(row.scannerScore ?? row.moveScore, 1))}${scoreBar(row.scannerScore ?? row.moveScore, 100)}` },
           { label: "1h", render: (row) => fmtPctRaw(row.change1h) },
@@ -1824,7 +1879,7 @@
 
         ${table(positions, [
           { label: "Coin", render: (row) => coinAvatar(row, "sm") },
-          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
           { label: "Entry", render: (row) => fmtPrice(row.entry) },
           { label: "SL", render: (row) => fmtPrice(row.sl) },
           { label: "TP", render: (row) => fmtPrice(row.tp) },
@@ -1954,7 +2009,7 @@
 
     async function activateBestSideMicro(side) {
       const normalizedSide = normalizeSide(side);
-      const rows = currentMicroRows();
+      const rows = await ensureMicroRows();
       const selected = bestMicroRowForSide(rows, normalizedSide);
 
       if (!selected) {
@@ -2000,21 +2055,29 @@
       const desiredActiveMacroFamilyIds = uniqueStrings([...preservedMacroIds, selectedMacroId]);
 
       const payload = {
-        action: "activateBestSideMicro",
-        mode: state.microMode,
+        action: "activateSelected",
+        mode: "selected",
         side: normalizedSide,
         preserveOppositeSide: true,
-        microFamilyId: selectedMicroId,
-        macroFamilyId: selectedMacroId,
+
+        microFamilyIds: desiredActiveMicroFamilyIds,
+        activeMicroFamilyIds: desiredActiveMicroFamilyIds,
+        trueMicroFamilyIds: desiredActiveMicroFamilyIds,
+        ids: desiredActiveMicroFamilyIds,
+
+        macroFamilyIds: desiredActiveMacroFamilyIds,
+        activeMacroFamilyIds: desiredActiveMacroFamilyIds,
+        macroIds: desiredActiveMacroFamilyIds,
+
         selectedMicroFamilyIds: [selectedMicroId],
         selectedMacroFamilyIds: selectedMacroId ? [selectedMacroId] : [],
-        desiredActiveMicroFamilyIds,
-        desiredActiveMacroFamilyIds,
+
         selectedRow: {
           microFamilyId: selectedMicroId,
           macroFamilyId: selectedMacroId,
           familyId: familyId(selected),
           side: normalizedSide,
+          tradeSide: normalizedSide,
           seen: selected.seen,
           completed: selected.completed,
           winrateSample: selected.winrateSample,
@@ -2040,6 +2103,11 @@
       const macroCount = extractMacroIdsFromRotation(active).length || desiredActiveMacroFamilyIds.length;
 
       setMessage(`Activated ${normalizedSide} micro. Active true micro=${microCount}, active macro=${macroCount}.`, "ok");
+
+      if (state.activeTab === "rotation") {
+        await renderRotation();
+        return;
+      }
 
       await renderMicros(state.microMode);
     }
@@ -2188,9 +2256,22 @@
         : activeIds.map((id, index) => ({ rank: index + 1, microFamilyId: id }));
 
       $("rotation").innerHTML = `
+        <div class="split-toolbar">
+          <div class="side-action-card">
+            <h3>Beste SHORT micro connecten</h3>
+            <p>Activeert alleen de beste SHORT micro. Bestaande LONG blijft behouden als die actief is.</p>
+            <button type="button" class="short-action" id="activateBestShortRotationBtn">Activate best SHORT micro</button>
+          </div>
+
+          <div class="side-action-card">
+            <h3>Beste LONG micro connecten</h3>
+            <p>Activeert alleen de beste LONG micro. Bestaande SHORT blijft behouden als die actief is.</p>
+            <button type="button" class="long-action" id="activateBestLongRotationBtn">Activate best LONG micro</button>
+          </div>
+        </div>
+
         <div class="toolbar">
           <button type="button" class="warn" id="freezeWeeklyBtn">Freeze next rotation</button>
-          <button type="button" class="warn" id="activateNextBtn">Activate next rotation</button>
           <button type="button" class="success" id="copyActiveMicroIdsBtn">Copy active true micro IDs</button>
           <button type="button" class="success" id="copyActiveMacroIdsBtn">Copy active macro IDs</button>
           <button type="button" id="downloadRotationBtn">Export rotation JSON</button>
@@ -2217,7 +2298,7 @@
         ${table(activeRows, [
           { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
           { label: "IDs", render: idStack },
-          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side))}">${escapeHtml(sideLabel(row.side))}</span>` },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
           { label: "Completed", render: (row) => fmt(row.completed, 2) },
           { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
           { label: "AvgR", render: (row) => fmt(row.avgR, 3) },
@@ -2245,6 +2326,9 @@
         </div>
       `;
 
+      $("activateBestShortRotationBtn")?.addEventListener("click", () => activateBestSideMicro("SHORT"));
+      $("activateBestLongRotationBtn")?.addEventListener("click", () => activateBestSideMicro("LONG"));
+
       $("freezeWeeklyBtn")?.addEventListener("click", async () => {
         const result = await api(endpoints.weeklyFreeze, {
           method: "POST",
@@ -2252,16 +2336,6 @@
         });
 
         setMessage(`Next rotation frozen. rotationId=${result.rotationId || result.result?.result?.rotationId || "NA"}`, "ok");
-        await renderRotation();
-      });
-
-      $("activateNextBtn")?.addEventListener("click", async () => {
-        const result = await api(endpoints.activateNextRotation, {
-          method: "POST",
-          body: JSON.stringify({ force: true })
-        });
-
-        setMessage(`Next rotation activated. count=${result.activatedCount || 0}`, "ok");
         await renderRotation();
       });
 
@@ -2302,7 +2376,7 @@
           { label: "TS", render: (row) => fmtTs(row.ts || row.createdAt) },
           { label: "Type", render: (row) => escapeHtml(row.type || row.level || "-") },
           { label: "Coin", render: (row) => coinAvatar(row.payload || row, "sm") },
-          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(sideClass(row.side || row.payload?.side))}">${escapeHtml(sideLabel(row.side || row.payload?.side))}</span>` },
+          { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row.payload || row))}">${escapeHtml(rowSideLabel(row.payload || row))}</span>` },
           { label: "True Micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row))}</code>` },
           { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row.payload || row))}</code>` },
           { label: "Result", render: (row) => escapeHtml(row.result ? JSON.stringify(row.result) : row.message || row.content || "") }
