@@ -21,6 +21,9 @@ import {
 } from '../analyze/analyzeEngine.js';
 import { sendExitAlert } from '../discord/discord.js';
 
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+
 function now() {
   return Date.now();
 }
@@ -104,12 +107,78 @@ function storageSymbol(input) {
   return base || String(raw || '').toUpperCase().trim();
 }
 
-function isLong(side) {
-  return sideToTradeSide(side) === 'LONG';
+function normalizeTradeSide(value) {
+  const direct = sideToTradeSide(value);
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
+
+  return 'UNKNOWN';
 }
 
 function isShort(side) {
-  return sideToTradeSide(side) === 'SHORT';
+  return normalizeTradeSide(side) === TARGET_TRADE_SIDE;
+}
+
+function inferTradeSideFromIds(row = {}) {
+  const haystack = [
+    row.tradeSide,
+    row.side,
+    row.positionSide,
+    row.direction,
+
+    row.familyId,
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.definition,
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (
+    haystack.includes('SHORT') ||
+    haystack.includes('BEAR') ||
+    haystack.includes('SELL') ||
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('TRADE_SIDE=SHORT') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('SIDE=BEAR') ||
+    haystack.includes('DIRECTION=SHORT') ||
+    haystack.includes('DIRECTION=BEAR')
+  ) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferPositionTradeSide(row = {}) {
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction
+  );
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+
+  return inferTradeSideFromIds(row);
 }
 
 function idHasSchema(id, schema) {
@@ -214,6 +283,12 @@ function normalizeMicroIdentity(row = {}) {
 }
 
 function assertEntryTradeable(entry = {}) {
+  const tradeSide = inferPositionTradeSide(entry);
+
+  if (tradeSide !== TARGET_TRADE_SIDE) {
+    throw new Error('OPEN_POSITION_SHORT_ONLY_SYSTEM_REJECTED_NON_SHORT_ENTRY');
+  }
+
   if (!entry.microFamilyId) {
     throw new Error('OPEN_POSITION_MICRO_FAMILY_ID_MISSING');
   }
@@ -233,12 +308,19 @@ function assertEntryTradeable(entry = {}) {
   if (!allowLegacyMacroLiveEntries() && !isTrueMicroFamilyRow(entry)) {
     throw new Error('OPEN_POSITION_REQUIRES_TRUE_MICRO_FAMILY');
   }
+
+  const entryPrice = safeNumber(entry.entry, 0);
+  const sl = safeNumber(entry.sl, 0);
+  const tp = safeNumber(entry.tp, 0);
+
+  if (!(entryPrice > 0 && sl > entryPrice && tp < entryPrice)) {
+    throw new Error('OPEN_POSITION_SHORT_RISK_GEOMETRY_INVALID');
+  }
 }
 
 function calcStopFromR({
   entry,
   initialSl,
-  side,
   stopR
 } = {}) {
   const e = safeNumber(entry, 0);
@@ -251,14 +333,10 @@ function calcStopFromR({
 
   if (riskDist <= 0) return 0;
 
-  if (isLong(side)) return e + riskDist * r;
-  if (isShort(side)) return e - riskDist * r;
-
-  return 0;
+  return e - riskDist * r;
 }
 
 function shouldTightenStop({
-  side,
   currentSl,
   nextSl
 } = {}) {
@@ -267,16 +345,14 @@ function shouldTightenStop({
 
   if (current <= 0 || next <= 0) return false;
 
-  if (isLong(side)) return next > current;
-  if (isShort(side)) return next < current;
-
-  return false;
+  return next < current;
 }
 
 function applyLiveStopManagement(position) {
   const cfg = manageConfig();
 
   if (!cfg.applyLive) return position;
+  if (!isShort(position.tradeSide || position.side)) return position;
 
   const entry = safeNumber(position.entry, 0);
   const initialSl = safeNumber(position.initialSl || position.sl, 0);
@@ -306,12 +382,10 @@ function applyLiveStopManagement(position) {
   const nextSl = calcStopFromR({
     entry,
     initialSl,
-    side: position.side,
     stopR: nextStopR
   });
 
   if (!shouldTightenStop({
-    side: position.side,
     currentSl,
     nextSl
   })) {
@@ -353,23 +427,15 @@ function detectExit({
     };
   }
 
-  const long = isLong(position.side);
-  const short = isShort(position.side);
-
-  if (!long && !short) {
+  if (!isShort(position.tradeSide || position.side)) {
     return {
       shouldExit: false,
-      reason: 'UNKNOWN_SIDE'
+      reason: 'NON_SHORT_POSITION_IGNORED'
     };
   }
 
-  const hitTP = long
-    ? current >= tp
-    : current <= tp;
-
-  const hitSL = long
-    ? current <= sl
-    : current >= sl;
+  const hitTP = current <= tp;
+  const hitSL = current >= sl;
 
   const expired =
     openedAt > 0 &&
@@ -456,6 +522,7 @@ export async function saveOpenPosition(position) {
   }
 
   const identity = normalizeMicroIdentity(position);
+  const tradeSide = inferPositionTradeSide(position);
 
   const row = {
     ...position,
@@ -464,6 +531,25 @@ export async function saveOpenPosition(position) {
     symbol: position.symbol || keySymbol,
     baseSymbol: position.baseSymbol || keySymbol,
     contractSymbol: position.contractSymbol || null,
+
+    side: tradeSide === TARGET_TRADE_SIDE
+      ? TARGET_DASHBOARD_SIDE
+      : position.side || null,
+
+    tradeSide: tradeSide === TARGET_TRADE_SIDE
+      ? TARGET_TRADE_SIDE
+      : position.tradeSide || null,
+
+    positionSide: tradeSide === TARGET_TRADE_SIDE
+      ? TARGET_TRADE_SIDE
+      : position.positionSide || null,
+
+    direction: tradeSide === TARGET_TRADE_SIDE
+      ? TARGET_TRADE_SIDE
+      : position.direction || null,
+
+    shortOnly: tradeSide === TARGET_TRADE_SIDE,
+    longDisabled: true,
 
     status: position.status || 'OPEN',
 
@@ -492,19 +578,20 @@ export async function deleteOpenPosition(symbol) {
 export function updatePathMetrics(position, price) {
   const cfg = manageConfig();
 
+  if (!isShort(position.tradeSide || position.side)) {
+    position.updatedAt = now();
+    position.shortOnly = false;
+    position.longDisabled = true;
+    position.liveManagementSkippedReason = 'NON_SHORT_POSITION_IGNORED';
+    return position;
+  }
+
   const current = safeNumber(price, 0);
   const entry = safeNumber(position.entry, 0);
   const initialSl = safeNumber(position.initialSl || position.sl, 0);
   const tp = safeNumber(position.tp, 0);
 
   if (entry <= 0 || initialSl <= 0 || tp <= 0 || current <= 0) {
-    return position;
-  }
-
-  const long = isLong(position.side);
-  const short = isShort(position.side);
-
-  if (!long && !short) {
     return position;
   }
 
@@ -515,10 +602,7 @@ export function updatePathMetrics(position, price) {
     return position;
   }
 
-  const directionalMove = long
-    ? current - entry
-    : entry - current;
-
+  const directionalMove = entry - current;
   const currentR = directionalMove / riskDist;
   const tpProgress = directionalMove / rewardDist;
 
@@ -554,7 +638,7 @@ export function updatePathMetrics(position, price) {
   if (position.mfeR >= 1.0) position.reachedOneR = true;
   if (tpProgress >= 0.8) position.nearTpSeen = true;
 
-  // Counterfactual BE logic. Always measured, even when live management is off.
+  // Counterfactual BE logic. Altijd meten, ook wanneer live management uit staat.
   if (position.mfeR >= cfg.beArmR) {
     position.beArmed = true;
 
@@ -565,7 +649,6 @@ export function updatePathMetrics(position, price) {
     }
   }
 
-  // Giveback diagnostics.
   if (position.reachedHalfR && currentR < 0) {
     position.gaveBackAfterHalfR = true;
   }
@@ -579,6 +662,13 @@ export function updatePathMetrics(position, price) {
   }
 
   applyLiveStopManagement(position);
+
+  position.side = TARGET_DASHBOARD_SIDE;
+  position.tradeSide = TARGET_TRADE_SIDE;
+  position.positionSide = TARGET_TRADE_SIDE;
+  position.direction = TARGET_TRADE_SIDE;
+  position.shortOnly = true;
+  position.longDisabled = true;
 
   position.updatedAt = now();
 
@@ -601,6 +691,11 @@ export function buildOpenPositionFromEntry(entry) {
     symbol: entry.symbol || keySymbol,
     baseSymbol: entry.baseSymbol || keySymbol,
     contractSymbol: entry.contractSymbol || null,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
 
     status: 'OPEN',
 
@@ -639,7 +734,10 @@ export function buildOpenPositionFromEntry(entry) {
     liveManaged: false,
     beLiveApplied: false,
     trailLiveApplied: false,
-    slManagementSource: null
+    slManagementSource: null,
+
+    shortOnly: true,
+    longDisabled: true
   };
 }
 
@@ -660,6 +758,11 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     ...outcome,
     ...identity,
 
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
     activeRotationId: position.activeRotationId || null,
     activeMacroFamilyId:
       position.activeMacroFamilyId ||
@@ -670,7 +773,10 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
 
     isTrueMicro: identity.isTrueMicro,
     isLegacyMacro: identity.isLegacyMacro,
-    trueMicroOnly: identity.trueMicroOnly
+    trueMicroOnly: identity.trueMicroOnly,
+
+    shortOnly: true,
+    longDisabled: true
   };
 }
 
@@ -679,6 +785,14 @@ async function monitorOnePosition({
   priceFetcher,
   timestamp
 }) {
+  if (!isShort(position.tradeSide || position.side)) {
+    return {
+      type: 'IGNORED_NON_SHORT',
+      position,
+      outcome: null
+    };
+  }
+
   const fetchSymbol = position.contractSymbol || position.symbol;
   const price = await priceFetcher(fetchSymbol).catch(() => 0);
 
@@ -722,9 +836,6 @@ async function monitorOnePosition({
 
   const outcome = enrichOutcomeIdentity(baseOutcome, position);
 
-  // Belangrijk:
-  // recordOutcome/analyze mag de learning-objecten intern verrijken of muteren.
-  // Discord moet de originele trade-engine exit houden: TP/SL/BE_SL/TRAIL_SL/TIME_STOP.
   const analyzeOutcome = clonePlainObject(outcome);
   const discordOutcome = clonePlainObject(outcome);
 
