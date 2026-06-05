@@ -2321,100 +2321,125 @@
 
     async function activateBestSideMicro(side) {
       const normalizedSide = normalizeSide(side);
-      const rows = await ensureMicroRows();
-      const selected = bestMicroRowForSide(rows, normalizedSide);
 
-      if (!selected) {
-        setMessage(`Geen ${normalizedSide} micro-family gevonden. Niets aangepast.`, "warn");
+      if (!["LONG", "SHORT"].includes(normalizedSide)) {
+        setMessage(`Ongeldige side: ${normalizedSide}.`, "error");
         return;
       }
 
-      const selectedMicroId = microId(selected);
-      const selectedMacroId = macroId(selected);
+      let previewRow = null;
 
-      if (!selectedMicroId) {
-        setMessage(`Beste ${normalizedSide} row heeft geen microFamilyId. Niets aangepast.`, "error");
+      try {
+        const rows = await ensureMicroRows();
+        previewRow = bestMicroRowForSide(rows, normalizedSide);
+      } catch {
+        previewRow = null;
+      }
+
+      const previewMicroId = previewRow
+        ? microId(previewRow)
+        : "Backend kiest beste actuele micro-family";
+
+      const previewScore = previewRow
+        ? fmt(previewRow.dashboardBalancedScore ?? previewRow.balancedScore, 2)
+        : "-";
+
+      if (!confirm(
+        `Selecteer beste ${normalizedSide} micro-family voor TradeSystem?\n\n` +
+        `${previewMicroId}\n` +
+        `Balanced: ${previewScore}\n\n` +
+        `De andere side blijft behouden als die actief is.`
+      )) {
         return;
       }
 
-      if (!confirm(`Activate best ${normalizedSide} micro?\n\n${selectedMicroId}\n\nDe andere side blijft behouden als die bestaat.`)) {
-        return;
-      }
-
-      const activeMicroIds = [...activeMicroSet()];
-      const activeMacroIds = [...activeMacroSet()];
-
-      const rowByMicroId = new Map(rows.map((row) => [microId(row), row]).filter(([id]) => Boolean(id)));
-      const rowByMacroId = new Map(rows.map((row) => [macroId(row), row]).filter(([id]) => Boolean(id)));
-
-      const preservedMicroIds = activeMicroIds.filter((id) => {
-        const row = rowByMicroId.get(id);
-
-        if (!row) return true;
-
-        return !isSide(row, normalizedSide);
-      });
-
-      const preservedMacroIds = activeMacroIds.filter((id) => {
-        const row = rowByMacroId.get(id);
-
-        if (!row) return true;
-
-        return !isSide(row, normalizedSide);
-      });
-
-      const desiredActiveMicroFamilyIds = uniqueStrings([...preservedMicroIds, selectedMicroId]);
-      const desiredActiveMacroFamilyIds = uniqueStrings([...preservedMacroIds, selectedMacroId]);
-
-      const payload = {
-        action: "activateSelected",
-        mode: "selected",
-        side: normalizedSide,
-        preserveOppositeSide: true,
-
-        microFamilyIds: desiredActiveMicroFamilyIds,
-        activeMicroFamilyIds: desiredActiveMicroFamilyIds,
-        trueMicroFamilyIds: desiredActiveMicroFamilyIds,
-        ids: desiredActiveMicroFamilyIds,
-
-        macroFamilyIds: desiredActiveMacroFamilyIds,
-        activeMacroFamilyIds: desiredActiveMacroFamilyIds,
-        macroIds: desiredActiveMacroFamilyIds,
-
-        selectedMicroFamilyIds: [selectedMicroId],
-        selectedMacroFamilyIds: selectedMacroId ? [selectedMacroId] : [],
-
-        selectedRow: {
-          microFamilyId: selectedMicroId,
-          macroFamilyId: selectedMacroId,
-          familyId: familyId(selected),
-          side: normalizedSide,
-          tradeSide: normalizedSide,
-          seen: selected.seen,
-          completed: selected.completed,
-          winrateSample: selected.winrateSample,
-          winrate: selected.winrate,
-          fairWinrate: selected.fairWinrate,
-          avgR: selected.avgR,
-          totalR: selected.totalR,
-          profitFactor: selected.profitFactor,
-          directSLPct: selected.directSLPct,
-          avgCostR: selected.avgCostR,
-          balancedScore: selected.balancedScore,
-          dashboardBalancedScore: selected.dashboardBalancedScore
-        }
-      };
+      const action = normalizedSide === "LONG"
+        ? "activateBestLongMicroFamily"
+        : "activateBestShortMicroFamily";
 
       const data = await api(endpoints.rotation, {
         method: "POST",
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          action,
+          side: normalizedSide,
+          tradeSide: normalizedSide,
+          mode: state.microMode,
+          preserveOppositeSide: true
+        })
       });
 
       const active = data.activeRotation || data.active || {};
-      const microCount = extractIdsFromRotation(active).length || desiredActiveMicroFamilyIds.length;
-      const macroCount = extractMacroIdsFromRotation(active).length || desiredActiveMacroFamilyIds.length;
+      const activeMicroIds = extractIdsFromRotation(active);
+      const activeMacroIds = extractMacroIdsFromRotation(active);
 
-      setMessage(`Activated ${normalizedSide} micro. Active true micro=${microCount}, active macro=${macroCount}.`, "ok");
+      if (data.skipped) {
+        setMessage(
+          `Geen ${normalizedSide} micro-family geactiveerd. Reden: ${data.emptyReason || "NO_SIDE_MICRO_FOUND"}.\n` +
+          `Active true micro=${activeMicroIds.length}, active macro=${activeMacroIds.length}.`,
+          "warn"
+        );
+
+        state.rotation = {
+          ...(state.rotation || {}),
+          active,
+          activeRotation: active,
+          activeMicroFamilyIds: activeMicroIds,
+          activeMacroFamilyIds: activeMacroIds
+        };
+
+        if (state.micros) {
+          state.micros = {
+            ...state.micros,
+            activeRotation: active,
+            activeMicroFamilyIds: activeMicroIds,
+            activeMacroFamilyIds: activeMacroIds
+          };
+        }
+
+        if (state.activeTab === "rotation") {
+          await renderRotation();
+          return;
+        }
+
+        await renderMicros(state.microMode);
+        return;
+      }
+
+      state.rotation = {
+        ...(state.rotation || {}),
+        active,
+        activeRotation: active,
+        activeMicroFamilyIds: activeMicroIds,
+        activeMacroFamilyIds: activeMacroIds
+      };
+
+      if (state.micros) {
+        state.micros = {
+          ...state.micros,
+          activeRotation: active,
+          activeMicroFamilyIds: activeMicroIds,
+          activeMacroFamilyIds: activeMacroIds
+        };
+      }
+
+      const selectedMicroId =
+        data.selectedMicroFamilyId ||
+        microId(data.selectedRow || {}) ||
+        "UNKNOWN_MICRO";
+
+      const selectedMacroId =
+        data.selectedMacroFamilyId ||
+        macroId(data.selectedRow || {}) ||
+        "UNKNOWN_MACRO";
+
+      setMessage(
+        `${normalizedSide} micro-family actief gezet voor TradeSystem.\n` +
+        `True micro: ${selectedMicroId}\n` +
+        `Macro: ${selectedMacroId}\n` +
+        `Active true micro=${activeMicroIds.length}, active macro=${activeMacroIds.length}.\n` +
+        `Route actief: scanner coin → TradeSystem fingerprint → active true micro match → Discord melding.`,
+        "ok"
+      );
 
       if (state.activeTab === "rotation") {
         await renderRotation();
