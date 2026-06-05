@@ -86,6 +86,14 @@ function roundPrice(value) {
   return Number(n.toFixed(10));
 }
 
+function clonePlainObject(value) {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
 function storageSymbol(input) {
   const raw = typeof input === 'object'
     ? input?.symbol || input?.baseSymbol || input?.contractSymbol
@@ -102,42 +110,6 @@ function isLong(side) {
 
 function isShort(side) {
   return sideToTradeSide(side) === 'SHORT';
-}
-
-function isFinitePositive(value) {
-  const n = Number(value);
-
-  return Number.isFinite(n) && n > 0;
-}
-
-function extractMarketPrice(value) {
-  if (typeof value === 'number' || typeof value === 'string') {
-    const n = safeNumber(value, 0);
-
-    return isFinitePositive(n) ? n : 0;
-  }
-
-  if (!value || typeof value !== 'object') return 0;
-
-  const candidates = [
-    value.markPrice,
-    value.price,
-    value.lastPrice,
-    value.close,
-    value.indexPrice,
-    value.midPrice,
-    value.data?.markPrice,
-    value.data?.price,
-    value.data?.lastPrice
-  ];
-
-  for (const candidate of candidates) {
-    const n = safeNumber(candidate, 0);
-
-    if (isFinitePositive(n)) return n;
-  }
-
-  return 0;
 }
 
 function idHasSchema(id, schema) {
@@ -362,56 +334,6 @@ function applyLiveStopManagement(position) {
   return position;
 }
 
-function didHitTp(position = {}, price) {
-  const current = safeNumber(price, 0);
-  const tp = safeNumber(position.tp, 0);
-
-  if (current <= 0 || tp <= 0) return false;
-
-  if (isLong(position.side)) return current >= tp;
-  if (isShort(position.side)) return current <= tp;
-
-  return false;
-}
-
-function didHitSl(position = {}, price) {
-  const current = safeNumber(price, 0);
-  const sl = safeNumber(position.sl, 0);
-
-  if (current <= 0 || sl <= 0) return false;
-
-  if (isLong(position.side)) return current <= sl;
-  if (isShort(position.side)) return current >= sl;
-
-  return false;
-}
-
-function slExitReason(position = {}) {
-  const source = String(position.slManagementSource || '').toUpperCase();
-
-  if (source === 'TRAIL') return 'TRAIL_SL';
-  if (source === 'BE') return 'BE_SL';
-
-  return 'SL';
-}
-
-function buildExitResult({
-  reason,
-  observedPrice,
-  triggerPrice
-} = {}) {
-  const cleanObserved = safeNumber(observedPrice, 0);
-  const cleanTrigger = safeNumber(triggerPrice, cleanObserved);
-
-  return {
-    shouldExit: true,
-    reason,
-    observedPrice: roundPrice(cleanObserved),
-    triggerPrice: roundPrice(cleanTrigger),
-    executionPrice: roundPrice(cleanTrigger)
-  };
-}
-
 function detectExit({
   position,
   price,
@@ -441,32 +363,53 @@ function detectExit({
     };
   }
 
-  if (didHitSl(position, current)) {
-    return buildExitResult({
-      reason: slExitReason(position),
-      observedPrice: current,
-      triggerPrice: sl
-    });
-  }
+  const hitTP = long
+    ? current >= tp
+    : current <= tp;
 
-  if (didHitTp(position, current)) {
-    return buildExitResult({
-      reason: 'TP',
-      observedPrice: current,
-      triggerPrice: tp
-    });
-  }
+  const hitSL = long
+    ? current <= sl
+    : current >= sl;
 
   const expired =
     openedAt > 0 &&
     timestamp - openedAt >= cfg.positionTimeStopMin * 60 * 1000;
 
+  if (hitTP) {
+    return {
+      shouldExit: true,
+      reason: 'TP'
+    };
+  }
+
+  if (hitSL) {
+    const source = String(position.slManagementSource || '').toUpperCase();
+
+    if (source === 'TRAIL') {
+      return {
+        shouldExit: true,
+        reason: 'TRAIL_SL'
+      };
+    }
+
+    if (source === 'BE') {
+      return {
+        shouldExit: true,
+        reason: 'BE_SL'
+      };
+    }
+
+    return {
+      shouldExit: true,
+      reason: 'SL'
+    };
+  }
+
   if (expired) {
-    return buildExitResult({
-      reason: 'TIME_STOP',
-      observedPrice: current,
-      triggerPrice: current
-    });
+    return {
+      shouldExit: true,
+      reason: 'TIME_STOP'
+    };
   }
 
   return {
@@ -520,6 +463,7 @@ export async function saveOpenPosition(position) {
 
     symbol: position.symbol || keySymbol,
     baseSymbol: position.baseSymbol || keySymbol,
+    contractSymbol: position.contractSymbol || null,
 
     status: position.status || 'OPEN',
 
@@ -621,7 +565,7 @@ export function updatePathMetrics(position, price) {
     }
   }
 
-  // Giveback diagnostics only. Deze velden mogen nooit echte TP/SL exit triggeren.
+  // Giveback diagnostics.
   if (position.reachedHalfR && currentR < 0) {
     position.gaveBackAfterHalfR = true;
   }
@@ -730,50 +674,13 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
   };
 }
 
-function forceExitOutcomeFields({
-  baseOutcome = {},
-  position = {},
-  exit = {}
-} = {}) {
-  const executionPrice = safeNumber(exit.executionPrice, 0);
-  const observedPrice = safeNumber(exit.observedPrice, executionPrice);
-  const triggerPrice = safeNumber(exit.triggerPrice, executionPrice);
-
-  return {
-    ...baseOutcome,
-
-    symbol: baseOutcome.symbol || position.symbol || position.baseSymbol || null,
-    baseSymbol: baseOutcome.baseSymbol || position.baseSymbol || position.symbol || null,
-    contractSymbol: baseOutcome.contractSymbol || position.contractSymbol || null,
-    side: baseOutcome.side || position.side || null,
-
-    exitReason: exit.reason,
-    reason: exit.reason,
-    source: 'REAL',
-
-    exit: roundPrice(executionPrice),
-    exitPrice: roundPrice(executionPrice),
-    observedExitPrice: roundPrice(observedPrice),
-    triggerPrice: roundPrice(triggerPrice),
-
-    tp: roundPrice(position.tp),
-    sl: roundPrice(position.sl),
-    entry: roundPrice(position.entry),
-
-    trueExitWasPriceCross: ['TP', 'SL', 'BE_SL', 'TRAIL_SL'].includes(exit.reason),
-    tpHitByPrice: exit.reason === 'TP',
-    slHitByPrice: ['SL', 'BE_SL', 'TRAIL_SL'].includes(exit.reason)
-  };
-}
-
 async function monitorOnePosition({
   position,
   priceFetcher,
   timestamp
 }) {
   const fetchSymbol = position.contractSymbol || position.symbol;
-  const rawPrice = await priceFetcher(fetchSymbol).catch(() => 0);
-  const price = extractMarketPrice(rawPrice);
+  const price = await priceFetcher(fetchSymbol).catch(() => 0);
 
   if (!price) {
     await markPriceFetchFailed(position);
@@ -808,31 +715,31 @@ async function monitorOnePosition({
 
   const baseOutcome = buildOutcomeFromPosition({
     position,
-    exitPrice: exit.executionPrice,
+    exitPrice: price,
     exitReason: exit.reason,
     source: 'REAL'
   });
 
-  const forcedOutcome = forceExitOutcomeFields({
-    baseOutcome,
-    position,
-    exit
-  });
+  const outcome = enrichOutcomeIdentity(baseOutcome, position);
 
-  const outcome = enrichOutcomeIdentity(forcedOutcome, position);
+  // Belangrijk:
+  // recordOutcome/analyze mag de learning-objecten intern verrijken of muteren.
+  // Discord moet de originele trade-engine exit houden: TP/SL/BE_SL/TRAIL_SL/TIME_STOP.
+  const analyzeOutcome = clonePlainObject(outcome);
+  const discordOutcome = clonePlainObject(outcome);
 
-  await recordOutcome(outcome, {
+  await recordOutcome(analyzeOutcome, {
     source: 'REAL'
   });
 
-  await sendExitAlert(outcome).catch(() => null);
+  await sendExitAlert(discordOutcome).catch(() => null);
 
   await deleteOpenPosition(position.symbol || position.contractSymbol);
 
   return {
     type: 'EXIT',
     position,
-    outcome
+    outcome: discordOutcome
   };
 }
 
