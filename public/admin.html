@@ -362,27 +362,6 @@
       margin: 12px 0 14px;
     }
 
-    .side-action-card {
-      border-radius: 18px;
-      border: 1px solid var(--border);
-      background: white;
-      padding: 14px;
-      box-shadow: var(--shadow-soft);
-    }
-
-    .side-action-card h3 {
-      margin: 0 0 6px;
-      font-size: 14px;
-    }
-
-    .side-action-card p {
-      margin: 0 0 10px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-      word-break: break-word;
-    }
-
     .micro-connect-card {
       position: relative;
       overflow: hidden;
@@ -1936,6 +1915,46 @@
       `;
     }
 
+    function safeMicroConnectCard(row, side = "SHORT", scope = "micros") {
+      try {
+        return microConnectCard(row, side, scope);
+      } catch (error) {
+        const normalizedSide = normalizeSide(side);
+        const cardClass = normalizedSide === "LONG" ? "long" : "short";
+        const buttonClass = normalizedSide === "LONG" ? "long-action" : "short-action";
+        const buttonId = scope === "rotation"
+          ? `activateBest${normalizedSide === "LONG" ? "Long" : "Short"}RotationBtn`
+          : `activateBest${normalizedSide === "LONG" ? "Long" : "Short"}Btn`;
+
+        return `
+          <div class="micro-connect-card ${escapeAttr(cardClass)}">
+            <div class="micro-connect-head">
+              <div class="micro-connect-title">
+                <h3>Beste ${escapeHtml(normalizedSide)} micro-family</h3>
+                <p>Kaart kon niet volledig worden opgebouwd. Backend-selectie blijft beschikbaar.</p>
+              </div>
+              <span class="pill warn">Fallback</span>
+            </div>
+
+            <div class="micro-connect-narrative">
+              Render error: ${escapeHtml(error?.message || String(error))}
+            </div>
+
+            <div class="micro-connect-actions">
+              <span class="pill ${escapeAttr(cardClass)}">${escapeHtml(normalizedSide)}</span>
+              <button type="button" class="${escapeAttr(buttonClass)}" id="${escapeAttr(buttonId)}">
+                Selecteer beste ${escapeHtml(normalizedSide)} micro-family
+              </button>
+            </div>
+
+            <div class="micro-connect-route">
+              Route: scanner coin → TradeSystem fingerprint → active true micro match → Discord melding.
+            </div>
+          </div>
+        `;
+      }
+    }
+
     function microRowsTable(rows, activeIdsInput = [], activeMacroIdsInput = []) {
       const activeIds = activeIdsInput instanceof Set
         ? activeIdsInput
@@ -2263,9 +2282,16 @@
           <button type="button" id="downloadMicrosBtn">Export JSON</button>
         </div>
 
-        <div class="split-toolbar">
-          ${microConnectCard(bestShort, "SHORT", "micros")}
-          ${microConnectCard(bestLong, "LONG", "micros")}
+        <div class="section-title">
+          <div>
+            <h2>Beste micro-family selectie</h2>
+            <p>Selecteer apart de beste SHORT of LONG true micro-family voor TradeSystem en Discord-match flow.</p>
+          </div>
+        </div>
+
+        <div class="split-toolbar" id="bestMicroCards">
+          ${safeMicroConnectCard(bestShort, "SHORT", "micros")}
+          ${safeMicroConnectCard(bestLong, "LONG", "micros")}
         </div>
 
         <div class="grid">
@@ -2604,9 +2630,16 @@
         : activeIds.map((id, index) => ({ rank: index + 1, microFamilyId: id }));
 
       $("rotation").innerHTML = `
-        <div class="split-toolbar">
-          ${microConnectCard(rotationBestShort, "SHORT", "rotation")}
-          ${microConnectCard(rotationBestLong, "LONG", "rotation")}
+        <div class="section-title">
+          <div>
+            <h2>Beste micro-family selectie</h2>
+            <p>Activeert alleen de gekozen side. De andere side blijft behouden als die al actief is.</p>
+          </div>
+        </div>
+
+        <div class="split-toolbar" id="bestRotationMicroCards">
+          ${safeMicroConnectCard(rotationBestShort, "SHORT", "rotation")}
+          ${safeMicroConnectCard(rotationBestLong, "LONG", "rotation")}
         </div>
 
         <div class="toolbar">
