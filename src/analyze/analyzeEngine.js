@@ -30,6 +30,8 @@ const WEEK_MICRO_ROW_CODEC = 'ANALYZE_WEEK_MICRO_ROW_GZIP_V1';
 const DEFAULT_MAX_REDIS_SET_BYTES = 9_500_000;
 const DEFAULT_MAX_ROW_SET_BYTES = 250_000;
 
+const VALID_TRADE_SIDES = new Set(['LONG', 'SHORT']);
+
 function now() {
   return Date.now();
 }
@@ -38,8 +40,226 @@ function normalizeSource(source) {
   return String(source || 'REAL').toUpperCase();
 }
 
+function mirrorConfig() {
+  return {
+    enabled: CONFIG.analyze?.mirrorOppositeSideMicroFamilies !== false,
+    mirrorOutcomes: CONFIG.analyze?.mirrorOppositeSideOutcomes !== false
+  };
+}
+
+function sideTextToTradeSide(value) {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (!raw) return 'UNKNOWN';
+
+  const direct = sideToTradeSide(raw);
+
+  if (VALID_TRADE_SIDES.has(direct)) return direct;
+
+  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
+
+  const normalized = raw.replace(/[^A-Z0-9]+/g, '_');
+
+  const longPatterns = [
+    'LONG',
+    'BULL',
+    'BUY',
+    'SIDE_LONG',
+    'TRADE_SIDE_LONG',
+    'TRADESIDE_LONG',
+    'DIRECTION_LONG',
+    'SIDE_BULL',
+    'TRADE_SIDE_BULL',
+    'DIRECTION_BULL',
+    'SIDE_BUY',
+    'DIRECTION_BUY',
+    'MICRO_LONG',
+    'FAMILY_LONG'
+  ];
+
+  const shortPatterns = [
+    'SHORT',
+    'BEAR',
+    'SELL',
+    'SIDE_SHORT',
+    'TRADE_SIDE_SHORT',
+    'TRADESIDE_SHORT',
+    'DIRECTION_SHORT',
+    'SIDE_BEAR',
+    'TRADE_SIDE_BEAR',
+    'DIRECTION_BEAR',
+    'SIDE_SELL',
+    'DIRECTION_SELL',
+    'MICRO_SHORT',
+    'FAMILY_SHORT'
+  ];
+
+  const longHit = longPatterns.some((pattern) => (
+    normalized === pattern ||
+    normalized.startsWith(`${pattern}_`) ||
+    normalized.endsWith(`_${pattern}`) ||
+    normalized.includes(`_${pattern}_`)
+  ));
+
+  const shortHit = shortPatterns.some((pattern) => (
+    normalized === pattern ||
+    normalized.startsWith(`${pattern}_`) ||
+    normalized.endsWith(`_${pattern}`) ||
+    normalized.includes(`_${pattern}_`)
+  ));
+
+  if (longHit && !shortHit) return 'LONG';
+  if (shortHit && !longHit) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function sideProbeValues(row = {}, classified = {}) {
+  return [
+    classified.tradeSide,
+    classified.side,
+    classified.positionSide,
+    classified.direction,
+
+    row.tradeSide,
+    row.side,
+    row.positionSide,
+    row.direction,
+    row.signalSide,
+    row.intentSide,
+    row.entrySide,
+
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ];
+}
+
+function inferTradeSide(row = {}, classified = {}) {
+  for (const value of sideProbeValues(row, classified)) {
+    const side = sideTextToTradeSide(value);
+
+    if (VALID_TRADE_SIDES.has(side)) return side;
+  }
+
+  return 'UNKNOWN';
+}
+
+function dashboardSideFromTradeSide(side) {
+  const tradeSide = sideTextToTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
+
+  return 'unknown';
+}
+
+function oppositeTradeSide(side) {
+  const tradeSide = sideTextToTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'SHORT';
+  if (tradeSide === 'SHORT') return 'LONG';
+
+  return 'UNKNOWN';
+}
+
+function normalizeClassificationInput(row = {}, forcedSide = null) {
+  const tradeSide = forcedSide || inferTradeSide(row);
+
+  if (!VALID_TRADE_SIDES.has(tradeSide)) return row;
+
+  return {
+    ...row,
+
+    side: tradeSide,
+    tradeSide,
+    positionSide: row.positionSide || tradeSide,
+    direction: row.direction || tradeSide
+  };
+}
+
+function normalizeClassifiedSide(classified = {}, input = {}) {
+  const tradeSide = inferTradeSide(input, classified);
+
+  if (!VALID_TRADE_SIDES.has(tradeSide)) return classified;
+
+  return {
+    ...classified,
+    side: dashboardSideFromTradeSide(tradeSide),
+    tradeSide
+  };
+}
+
+function buildOppositeSideRow(row = {}, forcedSide = null) {
+  const originalSide = inferTradeSide(row);
+  const mirrorSide = forcedSide || oppositeTradeSide(originalSide);
+
+  if (!VALID_TRADE_SIDES.has(mirrorSide)) return null;
+
+  const entry = safeNumber(row.entry, 0);
+  const sl = safeNumber(row.sl ?? row.initialSl, 0);
+  const tp = safeNumber(row.tp, 0);
+
+  const mirrored = {
+    ...row,
+
+    side: mirrorSide,
+    tradeSide: mirrorSide,
+    positionSide: mirrorSide,
+    direction: mirrorSide,
+
+    isMirrorMicroFamily: true,
+    mirrorOfSide: VALID_TRADE_SIDES.has(originalSide) ? originalSide : null,
+    mirrorSourceMicroFamilyId: row.microFamilyId || null,
+    mirrorSourceFamilyId: row.familyId || null,
+
+    observationMirror: true
+  };
+
+  if (entry > 0 && sl > 0 && tp > 0) {
+    mirrored.entry = entry;
+    mirrored.sl = tp;
+    mirrored.initialSl = tp;
+    mirrored.tp = sl;
+    mirrored.riskPct = Math.abs(entry - tp) / entry;
+
+    if (row.slDistancePct !== undefined || row.tpDistancePct !== undefined) {
+      mirrored.slDistancePct = row.tpDistancePct ?? row.takeProfitDistancePct ?? row.tpDistancePct;
+      mirrored.stopDistancePct = row.tpDistancePct ?? row.takeProfitDistancePct ?? row.tpDistancePct;
+      mirrored.stopLossDistancePct = row.tpDistancePct ?? row.takeProfitDistancePct ?? row.tpDistancePct;
+
+      mirrored.tpDistancePct = row.slDistancePct ?? row.stopDistancePct ?? row.stopLossDistancePct;
+      mirrored.takeProfitDistancePct = row.slDistancePct ?? row.stopDistancePct ?? row.stopLossDistancePct;
+    }
+  }
+
+  return mirrored;
+}
+
 function isLongSide(side) {
-  return sideToTradeSide(side) === 'LONG';
+  return sideTextToTradeSide(side) === 'LONG';
 }
 
 function getAnalyzeSchemaMeta() {
@@ -168,12 +388,23 @@ function uniqueStrings(values = []) {
 }
 
 function normalizeStatsSide(side, classified = {}) {
-  if (classified.side) return classified.side;
-
-  const tradeSide = sideToTradeSide(side);
+  const tradeSide = inferTradeSide(
+    {
+      side,
+      tradeSide: classified.tradeSide
+    },
+    classified
+  );
 
   if (tradeSide === 'LONG') return 'bull';
   if (tradeSide === 'SHORT') return 'bear';
+
+  if (classified.side) return classified.side;
+
+  const direct = sideToTradeSide(side);
+
+  if (direct === 'LONG') return 'bull';
+  if (direct === 'SHORT') return 'bear';
 
   return String(side || 'unknown').toLowerCase();
 }
@@ -182,7 +413,35 @@ function hasUsableDefinitionParts(value) {
   return Array.isArray(value) && value.length > 0;
 }
 
+function idSide(row = {}) {
+  const values = [
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+    row.familyId,
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId
+  ];
+
+  for (const value of values) {
+    const side = sideTextToTradeSide(value);
+
+    if (VALID_TRADE_SIDES.has(side)) return side;
+  }
+
+  return 'UNKNOWN';
+}
+
 function shouldReclassifyAsTrueMicro(row = {}) {
+  const inferredTradeSide = inferTradeSide(row);
+  const existingIdSide = idSide(row);
+
+  if (VALID_TRADE_SIDES.has(inferredTradeSide) && existingIdSide !== inferredTradeSide) {
+    return true;
+  }
+
   if (!row.microFamilyId || !row.familyId) return true;
 
   if (isMicroFamilyV1Id(row.microFamilyId)) return true;
@@ -248,6 +507,7 @@ function compactExample(example, maxStringLength = 480) {
   return {
     symbol: example.symbol || example.baseSymbol || example.contractSymbol || null,
     side: example.side || null,
+    tradeSide: example.tradeSide || null,
     rsiZone: example.rsiZone || null,
     rsiCoarse: example.rsiCoarse || null,
     flow: example.flow || null,
@@ -258,6 +518,7 @@ function compactExample(example, maxStringLength = 480) {
     regime: example.regime || null,
     scannerReason: example.scannerReason || null,
     scannerReasonCoarse: example.scannerReasonCoarse || null,
+    isMirrorMicroFamily: Boolean(example.isMirrorMicroFamily),
     ts: safeNumber(example.ts || example.createdAt, null)
   };
 }
@@ -274,6 +535,11 @@ function compactExamples(examples = [], maxItems = 8, maxStringLength = 480) {
 function compactOutcome(outcome = {}) {
   if (!outcome || typeof outcome !== 'object') return null;
 
+  const inferred = inferTradeSide(outcome);
+  const tradeSide = VALID_TRADE_SIDES.has(inferred)
+    ? inferred
+    : sideToTradeSide(outcome.side);
+
   return {
     source: outcome.source || null,
 
@@ -283,7 +549,7 @@ function compactOutcome(outcome = {}) {
     symbol: outcome.symbol || outcome.baseSymbol || outcome.contractSymbol || null,
     contractSymbol: outcome.contractSymbol || null,
     side: outcome.side || null,
-    tradeSide: outcome.tradeSide || sideToTradeSide(outcome.side),
+    tradeSide,
 
     exitReason: outcome.exitReason || outcome.reason || null,
 
@@ -313,6 +579,8 @@ function compactOutcome(outcome = {}) {
     gaveBackAfterHalfR: Boolean(outcome.gaveBackAfterHalfR),
     gaveBackAfterOneR: Boolean(outcome.gaveBackAfterOneR),
     nearTpThenLoss: Boolean(outcome.nearTpThenLoss),
+
+    isMirrorMicroFamily: Boolean(outcome.isMirrorMicroFamily),
 
     ts: safeNumber(
       outcome.ts ||
@@ -366,11 +634,18 @@ function removeKnownBulkyFields(row = {}) {
   return clean;
 }
 
-function enrichWithMicroFamily(row = {}) {
-  const classified = classifyMicroFamily(row);
-  const macro = classifyMacroFamily(row);
+function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
+  const classifyInput = normalizeClassificationInput(row, forcedSide);
+  const rawClassified = classifyMicroFamily(classifyInput);
+  const rawMacro = classifyMacroFamily(classifyInput);
 
-  if (shouldReclassifyAsTrueMicro(row)) {
+  const classified = normalizeClassifiedSide(rawClassified, classifyInput);
+  const macro = normalizeClassifiedSide(rawMacro, classifyInput);
+
+  const outputTradeSide = inferTradeSide(classifyInput, classified);
+  const outputSide = dashboardSideFromTradeSide(outputTradeSide);
+
+  if (shouldReclassifyAsTrueMicro(classifyInput)) {
     return {
       ...row,
 
@@ -396,8 +671,10 @@ function enrichWithMicroFamily(row = {}) {
       microFamilySchema: classified.schema,
       version: classified.version,
 
-      side: classified.side || row.side,
-      tradeSide: classified.tradeSide || sideToTradeSide(row.side),
+      side: outputSide !== 'unknown' ? outputSide : classified.side || row.side,
+      tradeSide: VALID_TRADE_SIDES.has(outputTradeSide)
+        ? outputTradeSide
+        : classified.tradeSide || sideToTradeSide(row.side),
 
       assetClass: classified.assetClass || row.assetClass,
 
@@ -445,8 +722,13 @@ function enrichWithMicroFamily(row = {}) {
     microFamilySchema: row.microFamilySchema || row.schema || classified.schema,
     version: row.version || classified.version,
 
-    side: row.side || classified.side,
-    tradeSide: row.tradeSide || classified.tradeSide || sideToTradeSide(row.side),
+    side: outputSide !== 'unknown'
+      ? outputSide
+      : row.side || classified.side,
+
+    tradeSide: VALID_TRADE_SIDES.has(outputTradeSide)
+      ? outputTradeSide
+      : row.tradeSide || classified.tradeSide || sideToTradeSide(row.side),
 
     assetClass: row.assetClass || classified.assetClass,
 
@@ -490,8 +772,18 @@ function compactMicroForStorage(row = {}, aggressive = false) {
     maxStringLength
   );
 
+  const inferredTradeSide = inferTradeSide(refreshed);
+
   return {
     ...refreshed,
+
+    side: VALID_TRADE_SIDES.has(inferredTradeSide)
+      ? dashboardSideFromTradeSide(inferredTradeSide)
+      : refreshed.side,
+
+    tradeSide: VALID_TRADE_SIDES.has(inferredTradeSide)
+      ? inferredTradeSide
+      : refreshed.tradeSide,
 
     definitionParts,
     definition: definitionParts.length
@@ -526,12 +818,19 @@ function compactMicroForStorage(row = {}, aggressive = false) {
 
 function getMinimalMicroForStorage(row = {}) {
   const refreshed = refreshStats(removeKnownBulkyFields(row));
+  const inferredTradeSide = inferTradeSide(refreshed);
 
   return {
     microFamilyId: refreshed.microFamilyId,
     familyId: refreshed.familyId,
-    side: refreshed.side,
-    tradeSide: refreshed.tradeSide,
+
+    side: VALID_TRADE_SIDES.has(inferredTradeSide)
+      ? dashboardSideFromTradeSide(inferredTradeSide)
+      : refreshed.side,
+
+    tradeSide: VALID_TRADE_SIDES.has(inferredTradeSide)
+      ? inferredTradeSide
+      : refreshed.tradeSide,
 
     schema: refreshed.schema,
     microFamilySchema: refreshed.microFamilySchema,
@@ -648,6 +947,14 @@ function getOrCreateMicro(micros, classified, side) {
     throw new Error('FAMILY_ID_MISSING');
   }
 
+  const inferredTradeSide = inferTradeSide(
+    {
+      ...classified,
+      side
+    },
+    classified
+  );
+
   const normalizedSide = normalizeStatsSide(side, classified);
 
   if (!micros[microFamilyId]) {
@@ -663,8 +970,14 @@ function getOrCreateMicro(micros, classified, side) {
 
   micro.microFamilyId ||= microFamilyId;
   micro.familyId ||= familyId;
-  micro.side ||= normalizedSide;
-  micro.tradeSide ||= classified.tradeSide || sideToTradeSide(side);
+
+  micro.side = VALID_TRADE_SIDES.has(inferredTradeSide)
+    ? dashboardSideFromTradeSide(inferredTradeSide)
+    : micro.side || normalizedSide;
+
+  micro.tradeSide = VALID_TRADE_SIDES.has(inferredTradeSide)
+    ? inferredTradeSide
+    : micro.tradeSide || classified.tradeSide || sideToTradeSide(side);
 
   micro.schema ||= classified.schema || classified.microFamilySchema || getAnalyzeSchemaMeta().microSchema;
   micro.microFamilySchema ||= classified.microFamilySchema || classified.schema || getAnalyzeSchemaMeta().microSchema;
@@ -700,6 +1013,13 @@ function getOrCreateMicro(micros, classified, side) {
 
   if (classified.spreadBps !== undefined && micro.spreadBps === undefined) {
     micro.spreadBps = classified.spreadBps;
+  }
+
+  if (classified.isMirrorMicroFamily) {
+    micro.isMirrorMicroFamily = true;
+    micro.mirrorOfSide ||= classified.mirrorOfSide || null;
+    micro.mirrorSourceMicroFamilyId ||= classified.mirrorSourceMicroFamilyId || null;
+    micro.mirrorSourceFamilyId ||= classified.mirrorSourceFamilyId || null;
   }
 
   return micro;
@@ -1252,6 +1572,57 @@ export async function saveWeekMicros(
   return clean;
 }
 
+function buildAnalyzeVariants(metrics = {}) {
+  const primary = enrichWithMicroFamily(metrics);
+  const primarySide = inferTradeSide(primary);
+
+  if (!mirrorConfig().enabled || !VALID_TRADE_SIDES.has(primarySide)) {
+    return {
+      primary,
+      mirrors: []
+    };
+  }
+
+  const oppositeSide = oppositeTradeSide(primarySide);
+  const oppositeInput = buildOppositeSideRow(primary, oppositeSide);
+
+  if (!oppositeInput) {
+    return {
+      primary,
+      mirrors: []
+    };
+  }
+
+  const opposite = enrichWithMicroFamily(oppositeInput, {
+    forcedSide: oppositeSide
+  });
+
+  if (!opposite.microFamilyId) {
+    return {
+      primary,
+      mirrors: []
+    };
+  }
+
+  if (opposite.microFamilyId === primary.microFamilyId) {
+    return {
+      primary,
+      mirrors: []
+    };
+  }
+
+  return {
+    primary,
+    mirrors: [
+      {
+        ...opposite,
+        analysisType: 'OBSERVATION_MIRROR',
+        observationMirror: true
+      }
+    ]
+  };
+}
+
 export async function analyzeCandidatesBatch(
   metricsRows = [],
   { weekKey = getIsoWeekKey() } = {}
@@ -1266,13 +1637,18 @@ export async function analyzeCandidatesBatch(
 
   const redis = getDurableRedis();
 
-  const classifiedRows = rows.map((metrics) => ({
+  const variantRows = rows.map((metrics) => ({
     metrics,
-    classified: enrichWithMicroFamily(metrics)
+    ...buildAnalyzeVariants(metrics)
   }));
 
+  const allClassifiedRows = variantRows.flatMap((row) => [
+    row.primary,
+    ...row.mirrors
+  ]);
+
   const touchedIds = uniqueStrings(
-    classifiedRows.map((row) => row.classified.microFamilyId)
+    allClassifiedRows.map((row) => row.microFamilyId)
   );
 
   const partialMode = await hasWeekMicrosIndex(redis, weekKey);
@@ -1284,44 +1660,63 @@ export async function analyzeCandidatesBatch(
   const analyzed = [];
   const actuallyTouchedIds = new Set();
 
-  for (const { metrics, classified } of classifiedRows) {
-    const obsKey = KEYS.analyze.obsLast(
-      metrics.snapshotId || 'NO_SNAPSHOT',
-      metrics.symbol || metrics.contractSymbol || 'UNKNOWN',
-      classified.microFamilyId
-    );
+  for (const batch of variantRows) {
+    const processRows = [
+      {
+        row: batch.primary,
+        returnToCaller: true
+      },
+      ...batch.mirrors.map((row) => ({
+        row,
+        returnToCaller: false
+      }))
+    ];
 
-    const firstObservation = await redis.set(obsKey, '1', {
-      nx: true,
-      ex: CONFIG.analyze.obsDedupeTtlSec
-    });
+    for (const item of processRows) {
+      const classified = item.row;
 
-    const micro = getOrCreateMicro(
-      micros,
-      classified,
-      classified.side || metrics.side
-    );
+      const obsKey = KEYS.analyze.obsLast(
+        batch.metrics.snapshotId || 'NO_SNAPSHOT',
+        batch.metrics.symbol || batch.metrics.contractSymbol || 'UNKNOWN',
+        classified.microFamilyId
+      );
 
-    if (firstObservation) {
-      updateObservation(micro, {
-        ...metrics,
-        ...classified,
-        weekKey,
-        strategyVersion: CONFIG.strategyVersion,
-        createdAt: metrics.createdAt || now()
+      const firstObservation = await redis.set(obsKey, '1', {
+        nx: true,
+        ex: CONFIG.analyze.obsDedupeTtlSec
       });
 
-      actuallyTouchedIds.add(classified.microFamilyId);
-    }
+      const micro = getOrCreateMicro(
+        micros,
+        classified,
+        classified.side || classified.tradeSide || batch.metrics.side
+      );
 
-    analyzed.push({
-      ...metrics,
-      ...classified,
-      analysisType: 'OBSERVATION',
-      observationRecorded: Boolean(firstObservation),
-      weekKey,
-      strategyVersion: CONFIG.strategyVersion
-    });
+      if (firstObservation) {
+        updateObservation(micro, {
+          ...batch.metrics,
+          ...classified,
+          weekKey,
+          strategyVersion: CONFIG.strategyVersion,
+          createdAt: batch.metrics.createdAt || now()
+        });
+
+        actuallyTouchedIds.add(classified.microFamilyId);
+      }
+
+      if (item.returnToCaller) {
+        analyzed.push({
+          ...batch.metrics,
+          ...classified,
+          analysisType: 'OBSERVATION',
+          observationRecorded: Boolean(firstObservation),
+          mirrorMicroFamiliesCreated: batch.mirrors.length,
+          mirrorMicroFamilyIds: batch.mirrors.map((row) => row.microFamilyId),
+          weekKey,
+          strategyVersion: CONFIG.strategyVersion
+        });
+      }
+    }
   }
 
   if (actuallyTouchedIds.size > 0) {
@@ -1335,6 +1730,125 @@ export async function analyzeCandidatesBatch(
   }
 
   return analyzed;
+}
+
+function buildMirroredOutcome(row = {}) {
+  if (!mirrorConfig().mirrorOutcomes) return null;
+
+  const sourceSide = inferTradeSide(row);
+  const mirrorSide = oppositeTradeSide(sourceSide);
+
+  if (!VALID_TRADE_SIDES.has(sourceSide) || !VALID_TRADE_SIDES.has(mirrorSide)) {
+    return null;
+  }
+
+  const mirrorInput = buildOppositeSideRow(row, mirrorSide);
+
+  if (!mirrorInput) return null;
+
+  const classified = enrichWithMicroFamily(
+    {
+      ...mirrorInput,
+      source: 'SHADOW',
+      outcomeMirror: true,
+      isMirrorMicroFamily: true,
+      mirrorOfSide: sourceSide,
+      mirrorSourceMicroFamilyId: row.microFamilyId || null,
+      mirrorSourceFamilyId: row.familyId || null
+    },
+    {
+      forcedSide: mirrorSide
+    }
+  );
+
+  const entry = safeNumber(row.entry, 0);
+  const exit = safeNumber(row.exit, 0);
+  const initialSl = safeNumber(classified.initialSl || classified.sl, 0);
+
+  const riskPct =
+    safeNumber(row.riskPct, 0) ||
+    calcRiskPct({
+      entry,
+      sl: initialSl
+    });
+
+  const grossMovePct = calcGrossMovePct({
+    side: mirrorSide,
+    entry,
+    exit
+  });
+
+  const cost = applyCosts({
+    grossMovePct,
+    riskPct,
+    entrySpreadPct: safeNumber(row.spreadPct, 0),
+    exitSpreadPct: safeNumber(row.exitSpreadPct ?? row.spreadPct, 0)
+  });
+
+  return {
+    ...classified,
+
+    type: 'OUTCOME',
+    source: 'SHADOW',
+    strategyVersion: CONFIG.strategyVersion,
+
+    tradeId: row.tradeId || null,
+    shadowId: row.shadowId || row.id || null,
+
+    symbol: row.symbol,
+    contractSymbol: row.contractSymbol,
+
+    side: dashboardSideFromTradeSide(mirrorSide),
+    tradeSide: mirrorSide,
+
+    entry,
+    exit,
+    sl: safeNumber(classified.sl, 0),
+    initialSl,
+    tp: safeNumber(classified.tp, 0),
+    rr: safeNumber(row.rr, 0),
+    riskPct,
+
+    exitReason: `MIRROR_${row.exitReason || 'EXIT'}`,
+
+    grossR: cost.grossR,
+    grossPnlPct: cost.grossPnlPct,
+
+    exitR: cost.netR,
+    pnlPct: cost.netPnlPct,
+    netR: cost.netR,
+    netPnlPct: cost.netPnlPct,
+
+    costR: cost.costR,
+    costPct: cost.costPct,
+    feePct: cost.feePct,
+    slippagePct: cost.slippagePct,
+
+    mfeR: safeNumber(row.maeR, 0) * -1,
+    maeR: safeNumber(row.mfeR, 0) * -1,
+
+    directToSL: cost.netR <= -0.8,
+    nearTpSeen: false,
+    reachedHalfR: cost.netR >= 0.5,
+    reachedOneR: cost.netR >= 1,
+
+    beArmed: false,
+    beWouldExit: false,
+    beExitR: 0,
+
+    gaveBackAfterHalfR: false,
+    gaveBackAfterOneR: false,
+    nearTpThenLoss: false,
+
+    openedAt: row.openedAt || row.createdAt || null,
+    closedAt: row.closedAt || now(),
+
+    outcomeMirror: true,
+    isMirrorMicroFamily: true,
+    mirrorOfSide: sourceSide,
+    mirrorSourceMicroFamilyId: row.microFamilyId || null,
+    mirrorSourceFamilyId: row.familyId || null
+  };
 }
 
 export async function recordOutcome(
@@ -1353,11 +1867,18 @@ export async function recordOutcome(
     strategyVersion: CONFIG.strategyVersion
   });
 
+  const mirrorOutcome = buildMirroredOutcome(row);
+
+  const touchedIds = uniqueStrings([
+    row.microFamilyId,
+    mirrorOutcome?.microFamilyId
+  ]);
+
   const redis = getDurableRedis();
   const partialMode = await hasWeekMicrosIndex(redis, weekKey);
 
   const micros = partialMode
-    ? await getWeekMicrosByIds(weekKey, [row.microFamilyId])
+    ? await getWeekMicrosByIds(weekKey, touchedIds)
     : await getWeekMicros(weekKey);
 
   const micro = getOrCreateMicro(
@@ -1368,11 +1889,25 @@ export async function recordOutcome(
 
   updateOutcome(micro, row, src);
 
+  if (
+    mirrorOutcome &&
+    mirrorOutcome.microFamilyId &&
+    mirrorOutcome.microFamilyId !== row.microFamilyId
+  ) {
+    const mirrorMicro = getOrCreateMicro(
+      micros,
+      mirrorOutcome,
+      mirrorOutcome.side
+    );
+
+    updateOutcome(mirrorMicro, mirrorOutcome, 'SHADOW');
+  }
+
   await saveWeekMicros(
     weekKey,
     micros,
     partialMode
-      ? { onlyIds: [row.microFamilyId] }
+      ? { onlyIds: touchedIds }
       : {}
   );
 
@@ -1380,7 +1915,9 @@ export async function recordOutcome(
     ...row,
     source: src,
     weekKey,
-    recordedAt: now()
+    recordedAt: now(),
+    mirrorOutcomeRecorded: Boolean(mirrorOutcome?.microFamilyId),
+    mirrorMicroFamilyId: mirrorOutcome?.microFamilyId || null
   };
 }
 
@@ -1633,7 +2170,7 @@ export function buildOutcomeFromPosition({
     });
 
   const grossMovePct = calcGrossMovePct({
-    side: position.side,
+    side: position.tradeSide || position.side,
     entry,
     exit
   });
@@ -1646,6 +2183,10 @@ export function buildOutcomeFromPosition({
   });
 
   const closedAt = now();
+  const inferredTradeSide = inferTradeSide(position);
+  const tradeSide = VALID_TRADE_SIDES.has(inferredTradeSide)
+    ? inferredTradeSide
+    : sideToTradeSide(position.side);
 
   return {
     type: 'OUTCOME',
@@ -1657,8 +2198,10 @@ export function buildOutcomeFromPosition({
 
     symbol: position.symbol,
     contractSymbol: position.contractSymbol,
-    side: position.side,
-    tradeSide: position.tradeSide || sideToTradeSide(position.side),
+    side: VALID_TRADE_SIDES.has(tradeSide)
+      ? dashboardSideFromTradeSide(tradeSide)
+      : position.side,
+    tradeSide,
 
     ...copyMicroClassificationFields(position),
 
