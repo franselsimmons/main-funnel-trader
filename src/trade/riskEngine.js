@@ -15,6 +15,28 @@ import {
   sideToTradeSide
 } from '../utils.js';
 
+const LONG_TOKENS = new Set([
+  'LONG',
+  'BULL',
+  'BULLISH',
+  'BUY',
+  'BID',
+  'UP',
+  'UPSIDE',
+  'GREEN'
+]);
+
+const SHORT_TOKENS = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL',
+  'ASK',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
+]);
+
 function now() {
   return Date.now();
 }
@@ -66,14 +88,6 @@ function round6(value) {
   return Number(safeNumber(value, 0).toFixed(6));
 }
 
-function isLong(side) {
-  return sideToTradeSide(side) === 'LONG';
-}
-
-function isShort(side) {
-  return sideToTradeSide(side) === 'SHORT';
-}
-
 function bool(value) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
@@ -91,8 +105,167 @@ function upper(value, fallback = 'UNKNOWN') {
     : fallback;
 }
 
+function normalizeTradeSideValue(value) {
+  const direct = sideToTradeSide(value);
+
+  if (direct === 'LONG') return 'LONG';
+  if (direct === 'SHORT') return 'SHORT';
+
+  const raw = upper(value, '');
+
+  if (!raw) return 'UNKNOWN';
+  if (LONG_TOKENS.has(raw)) return 'LONG';
+  if (SHORT_TOKENS.has(raw)) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSideFromIds(row = {}) {
+  const haystack = [
+    row.familyId,
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.id,
+    row.key
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (
+    haystack.startsWith('LONG_') ||
+    haystack.includes('_LONG_') ||
+    haystack.includes('|LONG_') ||
+    haystack.includes('MICRO_LONG_') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('BULL')
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    haystack.startsWith('SHORT_') ||
+    haystack.includes('_SHORT_') ||
+    haystack.includes('|SHORT_') ||
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('BEAR')
+  ) {
+    return 'SHORT';
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSideFromReason(row = {}) {
+  const reason = upper(
+    row.scannerReason ||
+    row.reason ||
+    row.signalReason ||
+    row.actionReason ||
+    '',
+    ''
+  );
+
+  if (!reason) return 'UNKNOWN';
+
+  if (
+    reason.includes('LONG') ||
+    reason.includes('BULL') ||
+    reason.includes('BUY') ||
+    reason.includes('UPSIDE')
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    reason.includes('SHORT') ||
+    reason.includes('BEAR') ||
+    reason.includes('SELL') ||
+    reason.includes('DOWNSIDE')
+  ) {
+    return 'SHORT';
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSide(row = {}) {
+  if (typeof row !== 'object' || row === null) {
+    return normalizeTradeSideValue(row);
+  }
+
+  const candidates = [
+    row.tradeSide,
+    row.side,
+    row.positionSide,
+    row.direction,
+    row.signalSide,
+    row.scannerSide,
+    row.expectedSide,
+    row.predictedSide,
+    row.intentSide,
+    row.biasSide
+  ];
+
+  for (const value of candidates) {
+    const side = normalizeTradeSideValue(value);
+
+    if (side !== 'UNKNOWN') return side;
+  }
+
+  const fromIds = inferTradeSideFromIds(row);
+
+  if (fromIds !== 'UNKNOWN') return fromIds;
+
+  const fromReason = inferTradeSideFromReason(row);
+
+  if (fromReason !== 'UNKNOWN') return fromReason;
+
+  return 'UNKNOWN';
+}
+
+function sideLabel(sideOrRow) {
+  return typeof sideOrRow === 'object' && sideOrRow !== null
+    ? inferTradeSide(sideOrRow)
+    : normalizeTradeSideValue(sideOrRow);
+}
+
+function isLong(side) {
+  return sideLabel(side) === 'LONG';
+}
+
+function isShort(side) {
+  return sideLabel(side) === 'SHORT';
+}
+
+function withTradeSide(candidate = {}, side) {
+  const tradeSide = normalizeTradeSideValue(side);
+
+  if (!['LONG', 'SHORT'].includes(tradeSide)) {
+    return {
+      ...candidate,
+      tradeSide: inferTradeSide(candidate)
+    };
+  }
+
+  return {
+    ...candidate,
+    originalSide: candidate.side ?? candidate.tradeSide ?? null,
+    side: tradeSide,
+    tradeSide
+  };
+}
+
 function btcRelation(side, btcState) {
-  const tradeSide = sideToTradeSide(side);
+  const tradeSide = sideLabel(side);
   const btc = upper(btcState, 'NEUTRAL');
 
   if (btc === 'NEUTRAL' || btc === 'UNKNOWN') return 'BTC_NEUTRAL';
@@ -606,10 +779,14 @@ export function calculateRR({
 export function buildRiskGeometry({
   candidate,
   ob,
-  candles15m
+  candles15m,
+  sideOverride = null
 } = {}) {
   const cfg = tradeConfig();
-  const tradeSide = sideToTradeSide(candidate?.side);
+  const overrideSide = normalizeTradeSideValue(sideOverride);
+  const tradeSide = overrideSide !== 'UNKNOWN'
+    ? overrideSide
+    : inferTradeSide(candidate);
 
   if (tradeSide === 'UNKNOWN') return null;
 
@@ -652,6 +829,9 @@ export function buildRiskGeometry({
   if (rr <= 0) return null;
 
   return {
+    side: tradeSide,
+    tradeSide,
+
     entry: roundPrice(entry),
     sl: roundPrice(sl),
     tp: roundPrice(tp),
@@ -673,6 +853,20 @@ export function buildRiskGeometry({
   };
 }
 
+export function buildRiskGeometryForSide({
+  candidate,
+  ob,
+  candles15m,
+  side
+} = {}) {
+  return buildRiskGeometry({
+    candidate,
+    ob,
+    candles15m,
+    sideOverride: side
+  });
+}
+
 export function buildLiveMetrics({
   candidate,
   ob,
@@ -681,17 +875,23 @@ export function buildLiveMetrics({
   candles1h,
   btcState,
   regime,
-  risk
+  risk,
+  sideOverride = null
 } = {}) {
   if (!candidate || !risk) {
     return null;
   }
 
-  const tradeSide = sideToTradeSide(candidate?.side);
+  const overrideSide = normalizeTradeSideValue(sideOverride);
+  const tradeSide = overrideSide !== 'UNKNOWN'
+    ? overrideSide
+    : inferTradeSide(candidate);
 
   if (tradeSide === 'UNKNOWN') {
     return null;
   }
+
+  const sideCandidate = withTradeSide(candidate, tradeSide);
 
   const rsi = safeNumber(calculateRsi(candles15m, 14) ?? 50, 50);
   const rsiHTF = safeNumber(calculateRsi(candles1h, 14) ?? rsi, rsi);
@@ -699,38 +899,38 @@ export function buildLiveMetrics({
   const rsiSlope = safeNumber(getRsiSlope(candles15m), 0);
 
   const flow = classifyFlow({
-    side: candidate?.side,
-    change1h: candidate?.change1h,
-    change24h: candidate?.change24h,
+    side: tradeSide,
+    change1h: sideCandidate.change1h,
+    change24h: sideCandidate.change24h,
     candles15m
   });
 
   const obBias = ob?.bias || 'NEUTRAL';
-  const obRelation = getObRelation(candidate?.side, obBias);
-  const relationToBtc = btcRelation(candidate?.side, btcState);
+  const obRelation = getObRelation(tradeSide, obBias);
+  const relationToBtc = btcRelation(tradeSide, btcState);
 
   const depthMinUsd1p = obDepthValue(ob);
   const spreadPct = safeNumber(ob?.spreadPct, 0);
   const fundingRate = safeNumber(funding?.rate, 0);
   const imbalance = obImbalance(ob);
 
-  const flags = inferEntryFlags(candidate);
+  const flags = inferEntryFlags(sideCandidate);
 
   const rsiLocalBucket = rsiBucket(rsi);
   const rsiHtfBucket = rsiBucket(rsiHTF);
   const rsiSlopeGroup = rsiSlopeBucket(rsiSlope);
 
   const rsiAlign = rsiAlignment({
-    side: candidate?.side,
+    side: tradeSide,
     rsi,
     rsiHTF,
     rsiSlope
   });
 
   const momentum = momentumBucket({
-    side: candidate?.side,
-    change1h: candidate?.change1h,
-    change24h: candidate?.change24h
+    side: tradeSide,
+    change1h: sideCandidate.change1h,
+    change24h: sideCandidate.change24h
   });
 
   const atrGroup = volatilityBucket(risk?.atrPct);
@@ -738,13 +938,13 @@ export function buildLiveMetrics({
   const depthGroup = depthBucket(depthMinUsd1p);
   const fundingGroup = fundingBucket(fundingRate);
   const fundingAlign = fundingAlignment({
-    side: candidate?.side,
+    side: tradeSide,
     fundingRate
   });
   const riskGroup = riskPctBucket(risk?.riskPct);
   const obImbalanceGroup = obImbalanceBucket(imbalance);
 
-  const baseScore = scoreInput(candidate);
+  const baseScore = scoreInput(sideCandidate);
 
   let confluence = 0;
 
@@ -772,7 +972,7 @@ export function buildLiveMetrics({
   sniperScore += flowScore(flow);
   sniperScore += rrScore(risk?.rr);
   sniperScore += directionalMoveScore({
-    side: candidate?.side,
+    side: tradeSide,
     rsiZone,
     rsiSlope,
     rsiHTF,
@@ -810,8 +1010,9 @@ export function buildLiveMetrics({
   });
 
   return {
-    ...candidate,
+    ...sideCandidate,
 
+    side: tradeSide,
     tradeSide,
 
     confluence,
@@ -852,7 +1053,7 @@ export function buildLiveMetrics({
     btcRelation: relationToBtc,
     regime,
 
-    scannerReason: scannerReason(candidate),
+    scannerReason: scannerReason(sideCandidate),
 
     pullbackConfirmed: flags.pullbackConfirmed,
     retestConfirmed: flags.retestConfirmed,
@@ -881,11 +1082,63 @@ export function buildLiveMetrics({
   };
 }
 
+export function buildLiveMetricsForSide(params = {}, side) {
+  return buildLiveMetrics({
+    ...params,
+    sideOverride: side
+  });
+}
+
+export function buildRiskAndLiveMetricsForBothSides({
+  candidate,
+  ob,
+  funding,
+  candles15m,
+  candles1h,
+  btcState,
+  regime
+} = {}) {
+  const rows = [];
+
+  for (const side of ['LONG', 'SHORT']) {
+    const sideCandidate = withTradeSide(candidate, side);
+
+    const risk = buildRiskGeometry({
+      candidate: sideCandidate,
+      ob,
+      candles15m,
+      sideOverride: side
+    });
+
+    if (!isValidRiskGeometry(risk, side)) {
+      continue;
+    }
+
+    const metrics = buildLiveMetrics({
+      candidate: sideCandidate,
+      ob,
+      funding,
+      candles15m,
+      candles1h,
+      btcState,
+      regime,
+      risk,
+      sideOverride: side
+    });
+
+    if (metrics) {
+      rows.push(metrics);
+    }
+  }
+
+  return rows;
+}
+
 export function isValidRiskGeometry(risk, side) {
   if (!risk) return false;
 
   const cfg = tradeConfig();
-  const tradeSide = sideToTradeSide(side);
+  const tradeSide = sideLabel(side || risk.side || risk.tradeSide);
 
   if (tradeSide === 'UNKNOWN') return false;
 
