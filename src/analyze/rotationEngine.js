@@ -14,6 +14,8 @@ import { getWeekMicros, saveWeekMicros } from './analyzeEngine.js';
 import { rankMicros, refreshStats } from './scoring.js';
 import { sendWeeklyRotationReport } from '../discord/discord.js';
 
+const ROTATION_SIDES = ['SHORT', 'LONG'];
+
 function now() {
   return Date.now();
 }
@@ -92,6 +94,10 @@ function allowSoftRotationFallback() {
   return CONFIG.rotation?.allowSoftRotationFallback !== false;
 }
 
+function allowObservationRotationFallback() {
+  return CONFIG.rotation?.allowObservationRotationFallback !== false;
+}
+
 function rowId(row = {}) {
   return String(row.microFamilyId || row.id || '').toUpperCase();
 }
@@ -160,10 +166,6 @@ export function isTrueMicroFamily(row = {}) {
   if (row.trueMicro === true || row.isTrueMicro === true) return true;
   if (version.includes('MACRO')) return false;
 
-  // Belangrijk:
-  // MF_V1 kan in jouw data al een echte true micro zijn.
-  // De oude macro bucket is dan meestal SHORT_15 / LONG_33,
-  // terwijl true micro IDs met MICRO_ beginnen.
   if (idLooksLikeMicroFamily(id)) return true;
 
   if (schema === microSchema) return true;
@@ -247,6 +249,20 @@ function microSide(row = {}) {
 
   if (microId.includes('MICRO_LONG_')) return 'LONG';
   if (microId.includes('MICRO_SHORT_')) return 'SHORT';
+  if (microId.includes('TRADESIDE=LONG')) return 'LONG';
+  if (microId.includes('TRADESIDE=SHORT')) return 'SHORT';
+  if (microId.includes('SIDE=LONG')) return 'LONG';
+  if (microId.includes('SIDE=SHORT')) return 'SHORT';
+
+  const definition = [
+    row.definition,
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : [])
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .join('|');
+
+  if (definition.includes('TRADESIDE=LONG') || definition.includes('SIDE=BULL')) return 'LONG';
+  if (definition.includes('TRADESIDE=SHORT') || definition.includes('SIDE=BEAR')) return 'SHORT';
 
   return 'UNKNOWN';
 }
@@ -267,7 +283,7 @@ function isEligible(row = {}) {
 function isSoftEligible(row = {}) {
   if (!allowSoftRotationFallback()) return false;
   if (!isTrueMicroFamily(row)) return false;
-  if (!['LONG', 'SHORT'].includes(microSide(row))) return false;
+  if (!ROTATION_SIDES.includes(microSide(row))) return false;
 
   const completed = safeNumber(row.completed, 0);
   const balancedScore = safeNumber(
@@ -281,14 +297,35 @@ function isSoftEligible(row = {}) {
   return (
     safeNumber(row.avgR, 0) > 0 ||
     safeNumber(row.totalR, 0) > 0 ||
-    safeNumber(row.fairWinrate, 0) > 0
+    safeNumber(row.fairWinrate, 0) > 0 ||
+    safeNumber(row.sampleAdjustedWinrate, 0) > 0 ||
+    safeNumber(row.wilsonLowerBound, 0) > 0
   );
+}
+
+function isObservationEligible(row = {}) {
+  if (!allowObservationRotationFallback()) return false;
+  if (!isTrueMicroFamily(row)) return false;
+  if (!ROTATION_SIDES.includes(microSide(row))) return false;
+
+  const seen = safeNumber(row.seen, 0);
+  const observations = safeNumber(row.observations, 0);
+
+  return Math.max(seen, observations) > 0;
+}
+
+function rotationEligibilityTier(row = {}) {
+  if (isEligible(row)) return 'HARD';
+  if (isSoftEligible(row)) return 'SOFT';
+  if (isObservationEligible(row)) return 'OBSERVATION';
+
+  return 'NONE';
 }
 
 function isManualEligible(row = {}) {
   if (allowManualBelowMinCompleted()) return true;
 
-  return isEligible(row) || isSoftEligible(row);
+  return isEligible(row) || isSoftEligible(row) || isObservationEligible(row);
 }
 
 function compactRotationRow(row = {}, rank = 0) {
@@ -296,6 +333,7 @@ function compactRotationRow(row = {}, rank = 0) {
   const side = normalizedSide(refreshed);
   const tradeSide = microSide(refreshed);
   const macroId = parentMacroFamilyId(refreshed);
+  const eligibilityTier = rotationEligibilityTier(refreshed);
 
   return {
     rank,
@@ -316,6 +354,12 @@ function compactRotationRow(row = {}, rank = 0) {
 
     isTrueMicro: isTrueMicroFamily(refreshed),
     isLegacyMacro: isLegacyMacroFamily(refreshed),
+
+    rotationEligibilityTier: eligibilityTier,
+    rotationEligible: eligibilityTier !== 'NONE',
+    hardEligible: eligibilityTier === 'HARD',
+    softEligible: eligibilityTier === 'SOFT',
+    observationEligible: eligibilityTier === 'OBSERVATION',
 
     seen: safeNumber(refreshed.seen, 0),
     observations: safeNumber(refreshed.observations ?? refreshed.seen, 0),
@@ -403,90 +447,170 @@ function compactRotationRow(row = {}, rank = 0) {
   };
 }
 
-function selectTopPerSide(ranked, topN, existing = []) {
-  const safeTopN = Math.max(1, Number(topN) || 10);
+function canUseMacroSlot({
+  row,
+  countsByMacro
+}) {
   const macroCap = maxPerMacroFamily();
 
+  if (macroCap <= 0) return true;
+
+  const macroId = parentMacroFamilyId(row);
+
+  if (!macroId) return true;
+
+  return safeNumber(countsByMacro[macroId], 0) < macroCap;
+}
+
+function reserveMacroSlot({
+  row,
+  countsByMacro
+}) {
+  const macroId = parentMacroFamilyId(row);
+
+  if (!macroId) return;
+
+  countsByMacro[macroId] = safeNumber(countsByMacro[macroId], 0) + 1;
+}
+
+function addSelectedRow({
+  row,
+  selected,
+  selectedIds,
+  countsBySide,
+  countsByMacro
+}) {
+  const id = String(row?.microFamilyId || '').trim();
+  const side = microSide(row);
+
+  if (!id) return false;
+  if (selectedIds.has(id)) return false;
+  if (!ROTATION_SIDES.includes(side)) return false;
+  if (!canUseMacroSlot({ row, countsByMacro })) return false;
+
+  selectedIds.add(id);
+  countsBySide[side] = safeNumber(countsBySide[side], 0) + 1;
+  reserveMacroSlot({ row, countsByMacro });
+  selected.push(row);
+
+  return true;
+}
+
+function buildSelectionState(existing = []) {
+  const selected = [];
+  const selectedIds = new Set();
   const countsBySide = {
     LONG: 0,
     SHORT: 0
   };
-
   const countsByMacro = {};
-  const selected = [];
 
   for (const row of existing) {
-    const side = microSide(row);
-    const macroId = parentMacroFamilyId(row);
-
-    if (['LONG', 'SHORT'].includes(side)) {
-      countsBySide[side] += 1;
-    }
-
-    if (macroId) {
-      countsByMacro[macroId] = (countsByMacro[macroId] || 0) + 1;
-    }
-
-    selected.push(row);
+    addSelectedRow({
+      row,
+      selected,
+      selectedIds,
+      countsBySide,
+      countsByMacro
+    });
   }
 
-  const selectedIds = new Set(
-    selected.map((row) => row.microFamilyId).filter(Boolean)
-  );
+  return {
+    selected,
+    selectedIds,
+    countsBySide,
+    countsByMacro
+  };
+}
+
+function selectTopPerSide(ranked, topN, existing = []) {
+  const safeTopN = Math.max(1, Number(topN) || 10);
+  const state = buildSelectionState(existing);
 
   for (const row of ranked) {
-    const id = String(row.microFamilyId || '').trim();
     const side = microSide(row);
 
-    if (!id || selectedIds.has(id)) continue;
-    if (!['LONG', 'SHORT'].includes(side)) continue;
-    if (countsBySide[side] >= safeTopN) continue;
+    if (!ROTATION_SIDES.includes(side)) continue;
+    if (state.countsBySide[side] >= safeTopN) continue;
 
-    const macroId = parentMacroFamilyId(row);
-
-    if (macroCap > 0 && macroId) {
-      const macroCount = countsByMacro[macroId] || 0;
-
-      if (macroCount >= macroCap) continue;
-
-      countsByMacro[macroId] = macroCount + 1;
-    }
-
-    countsBySide[side] += 1;
-    selectedIds.add(id);
-    selected.push(row);
+    addSelectedRow({
+      row,
+      selected: state.selected,
+      selectedIds: state.selectedIds,
+      countsBySide: state.countsBySide,
+      countsByMacro: state.countsByMacro
+    });
   }
 
-  return selected;
+  return state.selected;
+}
+
+function hasSelectedSide(rows = [], side) {
+  return rows.some((row) => microSide(row) === side);
+}
+
+function missingSides(rows = []) {
+  return ROTATION_SIDES.filter((side) => !hasSelectedSide(rows, side));
+}
+
+function fillMissingSide({
+  selected,
+  rankedRows,
+  side,
+  maxRows = 1
+}) {
+  const candidates = rankedRows.filter((row) => microSide(row) === side);
+
+  if (!candidates.length) return selected;
+
+  const state = buildSelectionState(selected);
+  const targetCount = state.countsBySide[side] + Math.max(1, Math.floor(maxRows));
+
+  for (const row of candidates) {
+    if (state.countsBySide[side] >= targetCount) break;
+
+    addSelectedRow({
+      row,
+      selected: state.selected,
+      selectedIds: state.selectedIds,
+      countsBySide: state.countsBySide,
+      countsByMacro: state.countsByMacro
+    });
+  }
+
+  return state.selected;
 }
 
 function selectRotationCandidates(rankedCandidates = []) {
   const hardEligible = rankedCandidates.filter(isEligible);
   const softEligible = rankedCandidates.filter(isSoftEligible);
+  const observationEligible = rankedCandidates.filter(isObservationEligible);
 
   let selected = selectTopPerSide(
     hardEligible,
     topNPerSide()
   );
 
-  const selectedSides = new Set(
-    selected.map((row) => microSide(row)).filter((side) => side !== 'UNKNOWN')
-  );
-
   if (allowSoftRotationFallback()) {
-    const missingSideRows = softEligible.filter((row) => {
-      const side = microSide(row);
+    for (const side of missingSides(selected)) {
+      selected = fillMissingSide({
+        selected,
+        rankedRows: softEligible,
+        side,
+        maxRows: 1
+      });
+    }
+  }
 
-      if (!['LONG', 'SHORT'].includes(side)) return false;
-
-      return !selectedSides.has(side);
-    });
-
-    selected = selectTopPerSide(
-      missingSideRows,
-      1,
-      selected
-    );
+  if (allowObservationRotationFallback()) {
+    for (const side of missingSides(selected)) {
+      selected = fillMissingSide({
+        selected,
+        rankedRows: observationEligible,
+        side,
+        maxRows: 1
+      });
+    }
   }
 
   if (selected.length === 0 && allowSoftRotationFallback()) {
@@ -496,11 +620,21 @@ function selectRotationCandidates(rankedCandidates = []) {
     );
   }
 
+  if (selected.length === 0 && allowObservationRotationFallback()) {
+    selected = selectTopPerSide(
+      observationEligible,
+      topNPerSide()
+    );
+  }
+
   return {
     selected,
     eligible: hardEligible,
     softEligible,
-    usedSoftFallback: selected.some((row) => !isEligible(row))
+    observationEligible,
+    usedSoftFallback: selected.some((row) => !isEligible(row) && isSoftEligible(row)),
+    usedObservationFallback: selected.some((row) => !isEligible(row) && !isSoftEligible(row) && isObservationEligible(row)),
+    missingSides: missingSides(selected)
   };
 }
 
@@ -599,6 +733,7 @@ function buildEmptyRotation({
   ranked,
   eligible,
   softEligible = [],
+  observationEligible = [],
   emptyReason = 'NO_TRUE_MICRO_FAMILIES_MET_MIN_WEIGHTED_COMPLETED'
 }) {
   const indexes = buildSelectionIndexes([]);
@@ -621,6 +756,7 @@ function buildEmptyRotation({
     trueMicroOnly: !allowLegacyMacroActivation(),
     usedLegacyFallback: false,
     usedSoftFallback: false,
+    usedObservationFallback: false,
 
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
@@ -628,10 +764,13 @@ function buildEmptyRotation({
 
     eligibleCount: eligible?.length || 0,
     softEligibleCount: softEligible?.length || 0,
+    observationEligibleCount: observationEligible?.length || 0,
     rankedCount: ranked.length,
     microCount: Object.keys(micros || {}).length,
     trueMicroCount: countByPredicate(micros, isTrueMicroFamily),
     legacyMacroCount: countByPredicate(micros, isLegacyMacroFamily),
+
+    missingSides: [...ROTATION_SIDES],
 
     empty: true,
     emptyReason,
@@ -675,7 +814,10 @@ export async function buildRotationFromWeek({
     selected,
     eligible,
     softEligible,
-    usedSoftFallback
+    observationEligible,
+    usedSoftFallback,
+    usedObservationFallback,
+    missingSides: selectedMissingSides
   } = selectRotationCandidates(rankedCandidates);
 
   if (selected.length === 0) {
@@ -687,9 +829,10 @@ export async function buildRotationFromWeek({
       ranked: rankedCandidates,
       eligible,
       softEligible,
+      observationEligible,
       emptyReason: rankedTrueMicros.length === 0
         ? 'NO_TRUE_MICRO_FAMILIES_FOUND'
-        : 'NO_TRUE_MICRO_FAMILIES_MET_MIN_WEIGHTED_COMPLETED'
+        : 'NO_TRUE_MICRO_FAMILIES_AVAILABLE_FOR_ROTATION'
     });
   }
 
@@ -717,6 +860,7 @@ export async function buildRotationFromWeek({
     trueMicroOnly: !usedLegacyFallback,
     usedLegacyFallback,
     usedSoftFallback,
+    usedObservationFallback,
 
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
@@ -724,11 +868,14 @@ export async function buildRotationFromWeek({
 
     eligibleCount: eligible.length,
     softEligibleCount: softEligible.length,
+    observationEligibleCount: observationEligible.length,
     rankedCount: rankedCandidates.length,
     allRankedCount: rankedAll.length,
     microCount: Object.keys(micros || {}).length,
     trueMicroCount: countByPredicate(micros, isTrueMicroFamily),
     legacyMacroCount: countByPredicate(micros, isLegacyMacroFamily),
+
+    missingSides: selectedMissingSides,
 
     empty: false,
     emptyReason: null,
@@ -785,8 +932,10 @@ export async function freezeWeeklyRotation({
       trueMicroOnly: rotation.trueMicroOnly,
       usedLegacyFallback: rotation.usedLegacyFallback,
       usedSoftFallback: rotation.usedSoftFallback,
+      usedObservationFallback: rotation.usedObservationFallback,
       selectedMicroFamilies: rotation.microFamilyIds.length,
       selectedMacroFamilies: rotation.macroFamilyIds.length,
+      missingSides: rotation.missingSides || [],
       bestLong: rotation.bestLong?.microFamilyId || null,
       bestShort: rotation.bestShort?.microFamilyId || null
     }
@@ -809,6 +958,8 @@ export async function freezeWeeklyRotation({
     trueMicroOnly: rotation.trueMicroOnly,
     usedLegacyFallback: rotation.usedLegacyFallback,
     usedSoftFallback: rotation.usedSoftFallback,
+    usedObservationFallback: rotation.usedObservationFallback,
+    missingSides: rotation.missingSides || [],
     bestLong: rotation.bestLong,
     bestShort: rotation.bestShort,
     rotation
@@ -827,7 +978,8 @@ function sanitizeActiveRotation(rotation = {}) {
       ...rotation,
       ...indexes,
       bestLong: rotation.bestLong || bestBySide(rows, 'LONG'),
-      bestShort: rotation.bestShort || bestBySide(rows, 'SHORT')
+      bestShort: rotation.bestShort || bestBySide(rows, 'SHORT'),
+      missingSides: missingSides(rows)
     };
   }
 
@@ -853,6 +1005,7 @@ function sanitizeActiveRotation(rotation = {}) {
 
     bestLong: bestBySide(trueRows, 'LONG'),
     bestShort: bestBySide(trueRows, 'SHORT'),
+    missingSides: missingSides(trueRows),
 
     empty: trueRows.length === 0,
     emptyReason: trueRows.length === 0
@@ -901,6 +1054,9 @@ export async function activateNextRotation() {
     activatedCount: active.microFamilyIds?.length || 0,
     activatedMacroCount: active.macroFamilyIds?.length || 0,
     trueMicroOnly: active.trueMicroOnly,
+    usedSoftFallback: active.usedSoftFallback,
+    usedObservationFallback: active.usedObservationFallback,
+    missingSides: active.missingSides || [],
     bestLong: active.bestLong,
     bestShort: active.bestShort
   };
@@ -948,6 +1104,12 @@ function getChildrenForMacroId({ micros = {}, macroId, mode = 'balanced' }) {
 }
 
 function buildManualOnlyRow(id, rank) {
+  const tradeSide = String(id || '').toUpperCase().includes('LONG')
+    ? 'LONG'
+    : String(id || '').toUpperCase().includes('SHORT')
+      ? 'SHORT'
+      : null;
+
   return {
     rank,
 
@@ -958,8 +1120,12 @@ function buildManualOnlyRow(id, rank) {
     parentMacroFamilyId: null,
     parentMicroFamilyId: null,
 
-    side: null,
-    tradeSide: null,
+    side: tradeSide === 'LONG'
+      ? 'bull'
+      : tradeSide === 'SHORT'
+        ? 'bear'
+        : null,
+    tradeSide,
 
     schema: schemaMeta().microSchema,
     microFamilySchema: schemaMeta().microSchema,
@@ -969,6 +1135,12 @@ function buildManualOnlyRow(id, rank) {
     isLegacyMacro: false,
     manualOnly: true,
     unverifiedManualId: true,
+
+    rotationEligibilityTier: 'MANUAL',
+    rotationEligible: true,
+    hardEligible: false,
+    softEligible: false,
+    observationEligible: false,
 
     seen: 0,
     observations: 0,
@@ -1026,6 +1198,16 @@ function resolveManualSelection({
   const expandedFromMacro = {};
   const seen = new Set();
 
+  const microsByUpperId = Object.fromEntries(
+    Object.values(micros || {})
+      .filter(Boolean)
+      .map((row) => [
+        String(row.microFamilyId || row.id || '').toUpperCase(),
+        row
+      ])
+      .filter(([id]) => Boolean(id))
+  );
+
   const addRow = (row) => {
     const id = String(row?.microFamilyId || '').trim();
 
@@ -1036,7 +1218,9 @@ function resolveManualSelection({
   };
 
   for (const id of requestedIds) {
-    const row = micros[id];
+    const directRow = micros[id];
+    const upperRow = microsByUpperId[String(id || '').toUpperCase()];
+    const row = directRow || upperRow;
 
     if (row && isTrueMicroFamily(row) && isManualEligible(row)) {
       addRow(row);
@@ -1143,6 +1327,7 @@ export async function activateSelectedMicroFamilies({
     trueMicroOnly: !allowLegacyMacroActivation(),
     usedLegacyFallback: false,
     usedSoftFallback: false,
+    usedObservationFallback: microFamilies.some((row) => row.rotationEligibilityTier === 'OBSERVATION'),
 
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
@@ -1159,6 +1344,7 @@ export async function activateSelectedMicroFamilies({
 
     bestLong: bestBySide(microFamilies, 'LONG'),
     bestShort: bestBySide(microFamilies, 'SHORT'),
+    missingSides: missingSides(microFamilies),
 
     microFamilyIds: indexes.microFamilyIds,
     macroFamilyIds: indexes.macroFamilyIds,
@@ -1216,6 +1402,15 @@ export async function getRotationDashboard() {
     bestLong: active?.bestLong || null,
     bestShort: active?.bestShort || null,
     nextBestLong: next?.bestLong || null,
-    nextBestShort: next?.bestShort || null
+    nextBestShort: next?.bestShort || null,
+
+    missingSides: active?.missingSides || [],
+    nextMissingSides: next?.missingSides || [],
+
+    usedSoftFallback: Boolean(active?.usedSoftFallback),
+    nextUsedSoftFallback: Boolean(next?.usedSoftFallback),
+
+    usedObservationFallback: Boolean(active?.usedObservationFallback),
+    nextUsedObservationFallback: Boolean(next?.usedObservationFallback)
   };
 }
