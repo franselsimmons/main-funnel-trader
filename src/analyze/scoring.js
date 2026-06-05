@@ -1,7 +1,7 @@
 // ================= FILE: src/analyze/scoring.js =================
 
 import { CONFIG } from '../config.js';
-import { clamp, safeNumber } from '../utils.js';
+import { clamp, safeNumber, sideToTradeSide } from '../utils.js';
 
 const DEFAULT_WILSON_Z = 1.96;
 const DEFAULT_PRIOR_TRADES = 24;
@@ -9,6 +9,8 @@ const DEFAULT_PRIOR_WINRATE = 0.5;
 const DEFAULT_SAMPLE_CAP = 50;
 const DEFAULT_AVG_R_CAP = 5;
 const DEFAULT_AVG_R_SAMPLE_EXPONENT = 1.35;
+
+const VALID_TRADE_SIDES = new Set(['LONG', 'SHORT']);
 
 function now() {
   return Date.now();
@@ -77,6 +79,132 @@ function makeCounters() {
     regime: {},
     scannerReason: {}
   };
+}
+
+function normalizeTradeSide(value) {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (!raw) return 'UNKNOWN';
+
+  const direct = sideToTradeSide(raw);
+
+  if (VALID_TRADE_SIDES.has(direct)) return direct;
+
+  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
+
+  const normalized = raw.replace(/[^A-Z0-9]+/g, '_');
+
+  const longHit =
+    normalized === 'LONG' ||
+    normalized === 'BULL' ||
+    normalized === 'BUY' ||
+    normalized.startsWith('LONG_') ||
+    normalized.startsWith('BULL_') ||
+    normalized.startsWith('BUY_') ||
+    normalized.endsWith('_LONG') ||
+    normalized.endsWith('_BULL') ||
+    normalized.endsWith('_BUY') ||
+    normalized.includes('_LONG_') ||
+    normalized.includes('_BULL_') ||
+    normalized.includes('_BUY_') ||
+    normalized.includes('MICRO_LONG') ||
+    normalized.includes('FAMILY_LONG');
+
+  const shortHit =
+    normalized === 'SHORT' ||
+    normalized === 'BEAR' ||
+    normalized === 'SELL' ||
+    normalized.startsWith('SHORT_') ||
+    normalized.startsWith('BEAR_') ||
+    normalized.startsWith('SELL_') ||
+    normalized.endsWith('_SHORT') ||
+    normalized.endsWith('_BEAR') ||
+    normalized.endsWith('_SELL') ||
+    normalized.includes('_SHORT_') ||
+    normalized.includes('_BEAR_') ||
+    normalized.includes('_SELL_') ||
+    normalized.includes('MICRO_SHORT') ||
+    normalized.includes('FAMILY_SHORT');
+
+  if (longHit && !shortHit) return 'LONG';
+  if (shortHit && !longHit) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSide(row = {}) {
+  if (typeof row === 'string') return normalizeTradeSide(row);
+
+  const values = [
+    row.tradeSide,
+    row.side,
+    row.positionSide,
+    row.direction,
+    row.signalSide,
+    row.intentSide,
+    row.entrySide,
+
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ];
+
+  for (const value of values) {
+    const side = normalizeTradeSide(value);
+
+    if (VALID_TRADE_SIDES.has(side)) return side;
+  }
+
+  return 'UNKNOWN';
+}
+
+function dashboardSideFromTradeSide(side, fallback = 'unknown') {
+  const tradeSide = normalizeTradeSide(side);
+
+  if (tradeSide === 'LONG') return 'bull';
+  if (tradeSide === 'SHORT') return 'bear';
+
+  return String(fallback || 'unknown').toLowerCase();
+}
+
+function applySideIdentity(stats = {}, row = {}) {
+  const tradeSide = inferTradeSide({
+    ...stats,
+    ...row
+  });
+
+  if (!VALID_TRADE_SIDES.has(tradeSide)) {
+    stats.tradeSide ||= row.tradeSide || stats.tradeSide || null;
+    stats.side ||= row.side || stats.side || 'unknown';
+    return stats;
+  }
+
+  stats.tradeSide = tradeSide;
+  stats.side = dashboardSideFromTradeSide(tradeSide);
+
+  return stats;
 }
 
 function hasSourceBuckets(stats = {}) {
@@ -324,14 +452,33 @@ export function createMicroStats({
   microFamilyId,
   familyId,
   side,
+  tradeSide,
   definitionParts = []
 } = {}) {
   const ts = now();
 
-  return {
+  const inferredTradeSide = inferTradeSide({
     microFamilyId,
     familyId,
     side,
+    tradeSide,
+    definitionParts
+  });
+
+  const cleanTradeSide = VALID_TRADE_SIDES.has(inferredTradeSide)
+    ? inferredTradeSide
+    : normalizeTradeSide(tradeSide || side);
+
+  const cleanSide = VALID_TRADE_SIDES.has(cleanTradeSide)
+    ? dashboardSideFromTradeSide(cleanTradeSide)
+    : String(side || 'unknown').toLowerCase();
+
+  return {
+    microFamilyId,
+    familyId,
+    side: cleanSide,
+    tradeSide: VALID_TRADE_SIDES.has(cleanTradeSide) ? cleanTradeSide : null,
+
     definitionParts,
     definition: definitionParts.join(' | '),
 
@@ -451,6 +598,8 @@ function ensureStatsShape(stats = {}) {
 
   stats.definition ||= stats.definitionParts.join(' | ');
 
+  applySideIdentity(stats);
+
   const numericFields = [
     'seen',
     'observations',
@@ -550,6 +699,7 @@ function ensureStatsShape(stats = {}) {
 
 export function updateObservation(stats, row = {}) {
   ensureStatsShape(stats);
+  applySideIdentity(stats, row);
 
   stats.seen = safeNumber(stats.seen, 0) + 1;
   stats.observations = safeNumber(stats.observations, 0) + 1;
@@ -562,13 +712,24 @@ export function updateObservation(stats, row = {}) {
   inc(stats.counters.scannerReason, row.scannerReason);
 
   if (stats.examples.length < 20) {
+    const tradeSide = inferTradeSide(row);
+
     stats.examples.push({
       symbol: row.symbol || null,
-      side: row.side || null,
+      side: VALID_TRADE_SIDES.has(tradeSide)
+        ? dashboardSideFromTradeSide(tradeSide)
+        : row.side || null,
+      tradeSide: VALID_TRADE_SIDES.has(tradeSide) ? tradeSide : row.tradeSide || null,
+
       rsiZone: row.rsiZone || null,
       flow: row.flow || null,
       obRelation: row.obRelation || null,
       scannerReason: row.scannerReason || null,
+
+      isMirrorMicroFamily: Boolean(row.isMirrorMicroFamily),
+      observationMirror: Boolean(row.observationMirror),
+      mirrorOfSide: row.mirrorOfSide || null,
+
       ts: row.createdAt || row.ts || now()
     });
   }
@@ -580,6 +741,7 @@ export function updateObservation(stats, row = {}) {
 
 export function updateOutcome(stats, row = {}, source = 'REAL') {
   ensureStatsShape(stats);
+  applySideIdentity(stats, row);
 
   const src = String(source || row.source || 'REAL').toUpperCase();
   const isShadow = src === 'SHADOW';
@@ -652,10 +814,19 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
   if (row.gaveBackAfterOneR) stats.gaveBackAfterOneRCount += weight;
   if (row.nearTpThenLoss) stats.nearTpThenLossCount += weight;
 
+  const tradeSide = inferTradeSide(row);
+
   stats.recentOutcomes.push({
     source: src,
     symbol: row.symbol || null,
-    side: row.side || null,
+
+    side: VALID_TRADE_SIDES.has(tradeSide)
+      ? dashboardSideFromTradeSide(tradeSide)
+      : row.side || null,
+
+    tradeSide: VALID_TRADE_SIDES.has(tradeSide)
+      ? tradeSide
+      : row.tradeSide || null,
 
     exitReason: row.exitReason || null,
 
@@ -685,6 +856,10 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
     gaveBackAfterHalfR: Boolean(row.gaveBackAfterHalfR),
     gaveBackAfterOneR: Boolean(row.gaveBackAfterOneR),
     nearTpThenLoss: Boolean(row.nearTpThenLoss),
+
+    isMirrorMicroFamily: Boolean(row.isMirrorMicroFamily),
+    outcomeMirror: Boolean(row.outcomeMirror),
+    mirrorOfSide: row.mirrorOfSide || null,
 
     ts: row.closedAt || row.completedAt || now()
   });
@@ -988,7 +1163,6 @@ export function refreshStats(stats) {
     wilsonLowerBound: round4(wilson),
     fairWinrate: round4(fair),
 
-    // Dashboard aliases: keep these identical. No second formula downstream.
     sampleRawWinrate: round4(rawWinrate),
     sampleBayesianWinrate: round4(bayes),
     sampleWilsonLowerBound: round4(wilson),
@@ -1023,6 +1197,8 @@ export function refreshStats(stats) {
     updatedAt: now()
   });
 
+  applySideIdentity(stats);
+
   return stats;
 }
 
@@ -1040,6 +1216,8 @@ export function normalizeDashboardMicro(row = {}, rank = null) {
 
     dashboardBalancedScore: stats.balancedScore
   };
+
+  applySideIdentity(normalized);
 
   if (rank !== null && rank !== undefined) {
     normalized.rank = rank;
