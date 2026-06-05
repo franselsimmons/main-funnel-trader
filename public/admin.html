@@ -16,20 +16,16 @@
       --border: #e2e8f0;
       --border-strong: #cbd5e1;
       --dark: #0f172a;
-      --dark-2: #111827;
       --blue: #2563eb;
       --green: #16a34a;
       --red: #dc2626;
       --amber: #d97706;
       --purple: #7c3aed;
-      --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
       --shadow-soft: 0 2px 10px rgba(15, 23, 42, 0.06);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -42,9 +38,7 @@
 
     button,
     select,
-    input {
-      font: inherit;
-    }
+    input { font: inherit; }
 
     button {
       border: 1px solid var(--border-strong);
@@ -68,41 +62,12 @@
       transform: none;
     }
 
-    button.primary {
-      background: var(--dark);
-      color: white;
-      border-color: var(--dark);
-    }
-
-    button.success {
-      background: var(--green);
-      color: white;
-      border-color: var(--green);
-    }
-
-    button.warn {
-      background: var(--amber);
-      color: white;
-      border-color: var(--amber);
-    }
-
-    button.danger {
-      background: var(--red);
-      color: white;
-      border-color: var(--red);
-    }
-
-    button.short-action {
-      background: var(--red);
-      color: white;
-      border-color: var(--red);
-    }
-
-    button.long-action {
-      background: var(--green);
-      color: white;
-      border-color: var(--green);
-    }
+    button.primary { background: var(--dark); color: white; border-color: var(--dark); }
+    button.success { background: var(--green); color: white; border-color: var(--green); }
+    button.warn { background: var(--amber); color: white; border-color: var(--amber); }
+    button.danger { background: var(--red); color: white; border-color: var(--red); }
+    button.short-action { background: var(--red); color: white; border-color: var(--red); }
+    button.long-action { background: var(--green); color: white; border-color: var(--green); }
 
     button.small {
       padding: 6px 9px;
@@ -120,9 +85,7 @@
       min-height: 42px;
     }
 
-    input[type="search"] {
-      min-width: 320px;
-    }
+    input[type="search"] { min-width: 320px; }
 
     header {
       background: linear-gradient(135deg, #0f172a 0%, #111827 48%, #1e1b4b 100%);
@@ -232,9 +195,7 @@
     }
 
     .hidden,
-    .panel.hidden {
-      display: none;
-    }
+    .panel.hidden { display: none; }
 
     .message {
       border-radius: 16px;
@@ -246,23 +207,9 @@
       white-space: pre-wrap;
     }
 
-    .message.ok {
-      color: #166534;
-      background: #dcfce7;
-      border-color: #bbf7d0;
-    }
-
-    .message.error {
-      color: #991b1b;
-      background: #fee2e2;
-      border-color: #fecaca;
-    }
-
-    .message.warn {
-      color: #92400e;
-      background: #fef3c7;
-      border-color: #fde68a;
-    }
+    .message.ok { color: #166534; background: #dcfce7; border-color: #bbf7d0; }
+    .message.error { color: #991b1b; background: #fee2e2; border-color: #fecaca; }
+    .message.warn { color: #92400e; background: #fef3c7; border-color: #fde68a; }
 
     .grid {
       display: grid;
@@ -380,13 +327,8 @@
       background: #94a3b8;
     }
 
-    .micro-connect-card.short::before {
-      background: linear-gradient(90deg, #dc2626, #fb7185);
-    }
-
-    .micro-connect-card.long::before {
-      background: linear-gradient(90deg, #16a34a, #22c55e);
-    }
+    .micro-connect-card.short::before { background: linear-gradient(90deg, #dc2626, #fb7185); }
+    .micro-connect-card.long::before { background: linear-gradient(90deg, #16a34a, #22c55e); }
 
     .micro-connect-head {
       display: flex;
@@ -396,9 +338,7 @@
       margin-bottom: 12px;
     }
 
-    .micro-connect-title {
-      min-width: 0;
-    }
+    .micro-connect-title { min-width: 0; }
 
     .micro-connect-title h3 {
       margin: 0 0 5px;
@@ -522,18 +462,12 @@
     }
 
     .coin-card.long::before,
-    .coin-card.bull::before {
-      background: linear-gradient(90deg, #16a34a, #22c55e);
-    }
+    .coin-card.bull::before { background: linear-gradient(90deg, #16a34a, #22c55e); }
 
     .coin-card.short::before,
-    .coin-card.bear::before {
-      background: linear-gradient(90deg, #dc2626, #fb7185);
-    }
+    .coin-card.bear::before { background: linear-gradient(90deg, #dc2626, #fb7185); }
 
-    .coin-card.neutral::before {
-      background: linear-gradient(90deg, #64748b, #94a3b8);
-    }
+    .coin-card.neutral::before { background: linear-gradient(90deg, #64748b, #94a3b8); }
 
     .coin-head {
       display: flex;
@@ -555,17 +489,8 @@
       position: relative;
     }
 
-    .coin-logo-wrap.lg {
-      width: 52px;
-      height: 52px;
-      min-width: 52px;
-    }
-
-    .coin-logo-wrap.sm {
-      width: 30px;
-      height: 30px;
-      min-width: 30px;
-    }
+    .coin-logo-wrap.lg { width: 52px; height: 52px; min-width: 52px; }
+    .coin-logo-wrap.sm { width: 30px; height: 30px; min-width: 30px; }
 
     .coin-logo-wrap img {
       width: 100%;
@@ -639,9 +564,7 @@
       margin-bottom: 3px;
     }
 
-    .coin-stat strong {
-      font-size: 13px;
-    }
+    .coin-stat strong { font-size: 13px; }
 
     .coin-foot {
       display: flex;
@@ -659,14 +582,8 @@
       min-width: 190px;
     }
 
-    .coin-mini .coin-symbol {
-      font-size: 14px;
-    }
-
-    .coin-mini .coin-name {
-      font-size: 11px;
-      max-width: 140px;
-    }
+    .coin-mini .coin-symbol { font-size: 14px; }
+    .coin-mini .coin-name { font-size: 11px; max-width: 140px; }
 
     .id-stack {
       display: grid;
@@ -707,52 +624,19 @@
 
     .pill.active,
     .pill.long,
-    .pill.bull {
-      background: #dcfce7;
-      color: #166534;
-    }
+    .pill.bull { background: #dcfce7; color: #166534; }
 
     .pill.short,
     .pill.bear,
-    .pill.danger {
-      background: #fee2e2;
-      color: #991b1b;
-    }
+    .pill.danger { background: #fee2e2; color: #991b1b; }
 
-    .pill.warn {
-      background: #fef3c7;
-      color: #92400e;
-    }
-
-    .pill.info {
-      background: #dbeafe;
-      color: #1d4ed8;
-    }
-
-    .pill.purple {
-      background: #ede9fe;
-      color: #5b21b6;
-    }
-
-    .pill.dark {
-      background: #0f172a;
-      color: white;
-    }
-
-    .pill.soft {
-      background: #e0f2fe;
-      color: #075985;
-    }
-
-    .pill.observation {
-      background: #fef9c3;
-      color: #854d0e;
-    }
-
-    .pill.raw {
-      background: #f1f5f9;
-      color: #475569;
-    }
+    .pill.warn { background: #fef3c7; color: #92400e; }
+    .pill.info { background: #dbeafe; color: #1d4ed8; }
+    .pill.purple { background: #ede9fe; color: #5b21b6; }
+    .pill.dark { background: #0f172a; color: white; }
+    .pill.soft { background: #e0f2fe; color: #075985; }
+    .pill.observation { background: #fef9c3; color: #854d0e; }
+    .pill.raw { background: #f1f5f9; color: #475569; }
 
     .score-bar {
       height: 8px;
@@ -806,9 +690,7 @@
       z-index: 1;
     }
 
-    tr:hover td {
-      background: #f8fafc;
-    }
+    tr:hover td { background: #f8fafc; }
 
     code {
       font-size: 12px;
@@ -879,68 +761,42 @@
 
     @media (max-width: 1180px) {
       .grid,
-      .coin-grid {
-        grid-template-columns: repeat(2, minmax(220px, 1fr));
-      }
+      .coin-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
 
       .grid-3,
-      .split-toolbar {
-        grid-template-columns: 1fr;
-      }
+      .split-toolbar { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 720px) {
-      header {
-        padding: 18px 14px;
-      }
+      header { padding: 18px 14px; }
 
-      .header-inner {
-        flex-direction: column;
-      }
+      .header-inner { flex-direction: column; }
 
-      main {
-        padding: 14px;
-      }
+      main { padding: 14px; }
 
       .grid,
       .coin-grid,
-      .two-col {
-        grid-template-columns: 1fr;
-      }
+      .two-col { grid-template-columns: 1fr; }
 
-      .tabs {
-        gap: 7px;
-      }
+      .tabs { gap: 7px; }
 
       .tab {
         flex: 1 1 auto;
         padding: 9px 10px;
       }
 
-      .brand-title strong {
-        font-size: 20px;
-      }
+      .brand-title strong { font-size: 20px; }
 
-      input[type="search"] {
-        min-width: 100%;
-      }
+      input[type="search"] { min-width: 100%; }
 
       .coin-stats,
-      .micro-performance-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
+      .micro-performance-grid { grid-template-columns: repeat(2, 1fr); }
 
-      .id-stack {
-        min-width: 260px;
-      }
+      .id-stack { min-width: 260px; }
 
-      .micro-connect-head {
-        flex-direction: column;
-      }
+      .micro-connect-head { flex-direction: column; }
 
-      .micro-connect-score {
-        text-align: left;
-      }
+      .micro-connect-score { text-align: left; }
     }
   </style>
 </head>
@@ -998,10 +854,14 @@
       micros: null,
       rotation: null,
       discord: null,
+
       microMode: "balanced",
       microSearch: "",
-      microFetchLimit: 1000,
-      microSideLimit: 50
+
+      // Hard verlaagd tegen 504.
+      microFetchLimit: 160,
+      microSideLimit: 25,
+      microSideEnsureLimit: 25
     };
 
     const endpoints = {
@@ -1091,6 +951,91 @@
       return escapeHtml(value).replaceAll("`", "&#096;");
     }
 
+    function normalizeSide(side) {
+      const s = String(side || "").trim().toUpperCase();
+
+      if (["LONG", "BULL", "BUY"].includes(s)) return "LONG";
+      if (["SHORT", "BEAR", "SELL"].includes(s)) return "SHORT";
+
+      return s || "NA";
+    }
+
+    function sideFromIds(row = {}) {
+      const raw = [
+        row.tradeSide,
+        row.side,
+        row.positionSide,
+        row.direction,
+        row.signalSide,
+        row.scannerSide,
+        row.analysisSide,
+        row.microFamilyId,
+        row.trueMicroFamilyId,
+        row.id,
+        row.key,
+        row.macroFamilyId,
+        row.parentMacroFamilyId,
+        row.parentMicroFamilyId,
+        row.familyId,
+        row.family,
+        row.definition,
+        Array.isArray(row.definitionParts) ? row.definitionParts.join("|") : ""
+      ].map((value) => String(value || "").toUpperCase());
+
+      if (raw.some((value) => (
+        value === "LONG" ||
+        value === "BULL" ||
+        value === "BUY" ||
+        value.includes("MICRO_LONG_") ||
+        value.includes("LONG_") ||
+        value.includes("_LONG") ||
+        value.includes("TRADESIDE=LONG") ||
+        value.includes("TRADE_SIDE=LONG")
+      ))) return "LONG";
+
+      if (raw.some((value) => (
+        value === "SHORT" ||
+        value === "BEAR" ||
+        value === "SELL" ||
+        value.includes("MICRO_SHORT_") ||
+        value.includes("SHORT_") ||
+        value.includes("_SHORT") ||
+        value.includes("TRADESIDE=SHORT") ||
+        value.includes("TRADE_SIDE=SHORT")
+      ))) return "SHORT";
+
+      return "NA";
+    }
+
+    function rowSide(row = {}) {
+      const direct = normalizeSide(row?.tradeSide || row?.side || row?.positionSide || row?.direction);
+
+      if (direct === "LONG" || direct === "SHORT") return direct;
+
+      return sideFromIds(row);
+    }
+
+    function sideClass(side) {
+      const s = normalizeSide(side);
+
+      if (s === "LONG") return "long";
+      if (s === "SHORT") return "short";
+
+      return "neutral";
+    }
+
+    function rowSideClass(row = {}) {
+      return sideClass(rowSide(row));
+    }
+
+    function rowSideLabel(row = {}) {
+      return rowSide(row);
+    }
+
+    function isSide(row, side) {
+      return rowSide(row) === normalizeSide(side);
+    }
+
     function baseSymbol(input) {
       const raw = typeof input === "string"
         ? input
@@ -1159,71 +1104,7 @@
       img.remove();
     }
 
-    function normalizeSide(side) {
-      const s = String(side || "").trim().toUpperCase();
-
-      if (["LONG", "BULL", "BUY"].includes(s)) return "LONG";
-      if (["SHORT", "BEAR", "SELL"].includes(s)) return "SHORT";
-
-      return s || "NA";
-    }
-
-    function sideFromIds(row = {}) {
-      const raw = [
-        row.tradeSide,
-        row.side,
-        row.positionSide,
-        row.direction,
-        row.microFamilyId,
-        row.trueMicroFamilyId,
-        row.id,
-        row.key,
-        row.macroFamilyId,
-        row.parentMicroFamilyId,
-        row.familyId,
-        row.family,
-        row.definition,
-        Array.isArray(row.definitionParts) ? row.definitionParts.join("|") : ""
-      ].map((value) => String(value || "").toUpperCase());
-
-      if (raw.some((value) => value === "LONG" || value === "BULL" || value === "BUY" || value.includes("LONG_") || value.includes("_LONG") || value.includes("TRADESIDE=LONG"))) return "LONG";
-      if (raw.some((value) => value === "SHORT" || value === "BEAR" || value === "SELL" || value.includes("SHORT_") || value.includes("_SHORT") || value.includes("TRADESIDE=SHORT"))) return "SHORT";
-
-      return "NA";
-    }
-
-    function rowSide(row = {}) {
-      const direct = normalizeSide(row?.tradeSide || row?.side || row?.positionSide || row?.direction);
-
-      if (direct === "LONG" || direct === "SHORT") return direct;
-
-      return sideFromIds(row);
-    }
-
-    function sideClass(side) {
-      const s = normalizeSide(side);
-
-      if (s === "LONG") return "long";
-      if (s === "SHORT") return "short";
-
-      return "neutral";
-    }
-
-    function rowSideClass(row = {}) {
-      return sideClass(rowSide(row));
-    }
-
-    function sideLabel(side) {
-      return normalizeSide(side);
-    }
-
-    function rowSideLabel(row = {}) {
-      return rowSide(row);
-    }
-
-    function isSide(row, side) {
-      return rowSide(row) === normalizeSide(side);
-    }
+    window.handleCoinLogoError = handleCoinLogoError;
 
     function coinAvatar(row, size = "") {
       const symbol = baseSymbol(row);
@@ -1328,6 +1209,10 @@
       return `${Math.floor(sec / 3600)}u geleden`;
     }
 
+    function boolText(value) {
+      return value ? "YES" : "NO";
+    }
+
     function jsonBlock(data) {
       return `<pre>${escapeHtml(JSON.stringify(data ?? null, null, 2))}</pre>`;
     }
@@ -1364,6 +1249,15 @@
       return [];
     }
 
+    function errorReason(data, fallback = "REQUEST_FAILED") {
+      const raw = data?.error || data?.reason || data?.message || fallback;
+
+      if (typeof raw === "string") return raw;
+      if (raw && typeof raw === "object") return JSON.stringify(raw);
+
+      return String(raw || fallback);
+    }
+
     async function api(url, options = {}) {
       const headers = {
         accept: "application/json",
@@ -1391,8 +1285,7 @@
       }
 
       if (!response.ok) {
-        const reason = data.error || data.reason || data.message || response.statusText;
-        throw new Error(`${response.status} ${reason}\n${JSON.stringify(data, null, 2)}`);
+        throw new Error(`${response.status} ${errorReason(data, response.statusText)}\n${JSON.stringify(data, null, 2)}`);
       }
 
       return data;
@@ -1608,10 +1501,6 @@
         .join(" ");
     }
 
-    function boolText(value) {
-      return value ? "YES" : "NO";
-    }
-
     function rotationDiagnosticsHtml(data = {}, active = {}) {
       const selectedTier = active.selectedTier || data.selectedTier || "-";
       const hardCount = data.hardCount ?? active.hardCount ?? active.selectionHardCount ?? "-";
@@ -1635,38 +1524,14 @@
           </div>
 
           <div class="micro-performance-grid">
-            <div class="micro-performance-stat">
-              <span>Side rows</span>
-              <strong>${escapeHtml(sideCount)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Candidate rows</span>
-              <strong>${escapeHtml(candidateCount)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Tradable rows</span>
-              <strong>${escapeHtml(tradableCount)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Selected tier</span>
-              <strong>${escapeHtml(selectedTier)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Hard count</span>
-              <strong>${escapeHtml(hardCount)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Soft count</span>
-              <strong>${escapeHtml(softCount)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Observation count</span>
-              <strong>${escapeHtml(observationCount)}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Missing sides</span>
-              <strong>${escapeHtml(missing.length ? missing.join(", ") : "NONE")}</strong>
-            </div>
+            <div class="micro-performance-stat"><span>Side rows</span><strong>${escapeHtml(sideCount)}</strong></div>
+            <div class="micro-performance-stat"><span>Candidate rows</span><strong>${escapeHtml(candidateCount)}</strong></div>
+            <div class="micro-performance-stat"><span>Tradable rows</span><strong>${escapeHtml(tradableCount)}</strong></div>
+            <div class="micro-performance-stat"><span>Selected tier</span><strong>${escapeHtml(selectedTier)}</strong></div>
+            <div class="micro-performance-stat"><span>Hard count</span><strong>${escapeHtml(hardCount)}</strong></div>
+            <div class="micro-performance-stat"><span>Soft count</span><strong>${escapeHtml(softCount)}</strong></div>
+            <div class="micro-performance-stat"><span>Observation count</span><strong>${escapeHtml(observationCount)}</strong></div>
+            <div class="micro-performance-stat"><span>Missing sides</span><strong>${escapeHtml(missing.length ? missing.join(", ") : "NONE")}</strong></div>
           </div>
 
           <div class="micro-connect-narrative">
@@ -1700,30 +1565,12 @@
           ${scoreBar(score)}
 
           <div class="coin-stats">
-            <div class="coin-stat">
-              <span>1h</span>
-              <strong>${escapeHtml(fmtPctRaw(row.change1h))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>24h</span>
-              <strong>${escapeHtml(fmtPctRaw(row.change24h))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>Volume</span>
-              <strong>${escapeHtml(fmtMoneyLike(row.volume24h))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>Pullback</span>
-              <strong>${row.pullbackConfirmed ? "Yes" : "No"}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>Retest</span>
-              <strong>${row.retestConfirmed ? "Yes" : "No"}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>Fake risk</span>
-              <strong>${row.fakeBreakoutRisk ? "Risk" : "Clean"}</strong>
-            </div>
+            <div class="coin-stat"><span>1h</span><strong>${escapeHtml(fmtPctRaw(row.change1h))}</strong></div>
+            <div class="coin-stat"><span>24h</span><strong>${escapeHtml(fmtPctRaw(row.change24h))}</strong></div>
+            <div class="coin-stat"><span>Volume</span><strong>${escapeHtml(fmtMoneyLike(row.volume24h))}</strong></div>
+            <div class="coin-stat"><span>Pullback</span><strong>${row.pullbackConfirmed ? "Yes" : "No"}</strong></div>
+            <div class="coin-stat"><span>Retest</span><strong>${row.retestConfirmed ? "Yes" : "No"}</strong></div>
+            <div class="coin-stat"><span>Fake risk</span><strong>${row.fakeBreakoutRisk ? "Risk" : "Clean"}</strong></div>
           </div>
 
           <div class="coin-foot">
@@ -1754,30 +1601,12 @@
           </div>
 
           <div class="coin-stats">
-            <div class="coin-stat">
-              <span>Entry</span>
-              <strong>${escapeHtml(fmtPrice(row.entry))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>SL</span>
-              <strong>${escapeHtml(fmtPrice(row.sl))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>TP</span>
-              <strong>${escapeHtml(fmtPrice(row.tp))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>RR</span>
-              <strong>${escapeHtml(fmt(row.rr, 2))}</strong>
-            </div>
-            <div class="coin-stat">
-              <span>MFE</span>
-              <strong>${escapeHtml(fmt(row.mfeR, 2))}R</strong>
-            </div>
-            <div class="coin-stat">
-              <span>MAE</span>
-              <strong>${escapeHtml(fmt(row.maeR, 2))}R</strong>
-            </div>
+            <div class="coin-stat"><span>Entry</span><strong>${escapeHtml(fmtPrice(row.entry))}</strong></div>
+            <div class="coin-stat"><span>SL</span><strong>${escapeHtml(fmtPrice(row.sl))}</strong></div>
+            <div class="coin-stat"><span>TP</span><strong>${escapeHtml(fmtPrice(row.tp))}</strong></div>
+            <div class="coin-stat"><span>RR</span><strong>${escapeHtml(fmt(row.rr, 2))}</strong></div>
+            <div class="coin-stat"><span>MFE</span><strong>${escapeHtml(fmt(row.mfeR, 2))}R</strong></div>
+            <div class="coin-stat"><span>MAE</span><strong>${escapeHtml(fmt(row.maeR, 2))}R</strong></div>
           </div>
 
           <div class="coin-foot">
@@ -1818,14 +1647,27 @@
       URL.revokeObjectURL(url);
     }
 
+    function microUrl(extra = {}) {
+      const params = new URLSearchParams();
+
+      params.set("mode", extra.mode || state.microMode);
+      params.set("limit", String(extra.limit || state.microFetchLimit));
+      params.set("sideEnsureLimit", String(extra.sideEnsureLimit || state.microSideEnsureLimit));
+      params.set("includeActiveRotation", "0");
+      params.set("compact", "1");
+
+      if (extra.side) params.set("side", extra.side);
+      if (extra.q) params.set("q", extra.q);
+
+      return `${endpoints.micros}?${params.toString()}`;
+    }
+
     function filterMicroRows(rows = []) {
       const search = state.microSearch.trim().toLowerCase();
 
       if (!search) return rows;
 
-      return rows.filter((row) => {
-        return JSON.stringify(row).toLowerCase().includes(search);
-      });
+      return rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search));
     }
 
     function splitTopMicroRows(rows = []) {
@@ -1852,12 +1694,12 @@
       return getRows(state.micros, ["rows", "microFamilies", "micros"]);
     }
 
-    async function ensureMicroRows() {
+    async function ensureMicroRows({ force = false } = {}) {
       const rows = currentMicroRows();
 
-      if (rows.length > 0) return rows;
+      if (!force && rows.length > 0) return rows;
 
-      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=${state.microFetchLimit}`);
+      const data = await api(microUrl());
       state.micros = data;
 
       return getRows(data, ["rows", "microFamilies", "micros"]);
@@ -1967,9 +1809,7 @@
           <div class="micro-connect-head">
             <div class="micro-connect-title">
               <h3>Beste ${escapeHtml(normalizedSide)} micro-family</h3>
-              <p>
-                ${active ? "Deze fingerprint staat al actief voor TradeSystem." : "Kandidaat om als actieve TradeSystem-filter te gebruiken."}
-              </p>
+              <p>${active ? "Deze fingerprint staat al actief voor TradeSystem." : "Kandidaat om als actieve TradeSystem-filter te gebruiken."}</p>
             </div>
 
             <div class="micro-connect-score">
@@ -1979,58 +1819,23 @@
           </div>
 
           <div class="micro-connect-id">
-            <div>
-              <span class="id-label">True micro</span>
-              <code>${escapeHtml(micro || "NO_MICRO_ID")}</code>
-            </div>
-            <div>
-              <span class="id-label">Macro parent</span>
-              <code>${escapeHtml(macro || "NO_MACRO_ID")}</code>
-            </div>
-            <div>
-              <span class="id-label">Family</span>
-              <code>${escapeHtml(family || "NO_FAMILY")}</code>
-            </div>
+            <div><span class="id-label">True micro</span><code>${escapeHtml(micro || "NO_MICRO_ID")}</code></div>
+            <div><span class="id-label">Macro parent</span><code>${escapeHtml(macro || "NO_MACRO_ID")}</code></div>
+            <div><span class="id-label">Family</span><code>${escapeHtml(family || "NO_FAMILY")}</code></div>
           </div>
 
           <div class="micro-performance-grid">
-            <div class="micro-performance-stat">
-              <span>Trades</span>
-              <strong>${escapeHtml(fmt(trades, 2))}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Winrate</span>
-              <strong>${escapeHtml(microWinrateText(row))}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Fair WR</span>
-              <strong>${escapeHtml(microFairWinrateText(row))}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Net PnL</span>
-              <strong>${escapeHtml(microPnlText(row))}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Avg R</span>
-              <strong>${escapeHtml(fmt(row.avgR, 3))}R</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>PF</span>
-              <strong>${escapeHtml(fmt(row.profitFactor, 2))}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Direct SL</span>
-              <strong>${escapeHtml(fmtPctRatio(row.directSLPct))}</strong>
-            </div>
-            <div class="micro-performance-stat">
-              <span>Cost R</span>
-              <strong>${escapeHtml(fmt(row.avgCostR, 3))}</strong>
-            </div>
+            <div class="micro-performance-stat"><span>Trades</span><strong>${escapeHtml(fmt(trades, 2))}</strong></div>
+            <div class="micro-performance-stat"><span>Winrate</span><strong>${escapeHtml(microWinrateText(row))}</strong></div>
+            <div class="micro-performance-stat"><span>Fair WR</span><strong>${escapeHtml(microFairWinrateText(row))}</strong></div>
+            <div class="micro-performance-stat"><span>Net PnL</span><strong>${escapeHtml(microPnlText(row))}</strong></div>
+            <div class="micro-performance-stat"><span>Avg R</span><strong>${escapeHtml(fmt(row.avgR, 3))}R</strong></div>
+            <div class="micro-performance-stat"><span>PF</span><strong>${escapeHtml(fmt(row.profitFactor, 2))}</strong></div>
+            <div class="micro-performance-stat"><span>Direct SL</span><strong>${escapeHtml(fmtPctRatio(row.directSLPct))}</strong></div>
+            <div class="micro-performance-stat"><span>Cost R</span><strong>${escapeHtml(fmt(row.avgCostR, 3))}</strong></div>
           </div>
 
-          <div class="micro-connect-narrative">
-            ${escapeHtml(microNarrative(row, normalizedSide))}
-          </div>
+          <div class="micro-connect-narrative">${escapeHtml(microNarrative(row, normalizedSide))}</div>
 
           <div class="micro-connect-actions">
             <span class="pill ${escapeAttr(cardClass)}">${escapeHtml(normalizedSide)}</span>
@@ -2069,19 +1874,13 @@
               <span class="pill warn">Fallback</span>
             </div>
 
-            <div class="micro-connect-narrative">
-              Render error: ${escapeHtml(error?.message || String(error))}
-            </div>
+            <div class="micro-connect-narrative">Render error: ${escapeHtml(error?.message || String(error))}</div>
 
             <div class="micro-connect-actions">
               <span class="pill ${escapeAttr(cardClass)}">${escapeHtml(normalizedSide)}</span>
               <button type="button" class="${escapeAttr(buttonClass)}" id="${escapeAttr(buttonId)}">
                 Selecteer beste ${escapeHtml(normalizedSide)} micro-family
               </button>
-            </div>
-
-            <div class="micro-connect-route">
-              Route: scanner coin → TradeSystem fingerprint → active true micro match → Discord melding.
             </div>
           </div>
         `;
@@ -2204,7 +2003,7 @@
         <div class="section-title">
           <div>
             <h2>System status</h2>
-            <p>Macro = oude grove micro-family. True micro = doelgerichte execution signature.</p>
+            <p>Macro = parent-context. True micro = exacte execution fingerprint.</p>
           </div>
         </div>
 
@@ -2380,8 +2179,8 @@
 
       $("runTradeBtn")?.addEventListener("click", async () => {
         const result = await api(endpoints.runTrade);
-        const counts = result.counts || {};
-        setMessage(`TradeSystem run klaar. Entries=${counts.entries || 0}, waits=${counts.waits || 0}, liveRows=${counts.liveRows || 0}.`, "ok");
+        const counts = result.counts || result.actionCounts || {};
+        setMessage(`TradeSystem run klaar. Entries=${counts.entries || counts.ENTRY || 0}, waits=${counts.waits || counts.WAIT || 0}.`, "ok");
         await renderTrade();
       });
 
@@ -2394,7 +2193,7 @@
       state.microMode = mode || "balanced";
       showLoading("micros");
 
-      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=${state.microFetchLimit}`);
+      const data = await api(microUrl({ mode: state.microMode }));
       state.micros = data;
 
       const rows = getRows(data, ["rows", "microFamilies", "micros"]);
@@ -2444,8 +2243,8 @@
         <div class="card">
           <h3>Analyze view</h3>
           <div class="metric-extra">
-            Deze pagina toont maximaal ${state.microSideLimit} beste SHORT + ${state.microSideLimit} beste LONG micro families.
-            Daardoor verdwijnt het probleem waarbij 300 rijen allemaal short zijn en de long-kant onzichtbaar blijft.
+            Deze pagina vraagt nu maximaal ${state.microFetchLimit} rows op en forceert sideEnsureLimit=${state.microSideEnsureLimit}.
+            Dit voorkomt dat de admin-route 1000 rows + volledige activeRotation terugstuurt en in 504 loopt.
           </div>
         </div>
 
@@ -2536,40 +2335,6 @@
       const selectedTier = data.selectedTier || active.selectedTier || "NA";
       const missing = missingSidesArray(data, active);
 
-      if (data.skipped) {
-        setMessage(
-          `Geen ${normalizedSide} micro-family geactiveerd. Reden: ${data.emptyReason || "NO_SIDE_MICRO_FOUND"}.\n` +
-          `Side rows=${data.sideCount ?? "-"}, hard=${data.hardCount ?? "-"}, soft=${data.softCount ?? "-"}, obs=${data.observationCount ?? "-"}.\n` +
-          `Active true micro=${activeMicroIds.length}, active macro=${activeMacroIds.length}.`,
-          "warn"
-        );
-
-        state.rotation = {
-          ...(state.rotation || {}),
-          active,
-          activeRotation: active,
-          activeMicroFamilyIds: activeMicroIds,
-          activeMacroFamilyIds: activeMacroIds
-        };
-
-        if (state.micros) {
-          state.micros = {
-            ...state.micros,
-            activeRotation: active,
-            activeMicroFamilyIds: activeMicroIds,
-            activeMacroFamilyIds: activeMacroIds
-          };
-        }
-
-        if (state.activeTab === "rotation") {
-          await renderRotation();
-          return;
-        }
-
-        await renderMicros(state.microMode);
-        return;
-      }
-
       state.rotation = {
         ...(state.rotation || {}),
         active,
@@ -2585,6 +2350,23 @@
           activeMicroFamilyIds: activeMicroIds,
           activeMacroFamilyIds: activeMacroIds
         };
+      }
+
+      if (data.skipped) {
+        setMessage(
+          `Geen ${normalizedSide} micro-family geactiveerd. Reden: ${data.emptyReason || "NO_SIDE_MICRO_FOUND"}.\n` +
+          `Side rows=${data.sideCount ?? "-"}, hard=${data.hardCount ?? "-"}, soft=${data.softCount ?? "-"}, obs=${data.observationCount ?? "-"}.\n` +
+          `Active true micro=${activeMicroIds.length}, active macro=${activeMacroIds.length}.`,
+          "warn"
+        );
+
+        if (state.activeTab === "rotation") {
+          await renderRotation();
+          return;
+        }
+
+        await renderMicros(state.microMode);
+        return;
       }
 
       const selectedMicroId =
@@ -2749,10 +2531,12 @@
 
       let rotationMicroRows = currentMicroRows();
 
-      try {
-        rotationMicroRows = await ensureMicroRows();
-      } catch {
-        rotationMicroRows = currentMicroRows();
+      if (rotationMicroRows.length === 0) {
+        try {
+          rotationMicroRows = await ensureMicroRows();
+        } catch {
+          rotationMicroRows = [];
+        }
       }
 
       const rotationBestShort = bestMicroRowForSide(rotationMicroRows, "SHORT");
