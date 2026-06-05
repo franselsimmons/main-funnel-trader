@@ -125,35 +125,6 @@ function coinLogoUrl(symbol) {
   return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${base}.png`;
 }
 
-function getBaseAppUrl() {
-  const explicit =
-    CONFIG.app?.baseUrl ||
-    process.env.APP_BASE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.PUBLIC_APP_URL ||
-    '';
-
-  if (explicit) {
-    return String(explicit).replace(/\/+$/g, '');
-  }
-
-  if (process.env.VERCEL_URL) {
-    return `https://${String(process.env.VERCEL_URL).replace(/\/+$/g, '')}`;
-  }
-
-  return '';
-}
-
-function adminUrl(path = '') {
-  const baseUrl = getBaseAppUrl();
-
-  if (!baseUrl) return null;
-
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
-
-  return `${baseUrl}${cleanPath}`;
-}
-
 function compactPayload(payload = {}) {
   return {
     symbol: payload.symbol || null,
@@ -255,82 +226,18 @@ async function logDiscord(type, payload, result) {
 export async function sendEntryAlert(entry = {}) {
   const symbol = normalizeBaseSymbol(entry.symbol || entry.contractSymbol);
   const side = normalizeSideLabel(entry.side);
-  const weeklyStats = entry.weeklyStats || {};
-  const logo = coinLogoUrl(symbol);
-  const admin = adminUrl('/admin.html#rotation');
-
-  const title = `ACTIVE MICRO ENTRY — ${symbol || 'UNKNOWN'} ${side}`;
-
-  const fields = [
-    field('Reason', entry.reason || 'ACTIVE_MICRO_FAMILY_ENTRY', true),
-    field('Family', entry.familyId || 'NA', true),
-    field('Rotation', entry.activeRotationId || 'NA', true),
-
-    field('MicroFamily', `\`${entry.microFamilyId || 'NA'}\``, false),
-
-    field(
-      'Risk Geometry',
-      [
-        `entry=${fmtPrice(entry.entry)}`,
-        `sl=${fmtPrice(entry.sl)}`,
-        `tp=${fmtPrice(entry.tp)}`,
-        `rr=${fmt(entry.rr, 2)}`,
-        `risk=${fmtPctRatio(entry.riskFraction, 3)}`
-      ].join('\n'),
-      true
-    ),
-
-    field(
-      'Weekly Stats',
-      [
-        `rank=${weeklyStats.rank ?? 'NA'}`,
-        `completed=${weeklyStats.completed ?? 0}`,
-        `fairWR=${fmtPctRatio(weeklyStats.fairWinrate)}`,
-        `avgR=${fmt(weeklyStats.avgR, 3)}`,
-        `totalR=${fmt(weeklyStats.totalR, 3)}`,
-        `balanced=${fmt(weeklyStats.balancedScore, 2)}`
-      ].join('\n'),
-      true
-    ),
-
-    field(
-      'Live Context',
-      [
-        `RSI=${entry.rsiZone || 'NA'} / ${fmt(entry.rsi, 2)}`,
-        `flow=${entry.flow || 'NA'}`,
-        `ob=${entry.obRelation || 'NA'}`,
-        `btc=${entry.btcState || 'NA'} (${entry.btcRelation || 'NA'})`,
-        `regime=${entry.regime || 'NA'}`
-      ].join('\n'),
-      true
-    ),
-
-    field(
-      'Execution Quality',
-      [
-        `spread=${fmt(safeNumber(entry.spreadPct, 0) * 10000, 2)}bps`,
-        `depth=${fmt(entry.depthMinUsd1p, 0)}`,
-        `funding=${fmtPctRatio(entry.fundingRate, 4)}`,
-        `confluence=${fmt(entry.confluence, 1)}`,
-        `sniper=${fmt(entry.sniperScore, 1)}`
-      ].join('\n'),
-      true
-    )
-  ];
-
-  if (admin) {
-    fields.push(field('Dashboard', admin, false));
-  }
 
   const content = {
     username: 'Micro-Family Trader',
     embeds: [
       {
-        title,
+        title: `${symbol || 'UNKNOWN'} ${side}`,
         color: discordColorForSide(entry.side),
-        thumbnail: logo ? { url: logo } : undefined,
-        fields,
-        timestamp: nowIso()
+        fields: [
+          field('Entry', fmtPrice(entry.entry), true),
+          field('TP', fmtPrice(entry.tp), true),
+          field('SL', fmtPrice(entry.sl), true)
+        ]
       }
     ]
   };
