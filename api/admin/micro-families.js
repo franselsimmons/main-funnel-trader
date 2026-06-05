@@ -7,7 +7,6 @@ import {
   safeNumber
 } from '../../src/utils.js';
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
-import { rankMicros } from '../../src/analyze/scoring.js';
 import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 
 const VALID_MODES = new Set([
@@ -29,6 +28,15 @@ const DEFAULT_LIMIT = 160;
 const MAX_LIMIT = 300;
 const DEFAULT_SIDE_ENSURE_LIMIT = 25;
 const MAX_SIDE_ENSURE_LIMIT = 60;
+
+const RANK_CACHE_TTL_MS = 15_000;
+const RANK_CACHE_MAX_KEYS = 8;
+
+const globalCache = globalThis.__ADMIN_MICRO_FAMILIES_RANK_CACHE__ ||= new Map();
+
+function now() {
+  return Date.now();
+}
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET');
@@ -118,6 +126,24 @@ function normalizeSideToken(value) {
   return 'UNKNOWN';
 }
 
+function getArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function getDefinitionParts(row = {}) {
+  if (Array.isArray(row.definitionParts)) return row.definitionParts;
+  if (Array.isArray(row.microDefinitionParts)) return row.microDefinitionParts;
+
+  return [];
+}
+
+function getMacroDefinitionParts(row = {}) {
+  if (Array.isArray(row.macroDefinitionParts)) return row.macroDefinitionParts;
+  if (Array.isArray(row.parentDefinitionParts)) return row.parentDefinitionParts;
+
+  return [];
+}
+
 function collectSideText(input = {}) {
   return [
     input.tradeSide,
@@ -150,10 +176,10 @@ function collectSideText(input = {}) {
     input.macroDefinition,
     input.parentDefinition,
 
-    ...(Array.isArray(input.definitionParts) ? input.definitionParts : []),
-    ...(Array.isArray(input.microDefinitionParts) ? input.microDefinitionParts : []),
-    ...(Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts : []),
-    ...(Array.isArray(input.parentDefinitionParts) ? input.parentDefinitionParts : [])
+    ...getArray(input.definitionParts),
+    ...getArray(input.microDefinitionParts),
+    ...getArray(input.macroDefinitionParts),
+    ...getArray(input.parentDefinitionParts)
   ]
     .map((value) => upper(value))
     .filter(Boolean)
@@ -322,20 +348,6 @@ function getFamilyId(row = {}) {
   );
 }
 
-function getDefinitionParts(row = {}) {
-  if (Array.isArray(row.definitionParts)) return row.definitionParts;
-  if (Array.isArray(row.microDefinitionParts)) return row.microDefinitionParts;
-
-  return [];
-}
-
-function getMacroDefinitionParts(row = {}) {
-  if (Array.isArray(row.macroDefinitionParts)) return row.macroDefinitionParts;
-  if (Array.isArray(row.parentDefinitionParts)) return row.parentDefinitionParts;
-
-  return [];
-}
-
 function getCompletedSample(row = {}) {
   const realCompleted = num(row.realCompleted, 0);
   const shadowCompleted = num(row.shadowCompleted, 0);
@@ -500,8 +512,8 @@ function getSampleAdjustedWinrate(row = {}) {
   };
 }
 
-function getDashboardBalancedScore(row = {}) {
-  const winrateMeta = getSampleAdjustedWinrate(row);
+function getDashboardBalancedScore(row = {}, winrateMeta = null) {
+  const meta = winrateMeta || getSampleAdjustedWinrate(row);
 
   const totalR = Math.max(0, num(row.totalR, 0));
   const avgR = Math.max(0, num(row.avgR, 0));
@@ -512,8 +524,8 @@ function getDashboardBalancedScore(row = {}) {
   const gaveBackAfterOneRPct = clamp(row.gaveBackAfterOneRPct, 0, 1);
   const avgCostR = Math.max(0, num(row.avgCostR, 0));
 
-  const winrateComponent = winrateMeta.score * 100;
-  const reliabilityComponent = winrateMeta.reliability * 20;
+  const winrateComponent = meta.score * 100;
+  const reliabilityComponent = meta.reliability * 20;
   const totalRComponent = Math.log1p(totalR) * 12;
   const avgRComponent = Math.log1p(avgR) * 8;
   const pfComponent = Math.log1p(profitFactor) * 3;
@@ -567,6 +579,20 @@ function compareWrappedBalanced(a, b) {
   );
 }
 
+function compareWrappedTotalR(a, b) {
+  return (
+    compareNumberDesc(a.row.totalR, b.row.totalR) ||
+    compareWrappedWinrate(a, b)
+  );
+}
+
+function compareWrappedAvgR(a, b) {
+  return (
+    compareNumberDesc(a.row.avgR, b.row.avgR) ||
+    compareWrappedWinrate(a, b)
+  );
+}
+
 function compareWrappedDirectSL(a, b) {
   return (
     compareNumberAsc(a.row.directSLPct, b.row.directSLPct) ||
@@ -580,19 +606,184 @@ function compareWrappedDirectSL(a, b) {
 function compareWrappedObserved(a, b) {
   return (
     compareNumberDesc(a.winrate.sample, b.winrate.sample) ||
+    compareNumberDesc(a.row.completed, b.row.completed) ||
+    compareNumberDesc(a.row.seen, b.row.seen) ||
     compareNumberDesc(a.winrate.score, b.winrate.score) ||
     compareNumberDesc(a.row.totalR, b.row.totalR) ||
     a.index - b.index
   );
 }
 
+function compareWrappedByMode(a, b, mode) {
+  if (mode === 'winrate') return compareWrappedWinrate(a, b);
+  if (mode === 'totalR') return compareWrappedTotalR(a, b);
+  if (mode === 'avgR') return compareWrappedAvgR(a, b);
+  if (mode === 'directSL') return compareWrappedDirectSL(a, b);
+  if (mode === 'observed') return compareWrappedObserved(a, b);
+
+  return compareWrappedBalanced(a, b);
+}
+
+function buildRawMicroRow(row = {}, key = '', index = 0) {
+  const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || key || null;
+  const familyId = getFamilyId(row);
+  const macroFamilyId = getMacroFamilyId({
+    ...row,
+    microFamilyId,
+    familyId
+  });
+
+  const definitionParts = getDefinitionParts(row);
+  const macroDefinitionParts = getMacroDefinitionParts(row);
+
+  const tradeSide = inferTradeSide({
+    ...row,
+    microFamilyId,
+    familyId,
+    macroFamilyId,
+    definitionParts,
+    macroDefinitionParts
+  });
+
+  return {
+    sourceIndex: index,
+
+    microFamilyId,
+    familyId,
+    macroFamilyId,
+
+    parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
+    parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
+
+    side: tradeSide === 'LONG'
+      ? 'bull'
+      : tradeSide === 'SHORT'
+        ? 'bear'
+        : 'unknown',
+    tradeSide,
+
+    seen: num(row.seen ?? row.observations, 0),
+    observations: num(row.observations ?? row.seen, 0),
+
+    completed: round(row.completed, 4),
+    realCompleted: num(row.realCompleted, 0),
+    shadowCompleted: num(row.shadowCompleted, 0),
+
+    wins: round(row.wins, 4),
+    losses: round(row.losses, 4),
+    flats: round(row.flats, 4),
+
+    realWins: num(row.realWins, 0),
+    realLosses: num(row.realLosses, 0),
+    realFlats: num(row.realFlats, 0),
+
+    shadowWins: num(row.shadowWins, 0),
+    shadowLosses: num(row.shadowLosses, 0),
+    shadowFlats: num(row.shadowFlats, 0),
+
+    winrate: round(row.winrate, 4),
+    bayesianWinrate: round(row.bayesianWinrate, 4),
+    wilsonLowerBound: round(row.wilsonLowerBound, 4),
+    fairWinrate: round(
+      row.fairWinrate ??
+      row.bayesianWinrate ??
+      row.wilsonLowerBound,
+      4
+    ),
+
+    totalR: round(row.totalR, 4),
+    realTotalR: round(row.realTotalR, 4),
+    shadowTotalR: round(row.shadowTotalR, 4),
+
+    avgR: round(row.avgR, 4),
+    avgWinR: round(row.avgWinR, 4),
+    avgLossR: round(row.avgLossR, 4),
+
+    profitFactor: round(row.profitFactor, 4),
+
+    directSLCount: round(row.directSLCount, 4),
+    directSLPct: round(row.directSLPct, 4),
+
+    nearTpCount: round(row.nearTpCount, 4),
+    nearTpPct: round(row.nearTpPct, 4),
+
+    reachedHalfRCount: round(row.reachedHalfRCount, 4),
+    reachedOneRCount: round(row.reachedOneRCount, 4),
+    reachedHalfRPct: round(row.reachedHalfRPct, 4),
+    reachedOneRPct: round(row.reachedOneRPct, 4),
+
+    beWouldExitCount: round(row.beWouldExitCount, 4),
+    beWouldExitPct: round(row.beWouldExitPct, 4),
+
+    gaveBackAfterHalfRCount: round(row.gaveBackAfterHalfRCount, 4),
+    gaveBackAfterOneRCount: round(row.gaveBackAfterOneRCount, 4),
+    gaveBackAfterHalfRPct: round(row.gaveBackAfterHalfRPct, 4),
+    gaveBackAfterOneRPct: round(row.gaveBackAfterOneRPct, 4),
+
+    nearTpThenLossCount: round(row.nearTpThenLossCount, 4),
+    nearTpThenLossPct: round(row.nearTpThenLossPct, 4),
+
+    totalCostR: round(row.totalCostR, 4),
+    avgCostR: round(row.avgCostR, 4),
+
+    balancedScore: round(row.balancedScore, 4),
+
+    definition: row.definition || row.microDefinition || null,
+    definitionParts,
+
+    macroDefinition: row.macroDefinition || row.parentDefinition || null,
+    macroDefinitionParts,
+
+    microDefinition: row.microDefinition || row.definition || null,
+    microDefinitionParts: Array.isArray(row.microDefinitionParts)
+      ? row.microDefinitionParts
+      : definitionParts,
+
+    assetClass: row.assetClass || null,
+    rsiZone: row.rsiZone || null,
+    rsiCoarse: row.rsiCoarse || null,
+    flow: row.flow || null,
+    flowCoarse: row.flowCoarse || null,
+    obRelation: row.obRelation || null,
+    btcState: row.btcState || null,
+    btcRelation: row.btcRelation || null,
+    regime: row.regime || null,
+    regimeCoarse: row.regimeCoarse || null,
+    scannerReason: row.scannerReason || null,
+    scannerReasonCoarse: row.scannerReasonCoarse || null,
+
+    selectedTier: row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || null,
+    rotationEligibilityTier: row.rotationEligibilityTier || row.selectedTier || row.eligibilityTier || null,
+
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function buildRowsFromMicros(micros = {}) {
+  return Object.entries(micros || {})
+    .map(([key, row], index) => buildRawMicroRow(row || {}, key, index))
+    .filter((row) => row.microFamilyId);
+}
+
 function decorateRowsForDashboard(rows = []) {
   return rows.map((row, index) => {
     const winrate = getSampleAdjustedWinrate(row);
-    const dashboardBalancedScore = getDashboardBalancedScore(row);
+    const dashboardBalancedScore = getDashboardBalancedScore(row, winrate);
 
     return {
-      row,
+      row: {
+        ...row,
+
+        winrateSample: round(winrate.sample, 4),
+        sampleAdjustedWinrate: round(winrate.score, 4),
+        sampleRawWinrate: round(winrate.rawWinrate, 4),
+        sampleBayesianWinrate: round(winrate.bayesianWinrate, 4),
+        sampleWilsonLowerBound: round(winrate.wilsonLowerBound, 4),
+        sampleReliability: round(winrate.reliability, 4),
+
+        dashboardBalancedScore: round(dashboardBalancedScore, 4)
+      },
       index,
       winrate,
       dashboardBalancedScore
@@ -601,41 +792,70 @@ function decorateRowsForDashboard(rows = []) {
 }
 
 function applyDashboardRanking(rows = [], mode = 'balanced') {
-  const wrapped = decorateRowsForDashboard(rows);
+  return decorateRowsForDashboard(rows)
+    .sort((a, b) => compareWrappedByMode(a, b, mode))
+    .map((item, index) => ({
+      ...item.row,
+      rank: index + 1
+    }));
+}
 
-  if (mode === 'winrate') {
-    wrapped.sort(compareWrappedWinrate);
-  } else if (mode === 'balanced') {
-    wrapped.sort(compareWrappedBalanced);
-  } else if (mode === 'directSL') {
-    wrapped.sort(compareWrappedDirectSL);
-  } else if (mode === 'observed') {
-    wrapped.sort(compareWrappedObserved);
+function pruneRankCache() {
+  const entries = [...globalCache.entries()];
+
+  if (entries.length <= RANK_CACHE_MAX_KEYS) return;
+
+  entries
+    .sort((a, b) => num(a[1]?.ts, 0) - num(b[1]?.ts, 0))
+    .slice(0, Math.max(0, entries.length - RANK_CACHE_MAX_KEYS))
+    .forEach(([key]) => globalCache.delete(key));
+}
+
+function microsSignature(micros = {}) {
+  const keys = Object.keys(micros || {});
+  const count = keys.length;
+
+  if (count <= 0) return '0';
+
+  const first = keys[0] || '';
+  const middle = keys[Math.floor(count / 2)] || '';
+  const last = keys[count - 1] || '';
+
+  return `${count}:${first}:${middle}:${last}`;
+}
+
+function getRankedRowsCached({
+  weekKey,
+  mode,
+  micros
+}) {
+  const signature = microsSignature(micros);
+  const cacheKey = `${weekKey}|${mode}|${signature}`;
+  const cached = globalCache.get(cacheKey);
+
+  if (cached && now() - cached.ts < RANK_CACHE_TTL_MS) {
+    return {
+      rows: cached.rows,
+      cacheHit: true,
+      cacheKey
+    };
   }
 
-  return wrapped.map((item) => {
-    const tradeSide = inferTradeSide(item.row);
+  const rawRows = buildRowsFromMicros(micros);
+  const rows = applyDashboardRanking(rawRows, mode);
 
-    return {
-      ...item.row,
-
-      tradeSide,
-      side: tradeSide === 'LONG'
-        ? 'bull'
-        : tradeSide === 'SHORT'
-          ? 'bear'
-          : normalizeDashboardSide(item.row),
-
-      winrateSample: round(item.winrate.sample, 4),
-      sampleAdjustedWinrate: round(item.winrate.score, 4),
-      sampleRawWinrate: round(item.winrate.rawWinrate, 4),
-      sampleBayesianWinrate: round(item.winrate.bayesianWinrate, 4),
-      sampleWilsonLowerBound: round(item.winrate.wilsonLowerBound, 4),
-      sampleReliability: round(item.winrate.reliability, 4),
-
-      dashboardBalancedScore: round(item.dashboardBalancedScore, 4)
-    };
+  globalCache.set(cacheKey, {
+    ts: now(),
+    rows
   });
+
+  pruneRankCache();
+
+  return {
+    rows,
+    cacheHit: false,
+    cacheKey
+  };
 }
 
 function normalizeMicroRow(
@@ -650,29 +870,7 @@ function normalizeMicroRow(
   const microFamilyId = row.microFamilyId || row.id || row.key || null;
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId(row);
-
-  const definitionParts = getDefinitionParts(row);
-  const macroDefinitionParts = getMacroDefinitionParts(row);
-
-  const sideContext = {
-    ...row,
-    microFamilyId,
-    familyId,
-    macroFamilyId,
-    definitionParts,
-    macroDefinitionParts
-  };
-
-  const tradeSide = inferTradeSide(sideContext);
-
-  const fairWinrate = num(
-    row.fairWinrate ??
-    row.bayesianWinrate ??
-    row.wilsonLowerBound,
-    0
-  );
-
-  const winrateMeta = getSampleAdjustedWinrate(row);
+  const tradeSide = inferTradeSide(row);
 
   const active = microFamilyId
     ? activeSet.has(microFamilyId)
@@ -724,14 +922,14 @@ function normalizeMicroRow(
     winrate: round(row.winrate, 4),
     bayesianWinrate: round(row.bayesianWinrate, 4),
     wilsonLowerBound: round(row.wilsonLowerBound, 4),
-    fairWinrate: round(fairWinrate, 4),
+    fairWinrate: round(row.fairWinrate, 4),
 
-    winrateSample: round(row.winrateSample ?? winrateMeta.sample, 4),
-    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate ?? winrateMeta.score, 4),
-    sampleRawWinrate: round(row.sampleRawWinrate ?? winrateMeta.rawWinrate, 4),
-    sampleBayesianWinrate: round(row.sampleBayesianWinrate ?? winrateMeta.bayesianWinrate, 4),
-    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound ?? winrateMeta.wilsonLowerBound, 4),
-    sampleReliability: round(row.sampleReliability ?? winrateMeta.reliability, 4),
+    winrateSample: round(row.winrateSample, 4),
+    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate, 4),
+    sampleRawWinrate: round(row.sampleRawWinrate, 4),
+    sampleBayesianWinrate: round(row.sampleBayesianWinrate, 4),
+    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound, 4),
+    sampleReliability: round(row.sampleReliability, 4),
 
     totalR: round(row.totalR, 4),
     realTotalR: round(row.realTotalR, 4),
@@ -768,20 +966,19 @@ function normalizeMicroRow(
     totalCostR: round(row.totalCostR, 4),
     avgCostR: round(row.avgCostR, 4),
 
-    sampleReliabilityOld: round(row.sampleReliability, 4),
     balancedScore: round(row.balancedScore, 4),
-    dashboardBalancedScore: round(row.dashboardBalancedScore ?? getDashboardBalancedScore(row), 4),
+    dashboardBalancedScore: round(row.dashboardBalancedScore, 4),
 
     definition: row.definition || null,
-    definitionParts,
+    definitionParts: getDefinitionParts(row),
 
     macroDefinition: row.macroDefinition || row.parentDefinition || null,
-    macroDefinitionParts,
+    macroDefinitionParts: getMacroDefinitionParts(row),
 
     microDefinition: row.microDefinition || row.definition || null,
     microDefinitionParts: Array.isArray(row.microDefinitionParts)
       ? row.microDefinitionParts
-      : definitionParts,
+      : getDefinitionParts(row),
 
     assetClass: row.assetClass || null,
     rsiZone: row.rsiZone || null,
@@ -843,16 +1040,17 @@ function compactBestRow(row) {
     macroActive: Boolean(row.macroActive),
 
     seen: num(row.seen, 0),
+    observations: num(row.observations, 0),
     completed: round(row.completed, 4),
     realCompleted: num(row.realCompleted, 0),
     shadowCompleted: num(row.shadowCompleted, 0),
 
-    winrateSample: round(row.winrateSample ?? getSampleAdjustedWinrate(row).sample, 4),
+    winrateSample: round(row.winrateSample, 4),
     winrate: round(row.winrate, 4),
-    fairWinrate: round(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound, 4),
-    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate ?? getSampleAdjustedWinrate(row).score, 4),
-    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound ?? row.wilsonLowerBound, 4),
-    sampleReliability: round(row.sampleReliability ?? getSampleAdjustedWinrate(row).reliability, 4),
+    fairWinrate: round(row.fairWinrate, 4),
+    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate, 4),
+    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound, 4),
+    sampleReliability: round(row.sampleReliability, 4),
 
     avgR: round(row.avgR, 4),
     totalR: round(row.totalR, 4),
@@ -862,7 +1060,7 @@ function compactBestRow(row) {
     avgCostR: round(row.avgCostR, 4),
 
     balancedScore: round(row.balancedScore, 4),
-    dashboardBalancedScore: round(row.dashboardBalancedScore ?? getDashboardBalancedScore(row), 4)
+    dashboardBalancedScore: round(row.dashboardBalancedScore, 4)
   };
 }
 
@@ -912,16 +1110,8 @@ function bestBy(rows = [], comparator) {
   return [...rows].sort(comparator)[0] || null;
 }
 
-function normalizeRowsForBest(rows = []) {
-  return rows.map((row, index) => normalizeMicroRow(row, index, {
-    compact: true
-  }));
-}
-
 function buildSideSummary(rows = [], side) {
-  const sideRows = normalizeRowsForBest(
-    rows.filter((row) => inferTradeSide(row) === side)
-  );
+  const sideRows = rows.filter((row) => inferTradeSide(row) === side);
 
   return {
     rows: sideRows.length,
@@ -935,22 +1125,28 @@ function buildSideSummary(rows = [], side) {
 
 function buildSummary(rows = [], activeSet = new Set()) {
   const completedRows = rows.filter((row) => num(row.completed, 0) > 0);
-  const tradableRows = rows.filter((row) => num(row.winrateSample ?? getSampleAdjustedWinrate(row).sample, 0) >= TRADABLE_SAMPLE_MIN);
+  const tradableRows = rows.filter((row) => num(row.winrateSample, 0) >= TRADABLE_SAMPLE_MIN);
   const activeRows = rows.filter((row) => activeSet.has(row.microFamilyId || row.id || row.key));
 
-  const totalR = rows.reduce((sum, row) => sum + num(row.totalR, 0), 0);
-  const totalSeen = rows.reduce((sum, row) => sum + num(row.seen, 0), 0);
-  const totalCompleted = rows.reduce((sum, row) => sum + num(row.completed, 0), 0);
-  const totalWinrateSample = rows.reduce((sum, row) => sum + num(row.winrateSample ?? getSampleAdjustedWinrate(row).sample, 0), 0);
-  const totalCostR = rows.reduce((sum, row) => sum + num(row.totalCostR, 0), 0);
+  let totalR = 0;
+  let totalSeen = 0;
+  let totalCompleted = 0;
+  let totalWinrateSample = 0;
+  let totalCostR = 0;
 
-  const normalizedForBest = normalizeRowsForBest(rows);
+  for (const row of rows) {
+    totalR += num(row.totalR, 0);
+    totalSeen += num(row.seen, 0);
+    totalCompleted += num(row.completed, 0);
+    totalWinrateSample += num(row.winrateSample, 0);
+    totalCostR += num(row.totalCostR, 0);
+  }
 
-  const bestBalanced = bestBy(normalizedForBest, compareNormalizedBalanced);
-  const bestTotalR = bestBy(normalizedForBest, compareNormalizedTotalR);
-  const bestAvgR = bestBy(normalizedForBest, compareNormalizedAvgR);
-  const bestWinrate = bestBy(normalizedForBest, compareNormalizedWinrate);
-  const lowestDirectSL = bestBy(normalizedForBest, compareNormalizedDirectSL);
+  const bestBalanced = bestBy(rows, compareNormalizedBalanced);
+  const bestTotalR = bestBy(rows, compareNormalizedTotalR);
+  const bestAvgR = bestBy(rows, compareNormalizedAvgR);
+  const bestWinrate = bestBy(rows, compareNormalizedWinrate);
+  const lowestDirectSL = bestBy(rows, compareNormalizedDirectSL);
 
   return {
     rows: rows.length,
@@ -1013,6 +1209,9 @@ function extractActiveMacroIds(activeRotation) {
 function compactActiveRotation(activeRotation) {
   if (!activeRotation) return null;
 
+  const activeMicroFamilyIds = extractActiveIds(activeRotation);
+  const activeMacroFamilyIds = extractActiveMacroIds(activeRotation);
+
   return {
     rotationId: activeRotation.rotationId || null,
     source: activeRotation.source || null,
@@ -1032,10 +1231,12 @@ function compactActiveRotation(activeRotation) {
       ? activeRotation.missingSides
       : [],
 
-    microFamilyIds: extractActiveIds(activeRotation),
-    activeMicroFamilyIds: extractActiveIds(activeRotation),
-    macroFamilyIds: extractActiveMacroIds(activeRotation),
-    activeMacroFamilyIds: extractActiveMacroIds(activeRotation),
+    microFamilyIds: activeMicroFamilyIds,
+    activeMicroFamilyIds,
+    trueMicroFamilyIds: activeMicroFamilyIds,
+
+    macroFamilyIds: activeMacroFamilyIds,
+    activeMacroFamilyIds,
 
     bestLong: activeRotation.bestLong
       ? compactBestRow(activeRotation.bestLong)
@@ -1095,10 +1296,10 @@ function rowMatchesSearch(row = {}, q = '') {
     row.microDefinition,
     row.macroDefinition,
     row.parentDefinition,
-    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
-    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
-    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...getArray(row.definitionParts),
+    ...getArray(row.microDefinitionParts),
+    ...getArray(row.macroDefinitionParts),
+    ...getArray(row.parentDefinitionParts)
   ]
     .map((value) => upper(value))
     .join(' | ');
@@ -1258,7 +1459,10 @@ function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
 }
 
 export default async function handler(req, res) {
+  const requestStartedAt = now();
+
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'fast');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -1276,6 +1480,7 @@ export default async function handler(req, res) {
       : 'balanced';
 
     const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
+    const requestedLimitNumber = Number(requestedLimitRaw) || DEFAULT_LIMIT;
     const limit = toSafeLimit(requestedLimitRaw, DEFAULT_LIMIT, MAX_LIMIT);
 
     const sideEnsureLimit = toSafeLimit(
@@ -1303,8 +1508,15 @@ export default async function handler(req, res) {
     const activeSet = new Set(activeMicroFamilyIds);
     const activeMacroSet = new Set(activeMacroFamilyIds);
 
-    const baseRankedRows = rankMicros(micros || {}, mode);
-    const dashboardRankedRows = applyDashboardRanking(baseRankedRows, mode);
+    const {
+      rows: dashboardRankedRows,
+      cacheHit,
+      cacheKey
+    } = getRankedRowsCached({
+      weekKey: requestedWeekKey,
+      mode,
+      micros: micros || {}
+    });
 
     const filteredRows = dashboardRankedRows.filter((row) => (
       rowPassesFilters(row, filters, activeSet, activeMacroSet)
@@ -1331,9 +1543,9 @@ export default async function handler(req, res) {
       mode,
       requestedMode,
 
-      requestedLimit: Number(requestedLimitRaw) || DEFAULT_LIMIT,
+      requestedLimit: requestedLimitNumber,
       limit,
-      limitCapped: Number(requestedLimitRaw) > limit,
+      limitCapped: requestedLimitNumber > limit,
 
       sideEnsureLimit,
       filters,
@@ -1355,6 +1567,14 @@ export default async function handler(req, res) {
       summary,
 
       rows: normalizedRows,
+
+      perf: {
+        durationMs: now() - requestStartedAt,
+        rankCacheHit: cacheHit,
+        rankCacheKey: cacheKey,
+        rankCacheTtlMs: RANK_CACHE_TTL_MS,
+        rankCacheSize: globalCache.size
+      },
 
       serverTs: Date.now()
     });
