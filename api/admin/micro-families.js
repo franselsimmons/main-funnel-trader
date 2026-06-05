@@ -24,29 +24,32 @@ const WINRATE_BAYES_BETA = 1;
 const SAMPLE_RELIABILITY_CAP = 50;
 const TRADABLE_SAMPLE_MIN = 5;
 
-const DEFAULT_LIMIT = 60;
-const MAX_LIMIT = 160;
-const DEFAULT_SIDE_ENSURE_LIMIT = 0;
-const MAX_SIDE_ENSURE_LIMIT = 40;
+const DEFAULT_LIMIT = 160;
+const MAX_LIMIT = 300;
 
+const DEFAULT_SIDE_LIMIT = 25;
+const MAX_SIDE_LIMIT = 80;
+
+const DEFAULT_SIDE_ENSURE_LIMIT = 25;
+const MAX_SIDE_ENSURE_LIMIT = 80;
+
+const WEEK_MICROS_CACHE_TTL_MS = 20_000;
 const RANK_CACHE_TTL_MS = 20_000;
-const RANK_CACHE_MAX_KEYS = 12;
+const TOP_SIDES_CACHE_TTL_MS = 12_000;
 
-const FAST_SUMMARY_LIMIT = 1200;
-const HARD_ROUTE_BUDGET_MS = 52_000;
+const GET_WEEK_MICROS_TIMEOUT_MS = 9_000;
+const GET_ACTIVE_ROTATION_TIMEOUT_MS = 1_400;
 
-const globalCache = globalThis.__ADMIN_MICRO_FAMILIES_RANK_CACHE__ ||= new Map();
+const CACHE_MAX_KEYS = 12;
+
+const rootCache = globalThis.__ADMIN_MICRO_FAMILIES_FAST_CACHE__ ||= {
+  weekMicros: new Map(),
+  ranked: new Map(),
+  topSides: new Map()
+};
 
 function now() {
   return Date.now();
-}
-
-function elapsed(startedAt) {
-  return now() - startedAt;
-}
-
-function routeBudgetExceeded(startedAt, maxMs = HARD_ROUTE_BUDGET_MS) {
-  return elapsed(startedAt) >= maxMs;
 }
 
 function methodNotAllowed(res) {
@@ -87,18 +90,6 @@ function isTrue(value) {
   );
 }
 
-function isFalse(value) {
-  return (
-    value === false ||
-    value === 'false' ||
-    value === 'FALSE' ||
-    value === 0 ||
-    value === '0' ||
-    value === 'no' ||
-    value === 'NO'
-  );
-}
-
 function num(value, fallback = 0) {
   return safeNumber(value, fallback);
 }
@@ -120,13 +111,9 @@ function upper(value) {
   return String(value || '').trim().toUpperCase();
 }
 
-function getArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
 function uniqueStrings(values = []) {
   return [...new Set(
-    (Array.isArray(values) ? values : [])
+    (Array.isArray(values) ? values : [values])
       .flatMap((value) => {
         if (Array.isArray(value)) return value;
 
@@ -136,6 +123,35 @@ function uniqueStrings(values = []) {
       })
       .filter(Boolean)
   )];
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(label || 'TIMEOUT');
+      error.code = label || 'TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+  });
+
+  return Promise
+    .race([promise, timeoutPromise])
+    .finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+}
+
+function pruneMap(map, maxKeys = CACHE_MAX_KEYS) {
+  const entries = [...map.entries()];
+
+  if (entries.length <= maxKeys) return;
+
+  entries
+    .sort((a, b) => num(a[1]?.ts, 0) - num(b[1]?.ts, 0))
+    .slice(0, Math.max(0, entries.length - maxKeys))
+    .forEach(([key]) => map.delete(key));
 }
 
 function normalizeSideToken(value) {
@@ -151,6 +167,10 @@ function normalizeSideToken(value) {
   if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
 
   return 'UNKNOWN';
+}
+
+function getArray(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function getDefinitionParts(row = {}) {
@@ -581,75 +601,76 @@ function compareIdAsc(a, b) {
   return String(a || '').localeCompare(String(b || ''));
 }
 
-function compareWrappedWinrate(a, b) {
+function compareNormalizedWinrate(a, b) {
   return (
-    compareNumberDesc(a.winrate.score, b.winrate.score) ||
-    compareNumberDesc(a.winrate.wilsonLowerBound, b.winrate.wilsonLowerBound) ||
-    compareNumberDesc(a.winrate.bayesianWinrate, b.winrate.bayesianWinrate) ||
-    compareNumberDesc(a.winrate.rawWinrate, b.winrate.rawWinrate) ||
-    compareNumberDesc(a.winrate.sample, b.winrate.sample) ||
-    compareNumberDesc(a.row.totalR, b.row.totalR) ||
-    compareNumberDesc(a.row.avgR, b.row.avgR) ||
-    compareIdAsc(a.row.microFamilyId, b.row.microFamilyId) ||
-    a.index - b.index
+    compareNumberDesc(a.sampleAdjustedWinrate, b.sampleAdjustedWinrate) ||
+    compareNumberDesc(a.sampleWilsonLowerBound, b.sampleWilsonLowerBound) ||
+    compareNumberDesc(a.sampleBayesianWinrate, b.sampleBayesianWinrate) ||
+    compareNumberDesc(a.sampleRawWinrate, b.sampleRawWinrate) ||
+    compareNumberDesc(a.winrateSample, b.winrateSample) ||
+    compareNumberDesc(a.totalR, b.totalR) ||
+    compareNumberDesc(a.avgR, b.avgR) ||
+    compareIdAsc(a.microFamilyId, b.microFamilyId)
   );
 }
 
-function compareWrappedBalanced(a, b) {
+function compareNormalizedBalanced(a, b) {
   return (
     compareNumberDesc(a.dashboardBalancedScore, b.dashboardBalancedScore) ||
-    compareWrappedWinrate(a, b)
+    compareNormalizedWinrate(a, b)
   );
 }
 
-function compareWrappedTotalR(a, b) {
+function compareNormalizedTotalR(a, b) {
   return (
-    compareNumberDesc(a.row.totalR, b.row.totalR) ||
-    compareWrappedWinrate(a, b)
+    compareNumberDesc(a.totalR, b.totalR) ||
+    compareNormalizedWinrate(a, b)
   );
 }
 
-function compareWrappedAvgR(a, b) {
+function compareNormalizedAvgR(a, b) {
   return (
-    compareNumberDesc(a.row.avgR, b.row.avgR) ||
-    compareWrappedWinrate(a, b)
+    compareNumberDesc(a.avgR, b.avgR) ||
+    compareNormalizedWinrate(a, b)
   );
 }
 
-function compareWrappedDirectSL(a, b) {
+function compareNormalizedDirectSL(a, b) {
   return (
-    compareNumberAsc(a.row.directSLPct, b.row.directSLPct) ||
-    compareNumberDesc(a.winrate.sample, b.winrate.sample) ||
-    compareNumberDesc(a.winrate.score, b.winrate.score) ||
-    compareNumberDesc(a.row.totalR, b.row.totalR) ||
-    a.index - b.index
+    compareNumberAsc(a.directSLPct, b.directSLPct) ||
+    compareNumberDesc(a.winrateSample, b.winrateSample) ||
+    compareNormalizedWinrate(a, b)
   );
 }
 
-function compareWrappedObserved(a, b) {
+function compareNormalizedObserved(a, b) {
   return (
-    compareNumberDesc(a.winrate.sample, b.winrate.sample) ||
-    compareNumberDesc(a.row.completed, b.row.completed) ||
-    compareNumberDesc(a.row.seen, b.row.seen) ||
-    compareNumberDesc(a.winrate.score, b.winrate.score) ||
-    compareNumberDesc(a.row.totalR, b.row.totalR) ||
-    a.index - b.index
+    compareNumberDesc(a.winrateSample, b.winrateSample) ||
+    compareNumberDesc(a.completed, b.completed) ||
+    compareNumberDesc(a.seen, b.seen) ||
+    compareNumberDesc(a.observations, b.observations) ||
+    compareNormalizedWinrate(a, b)
   );
 }
 
-function compareWrappedByMode(a, b, mode) {
-  if (mode === 'winrate') return compareWrappedWinrate(a, b);
-  if (mode === 'totalR') return compareWrappedTotalR(a, b);
-  if (mode === 'avgR') return compareWrappedAvgR(a, b);
-  if (mode === 'directSL') return compareWrappedDirectSL(a, b);
-  if (mode === 'observed') return compareWrappedObserved(a, b);
+function compareNormalizedByMode(a, b, mode = 'balanced') {
+  if (mode === 'winrate') return compareNormalizedWinrate(a, b);
+  if (mode === 'totalR') return compareNormalizedTotalR(a, b);
+  if (mode === 'avgR') return compareNormalizedAvgR(a, b);
+  if (mode === 'directSL') return compareNormalizedDirectSL(a, b);
+  if (mode === 'observed') return compareNormalizedObserved(a, b);
 
-  return compareWrappedBalanced(a, b);
+  return compareNormalizedBalanced(a, b);
+}
+
+function bestBy(rows = [], comparator) {
+  return [...rows].sort(comparator)[0] || null;
 }
 
 function buildRawMicroRow(row = {}, key = '', index = 0) {
   const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || key || null;
   const familyId = getFamilyId(row);
+
   const macroFamilyId = getMacroFamilyId({
     ...row,
     microFamilyId,
@@ -672,6 +693,7 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     sourceIndex: index,
 
     microFamilyId,
+    trueMicroFamilyId: microFamilyId,
     familyId,
     macroFamilyId,
 
@@ -709,6 +731,7 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     wilsonLowerBound: round(row.wilsonLowerBound, 4),
     fairWinrate: round(
       row.fairWinrate ??
+      row.sampleAdjustedWinrate ??
       row.bayesianWinrate ??
       row.wilsonLowerBound,
       4
@@ -783,73 +806,38 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
   };
 }
 
-function buildRowsFromMicros(micros = {}, options = {}) {
-  const startedAt = options.startedAt || now();
-  const entries = Object.entries(micros || {});
-  const rows = [];
+function decorateMicroRow(row = {}) {
+  const winrate = getSampleAdjustedWinrate(row);
+  const dashboardBalancedScore = getDashboardBalancedScore(row, winrate);
 
-  for (let index = 0; index < entries.length; index += 1) {
-    if (routeBudgetExceeded(startedAt)) break;
+  return {
+    ...row,
 
-    const [key, row] = entries[index];
-    const built = buildRawMicroRow(row || {}, key, index);
+    winrateSample: round(winrate.sample, 4),
+    sampleAdjustedWinrate: round(winrate.score, 4),
+    sampleRawWinrate: round(winrate.rawWinrate, 4),
+    sampleBayesianWinrate: round(winrate.bayesianWinrate, 4),
+    sampleWilsonLowerBound: round(winrate.wilsonLowerBound, 4),
+    sampleReliability: round(winrate.reliability, 4),
 
-    if (built.microFamilyId) rows.push(built);
-  }
+    fairWinrate: round(
+      row.fairWinrate ??
+      winrate.score ??
+      row.bayesianWinrate ??
+      row.wilsonLowerBound,
+      4
+    ),
 
-  return rows;
+    dashboardBalancedScore: round(dashboardBalancedScore, 4)
+  };
 }
 
-function decorateRowsForDashboard(rows = [], startedAt = now()) {
-  const output = [];
-
-  for (let index = 0; index < rows.length; index += 1) {
-    if (routeBudgetExceeded(startedAt)) break;
-
-    const row = rows[index];
-    const winrate = getSampleAdjustedWinrate(row);
-    const dashboardBalancedScore = getDashboardBalancedScore(row, winrate);
-
-    output.push({
-      row: {
-        ...row,
-
-        winrateSample: round(winrate.sample, 4),
-        sampleAdjustedWinrate: round(winrate.score, 4),
-        sampleRawWinrate: round(winrate.rawWinrate, 4),
-        sampleBayesianWinrate: round(winrate.bayesianWinrate, 4),
-        sampleWilsonLowerBound: round(winrate.wilsonLowerBound, 4),
-        sampleReliability: round(winrate.reliability, 4),
-
-        dashboardBalancedScore: round(dashboardBalancedScore, 4)
-      },
-      index,
-      winrate,
-      dashboardBalancedScore
-    });
-  }
-
-  return output;
-}
-
-function applyDashboardRanking(rows = [], mode = 'balanced', startedAt = now()) {
-  return decorateRowsForDashboard(rows, startedAt)
-    .sort((a, b) => compareWrappedByMode(a, b, mode))
-    .map((item, index) => ({
-      ...item.row,
-      rank: index + 1
-    }));
-}
-
-function pruneRankCache() {
-  const entries = [...globalCache.entries()];
-
-  if (entries.length <= RANK_CACHE_MAX_KEYS) return;
-
-  entries
-    .sort((a, b) => num(a[1]?.ts, 0) - num(b[1]?.ts, 0))
-    .slice(0, Math.max(0, entries.length - RANK_CACHE_MAX_KEYS))
-    .forEach(([key]) => globalCache.delete(key));
+function buildRowsFromMicros(micros = {}) {
+  return Object.entries(micros || {})
+    .map(([key, row], index) => decorateMicroRow(
+      buildRawMicroRow(row || {}, key, index)
+    ))
+    .filter((row) => row.microFamilyId);
 }
 
 function microsSignature(micros = {}) {
@@ -865,170 +853,135 @@ function microsSignature(micros = {}) {
   return `${count}:${first}:${middle}:${last}`;
 }
 
-function parseFilters(req) {
-  const side = String(firstQueryValue(req.query?.side, '') || '').toUpperCase();
-  const familyId = String(firstQueryValue(req.query?.familyId, '') || '').trim();
-  const macroFamilyId = String(firstQueryValue(req.query?.macroFamilyId, '') || '').trim();
-  const q = String(firstQueryValue(req.query?.q, '') || '').trim().toUpperCase();
+async function getWeekMicrosCached(weekKey) {
+  const cached = rootCache.weekMicros.get(weekKey);
 
-  return {
-    side,
-    familyId,
-    macroFamilyId,
-    q,
+  if (cached && now() - cached.ts < WEEK_MICROS_CACHE_TTL_MS) {
+    return {
+      micros: cached.micros || {},
+      cacheHit: true,
+      stale: false,
+      warning: null
+    };
+  }
 
-    activeOnly: isTrue(firstQueryValue(req.query?.activeOnly, false)),
-    macroActiveOnly: isTrue(firstQueryValue(req.query?.macroActiveOnly, false)),
+  try {
+    const micros = await withTimeout(
+      getWeekMicros(weekKey),
+      GET_WEEK_MICROS_TIMEOUT_MS,
+      'GET_WEEK_MICROS_TIMEOUT'
+    );
 
-    minCompleted: num(firstQueryValue(req.query?.minCompleted, 0), 0),
-    minSample: num(firstQueryValue(req.query?.minSample, 0), 0),
-    minSeen: num(firstQueryValue(req.query?.minSeen, 0), 0)
-  };
+    rootCache.weekMicros.set(weekKey, {
+      ts: now(),
+      micros: micros || {}
+    });
+
+    pruneMap(rootCache.weekMicros);
+
+    return {
+      micros: micros || {},
+      cacheHit: false,
+      stale: false,
+      warning: null
+    };
+  } catch (error) {
+    if (cached) {
+      return {
+        micros: cached.micros || {},
+        cacheHit: true,
+        stale: true,
+        warning: error?.message || String(error)
+      };
+    }
+
+    return {
+      micros: {},
+      cacheHit: false,
+      stale: false,
+      warning: error?.message || String(error)
+    };
+  }
 }
 
-function wantedTradeSide(side) {
-  const raw = upper(side);
-
-  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
-  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
-
-  return raw || '';
-}
-
-function rowMatchesSearch(row = {}, q = '') {
-  if (!q) return true;
-
-  const haystack = [
-    row.microFamilyId,
-    row.trueMicroFamilyId,
-    row.id,
-    row.key,
-    row.familyId,
-    row.family,
-    row.macroFamilyId,
-    row.parentMacroFamilyId,
-    row.parentMicroFamilyId,
-    row.parentFamilyId,
-    row.definition,
-    row.microDefinition,
-    row.macroDefinition,
-    row.parentDefinition,
-    ...getArray(row.definitionParts),
-    ...getArray(row.microDefinitionParts),
-    ...getArray(row.macroDefinitionParts),
-    ...getArray(row.parentDefinitionParts)
-  ]
-    .map((value) => upper(value))
-    .join(' | ');
-
-  return haystack.includes(q);
-}
-
-function rowPassesFilters(row = {}, filters, activeSet, activeMacroSet) {
-  if (filters.side) {
-    const wantedSide = wantedTradeSide(filters.side);
-
-    if (inferTradeSide(row) !== wantedSide) return false;
+async function getActiveRotationSafe() {
+  try {
+    return await withTimeout(
+      getActiveRotation(),
+      GET_ACTIVE_ROTATION_TIMEOUT_MS,
+      'GET_ACTIVE_ROTATION_TIMEOUT'
+    );
+  } catch {
+    return null;
   }
-
-  if (filters.familyId && String(row.familyId || '') !== filters.familyId) {
-    return false;
-  }
-
-  if (
-    filters.macroFamilyId &&
-    String(getMacroFamilyId(row) || '') !== filters.macroFamilyId
-  ) {
-    return false;
-  }
-
-  if (filters.activeOnly && !activeSet.has(row.microFamilyId)) {
-    return false;
-  }
-
-  if (filters.macroActiveOnly && !activeMacroSet.has(getMacroFamilyId(row))) {
-    return false;
-  }
-
-  if (filters.minCompleted > 0 && num(row.completed, 0) < filters.minCompleted) {
-    return false;
-  }
-
-  if (filters.minSample > 0 && num(row.winrateSample, 0) < filters.minSample) {
-    return false;
-  }
-
-  if (filters.minSeen > 0 && num(row.seen, 0) < filters.minSeen) {
-    return false;
-  }
-
-  return rowMatchesSearch(row, filters.q);
-}
-
-function filtersNeedActiveRotation(filters = {}, includeActiveRotation = false) {
-  return Boolean(
-    includeActiveRotation ||
-    filters.activeOnly ||
-    filters.macroActiveOnly
-  );
 }
 
 function getRankedRowsCached({
   weekKey,
   mode,
-  micros,
-  filters,
-  startedAt
+  micros
 }) {
   const signature = microsSignature(micros);
-  const sideKey = filters.side ? wantedTradeSide(filters.side) : 'ALL';
-  const qKey = filters.q ? `Q:${filters.q}` : 'NOQ';
-  const familyKey = filters.familyId ? `F:${filters.familyId}` : 'NOF';
-  const macroKey = filters.macroFamilyId ? `M:${filters.macroFamilyId}` : 'NOM';
-  const minKey = [
-    filters.minCompleted || 0,
-    filters.minSample || 0,
-    filters.minSeen || 0
-  ].join(':');
-
-  const cacheKey = `${weekKey}|${mode}|${signature}|${sideKey}|${qKey}|${familyKey}|${macroKey}|${minKey}`;
-  const cached = globalCache.get(cacheKey);
+  const cacheKey = `${weekKey}|${mode}|${signature}`;
+  const cached = rootCache.ranked.get(cacheKey);
 
   if (cached && now() - cached.ts < RANK_CACHE_TTL_MS) {
     return {
       rows: cached.rows,
-      scannedRows: cached.scannedRows || cached.rows.length,
       cacheHit: true,
       cacheKey
     };
   }
 
-  const rawRows = buildRowsFromMicros(micros, { startedAt });
+  const rows = buildRowsFromMicros(micros)
+    .sort((a, b) => compareNormalizedByMode(a, b, mode))
+    .map((row, index) => ({
+      ...row,
+      rank: index + 1
+    }));
 
-  const preFilteredRows = rawRows.filter((row) => (
-    rowPassesFilters(row, {
-      ...filters,
-      activeOnly: false,
-      macroActiveOnly: false
-    }, new Set(), new Set())
-  ));
-
-  const rows = applyDashboardRanking(preFilteredRows, mode, startedAt);
-
-  globalCache.set(cacheKey, {
+  rootCache.ranked.set(cacheKey, {
     ts: now(),
-    rows,
-    scannedRows: rawRows.length
+    rows
   });
 
-  pruneRankCache();
+  pruneMap(rootCache.ranked);
 
   return {
     rows,
-    scannedRows: rawRows.length,
     cacheHit: false,
     cacheKey
   };
+}
+
+function extractActiveIds(activeRotation) {
+  if (!activeRotation) return [];
+
+  const ids = [
+    ...(Array.isArray(activeRotation.microFamilyIds) ? activeRotation.microFamilyIds : []),
+    ...(Array.isArray(activeRotation.activeMicroFamilyIds) ? activeRotation.activeMicroFamilyIds : []),
+    ...(Array.isArray(activeRotation.trueMicroFamilyIds) ? activeRotation.trueMicroFamilyIds : []),
+    ...(Array.isArray(activeRotation.ids) ? activeRotation.ids : []),
+    ...(Array.isArray(activeRotation.microFamilies)
+      ? activeRotation.microFamilies.map((row) => row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)
+      : [])
+  ];
+
+  return uniqueStrings(ids);
+}
+
+function extractActiveMacroIds(activeRotation) {
+  if (!activeRotation) return [];
+
+  const ids = [
+    ...(Array.isArray(activeRotation.macroFamilyIds) ? activeRotation.macroFamilyIds : []),
+    ...(Array.isArray(activeRotation.activeMacroFamilyIds) ? activeRotation.activeMacroFamilyIds : []),
+    ...(Array.isArray(activeRotation.microFamilies)
+      ? activeRotation.microFamilies.map((row) => getMacroFamilyId(row))
+      : [])
+  ];
+
+  return uniqueStrings(ids);
 }
 
 function normalizeMicroRow(
@@ -1040,7 +993,7 @@ function normalizeMicroRow(
     compact = true
   } = {}
 ) {
-  const microFamilyId = row.microFamilyId || row.id || row.key || null;
+  const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null;
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId(row);
   const tradeSide = inferTradeSide(row);
@@ -1054,9 +1007,10 @@ function normalizeMicroRow(
     : false;
 
   const base = {
-    rank: row.rank || index + 1,
+    rank: index + 1,
 
     microFamilyId,
+    trueMicroFamilyId: microFamilyId,
     familyId,
     macroFamilyId,
 
@@ -1202,7 +1156,8 @@ function compactBestRow(row) {
   if (!row) return null;
 
   return {
-    microFamilyId: row.microFamilyId || row.id || row.key || null,
+    microFamilyId: row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null,
+    trueMicroFamilyId: row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null,
     familyId: getFamilyId(row),
     macroFamilyId: getMacroFamilyId(row),
 
@@ -1235,155 +1190,6 @@ function compactBestRow(row) {
     balancedScore: round(row.balancedScore, 4),
     dashboardBalancedScore: round(row.dashboardBalancedScore, 4)
   };
-}
-
-function compareNormalizedWinrate(a, b) {
-  return (
-    compareNumberDesc(a.sampleAdjustedWinrate, b.sampleAdjustedWinrate) ||
-    compareNumberDesc(a.sampleWilsonLowerBound, b.sampleWilsonLowerBound) ||
-    compareNumberDesc(a.sampleBayesianWinrate, b.sampleBayesianWinrate) ||
-    compareNumberDesc(a.sampleRawWinrate, b.sampleRawWinrate) ||
-    compareNumberDesc(a.winrateSample, b.winrateSample) ||
-    compareNumberDesc(a.totalR, b.totalR) ||
-    compareNumberDesc(a.avgR, b.avgR) ||
-    compareIdAsc(a.microFamilyId, b.microFamilyId)
-  );
-}
-
-function compareNormalizedBalanced(a, b) {
-  return (
-    compareNumberDesc(a.dashboardBalancedScore, b.dashboardBalancedScore) ||
-    compareNormalizedWinrate(a, b)
-  );
-}
-
-function compareNormalizedTotalR(a, b) {
-  return (
-    compareNumberDesc(a.totalR, b.totalR) ||
-    compareNormalizedWinrate(a, b)
-  );
-}
-
-function compareNormalizedAvgR(a, b) {
-  return (
-    compareNumberDesc(a.avgR, b.avgR) ||
-    compareNormalizedWinrate(a, b)
-  );
-}
-
-function compareNormalizedDirectSL(a, b) {
-  return (
-    compareNumberAsc(a.directSLPct, b.directSLPct) ||
-    compareNumberDesc(a.winrateSample, b.winrateSample) ||
-    compareNormalizedWinrate(a, b)
-  );
-}
-
-function bestBy(rows = [], comparator) {
-  return [...rows].sort(comparator)[0] || null;
-}
-
-function buildSideSummary(rows = [], side) {
-  const sideRows = rows.filter((row) => inferTradeSide(row) === side);
-
-  return {
-    rows: sideRows.length,
-    bestBalanced: compactBestRow(bestBy(sideRows, compareNormalizedBalanced)),
-    bestWinrate: compactBestRow(bestBy(sideRows, compareNormalizedWinrate)),
-    bestTotalR: compactBestRow(bestBy(sideRows, compareNormalizedTotalR)),
-    bestAvgR: compactBestRow(bestBy(sideRows, compareNormalizedAvgR)),
-    lowestDirectSL: compactBestRow(bestBy(sideRows, compareNormalizedDirectSL))
-  };
-}
-
-function buildSummary(rows = [], activeSet = new Set()) {
-  const sourceRows = rows.length > FAST_SUMMARY_LIMIT
-    ? rows.slice(0, FAST_SUMMARY_LIMIT)
-    : rows;
-
-  const completedRows = sourceRows.filter((row) => num(row.completed, 0) > 0);
-  const tradableRows = sourceRows.filter((row) => num(row.winrateSample, 0) >= TRADABLE_SAMPLE_MIN);
-  const activeRows = sourceRows.filter((row) => activeSet.has(row.microFamilyId || row.id || row.key));
-
-  let totalR = 0;
-  let totalSeen = 0;
-  let totalCompleted = 0;
-  let totalWinrateSample = 0;
-  let totalCostR = 0;
-
-  for (const row of sourceRows) {
-    totalR += num(row.totalR, 0);
-    totalSeen += num(row.seen, 0);
-    totalCompleted += num(row.completed, 0);
-    totalWinrateSample += num(row.winrateSample, 0);
-    totalCostR += num(row.totalCostR, 0);
-  }
-
-  const bestBalanced = bestBy(sourceRows, compareNormalizedBalanced);
-  const bestTotalR = bestBy(sourceRows, compareNormalizedTotalR);
-  const bestAvgR = bestBy(sourceRows, compareNormalizedAvgR);
-  const bestWinrate = bestBy(sourceRows, compareNormalizedWinrate);
-  const lowestDirectSL = bestBy(sourceRows, compareNormalizedDirectSL);
-
-  return {
-    rows: rows.length,
-    summaryRowsUsed: sourceRows.length,
-    summaryTruncated: rows.length > sourceRows.length,
-
-    activeRows: activeRows.length,
-    activeIds: activeSet.size,
-
-    seen: round(totalSeen, 4),
-    completed: round(totalCompleted, 4),
-    winrateSample: round(totalWinrateSample, 4),
-
-    completedMicroFamilies: completedRows.length,
-    tradableMicroFamilies: tradableRows.length,
-
-    totalR: round(totalR, 4),
-    totalCostR: round(totalCostR, 4),
-    avgR: totalCompleted > 0 ? round(totalR / totalCompleted, 4) : 0,
-    avgCostR: totalCompleted > 0 ? round(totalCostR / totalCompleted, 4) : 0,
-
-    bestBalanced: compactBestRow(bestBalanced),
-    bestTotalR: compactBestRow(bestTotalR),
-    bestAvgR: compactBestRow(bestAvgR),
-    bestWinrate: compactBestRow(bestWinrate),
-    lowestDirectSL: compactBestRow(lowestDirectSL),
-
-    long: buildSideSummary(sourceRows, 'LONG'),
-    short: buildSideSummary(sourceRows, 'SHORT')
-  };
-}
-
-function extractActiveIds(activeRotation) {
-  if (!activeRotation) return [];
-
-  const ids = [
-    ...(Array.isArray(activeRotation.microFamilyIds) ? activeRotation.microFamilyIds : []),
-    ...(Array.isArray(activeRotation.activeMicroFamilyIds) ? activeRotation.activeMicroFamilyIds : []),
-    ...(Array.isArray(activeRotation.trueMicroFamilyIds) ? activeRotation.trueMicroFamilyIds : []),
-    ...(Array.isArray(activeRotation.ids) ? activeRotation.ids : []),
-    ...(Array.isArray(activeRotation.microFamilies)
-      ? activeRotation.microFamilies.map((row) => row.microFamilyId)
-      : [])
-  ];
-
-  return uniqueStrings(ids);
-}
-
-function extractActiveMacroIds(activeRotation) {
-  if (!activeRotation) return [];
-
-  const ids = [
-    ...(Array.isArray(activeRotation.macroFamilyIds) ? activeRotation.macroFamilyIds : []),
-    ...(Array.isArray(activeRotation.activeMacroFamilyIds) ? activeRotation.activeMacroFamilyIds : []),
-    ...(Array.isArray(activeRotation.microFamilies)
-      ? activeRotation.microFamilies.map((row) => getMacroFamilyId(row))
-      : [])
-  ];
-
-  return uniqueStrings(ids);
 }
 
 function compactActiveRotation(activeRotation) {
@@ -1428,6 +1234,110 @@ function compactActiveRotation(activeRotation) {
   };
 }
 
+function parseFilters(req) {
+  const side = String(firstQueryValue(req.query?.side, '') || '').toUpperCase();
+  const familyId = String(firstQueryValue(req.query?.familyId, '') || '').trim();
+  const macroFamilyId = String(firstQueryValue(req.query?.macroFamilyId, '') || '').trim();
+  const q = String(firstQueryValue(req.query?.q, '') || '').trim().toUpperCase();
+
+  return {
+    side,
+    familyId,
+    macroFamilyId,
+    q,
+
+    activeOnly: isTrue(firstQueryValue(req.query?.activeOnly, false)),
+    macroActiveOnly: isTrue(firstQueryValue(req.query?.macroActiveOnly, false)),
+
+    minCompleted: num(firstQueryValue(req.query?.minCompleted, 0), 0),
+    minSample: num(firstQueryValue(req.query?.minSample, 0), 0),
+    minSeen: num(firstQueryValue(req.query?.minSeen, 0), 0)
+  };
+}
+
+function wantedTradeSide(side) {
+  const raw = upper(side);
+
+  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
+
+  return raw || '';
+}
+
+function rowMatchesSearch(row = {}, q = '') {
+  if (!q) return true;
+
+  const haystack = [
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.id,
+    row.key,
+    row.familyId,
+    row.family,
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+    ...getArray(row.definitionParts),
+    ...getArray(row.microDefinitionParts),
+    ...getArray(row.macroDefinitionParts),
+    ...getArray(row.parentDefinitionParts)
+  ]
+    .map((value) => upper(value))
+    .join(' | ');
+
+  return haystack.includes(q);
+}
+
+function rowPassesFilters(row = {}, filters, activeSet, activeMacroSet) {
+  if (filters.side) {
+    const wantedSide = wantedTradeSide(filters.side);
+
+    if (inferTradeSide(row) !== wantedSide) return false;
+  }
+
+  if (filters.familyId && String(row.familyId || '') !== filters.familyId) {
+    return false;
+  }
+
+  if (
+    filters.macroFamilyId &&
+    String(getMacroFamilyId(row) || '') !== filters.macroFamilyId
+  ) {
+    return false;
+  }
+
+  if (filters.activeOnly && !activeSet.has(row.microFamilyId)) {
+    return false;
+  }
+
+  if (filters.macroActiveOnly && !activeMacroSet.has(getMacroFamilyId(row))) {
+    return false;
+  }
+
+  if (filters.minCompleted > 0 && num(row.completed, 0) < filters.minCompleted) {
+    return false;
+  }
+
+  if (filters.minSample > 0 && num(row.winrateSample, 0) < filters.minSample) {
+    return false;
+  }
+
+  if (filters.minSeen > 0 && num(row.seen, 0) < filters.minSeen) {
+    return false;
+  }
+
+  if (!rowMatchesSearch(row, filters.q)) {
+    return false;
+  }
+
+  return true;
+}
+
 function rowKey(row = {}) {
   return String(
     row.microFamilyId ||
@@ -1457,73 +1367,216 @@ function sideCounts(rows = []) {
   );
 }
 
-function ensureSideRows({
-  baseRows = [],
-  allRows = [],
-  side,
-  ensureLimit = DEFAULT_SIDE_ENSURE_LIMIT,
-  seenKeys
-} = {}) {
-  const currentSideCount = baseRows.filter((row) => inferTradeSide(row) === side).length;
-  const missing = Math.max(0, ensureLimit - currentSideCount);
+function pushTopRow(bucket, row, mode, maxKeep) {
+  bucket.push(row);
 
-  if (missing <= 0) return [];
+  if (bucket.length <= maxKeep * 2) return;
 
-  const additions = [];
-
-  for (const row of allRows) {
-    if (inferTradeSide(row) !== side) continue;
-
-    const key = rowKey(row);
-
-    if (!key || seenKeys.has(key)) continue;
-
-    seenKeys.add(key);
-    additions.push(row);
-
-    if (additions.length >= missing) break;
-  }
-
-  return additions;
+  bucket.sort((a, b) => compareNormalizedByMode(a, b, mode));
+  bucket.length = maxKeep;
 }
 
-function selectResponseRows({
-  filteredRows = [],
-  limit = DEFAULT_LIMIT,
-  sideEnsureLimit = DEFAULT_SIDE_ENSURE_LIMIT,
-  filters = {}
+function buildFastTopSides({
+  micros = {},
+  mode = 'balanced',
+  sideLimit = DEFAULT_SIDE_LIMIT,
+  filters = {},
+  activeSet = new Set(),
+  activeMacroSet = new Set()
 } = {}) {
-  const baseRows = filteredRows.slice(0, limit);
-
-  if (filters.side || sideEnsureLimit <= 0) return baseRows;
-
-  const seenKeys = new Set(
-    baseRows
-      .map((row) => rowKey(row))
-      .filter(Boolean)
-  );
-
-  const longAdditions = ensureSideRows({
-    baseRows,
-    allRows: filteredRows,
-    side: 'LONG',
-    ensureLimit: sideEnsureLimit,
-    seenKeys
+  const signature = microsSignature(micros);
+  const cacheKey = JSON.stringify({
+    sig: signature,
+    mode,
+    sideLimit,
+    filters: {
+      side: filters.side,
+      familyId: filters.familyId,
+      macroFamilyId: filters.macroFamilyId,
+      q: filters.q,
+      activeOnly: filters.activeOnly,
+      macroActiveOnly: filters.macroActiveOnly,
+      minCompleted: filters.minCompleted,
+      minSample: filters.minSample,
+      minSeen: filters.minSeen
+    },
+    activeMicroSize: activeSet.size,
+    activeMacroSize: activeMacroSet.size
   });
 
-  const shortAdditions = ensureSideRows({
-    baseRows,
-    allRows: filteredRows,
-    side: 'SHORT',
-    ensureLimit: sideEnsureLimit,
-    seenKeys
+  const cached = rootCache.topSides.get(cacheKey);
+
+  if (cached && now() - cached.ts < TOP_SIDES_CACHE_TTL_MS) {
+    return {
+      ...cached.value,
+      cacheHit: true,
+      cacheKey
+    };
+  }
+
+  const maxKeep = Math.max(sideLimit * 4, sideLimit + 20, 80);
+
+  const shortRows = [];
+  const longRows = [];
+  const unknownRows = [];
+
+  const rawCounts = {
+    long: 0,
+    short: 0,
+    unknown: 0
+  };
+
+  const filteredCounts = {
+    long: 0,
+    short: 0,
+    unknown: 0
+  };
+
+  let totalAvailable = 0;
+  let filteredTotal = 0;
+
+  for (const [key, rawRow] of Object.entries(micros || {})) {
+    totalAvailable += 1;
+
+    const row = decorateMicroRow(
+      buildRawMicroRow(rawRow || {}, key, totalAvailable - 1)
+    );
+
+    if (row.tradeSide === 'LONG') rawCounts.long += 1;
+    else if (row.tradeSide === 'SHORT') rawCounts.short += 1;
+    else rawCounts.unknown += 1;
+
+    if (!rowPassesFilters(row, filters, activeSet, activeMacroSet)) {
+      continue;
+    }
+
+    filteredTotal += 1;
+
+    if (row.tradeSide === 'LONG') {
+      filteredCounts.long += 1;
+      pushTopRow(longRows, row, mode, maxKeep);
+      continue;
+    }
+
+    if (row.tradeSide === 'SHORT') {
+      filteredCounts.short += 1;
+      pushTopRow(shortRows, row, mode, maxKeep);
+      continue;
+    }
+
+    filteredCounts.unknown += 1;
+
+    if (unknownRows.length < Math.min(sideLimit, 25)) {
+      unknownRows.push(row);
+    }
+  }
+
+  shortRows.sort((a, b) => compareNormalizedByMode(a, b, mode));
+  longRows.sort((a, b) => compareNormalizedByMode(a, b, mode));
+  unknownRows.sort((a, b) => compareNormalizedByMode(a, b, mode));
+
+  const topShortRows = shortRows.slice(0, sideLimit);
+  const topLongRows = longRows.slice(0, sideLimit);
+
+  const value = {
+    shortRows: topShortRows,
+    longRows: topLongRows,
+    unknownRows,
+
+    bestShort: topShortRows[0] || null,
+    bestLong: topLongRows[0] || null,
+
+    totalAvailable,
+    filteredTotal,
+
+    rawSideCounts: rawCounts,
+    filteredSideCounts: filteredCounts,
+
+    cacheHit: false,
+    cacheKey
+  };
+
+  rootCache.topSides.set(cacheKey, {
+    ts: now(),
+    value
   });
 
-  return [
-    ...baseRows,
-    ...longAdditions,
-    ...shortAdditions
-  ];
+  pruneMap(rootCache.topSides);
+
+  return value;
+}
+
+function buildCompactSummary(rows = [], activeSet = new Set(), counts = {}) {
+  let totalR = 0;
+  let totalSeen = 0;
+  let totalCompleted = 0;
+  let totalWinrateSample = 0;
+  let totalCostR = 0;
+  let tradableMicroFamilies = 0;
+  let completedMicroFamilies = 0;
+  let activeRows = 0;
+
+  for (const row of rows) {
+    totalR += num(row.totalR, 0);
+    totalSeen += num(row.seen, 0);
+    totalCompleted += num(row.completed, 0);
+    totalWinrateSample += num(row.winrateSample, 0);
+    totalCostR += num(row.totalCostR, 0);
+
+    if (num(row.completed, 0) > 0) completedMicroFamilies += 1;
+    if (num(row.winrateSample, 0) >= TRADABLE_SAMPLE_MIN) tradableMicroFamilies += 1;
+    if (activeSet.has(row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)) activeRows += 1;
+  }
+
+  return {
+    rows: counts.filteredTotal ?? rows.length,
+    returnedRows: rows.length,
+    activeRows,
+    activeIds: activeSet.size,
+
+    seen: round(totalSeen, 4),
+    completed: round(totalCompleted, 4),
+    winrateSample: round(totalWinrateSample, 4),
+
+    completedMicroFamilies,
+    tradableMicroFamilies,
+
+    totalR: round(totalR, 4),
+    totalCostR: round(totalCostR, 4),
+    avgR: totalCompleted > 0 ? round(totalR / totalCompleted, 4) : 0,
+    avgCostR: totalCompleted > 0 ? round(totalCostR / totalCompleted, 4) : 0,
+
+    bestBalanced: compactBestRow(bestBy(rows, compareNormalizedBalanced)),
+    bestTotalR: compactBestRow(bestBy(rows, compareNormalizedTotalR)),
+    bestAvgR: compactBestRow(bestBy(rows, compareNormalizedAvgR)),
+    bestWinrate: compactBestRow(bestBy(rows, compareNormalizedWinrate)),
+    lowestDirectSL: compactBestRow(bestBy(rows, compareNormalizedDirectSL)),
+
+    long: {
+      rows: counts.filteredSideCounts?.long ?? rows.filter((row) => row.tradeSide === 'LONG').length,
+      bestBalanced: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'LONG'), compareNormalizedBalanced)),
+      bestWinrate: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'LONG'), compareNormalizedWinrate)),
+      bestTotalR: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'LONG'), compareNormalizedTotalR)),
+      bestAvgR: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'LONG'), compareNormalizedAvgR)),
+      lowestDirectSL: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'LONG'), compareNormalizedDirectSL))
+    },
+
+    short: {
+      rows: counts.filteredSideCounts?.short ?? rows.filter((row) => row.tradeSide === 'SHORT').length,
+      bestBalanced: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'SHORT'), compareNormalizedBalanced)),
+      bestWinrate: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'SHORT'), compareNormalizedWinrate)),
+      bestTotalR: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'SHORT'), compareNormalizedTotalR)),
+      bestAvgR: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'SHORT'), compareNormalizedAvgR)),
+      lowestDirectSL: compactBestRow(bestBy(rows.filter((row) => row.tradeSide === 'SHORT'), compareNormalizedDirectSL))
+    }
+  };
+}
+
+function buildFullSummary(rows = [], activeSet = new Set()) {
+  return buildCompactSummary(rows, activeSet, {
+    filteredTotal: rows.length,
+    filteredSideCounts: sideCounts(rows)
+  });
 }
 
 function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
@@ -1534,166 +1587,370 @@ function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
   }));
 }
 
-function shouldReturnMinimalActive(req, filters, includeActiveRotation) {
-  const fast = isTrue(firstQueryValue(req.query?.fast, false));
+function shouldUseFastDefault({
+  view,
+  compact,
+  includeActiveRotation,
+  filters
+}) {
+  if (view === 'full') return false;
+  if (view === 'topSides' || view === 'fast' || view === 'side') return true;
 
-  if (!fast) return false;
+  if (!compact) return false;
   if (includeActiveRotation) return false;
-  if (filters.activeOnly || filters.macroActiveOnly) return false;
+
+  if (filters.familyId) return false;
+  if (filters.macroFamilyId) return false;
+  if (filters.activeOnly) return false;
+  if (filters.macroActiveOnly) return false;
+  if (filters.minCompleted > 0) return false;
+  if (filters.minSample > 0) return false;
+  if (filters.minSeen > 0) return false;
 
   return true;
 }
 
-async function loadActiveRotationMaybe(req, filters, includeActiveRotation) {
-  if (shouldReturnMinimalActive(req, filters, includeActiveRotation)) {
-    return {
-      activeRotation: null,
-      skipped: true
-    };
-  }
+function selectedRowsFromFastResult(fastResult, filters = {}) {
+  const wanted = wantedTradeSide(filters.side);
+
+  if (wanted === 'SHORT') return fastResult.shortRows;
+  if (wanted === 'LONG') return fastResult.longRows;
+  if (wanted === 'UNKNOWN') return fastResult.unknownRows;
+
+  return [
+    ...fastResult.shortRows,
+    ...fastResult.longRows
+  ];
+}
+
+async function buildSharedContext(req) {
+  const currentWeekKey = getIsoWeekKey();
+  const previousWeekKey = getPreviousIsoWeekKey();
+
+  const requestedWeekKey = firstQueryValue(req.query?.weekKey, currentWeekKey);
+  const requestedMode = String(firstQueryValue(req.query?.mode, 'balanced') || 'balanced');
+
+  const mode = VALID_MODES.has(requestedMode)
+    ? requestedMode
+    : 'balanced';
+
+  const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
+  const requestedLimitNumber = Number(requestedLimitRaw) || DEFAULT_LIMIT;
+  const limit = toSafeLimit(requestedLimitRaw, DEFAULT_LIMIT, MAX_LIMIT);
+
+  const sideLimit = toSafeLimit(
+    firstQueryValue(
+      req.query?.sideLimit,
+      firstQueryValue(req.query?.sideEnsureLimit, DEFAULT_SIDE_LIMIT)
+    ),
+    DEFAULT_SIDE_LIMIT,
+    MAX_SIDE_LIMIT
+  );
+
+  const sideEnsureLimit = toSafeLimit(
+    firstQueryValue(
+      req.query?.sideEnsureLimit,
+      firstQueryValue(req.query?.sideLimit, DEFAULT_SIDE_ENSURE_LIMIT)
+    ),
+    DEFAULT_SIDE_ENSURE_LIMIT,
+    MAX_SIDE_ENSURE_LIMIT
+  );
+
+  const includeActiveRotation = isTrue(firstQueryValue(req.query?.includeActiveRotation, false));
+  const details = isTrue(firstQueryValue(req.query?.details, false));
+  const compactRaw = firstQueryValue(req.query?.compact, null);
+
+  const compact = details
+    ? false
+    : compactRaw === null
+      ? true
+      : isTrue(compactRaw);
+
+  const view = String(firstQueryValue(req.query?.view, '') || '').trim();
+  const filters = parseFilters(req);
+
+  const [weekMicrosResult, activeRotation] = await Promise.all([
+    getWeekMicrosCached(requestedWeekKey),
+    getActiveRotationSafe()
+  ]);
+
+  const activeMicroFamilyIds = extractActiveIds(activeRotation);
+  const activeMacroFamilyIds = extractActiveMacroIds(activeRotation);
+
+  const activeSet = new Set(activeMicroFamilyIds);
+  const activeMacroSet = new Set(activeMacroFamilyIds);
 
   return {
-    activeRotation: await getActiveRotation(),
-    skipped: false
+    currentWeekKey,
+    previousWeekKey,
+    requestedWeekKey,
+    requestedMode,
+    mode,
+
+    requestedLimitRaw,
+    requestedLimitNumber,
+    limit,
+
+    sideLimit,
+    sideEnsureLimit,
+
+    includeActiveRotation,
+    compact,
+    view,
+    filters,
+
+    micros: weekMicrosResult.micros,
+    microsCacheHit: weekMicrosResult.cacheHit,
+    microsCacheStale: weekMicrosResult.stale,
+    microsWarning: weekMicrosResult.warning,
+
+    activeRotation,
+    activeMicroFamilyIds,
+    activeMacroFamilyIds,
+    activeSet,
+    activeMacroSet
   };
+}
+
+async function handleFastResponse(req, res, context, requestStartedAt) {
+  const fastResult = buildFastTopSides({
+    micros: context.micros,
+    mode: context.mode,
+    sideLimit: context.sideLimit,
+    filters: context.filters,
+    activeSet: context.activeSet,
+    activeMacroSet: context.activeMacroSet
+  });
+
+  const selectedRows = selectedRowsFromFastResult(fastResult, context.filters)
+    .slice(0, context.limit);
+
+  const normalizedRows = normalizeRows(
+    selectedRows,
+    context.activeSet,
+    context.activeMacroSet,
+    context.compact
+  );
+
+  const normalizedShortRows = normalizeRows(
+    fastResult.shortRows,
+    context.activeSet,
+    context.activeMacroSet,
+    context.compact
+  );
+
+  const normalizedLongRows = normalizeRows(
+    fastResult.longRows,
+    context.activeSet,
+    context.activeMacroSet,
+    context.compact
+  );
+
+  const normalizedUnknownRows = normalizeRows(
+    fastResult.unknownRows,
+    context.activeSet,
+    context.activeMacroSet,
+    context.compact
+  );
+
+  const summaryRows = [
+    ...fastResult.shortRows,
+    ...fastResult.longRows
+  ];
+
+  const summary = buildCompactSummary(summaryRows, context.activeSet, {
+    filteredTotal: fastResult.filteredTotal,
+    filteredSideCounts: fastResult.filteredSideCounts
+  });
+
+  const warnings = [
+    context.microsWarning
+      ? `MICROS_SOURCE_WARNING:${context.microsWarning}`
+      : null
+  ].filter(Boolean);
+
+  return res.status(200).json({
+    ok: true,
+    fast: true,
+    view: context.view || 'topSides-default',
+
+    weekKey: context.requestedWeekKey,
+    currentWeekKey: context.currentWeekKey,
+    previousWeekKey: context.previousWeekKey,
+
+    mode: context.mode,
+    requestedMode: context.requestedMode,
+
+    requestedLimit: context.requestedLimitNumber,
+    limit: context.limit,
+    limitCapped: context.requestedLimitNumber > context.limit,
+
+    sideLimit: context.sideLimit,
+    sideEnsureLimit: context.sideEnsureLimit,
+
+    filters: context.filters,
+    compact: context.compact,
+
+    count: normalizedRows.length,
+    filtered: fastResult.filteredTotal,
+    totalAvailable: fastResult.totalAvailable,
+
+    rawSideCounts: fastResult.rawSideCounts,
+    filteredSideCounts: fastResult.filteredSideCounts,
+    responseSideCounts: sideCounts(normalizedRows),
+
+    activeRotationId: context.activeRotation?.rotationId || null,
+    activeRotation: context.includeActiveRotation
+      ? context.activeRotation
+      : compactActiveRotation(context.activeRotation),
+
+    activeMicroFamilyIds: context.activeMicroFamilyIds,
+    activeMacroFamilyIds: context.activeMacroFamilyIds,
+
+    bestShort: compactBestRow(fastResult.bestShort),
+    bestLong: compactBestRow(fastResult.bestLong),
+
+    shortRows: normalizedShortRows,
+    longRows: normalizedLongRows,
+    unknownRows: normalizedUnknownRows,
+
+    summary,
+    rows: normalizedRows,
+
+    warnings,
+
+    perf: {
+      durationMs: now() - requestStartedAt,
+      path: 'fastTopSides',
+      microsCacheHit: context.microsCacheHit,
+      microsCacheStale: context.microsCacheStale,
+      topSidesCacheHit: fastResult.cacheHit,
+      topSidesCacheKey: fastResult.cacheKey,
+      weekMicrosCacheSize: rootCache.weekMicros.size,
+      topSidesCacheSize: rootCache.topSides.size,
+      rankedCacheSize: rootCache.ranked.size
+    },
+
+    serverTs: Date.now()
+  });
+}
+
+async function handleFullResponse(req, res, context, requestStartedAt) {
+  const {
+    rows: dashboardRankedRows,
+    cacheHit,
+    cacheKey
+  } = getRankedRowsCached({
+    weekKey: context.requestedWeekKey,
+    mode: context.mode,
+    micros: context.micros || {}
+  });
+
+  const filteredRows = dashboardRankedRows.filter((row) => (
+    rowPassesFilters(row, context.filters, context.activeSet, context.activeMacroSet)
+  ));
+
+  const responseRows = filteredRows.slice(0, context.limit);
+
+  const normalizedRows = normalizeRows(
+    responseRows,
+    context.activeSet,
+    context.activeMacroSet,
+    context.compact
+  );
+
+  const summary = buildFullSummary(filteredRows, context.activeSet);
+
+  const warnings = [
+    context.microsWarning
+      ? `MICROS_SOURCE_WARNING:${context.microsWarning}`
+      : null
+  ].filter(Boolean);
+
+  return res.status(200).json({
+    ok: true,
+    fast: false,
+    view: context.view || 'full',
+
+    weekKey: context.requestedWeekKey,
+    currentWeekKey: context.currentWeekKey,
+    previousWeekKey: context.previousWeekKey,
+
+    mode: context.mode,
+    requestedMode: context.requestedMode,
+
+    requestedLimit: context.requestedLimitNumber,
+    limit: context.limit,
+    limitCapped: context.requestedLimitNumber > context.limit,
+
+    sideLimit: context.sideLimit,
+    sideEnsureLimit: context.sideEnsureLimit,
+
+    filters: context.filters,
+    compact: context.compact,
+
+    count: normalizedRows.length,
+    filtered: filteredRows.length,
+    totalAvailable: dashboardRankedRows.length,
+
+    rawSideCounts: sideCounts(dashboardRankedRows),
+    filteredSideCounts: sideCounts(filteredRows),
+    responseSideCounts: sideCounts(normalizedRows),
+
+    activeRotationId: context.activeRotation?.rotationId || null,
+    activeRotation: context.includeActiveRotation
+      ? context.activeRotation
+      : compactActiveRotation(context.activeRotation),
+
+    activeMicroFamilyIds: context.activeMicroFamilyIds,
+    activeMacroFamilyIds: context.activeMacroFamilyIds,
+
+    summary,
+    rows: normalizedRows,
+
+    warnings,
+
+    perf: {
+      durationMs: now() - requestStartedAt,
+      path: 'fullRanked',
+      microsCacheHit: context.microsCacheHit,
+      microsCacheStale: context.microsCacheStale,
+      rankCacheHit: cacheHit,
+      rankCacheKey: cacheKey,
+      weekMicrosCacheSize: rootCache.weekMicros.size,
+      topSidesCacheSize: rootCache.topSides.size,
+      rankedCacheSize: rootCache.ranked.size
+    },
+
+    serverTs: Date.now()
+  });
 }
 
 export default async function handler(req, res) {
   const requestStartedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'fast-v2');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'fast-default');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
   }
 
   try {
-    const currentWeekKey = getIsoWeekKey();
-    const previousWeekKey = getPreviousIsoWeekKey();
+    const context = await buildSharedContext(req);
 
-    const requestedWeekKey = firstQueryValue(req.query?.weekKey, currentWeekKey);
-    const requestedMode = String(firstQueryValue(req.query?.mode, 'balanced') || 'balanced');
+    if (
+      shouldUseFastDefault({
+        view: context.view,
+        compact: context.compact,
+        includeActiveRotation: context.includeActiveRotation,
+        filters: context.filters
+      })
+    ) {
+      return await handleFastResponse(req, res, context, requestStartedAt);
+    }
 
-    const mode = VALID_MODES.has(requestedMode)
-      ? requestedMode
-      : 'balanced';
-
-    const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
-    const requestedLimitNumber = Number(requestedLimitRaw) || DEFAULT_LIMIT;
-    const limit = toSafeLimit(requestedLimitRaw, DEFAULT_LIMIT, MAX_LIMIT);
-
-    const includeActiveRotationRaw = firstQueryValue(req.query?.includeActiveRotation, false);
-    const includeActiveRotation = isTrue(includeActiveRotationRaw) && !isFalse(includeActiveRotationRaw);
-
-    const sideEnsureLimit = toSafeLimit(
-      firstQueryValue(
-        req.query?.sideEnsureLimit,
-        firstQueryValue(req.query?.sideLimit, DEFAULT_SIDE_ENSURE_LIMIT)
-      ),
-      DEFAULT_SIDE_ENSURE_LIMIT,
-      MAX_SIDE_ENSURE_LIMIT
-    );
-
-    const compact = !isTrue(firstQueryValue(req.query?.details, false));
-    const filters = parseFilters(req);
-
-    const micros = await getWeekMicros(requestedWeekKey);
-
-    const { activeRotation, skipped: activeRotationSkipped } = await loadActiveRotationMaybe(
-      req,
-      filters,
-      includeActiveRotation
-    );
-
-    const activeMicroFamilyIds = extractActiveIds(activeRotation);
-    const activeMacroFamilyIds = extractActiveMacroIds(activeRotation);
-
-    const activeSet = new Set(activeMicroFamilyIds);
-    const activeMacroSet = new Set(activeMacroFamilyIds);
-
-    const {
-      rows: preFilteredRankedRows,
-      scannedRows,
-      cacheHit,
-      cacheKey
-    } = getRankedRowsCached({
-      weekKey: requestedWeekKey,
-      mode,
-      micros: micros || {},
-      filters,
-      startedAt: requestStartedAt
-    });
-
-    const filteredRows = preFilteredRankedRows.filter((row) => (
-      rowPassesFilters(row, filters, activeSet, activeMacroSet)
-    ));
-
-    const responseRows = selectResponseRows({
-      filteredRows,
-      limit,
-      sideEnsureLimit,
-      filters
-    });
-
-    const normalizedRows = normalizeRows(responseRows, activeSet, activeMacroSet, compact);
-    const summary = buildSummary(filteredRows, activeSet);
-    const activeRotationCompact = compactActiveRotation(activeRotation);
-
-    const rawSideCounts = sideCounts(preFilteredRankedRows);
-    const filteredSideCounts = sideCounts(filteredRows);
-    const responseSideCounts = sideCounts(normalizedRows);
-
-    return res.status(200).json({
-      ok: true,
-
-      weekKey: requestedWeekKey,
-      currentWeekKey,
-      previousWeekKey,
-
-      mode,
-      requestedMode,
-
-      requestedLimit: requestedLimitNumber,
-      limit,
-      limitCapped: requestedLimitNumber > limit,
-
-      sideEnsureLimit,
-      filters,
-      compact,
-
-      count: normalizedRows.length,
-      filtered: filteredRows.length,
-      totalAvailable: preFilteredRankedRows.length,
-      scannedRows,
-
-      rawSideCounts,
-      filteredSideCounts,
-      responseSideCounts,
-
-      activeRotationId: activeRotation?.rotationId || null,
-      activeRotation: includeActiveRotation ? activeRotation : activeRotationCompact,
-      activeRotationSkipped,
-      activeMicroFamilyIds,
-      activeMacroFamilyIds,
-
-      summary,
-
-      rows: normalizedRows,
-
-      perf: {
-        durationMs: elapsed(requestStartedAt),
-        rankCacheHit: cacheHit,
-        rankCacheKey: cacheKey,
-        rankCacheTtlMs: RANK_CACHE_TTL_MS,
-        rankCacheSize: globalCache.size,
-        fastMode: isTrue(firstQueryValue(req.query?.fast, false)),
-        activeRotationSkipped,
-        hardRouteBudgetMs: HARD_ROUTE_BUDGET_MS
-      },
-
-      serverTs: Date.now()
-    });
+    return await handleFullResponse(req, res, context, requestStartedAt);
   } catch (error) {
     return res.status(500).json({
       ok: false,
