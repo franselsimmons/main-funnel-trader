@@ -104,6 +104,42 @@ function isShort(side) {
   return sideToTradeSide(side) === 'SHORT';
 }
 
+function isFinitePositive(value) {
+  const n = Number(value);
+
+  return Number.isFinite(n) && n > 0;
+}
+
+function extractMarketPrice(value) {
+  if (typeof value === 'number' || typeof value === 'string') {
+    const n = safeNumber(value, 0);
+
+    return isFinitePositive(n) ? n : 0;
+  }
+
+  if (!value || typeof value !== 'object') return 0;
+
+  const candidates = [
+    value.markPrice,
+    value.price,
+    value.lastPrice,
+    value.close,
+    value.indexPrice,
+    value.midPrice,
+    value.data?.markPrice,
+    value.data?.price,
+    value.data?.lastPrice
+  ];
+
+  for (const candidate of candidates) {
+    const n = safeNumber(candidate, 0);
+
+    if (isFinitePositive(n)) return n;
+  }
+
+  return 0;
+}
+
 function idHasSchema(id, schema) {
   const value = String(id || '').toUpperCase();
   const target = String(schema || '').toUpperCase();
@@ -326,6 +362,56 @@ function applyLiveStopManagement(position) {
   return position;
 }
 
+function didHitTp(position = {}, price) {
+  const current = safeNumber(price, 0);
+  const tp = safeNumber(position.tp, 0);
+
+  if (current <= 0 || tp <= 0) return false;
+
+  if (isLong(position.side)) return current >= tp;
+  if (isShort(position.side)) return current <= tp;
+
+  return false;
+}
+
+function didHitSl(position = {}, price) {
+  const current = safeNumber(price, 0);
+  const sl = safeNumber(position.sl, 0);
+
+  if (current <= 0 || sl <= 0) return false;
+
+  if (isLong(position.side)) return current <= sl;
+  if (isShort(position.side)) return current >= sl;
+
+  return false;
+}
+
+function slExitReason(position = {}) {
+  const source = String(position.slManagementSource || '').toUpperCase();
+
+  if (source === 'TRAIL') return 'TRAIL_SL';
+  if (source === 'BE') return 'BE_SL';
+
+  return 'SL';
+}
+
+function buildExitResult({
+  reason,
+  observedPrice,
+  triggerPrice
+} = {}) {
+  const cleanObserved = safeNumber(observedPrice, 0);
+  const cleanTrigger = safeNumber(triggerPrice, cleanObserved);
+
+  return {
+    shouldExit: true,
+    reason,
+    observedPrice: roundPrice(cleanObserved),
+    triggerPrice: roundPrice(cleanTrigger),
+    executionPrice: roundPrice(cleanTrigger)
+  };
+}
+
 function detectExit({
   position,
   price,
@@ -355,53 +441,32 @@ function detectExit({
     };
   }
 
-  const hitTP = long
-    ? current >= tp
-    : current <= tp;
+  if (didHitSl(position, current)) {
+    return buildExitResult({
+      reason: slExitReason(position),
+      observedPrice: current,
+      triggerPrice: sl
+    });
+  }
 
-  const hitSL = long
-    ? current <= sl
-    : current >= sl;
+  if (didHitTp(position, current)) {
+    return buildExitResult({
+      reason: 'TP',
+      observedPrice: current,
+      triggerPrice: tp
+    });
+  }
 
   const expired =
     openedAt > 0 &&
     timestamp - openedAt >= cfg.positionTimeStopMin * 60 * 1000;
 
-  if (hitTP) {
-    return {
-      shouldExit: true,
-      reason: 'TP'
-    };
-  }
-
-  if (hitSL) {
-    const source = String(position.slManagementSource || '').toUpperCase();
-
-    if (source === 'TRAIL') {
-      return {
-        shouldExit: true,
-        reason: 'TRAIL_SL'
-      };
-    }
-
-    if (source === 'BE') {
-      return {
-        shouldExit: true,
-        reason: 'BE_SL'
-      };
-    }
-
-    return {
-      shouldExit: true,
-      reason: 'SL'
-    };
-  }
-
   if (expired) {
-    return {
-      shouldExit: true,
-      reason: 'TIME_STOP'
-    };
+    return buildExitResult({
+      reason: 'TIME_STOP',
+      observedPrice: current,
+      triggerPrice: current
+    });
   }
 
   return {
@@ -556,7 +621,7 @@ export function updatePathMetrics(position, price) {
     }
   }
 
-  // Giveback diagnostics.
+  // Giveback diagnostics only. Deze velden mogen nooit echte TP/SL exit triggeren.
   if (position.reachedHalfR && currentR < 0) {
     position.gaveBackAfterHalfR = true;
   }
@@ -665,13 +730,50 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
   };
 }
 
+function forceExitOutcomeFields({
+  baseOutcome = {},
+  position = {},
+  exit = {}
+} = {}) {
+  const executionPrice = safeNumber(exit.executionPrice, 0);
+  const observedPrice = safeNumber(exit.observedPrice, executionPrice);
+  const triggerPrice = safeNumber(exit.triggerPrice, executionPrice);
+
+  return {
+    ...baseOutcome,
+
+    symbol: baseOutcome.symbol || position.symbol || position.baseSymbol || null,
+    baseSymbol: baseOutcome.baseSymbol || position.baseSymbol || position.symbol || null,
+    contractSymbol: baseOutcome.contractSymbol || position.contractSymbol || null,
+    side: baseOutcome.side || position.side || null,
+
+    exitReason: exit.reason,
+    reason: exit.reason,
+    source: 'REAL',
+
+    exit: roundPrice(executionPrice),
+    exitPrice: roundPrice(executionPrice),
+    observedExitPrice: roundPrice(observedPrice),
+    triggerPrice: roundPrice(triggerPrice),
+
+    tp: roundPrice(position.tp),
+    sl: roundPrice(position.sl),
+    entry: roundPrice(position.entry),
+
+    trueExitWasPriceCross: ['TP', 'SL', 'BE_SL', 'TRAIL_SL'].includes(exit.reason),
+    tpHitByPrice: exit.reason === 'TP',
+    slHitByPrice: ['SL', 'BE_SL', 'TRAIL_SL'].includes(exit.reason)
+  };
+}
+
 async function monitorOnePosition({
   position,
   priceFetcher,
   timestamp
 }) {
   const fetchSymbol = position.contractSymbol || position.symbol;
-  const price = await priceFetcher(fetchSymbol).catch(() => 0);
+  const rawPrice = await priceFetcher(fetchSymbol).catch(() => 0);
+  const price = extractMarketPrice(rawPrice);
 
   if (!price) {
     await markPriceFetchFailed(position);
@@ -706,12 +808,18 @@ async function monitorOnePosition({
 
   const baseOutcome = buildOutcomeFromPosition({
     position,
-    exitPrice: price,
+    exitPrice: exit.executionPrice,
     exitReason: exit.reason,
     source: 'REAL'
   });
 
-  const outcome = enrichOutcomeIdentity(baseOutcome, position);
+  const forcedOutcome = forceExitOutcomeFields({
+    baseOutcome,
+    position,
+    exit
+  });
+
+  const outcome = enrichOutcomeIdentity(forcedOutcome, position);
 
   await recordOutcome(outcome, {
     source: 'REAL'
