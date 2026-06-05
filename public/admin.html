@@ -57,9 +57,15 @@
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
     }
 
-    button:hover {
+    button:hover:not(:disabled) {
       transform: translateY(-1px);
       box-shadow: 0 6px 18px rgba(15, 23, 42, 0.10);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
     }
 
     button.primary {
@@ -84,6 +90,18 @@
       background: var(--red);
       color: white;
       border-color: var(--red);
+    }
+
+    button.short-action {
+      background: var(--red);
+      color: white;
+      border-color: var(--red);
+    }
+
+    button.long-action {
+      background: var(--green);
+      color: white;
+      border-color: var(--green);
     }
 
     button.small {
@@ -335,6 +353,33 @@
       gap: 9px;
       align-items: center;
       margin: 12px 0 14px;
+    }
+
+    .split-toolbar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 12px 0 14px;
+    }
+
+    .side-action-card {
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: white;
+      padding: 14px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .side-action-card h3 {
+      margin: 0 0 6px;
+      font-size: 14px;
+    }
+
+    .side-action-card p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     .coin-card {
@@ -702,7 +747,8 @@
         grid-template-columns: repeat(2, minmax(220px, 1fr));
       }
 
-      .grid-3 {
+      .grid-3,
+      .split-toolbar {
         grid-template-columns: 1fr;
       }
     }
@@ -808,7 +854,9 @@
       rotation: null,
       discord: null,
       microMode: "balanced",
-      microSearch: ""
+      microSearch: "",
+      microFetchLimit: 1000,
+      microSideLimit: 50
     };
 
     const endpoints = {
@@ -966,22 +1014,30 @@
       img.remove();
     }
 
-    function sideClass(side) {
-      const s = String(side || "").toLowerCase();
+    function normalizeSide(side) {
+      const s = String(side || "").trim().toUpperCase();
 
-      if (s === "bull" || s === "long" || s === "buy") return "bull";
-      if (s === "bear" || s === "short" || s === "sell") return "bear";
+      if (["LONG", "BULL", "BUY"].includes(s)) return "LONG";
+      if (["SHORT", "BEAR", "SELL"].includes(s)) return "SHORT";
+
+      return s || "NA";
+    }
+
+    function sideClass(side) {
+      const s = normalizeSide(side);
+
+      if (s === "LONG") return "long";
+      if (s === "SHORT") return "short";
 
       return "neutral";
     }
 
     function sideLabel(side) {
-      const s = String(side || "").toLowerCase();
+      return normalizeSide(side);
+    }
 
-      if (s === "bull" || s === "long" || s === "buy") return "LONG";
-      if (s === "bear" || s === "short" || s === "sell") return "SHORT";
-
-      return String(side || "NA").toUpperCase();
+    function isSide(row, side) {
+      return normalizeSide(row?.side) === normalizeSide(side);
     }
 
     function coinAvatar(row, size = "") {
@@ -1457,6 +1513,33 @@
       });
     }
 
+    function splitTopMicroRows(rows = []) {
+      const shortRows = rows.filter((row) => isSide(row, "SHORT")).slice(0, state.microSideLimit);
+      const longRows = rows.filter((row) => isSide(row, "LONG")).slice(0, state.microSideLimit);
+
+      return {
+        shortRows,
+        longRows,
+        visibleRows: [...shortRows, ...longRows],
+        totalShortRows: rows.filter((row) => isSide(row, "SHORT")).length,
+        totalLongRows: rows.filter((row) => isSide(row, "LONG")).length
+      };
+    }
+
+    function bestMicroRowForSide(rows = [], side = "SHORT") {
+      return rows.find((row) => isSide(row, side) && microId(row));
+    }
+
+    function currentMicroRows() {
+      return getRows(state.micros, ["rows", "microFamilies", "micros"]);
+    }
+
+    function currentVisibleMicroRows() {
+      const rows = filterMicroRows(currentMicroRows());
+
+      return splitTopMicroRows(rows).visibleRows;
+    }
+
     function microRowsTable(rows, activeIdsInput = [], activeMacroIdsInput = []) {
       const activeIds = activeIdsInput instanceof Set
         ? activeIdsInput
@@ -1510,24 +1593,47 @@
       });
     }
 
-    function renderMicrosTableOnly(filteredRows) {
-      const target = $("microsTable");
-
-      if (!target) return;
-
-      const activeIds = new Set(
+    function activeMicroSet() {
+      return new Set(
         state.micros?.activeMicroFamilyIds ||
         extractIdsFromRotation(state.micros?.activeRotation || {}) ||
         activeIdsFromState()
       );
+    }
 
-      const activeMacroIds = new Set(
+    function activeMacroSet() {
+      return new Set(
         state.micros?.activeMacroFamilyIds ||
         extractMacroIdsFromRotation(state.micros?.activeRotation || {}) ||
         activeMacroIdsFromState()
       );
+    }
 
-      target.innerHTML = microRowsTable(filteredRows, activeIds, activeMacroIds);
+    function renderMicrosTableOnly() {
+      const target = $("microsTable");
+
+      if (!target) return;
+
+      const rows = filterMicroRows(currentMicroRows());
+      const split = splitTopMicroRows(rows);
+
+      target.innerHTML = `
+        <div class="section-title">
+          <div>
+            <h2>Top ${state.microSideLimit} SHORT true micro families</h2>
+            <p>Beste short fingerprints volgens mode: ${escapeHtml(state.microMode)}.</p>
+          </div>
+        </div>
+        ${microRowsTable(split.shortRows, activeMicroSet(), activeMacroSet())}
+
+        <div class="section-title">
+          <div>
+            <h2>Top ${state.microSideLimit} LONG true micro families</h2>
+            <p>Beste long fingerprints volgens mode: ${escapeHtml(state.microMode)}.</p>
+          </div>
+        </div>
+        ${microRowsTable(split.longRows, activeMicroSet(), activeMacroSet())}
+      `;
 
       bindMicroTableEvents();
     }
@@ -1753,24 +1859,14 @@
       state.microMode = mode || "balanced";
       showLoading("micros");
 
-      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=300`);
+      const data = await api(`${endpoints.micros}?mode=${encodeURIComponent(state.microMode)}&limit=${state.microFetchLimit}`);
       state.micros = data;
 
       const rows = getRows(data, ["rows", "microFamilies", "micros"]);
-
-      const activeIds = new Set(
-        data.activeMicroFamilyIds ||
-        extractIdsFromRotation(data.activeRotation || {}) ||
-        activeIdsFromState()
-      );
-
-      const activeMacroIds = new Set(
-        data.activeMacroFamilyIds ||
-        extractMacroIdsFromRotation(data.activeRotation || {}) ||
-        activeMacroIdsFromState()
-      );
-
       const filteredRows = filterMicroRows(rows);
+      const split = splitTopMicroRows(filteredRows);
+      const bestShort = bestMicroRowForSide(rows, "SHORT");
+      const bestLong = bestMicroRowForSide(rows, "LONG");
 
       $("micros").innerHTML = `
         <div class="toolbar">
@@ -1782,34 +1878,52 @@
 
           <input id="microSearch" type="search" placeholder="Zoek true micro, macro, family, side, bucket..." value="${escapeAttr(state.microSearch)}" />
 
-          <button type="button" class="primary" id="activateBestBalancedBtn">Activate best balanced</button>
-          <button type="button" class="success" id="copyTopMicroIdsBtn">Copy top true micro IDs</button>
-          <button type="button" class="success" id="copyTopMacroIdsBtn">Copy top macro IDs</button>
+          <button type="button" class="success" id="copyTopMicroIdsBtn">Copy visible true micro IDs</button>
+          <button type="button" class="success" id="copyTopMacroIdsBtn">Copy visible macro IDs</button>
           <button type="button" id="downloadMicrosBtn">Export JSON</button>
         </div>
 
-        <div class="grid">
-          ${metricCard("Rows", fmtInt(rows.length))}
-          ${metricCard("Filtered", fmtInt(filteredRows.length))}
-          ${metricCard("Mode", state.microMode)}
-          ${metricCard("Active true micro", fmtInt(activeIds.size))}
-          ${metricCard("Active macro", fmtInt(activeMacroIds.size))}
-          ${metricCard("Completed", fmt(data.summary?.completed, 2))}
-          ${metricCard("Total R", fmt(data.summary?.totalR, 2))}
-          ${metricCard("Tradable", fmtInt(data.summary?.tradableMicroFamilies || 0))}
-        </div>
+        <div class="split-toolbar">
+          <div class="side-action-card">
+            <h3>Beste SHORT micro connecten</h3>
+            <p>${bestShort ? `${microId(bestShort)} · balanced ${fmt(bestShort.dashboardBalancedScore ?? bestShort.balancedScore, 2)} · trades ${fmt(bestShort.winrateSample ?? bestShort.completed, 2)}` : "Geen short micro-family gevonden in de analyse."}</p>
+            <button type="button" class="short-action" id="activateBestShortBtn" ${bestShort ? "" : "disabled"}>
+              Activate best SHORT micro
+            </button>
+          </div>
 
-        <div class="section-title">
-          <div>
-            <h2>True micro families</h2>
-            <p>Macro = oude micro-family bucket. True micro = extra strakke execution fingerprint binnen de macro.</p>
+          <div class="side-action-card">
+            <h3>Beste LONG micro connecten</h3>
+            <p>${bestLong ? `${microId(bestLong)} · balanced ${fmt(bestLong.dashboardBalancedScore ?? bestLong.balancedScore, 2)} · trades ${fmt(bestLong.winrateSample ?? bestLong.completed, 2)}` : "Geen long micro-family gevonden in de analyse."}</p>
+            <button type="button" class="long-action" id="activateBestLongBtn" ${bestLong ? "" : "disabled"}>
+              Activate best LONG micro
+            </button>
           </div>
         </div>
 
-        <div id="microsTable">
-          ${microRowsTable(filteredRows, activeIds, activeMacroIds)}
+        <div class="grid">
+          ${metricCard("Fetched rows", fmtInt(rows.length))}
+          ${metricCard("Visible rows", fmtInt(split.visibleRows.length))}
+          ${metricCard("Mode", state.microMode)}
+          ${metricCard("Active true micro", fmtInt(activeMicroSet().size))}
+          ${metricCard("Active macro", fmtInt(activeMacroSet().size))}
+          ${metricCard("SHORT visible", `${fmtInt(split.shortRows.length)} / ${fmtInt(split.totalShortRows)}`)}
+          ${metricCard("LONG visible", `${fmtInt(split.longRows.length)} / ${fmtInt(split.totalLongRows)}`)}
+          ${metricCard("Tradable", fmtInt(data.summary?.tradableMicroFamilies || 0))}
         </div>
+
+        <div class="card">
+          <h3>Analyze view</h3>
+          <div class="metric-extra">
+            Deze pagina toont maximaal ${state.microSideLimit} beste SHORT + ${state.microSideLimit} beste LONG micro families.
+            Daardoor verdwijnt het probleem waarbij 300 rijen allemaal short zijn en de long-kant onzichtbaar blijft.
+          </div>
+        </div>
+
+        <div id="microsTable"></div>
       `;
+
+      renderMicrosTableOnly();
 
       $("microMode")?.addEventListener("change", (event) => {
         renderMicros(event.target.value);
@@ -1817,41 +1931,117 @@
 
       $("microSearch")?.addEventListener("input", (event) => {
         state.microSearch = event.target.value;
-
-        const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
-        const currentFilteredRows = filterMicroRows(currentRows);
-        const filteredMetric = document.querySelector("#micros .grid .metric-card:nth-child(2) .metric-value");
-
-        if (filteredMetric) {
-          filteredMetric.textContent = fmtInt(currentFilteredRows.length);
-        }
-
-        renderMicrosTableOnly(currentFilteredRows);
+        renderMicrosTableOnly();
       });
 
-      $("activateBestBalancedBtn")?.addEventListener("click", activateBestBalanced);
+      $("activateBestShortBtn")?.addEventListener("click", () => activateBestSideMicro("SHORT"));
+      $("activateBestLongBtn")?.addEventListener("click", () => activateBestSideMicro("LONG"));
 
       $("copyTopMicroIdsBtn")?.addEventListener("click", () => {
-        const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
-        const currentFilteredRows = filterMicroRows(currentRows);
-        const ids = uniqueStrings(currentFilteredRows.map(microId)).slice(0, 50);
-
-        copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} true microFamilyIds gekopieerd.`);
+        const ids = uniqueStrings(currentVisibleMicroRows().map(microId));
+        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} true microFamilyIds gekopieerd.`);
       });
 
       $("copyTopMacroIdsBtn")?.addEventListener("click", () => {
-        const currentRows = getRows(state.micros, ["rows", "microFamilies", "micros"]);
-        const currentFilteredRows = filterMicroRows(currentRows);
-        const ids = uniqueStrings(currentFilteredRows.map(macroId)).slice(0, 50);
-
-        copyText(JSON.stringify(ids, null, 2), `Top ${ids.length} macroFamilyIds gekopieerd.`);
+        const ids = uniqueStrings(currentVisibleMicroRows().map(macroId));
+        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} macroFamilyIds gekopieerd.`);
       });
 
       $("downloadMicrosBtn")?.addEventListener("click", () => {
         downloadJson("micro-families.json", data);
       });
+    }
 
-      bindMicroTableEvents();
+    async function activateBestSideMicro(side) {
+      const normalizedSide = normalizeSide(side);
+      const rows = currentMicroRows();
+      const selected = bestMicroRowForSide(rows, normalizedSide);
+
+      if (!selected) {
+        setMessage(`Geen ${normalizedSide} micro-family gevonden. Niets aangepast.`, "warn");
+        return;
+      }
+
+      const selectedMicroId = microId(selected);
+      const selectedMacroId = macroId(selected);
+
+      if (!selectedMicroId) {
+        setMessage(`Beste ${normalizedSide} row heeft geen microFamilyId. Niets aangepast.`, "error");
+        return;
+      }
+
+      if (!confirm(`Activate best ${normalizedSide} micro?\n\n${selectedMicroId}\n\nDe andere side blijft behouden als die bestaat.`)) {
+        return;
+      }
+
+      const activeMicroIds = [...activeMicroSet()];
+      const activeMacroIds = [...activeMacroSet()];
+
+      const rowByMicroId = new Map(rows.map((row) => [microId(row), row]).filter(([id]) => Boolean(id)));
+      const rowByMacroId = new Map(rows.map((row) => [macroId(row), row]).filter(([id]) => Boolean(id)));
+
+      const preservedMicroIds = activeMicroIds.filter((id) => {
+        const row = rowByMicroId.get(id);
+
+        if (!row) return true;
+
+        return !isSide(row, normalizedSide);
+      });
+
+      const preservedMacroIds = activeMacroIds.filter((id) => {
+        const row = rowByMacroId.get(id);
+
+        if (!row) return true;
+
+        return !isSide(row, normalizedSide);
+      });
+
+      const desiredActiveMicroFamilyIds = uniqueStrings([...preservedMicroIds, selectedMicroId]);
+      const desiredActiveMacroFamilyIds = uniqueStrings([...preservedMacroIds, selectedMacroId]);
+
+      const payload = {
+        action: "activateBestSideMicro",
+        mode: state.microMode,
+        side: normalizedSide,
+        preserveOppositeSide: true,
+        microFamilyId: selectedMicroId,
+        macroFamilyId: selectedMacroId,
+        selectedMicroFamilyIds: [selectedMicroId],
+        selectedMacroFamilyIds: selectedMacroId ? [selectedMacroId] : [],
+        desiredActiveMicroFamilyIds,
+        desiredActiveMacroFamilyIds,
+        selectedRow: {
+          microFamilyId: selectedMicroId,
+          macroFamilyId: selectedMacroId,
+          familyId: familyId(selected),
+          side: normalizedSide,
+          seen: selected.seen,
+          completed: selected.completed,
+          winrateSample: selected.winrateSample,
+          winrate: selected.winrate,
+          fairWinrate: selected.fairWinrate,
+          avgR: selected.avgR,
+          totalR: selected.totalR,
+          profitFactor: selected.profitFactor,
+          directSLPct: selected.directSLPct,
+          avgCostR: selected.avgCostR,
+          balancedScore: selected.balancedScore,
+          dashboardBalancedScore: selected.dashboardBalancedScore
+        }
+      };
+
+      const data = await api(endpoints.rotation, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+
+      const active = data.activeRotation || data.active || {};
+      const microCount = extractIdsFromRotation(active).length || desiredActiveMicroFamilyIds.length;
+      const macroCount = extractMacroIdsFromRotation(active).length || desiredActiveMacroFamilyIds.length;
+
+      setMessage(`Activated ${normalizedSide} micro. Active true micro=${microCount}, active macro=${macroCount}.`, "ok");
+
+      await renderMicros(state.microMode);
     }
 
     async function openMicro(id) {
@@ -1999,7 +2189,6 @@
 
       $("rotation").innerHTML = `
         <div class="toolbar">
-          <button type="button" class="primary" id="activateBestBalancedNowBtn">Activate best balanced now</button>
           <button type="button" class="warn" id="freezeWeeklyBtn">Freeze next rotation</button>
           <button type="button" class="warn" id="activateNextBtn">Activate next rotation</button>
           <button type="button" class="success" id="copyActiveMicroIdsBtn">Copy active true micro IDs</button>
@@ -2055,8 +2244,6 @@
           ${jsonBlock(next)}
         </div>
       `;
-
-      $("activateBestBalancedNowBtn")?.addEventListener("click", activateBestBalanced);
 
       $("freezeWeeklyBtn")?.addEventListener("click", async () => {
         const result = await api(endpoints.weeklyFreeze, {
@@ -2219,36 +2406,6 @@
 
       $("resetResult").textContent = JSON.stringify(data, null, 2);
       setMessage("Factory reset uitgevoerd.", "ok");
-    }
-
-    async function activateBestBalanced() {
-      if (!confirm("Activate best balanced true microFamilies als active rotation?")) return;
-
-      const data = await api(endpoints.rotation, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "activateBestBalanced",
-          mode: "balanced"
-        })
-      });
-
-      const active = data.activeRotation || data.active || {};
-      const microCount = extractIdsFromRotation(active).length;
-      const macroCount = extractMacroIdsFromRotation(active).length;
-
-      setMessage(`Activated ${microCount} true microFamilies binnen ${macroCount} macroFamilies.`, "ok");
-
-      if (state.activeTab === "micros") {
-        await renderMicros(state.microMode);
-        return;
-      }
-
-      if (state.activeTab === "rotation") {
-        await renderRotation();
-        return;
-      }
-
-      await refresh(state.activeTab);
     }
 
     function showTab(id) {
