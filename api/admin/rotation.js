@@ -11,7 +11,6 @@ import {
 } from '../../src/utils.js';
 import {
   getDurableRedis,
-  getJson,
   setJson
 } from '../../src/redis.js';
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
@@ -39,12 +38,26 @@ const ALLOWED_MODES = new Set([
 
 const TRADE_SIDES = new Set(['LONG', 'SHORT']);
 
-const DEFAULT_ACTIVE_ROWS_LIMIT = 100;
-const DEFAULT_NEXT_ROWS_LIMIT = 40;
-const MAX_ROWS_LIMIT = 250;
+const DEFAULT_ACTIVE_ROWS_LIMIT = 60;
+const DEFAULT_NEXT_ROWS_LIMIT = 25;
+const MAX_ROWS_LIMIT = 160;
+
+const WEEK_ROWS_CACHE_TTL_MS = 20_000;
+const WEEK_ROWS_CACHE_MAX_KEYS = 8;
+const HARD_ROUTE_BUDGET_MS = 52_000;
+
+const weekRowsCache = globalThis.__ADMIN_ROTATION_WEEK_ROWS_CACHE__ ||= new Map();
 
 function now() {
   return Date.now();
+}
+
+function elapsed(startedAt) {
+  return now() - startedAt;
+}
+
+function routeBudgetExceeded(startedAt, maxMs = HARD_ROUTE_BUDGET_MS) {
+  return elapsed(startedAt) >= maxMs;
 }
 
 function methodNotAllowed(res) {
@@ -140,6 +153,21 @@ function round(value, decimals = 4) {
   return Number(num(value, 0).toFixed(decimals));
 }
 
+async function getRedisJson(redis, key, fallback = null) {
+  if (!key || !redis || typeof redis.get !== 'function') return fallback;
+
+  const value = await redis.get(key);
+
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'string') return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeRequestedTradeSide(value) {
   const raw = String(value || '').trim().toUpperCase();
 
@@ -180,20 +208,26 @@ function inferTradeSide(row = {}) {
     row.tradeSide ||
     row.side ||
     row.positionSide ||
-    row.direction
+    row.direction ||
+    row.signalSide ||
+    row.scannerSide ||
+    row.entrySide ||
+    row.bias ||
+    row.marketBias
   );
 
   if (direct !== 'UNKNOWN') return direct;
 
   const rawSide = String(row.side || '').toUpperCase();
 
-  if (['BULL', 'LONG', 'BUY'].includes(rawSide)) return 'LONG';
-  if (['BEAR', 'SHORT', 'SELL'].includes(rawSide)) return 'SHORT';
+  if (['BULL', 'LONG', 'BUY', 'BULLISH'].includes(rawSide)) return 'LONG';
+  if (['BEAR', 'SHORT', 'SELL', 'BEARISH'].includes(rawSide)) return 'SHORT';
 
-  const familyId = String(row.familyId || '').toUpperCase();
+  const familyId = String(row.familyId || row.family || row.baseFamilyId || '').toUpperCase();
+
   const macroFamilyId = String(
-    row.macroFamilyId ||
     row.parentMacroFamilyId ||
+    row.macroFamilyId ||
     row.parentMicroFamilyId ||
     row.parentFamilyId ||
     row.macroId ||
@@ -227,7 +261,9 @@ function inferTradeSide(row = {}) {
     definition.includes('SIDE=BULL') ||
     definition.includes('SIDE=LONG') ||
     definition.includes('DIRECTION=LONG') ||
-    definition.includes('DIRECTION=BULL')
+    definition.includes('DIRECTION=BULL') ||
+    definition.includes('SIDE=BUY') ||
+    definition.includes('DIRECTION=BUY')
   ) {
     return 'LONG';
   }
@@ -238,10 +274,15 @@ function inferTradeSide(row = {}) {
     definition.includes('SIDE=BEAR') ||
     definition.includes('SIDE=SHORT') ||
     definition.includes('DIRECTION=SHORT') ||
-    definition.includes('DIRECTION=BEAR')
+    definition.includes('DIRECTION=BEAR') ||
+    definition.includes('SIDE=SELL') ||
+    definition.includes('DIRECTION=SELL')
   ) {
     return 'SHORT';
   }
+
+  if (microFamilyId.includes('LONG')) return 'LONG';
+  if (microFamilyId.includes('SHORT')) return 'SHORT';
 
   return 'UNKNOWN';
 }
@@ -293,6 +334,7 @@ function getMacroDefinitionParts(row = {}) {
 
 function normalizeRotationRow(row = {}, index = 0) {
   const microFamilyId = row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null;
+
   const macroFamilyId = getMacroFamilyId({
     ...row,
     microFamilyId
@@ -336,6 +378,18 @@ function normalizeRotationRow(row = {}, index = 0) {
     completed: round(row.completed, 4),
     realCompleted: num(row.realCompleted, 0),
     shadowCompleted: num(row.shadowCompleted, 0),
+
+    wins: round(row.wins, 4),
+    losses: round(row.losses, 4),
+    flats: round(row.flats, 4),
+
+    realWins: num(row.realWins, 0),
+    realLosses: num(row.realLosses, 0),
+    realFlats: num(row.realFlats, 0),
+
+    shadowWins: num(row.shadowWins, 0),
+    shadowLosses: num(row.shadowLosses, 0),
+    shadowFlats: num(row.shadowFlats, 0),
 
     winrateSample: round(row.winrateSample ?? row.completed, 4),
     winrate: round(row.winrate, 4),
@@ -515,9 +569,9 @@ function normalizeRotation(rotation = {}, fallback = {}, options = {}) {
     ? base.microFamilies
     : [];
 
-  const microFamilies = rawRows
-    .slice(0, rowLimit)
-    .map((row, index) => normalizeRotationRow(row, index));
+  const normalizedRawRows = rawRows.map((row, index) => normalizeRotationRow(row, index));
+
+  const microFamilies = normalizedRawRows.slice(0, rowLimit);
 
   const explicitMicroFamilyIds = normalizeFamilyIds(
     microIdsFromRotation({
@@ -535,9 +589,7 @@ function normalizeRotation(rotation = {}, fallback = {}, options = {}) {
     rawRows.map((row) => getMacroFamilyId(row))
   );
 
-  const indexes = buildSelectionIndexes(
-    rawRows.map((row, index) => normalizeRotationRow(row, index))
-  );
+  const indexes = buildSelectionIndexes(normalizedRawRows);
 
   const microFamilyIds = indexes.microFamilyIds.length
     ? indexes.microFamilyIds
@@ -548,11 +600,11 @@ function normalizeRotation(rotation = {}, fallback = {}, options = {}) {
     : explicitMacroFamilyIds;
 
   const bestLong =
-    microFamilies.find((row) => row.tradeSide === 'LONG') ||
+    normalizedRawRows.find((row) => row.tradeSide === 'LONG') ||
     (base.bestLong ? normalizeRotationRow(base.bestLong, 0) : null);
 
   const bestShort =
-    microFamilies.find((row) => row.tradeSide === 'SHORT') ||
+    normalizedRawRows.find((row) => row.tradeSide === 'SHORT') ||
     (base.bestShort ? normalizeRotationRow(base.bestShort, 0) : null);
 
   const empty = base.empty ?? microFamilyIds.length === 0;
@@ -648,7 +700,7 @@ function normalizeRotation(rotation = {}, fallback = {}, options = {}) {
 
     bestLong,
     bestShort,
-    missingSides: missingSides(microFamilies, {
+    missingSides: missingSides(normalizedRawRows, {
       ...base,
       bestLong,
       bestShort
@@ -726,9 +778,9 @@ async function getStoredRotationDashboard(options = {}) {
   const redis = getDurableRedis();
 
   const [activeRaw, nextRaw, validFrom] = await Promise.all([
-    getJson(redis, KEYS.analyze.activeRotation, null),
-    getJson(redis, KEYS.analyze.nextRotation, null),
-    getJson(redis, KEYS.analyze.rotationValidFrom, null)
+    getRedisJson(redis, KEYS.analyze?.activeRotation, null),
+    getRedisJson(redis, KEYS.analyze?.nextRotation, null),
+    getRedisJson(redis, KEYS.analyze?.rotationValidFrom, null)
   ]);
 
   return normalizeDashboardFromStored({
@@ -741,7 +793,7 @@ async function getStoredRotationDashboard(options = {}) {
 
 async function getStoredActiveRotation() {
   const redis = getDurableRedis();
-  const activeRaw = await getJson(redis, KEYS.analyze.activeRotation, null);
+  const activeRaw = await getRedisJson(redis, KEYS.analyze?.activeRotation, null);
 
   return normalizeRotation(activeRaw || {}, {}, {
     rowLimit: DEFAULT_ACTIVE_ROWS_LIMIT
@@ -749,6 +801,8 @@ async function getStoredActiveRotation() {
 }
 
 async function handleGet(req, res) {
+  const requestStartedAt = now();
+
   const activeRowsLimit = toLimit(
     firstValue(req.query?.activeRowsLimit, DEFAULT_ACTIVE_ROWS_LIMIT),
     DEFAULT_ACTIVE_ROWS_LIMIT,
@@ -777,6 +831,12 @@ async function handleGet(req, res) {
 
     ...dashboard,
 
+    perf: {
+      durationMs: elapsed(requestStartedAt),
+      source: 'stored_redis_only',
+      avoidsAnalyzeEngineDashboard: true
+    },
+
     serverTs: Date.now()
   });
 }
@@ -803,6 +863,7 @@ function selectedIdsFromBody(body = {}) {
 
 function rowMatchesSelection(row, microSet, macroSet) {
   const microFamilyId = row.microFamilyId || row.id || row.key || null;
+
   const macroFamilyId = getMacroFamilyId({
     ...row,
     microFamilyId
@@ -1010,13 +1071,25 @@ function rowEligibilityTier(row = {}) {
 }
 
 function rowsByEligibility(sideRows = []) {
-  const hardRows = sideRows.filter(rowHasHardEligibility);
-  const softRows = sideRows.filter((row) => !rowHasHardEligibility(row) && rowHasSoftEligibility(row));
-  const observationRows = sideRows.filter((row) => (
-    !rowHasHardEligibility(row) &&
-    !rowHasSoftEligibility(row) &&
-    rowHasObservationEligibility(row)
-  ));
+  const hardRows = [];
+  const softRows = [];
+  const observationRows = [];
+
+  for (const row of sideRows) {
+    if (rowHasHardEligibility(row)) {
+      hardRows.push(row);
+      continue;
+    }
+
+    if (rowHasSoftEligibility(row)) {
+      softRows.push(row);
+      continue;
+    }
+
+    if (rowHasObservationEligibility(row)) {
+      observationRows.push(row);
+    }
+  }
 
   return {
     hardRows,
@@ -1025,24 +1098,89 @@ function rowsByEligibility(sideRows = []) {
   };
 }
 
-async function getWeekRows(weekKey) {
-  const micros = await getWeekMicros(weekKey);
+function pruneWeekRowsCache() {
+  const entries = [...weekRowsCache.entries()];
 
-  return Object.entries(micros || {})
-    .map(([key, row], index) => normalizeRotationRow({
+  if (entries.length <= WEEK_ROWS_CACHE_MAX_KEYS) return;
+
+  entries
+    .sort((a, b) => num(a[1]?.ts, 0) - num(b[1]?.ts, 0))
+    .slice(0, Math.max(0, entries.length - WEEK_ROWS_CACHE_MAX_KEYS))
+    .forEach(([key]) => weekRowsCache.delete(key));
+}
+
+function microsSignature(micros = {}) {
+  const keys = Object.keys(micros || {});
+  const count = keys.length;
+
+  if (count <= 0) return '0';
+
+  const first = keys[0] || '';
+  const middle = keys[Math.floor(count / 2)] || '';
+  const last = keys[count - 1] || '';
+
+  return `${count}:${first}:${middle}:${last}`;
+}
+
+async function getWeekRows(weekKey, startedAt = now()) {
+  const micros = await getWeekMicros(weekKey);
+  const signature = microsSignature(micros);
+  const cacheKey = `${weekKey}|${signature}`;
+  const cached = weekRowsCache.get(cacheKey);
+
+  if (cached && now() - cached.ts < WEEK_ROWS_CACHE_TTL_MS) {
+    return {
+      rows: cached.rows,
+      micros,
+      cacheHit: true,
+      cacheKey
+    };
+  }
+
+  const entries = Object.entries(micros || {});
+  const rows = [];
+
+  for (let index = 0; index < entries.length; index += 1) {
+    if (routeBudgetExceeded(startedAt)) break;
+
+    const [key, row] = entries[index];
+
+    const normalized = normalizeRotationRow({
       ...row,
       key,
-      microFamilyId: row?.microFamilyId || key
-    }, index))
-    .filter((row) => row.microFamilyId);
+      microFamilyId: row?.microFamilyId || row?.trueMicroFamilyId || key
+    }, index);
+
+    if (normalized.microFamilyId) rows.push(normalized);
+  }
+
+  weekRowsCache.set(cacheKey, {
+    ts: now(),
+    rows
+  });
+
+  pruneWeekRowsCache();
+
+  return {
+    rows,
+    micros,
+    cacheHit: false,
+    cacheKey
+  };
 }
 
 async function findBestWeekSideRow({
   weekKey,
   tradeSide,
-  mode
+  mode,
+  startedAt = now()
 } = {}) {
-  const rows = await getWeekRows(weekKey);
+  const {
+    rows,
+    cacheHit,
+    cacheKey
+  } = await getWeekRows(weekKey, startedAt);
+
   const sideRows = rows.filter((row) => row.tradeSide === tradeSide);
 
   const {
@@ -1092,48 +1230,63 @@ async function findBestWeekSideRow({
     observationCount: observationRows.length,
 
     tradableCount: hardRows.length + softRows.length + observationRows.length,
-    selectedTier
+    selectedTier,
+
+    weekRowsCacheHit: cacheHit,
+    weekRowsCacheKey: cacheKey,
+    scannedRows: rows.length
   };
 }
 
 async function buildSelectedRotationRows({
   weekKey,
   microFamilyIds = [],
-  macroFamilyIds = []
+  macroFamilyIds = [],
+  startedAt = now()
 } = {}) {
-  const micros = await getWeekMicros(weekKey);
+  const {
+    rows,
+    micros,
+    cacheHit,
+    cacheKey
+  } = await getWeekRows(weekKey, startedAt);
 
   const microSet = new Set(microFamilyIds);
   const macroSet = new Set(macroFamilyIds);
 
-  const rows = Object.entries(micros || {})
-    .map(([key, row], index) => normalizeRotationRow({
-      ...row,
-      key,
-      microFamilyId: row?.microFamilyId || key
-    }, index))
-    .filter((row) => rowMatchesSelection(row, microSet, macroSet));
+  const matchedRows = [];
 
-  const matchedMicroIds = new Set(rows.map((row) => row.microFamilyId).filter(Boolean));
-  const matchedMacroIds = new Set(rows.map((row) => row.macroFamilyId).filter(Boolean));
+  for (const row of rows) {
+    if (routeBudgetExceeded(startedAt)) break;
+    if (rowMatchesSelection(row, microSet, macroSet)) matchedRows.push(row);
+  }
+
+  const matchedMicroIds = new Set(matchedRows.map((row) => row.microFamilyId).filter(Boolean));
+  const matchedMacroIds = new Set(matchedRows.map((row) => row.macroFamilyId).filter(Boolean));
 
   const missingMicroRows = microFamilyIds
     .filter((id) => !matchedMicroIds.has(id) && !matchedMacroIds.has(id))
-    .map((id, index) => buildManualRow(id, rows.length + index, 'micro'));
+    .map((id, index) => buildManualRow(id, matchedRows.length + index, 'micro'));
 
   const missingMacroRows = macroFamilyIds
     .filter((id) => !matchedMacroIds.has(id) && !matchedMicroIds.has(id))
     .map((id, index) => buildManualRow(
       id,
-      rows.length + missingMicroRows.length + index,
+      matchedRows.length + missingMicroRows.length + index,
       'macro'
     ));
 
-  return dedupeRows([
-    ...rows,
-    ...missingMicroRows,
-    ...missingMacroRows
-  ]);
+  return {
+    rows: dedupeRows([
+      ...matchedRows,
+      ...missingMicroRows,
+      ...missingMacroRows
+    ]),
+    weekRowsCacheHit: cacheHit,
+    weekRowsCacheKey: cacheKey,
+    scannedRows: rows.length,
+    microsCount: Object.keys(micros || {}).length
+  };
 }
 
 async function persistActiveRotation(active) {
@@ -1150,7 +1303,7 @@ async function persistActiveRotation(active) {
   return normalizedActive;
 }
 
-async function activateBestBalanced(body) {
+async function activateBestBalanced(body, startedAt = now()) {
   const sourceWeekKey = firstValue(
     body.weekKey,
     getIsoWeekKey()
@@ -1209,7 +1362,12 @@ async function activateBestBalanced(body) {
     empty: Boolean(active.empty),
     emptyReason: active.emptyReason || null,
     usedSoftFallback: Boolean(active.usedSoftFallback),
-    usedObservationFallback: Boolean(active.usedObservationFallback)
+    usedObservationFallback: Boolean(active.usedObservationFallback),
+
+    perf: {
+      durationMs: elapsed(startedAt),
+      source: 'buildRotationFromWeek'
+    }
   };
 }
 
@@ -1217,7 +1375,7 @@ function preserveOppositeSideEnabled(body = {}) {
   return body.preserveOppositeSide !== false;
 }
 
-async function activateBestSideMicro(body, forcedTradeSide = null) {
+async function activateBestSideMicro(body, forcedTradeSide = null, startedAt = now()) {
   const sourceWeekKey = firstValue(
     body.weekKey,
     getIsoWeekKey()
@@ -1257,6 +1415,13 @@ async function activateBestSideMicro(body, forcedTradeSide = null) {
     ? bestRowForSide(previousRows, oppositeSide, mode)
     : null;
 
+  const sideResult = await findBestWeekSideRow({
+    weekKey: sourceWeekKey,
+    tradeSide: requestedTradeSide,
+    mode,
+    startedAt
+  });
+
   const {
     best: selectedRow,
     sideCount,
@@ -1265,12 +1430,11 @@ async function activateBestSideMicro(body, forcedTradeSide = null) {
     softCount,
     observationCount,
     tradableCount,
-    selectedTier
-  } = await findBestWeekSideRow({
-    weekKey: sourceWeekKey,
-    tradeSide: requestedTradeSide,
-    mode
-  });
+    selectedTier,
+    weekRowsCacheHit,
+    weekRowsCacheKey,
+    scannedRows
+  } = sideResult;
 
   if (!selectedRow) {
     return {
@@ -1313,7 +1477,14 @@ async function activateBestSideMicro(body, forcedTradeSide = null) {
 
       bestLong: previousActive.bestLong,
       bestShort: previousActive.bestShort,
-      missingSides: previousActive.missingSides || []
+      missingSides: previousActive.missingSides || [],
+
+      perf: {
+        durationMs: elapsed(startedAt),
+        weekRowsCacheHit,
+        weekRowsCacheKey,
+        scannedRows
+      }
     };
   }
 
@@ -1423,11 +1594,18 @@ async function activateBestSideMicro(body, forcedTradeSide = null) {
     missingSides: active.missingSides || [],
 
     usedSoftFallback: Boolean(active.usedSoftFallback),
-    usedObservationFallback: Boolean(active.usedObservationFallback)
+    usedObservationFallback: Boolean(active.usedObservationFallback),
+
+    perf: {
+      durationMs: elapsed(startedAt),
+      weekRowsCacheHit,
+      weekRowsCacheKey,
+      scannedRows
+    }
   };
 }
 
-async function activateSelected(body, forcedType = null) {
+async function activateSelected(body, forcedType = null, startedAt = now()) {
   const sourceWeekKey = firstValue(
     body.weekKey,
     getIsoWeekKey()
@@ -1469,12 +1647,14 @@ async function activateSelected(body, forcedType = null) {
     throw error;
   }
 
-  const microFamilies = await buildSelectedRotationRows({
+  const selectedResult = await buildSelectedRotationRows({
     weekKey: sourceWeekKey,
     microFamilyIds,
-    macroFamilyIds
+    macroFamilyIds,
+    startedAt
   });
 
+  const microFamilies = selectedResult.rows;
   const indexes = buildSelectionIndexes(microFamilies);
 
   const active = await persistActiveRotation({
@@ -1553,11 +1733,20 @@ async function activateSelected(body, forcedType = null) {
 
     bestLong: active.bestLong,
     bestShort: active.bestShort,
-    missingSides: active.missingSides || []
+    missingSides: active.missingSides || [],
+
+    perf: {
+      durationMs: elapsed(startedAt),
+      weekRowsCacheHit: selectedResult.weekRowsCacheHit,
+      weekRowsCacheKey: selectedResult.weekRowsCacheKey,
+      scannedRows: selectedResult.scannedRows,
+      microsCount: selectedResult.microsCount
+    }
   };
 }
 
 async function handlePost(req, res) {
+  const requestStartedAt = now();
   const body = await readBody(req);
   const action = String(body?.action || '').trim();
 
@@ -1570,7 +1759,7 @@ async function handlePost(req, res) {
   }
 
   if (action === 'activateBestBalanced') {
-    const result = await activateBestBalanced(body);
+    const result = await activateBestBalanced(body, requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1583,7 +1772,7 @@ async function handlePost(req, res) {
     action === 'activateBestSideMicro' ||
     action === 'activateBestSideMicroFamily'
   ) {
-    const result = await activateBestSideMicro(body);
+    const result = await activateBestSideMicro(body, null, requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1593,7 +1782,7 @@ async function handlePost(req, res) {
   }
 
   if (action === 'activateBestLongMicroFamily') {
-    const result = await activateBestSideMicro(body, 'LONG');
+    const result = await activateBestSideMicro(body, 'LONG', requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1603,7 +1792,7 @@ async function handlePost(req, res) {
   }
 
   if (action === 'activateBestShortMicroFamily') {
-    const result = await activateBestSideMicro(body, 'SHORT');
+    const result = await activateBestSideMicro(body, 'SHORT', requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1613,7 +1802,7 @@ async function handlePost(req, res) {
   }
 
   if (action === 'activateSelected') {
-    const result = await activateSelected(body);
+    const result = await activateSelected(body, null, requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1623,7 +1812,7 @@ async function handlePost(req, res) {
   }
 
   if (action === 'activateSelectedMicroFamilies') {
-    const result = await activateSelected(body, 'micro');
+    const result = await activateSelected(body, 'micro', requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1633,7 +1822,7 @@ async function handlePost(req, res) {
   }
 
   if (action === 'activateSelectedMacroFamilies') {
-    const result = await activateSelected(body, 'macro');
+    const result = await activateSelected(body, 'macro', requestStartedAt);
 
     return res.status(200).json({
       ok: true,
@@ -1652,6 +1841,7 @@ async function handlePost(req, res) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Admin-Rotation-Mode', 'stored-fast-v2');
 
   try {
     if (req.method === 'GET') {
