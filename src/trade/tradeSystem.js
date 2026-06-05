@@ -31,9 +31,7 @@ import {
 } from '../analyze/analyzeEngine.js';
 import { getActiveRotation } from '../analyze/rotationEngine.js';
 import {
-  buildLiveMetrics,
-  buildRiskGeometry,
-  isValidRiskGeometry
+  buildRiskAndLiveMetricsForBothSides
 } from './riskEngine.js';
 import {
   buildOpenPositionFromEntry,
@@ -240,10 +238,66 @@ function normalizeTradeSide(side) {
 
   const raw = String(side || '').trim().toUpperCase();
 
-  if (['LONG', 'BULL', 'BUY'].includes(raw)) return 'LONG';
-  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return 'SHORT';
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
 
   return 'UNKNOWN';
+}
+
+function inferSideFromIds(row = {}) {
+  const haystack = [
+    row.familyId,
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.id,
+    row.key
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean)
+    .join('|');
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (
+    haystack.startsWith('LONG_') ||
+    haystack.includes('_LONG_') ||
+    haystack.includes('MICRO_LONG_') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('TRADESIDE=LONG')
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    haystack.startsWith('SHORT_') ||
+    haystack.includes('_SHORT_') ||
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('TRADESIDE=SHORT')
+  ) {
+    return 'SHORT';
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferRowTradeSide(row = {}) {
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.side ||
+    row.positionSide ||
+    row.direction ||
+    row.scannerSide ||
+    row.actualScannerSide ||
+    row.analysisSide
+  );
+
+  if (VALID_TRADE_SIDES.has(direct)) return direct;
+
+  return inferSideFromIds(row);
 }
 
 function oppositeTradeSide(side) {
@@ -256,11 +310,11 @@ function oppositeTradeSide(side) {
 }
 
 function isLong(side) {
-  return sideToTradeSide(side) === 'LONG';
+  return normalizeTradeSide(side) === 'LONG';
 }
 
 function isShort(side) {
-  return sideToTradeSide(side) === 'SHORT';
+  return normalizeTradeSide(side) === 'SHORT';
 }
 
 function isMirrorAnalysisRow(row = {}) {
@@ -272,42 +326,54 @@ function isMirrorAnalysisRow(row = {}) {
   );
 }
 
-function buildCandidateVariants(candidate = {}) {
-  const normalized = normalizeCandidate(candidate);
-  const tradeSide = normalizeTradeSide(normalized.tradeSide || normalized.side);
-  const variants = [
-    {
-      ...normalized,
-      side: tradeSide !== 'UNKNOWN' ? tradeSide : normalized.side,
-      tradeSide: tradeSide !== 'UNKNOWN' ? tradeSide : normalized.tradeSide,
+function isLiveScannerRow(row = {}) {
+  return !isMirrorAnalysisRow(row);
+}
 
-      actualScannerSide: tradeSide !== 'UNKNOWN' ? tradeSide : null,
-      scannerSide: tradeSide !== 'UNKNOWN' ? tradeSide : null,
-      analysisSide: tradeSide !== 'UNKNOWN' ? tradeSide : null,
+function buildAnalysisVariant(candidate = {}, side, scannerSide) {
+  const tradeSide = normalizeTradeSide(side);
+  const actualScannerSide = VALID_TRADE_SIDES.has(scannerSide)
+    ? scannerSide
+    : null;
+
+  const isActualScannerSide =
+    actualScannerSide &&
+    tradeSide === actualScannerSide;
+
+  const mirror = !isActualScannerSide;
+
+  if (!mirror) {
+    return {
+      ...candidate,
+
+      side: tradeSide,
+      tradeSide,
+
+      actualScannerSide,
+      scannerSide: actualScannerSide,
+      analysisSide: tradeSide,
 
       isMirrorMicroFamily: false,
       observationMirror: false,
       analysisMirror: false,
-      mirrorAnalysisOnly: false
-    }
-  ];
+      mirrorAnalysisOnly: false,
 
-  if (!VALID_TRADE_SIDES.has(tradeSide)) {
-    return variants;
+      analyzeOnly: Boolean(candidate.analyzeOnly),
+      discoveryOnly: Boolean(candidate.discoveryOnly),
+      tradeDiscoveryOnly: Boolean(candidate.tradeDiscoveryOnly)
+    };
   }
 
-  const mirrorSide = oppositeTradeSide(tradeSide);
+  return {
+    ...candidate,
 
-  variants.push({
-    ...normalized,
+    side: tradeSide,
+    tradeSide,
 
-    side: mirrorSide,
-    tradeSide: mirrorSide,
-
-    actualScannerSide: tradeSide,
-    scannerSide: tradeSide,
-    analysisSide: mirrorSide,
-    mirrorOfSide: tradeSide,
+    actualScannerSide,
+    scannerSide: actualScannerSide,
+    analysisSide: tradeSide,
+    mirrorOfSide: actualScannerSide || oppositeTradeSide(tradeSide) || null,
 
     isMirrorMicroFamily: true,
     observationMirror: true,
@@ -320,14 +386,12 @@ function buildCandidateVariants(candidate = {}) {
 
     liveEntryBlockedReason: 'MIRROR_ANALYSIS_ONLY',
 
-    scannerReason: normalized.scannerReason
-      ? `${normalized.scannerReason}_MIRROR_${mirrorSide}`
-      : `MIRROR_${mirrorSide}`,
+    scannerReason: candidate.scannerReason
+      ? `${candidate.scannerReason}_MIRROR_${tradeSide}`
+      : `MIRROR_${tradeSide}`,
 
-    scannerGateReason: normalized.scannerGateReason || 'MIRROR_ANALYSIS_PAIR'
-  });
-
-  return variants;
+    scannerGateReason: candidate.scannerGateReason || 'MIRROR_ANALYSIS_PAIR'
+  };
 }
 
 function waitAction(candidate, reason, extra = {}) {
@@ -337,7 +401,7 @@ function waitAction(candidate, reason, extra = {}) {
     symbol: candidate?.symbol || null,
     contractSymbol: candidate?.contractSymbol || null,
     side: candidate?.side || null,
-    tradeSide: candidate?.tradeSide || sideToTradeSide(candidate?.side),
+    tradeSide: candidate?.tradeSide || inferRowTradeSide(candidate),
     snapshotId: candidate?.snapshotId || null,
     scannerScore: candidate?.scannerScore ?? candidate?.moveScore ?? null,
     isMirrorMicroFamily: Boolean(candidate?.isMirrorMicroFamily),
@@ -462,7 +526,13 @@ function buildActiveRotationContext(activeRotation) {
     rowByMicroId.set(id, row);
   }
 
-  const configuredIds = uniqueStrings(activeRotation?.microFamilyIds || []);
+  const configuredIds = uniqueStrings([
+    ...(Array.isArray(activeRotation?.microFamilyIds) ? activeRotation.microFamilyIds : []),
+    ...(Array.isArray(activeRotation?.activeMicroFamilyIds) ? activeRotation.activeMicroFamilyIds : []),
+    ...(Array.isArray(activeRotation?.trueMicroFamilyIds) ? activeRotation.trueMicroFamilyIds : []),
+    ...(Array.isArray(activeRotation?.ids) ? activeRotation.ids : []),
+    ...rows.map(rowMicroId)
+  ]);
 
   const activeMicroFamilyIds = configuredIds.filter((id) => {
     const row = rowByMicroId.get(id);
@@ -476,8 +546,9 @@ function buildActiveRotationContext(activeRotation) {
   const activeMicroSet = new Set(activeMicroFamilyIds);
 
   const activeMacroFamilyIds = uniqueStrings([
-    ...(activeRotation?.macroFamilyIds || []),
-    ...(activeRotation?.activeMacroFamilyIds || []),
+    ...(Array.isArray(activeRotation?.macroFamilyIds) ? activeRotation.macroFamilyIds : []),
+    ...(Array.isArray(activeRotation?.activeMacroFamilyIds) ? activeRotation.activeMacroFamilyIds : []),
+    ...(Array.isArray(activeRotation?.macroIds) ? activeRotation.macroIds : []),
     ...rows.map(parentMacroFamilyId)
   ]);
 
@@ -784,7 +855,7 @@ function validateExposure(openPositions, side) {
   const cfg = tradeConfig();
 
   const rows = Array.isArray(openPositions) ? openPositions : [];
-  const tradeSide = sideToTradeSide(side);
+  const tradeSide = normalizeTradeSide(side);
 
   if (rows.length >= cfg.maxOpenPositions) {
     return {
@@ -796,7 +867,7 @@ function validateExposure(openPositions, side) {
   }
 
   const sameSide = rows.filter((position) => (
-    sideToTradeSide(position.side) === tradeSide
+    normalizeTradeSide(position.side || position.tradeSide) === tradeSide
   )).length;
 
   if (sameSide >= cfg.maxOpenSameSide) {
@@ -826,12 +897,12 @@ function detectShadowExit(shadow, price) {
     };
   }
 
-  if (isLong(shadow.side)) {
+  if (isLong(shadow.side || shadow.tradeSide)) {
     if (current >= tp) return { shouldExit: true, reason: 'TP' };
     if (current <= sl) return { shouldExit: true, reason: 'SL' };
   }
 
-  if (isShort(shadow.side)) {
+  if (isShort(shadow.side || shadow.tradeSide)) {
     if (current <= tp) return { shouldExit: true, reason: 'TP' };
     if (current >= sl) return { shouldExit: true, reason: 'SL' };
   }
@@ -936,11 +1007,18 @@ function enrichMetricsWithScannerAndLiveGates({
     0
   );
 
+  const tradeSide = normalizeTradeSide(
+    normalized.tradeSide ||
+    normalized.side ||
+    metrics.tradeSide ||
+    metrics.side
+  );
+
   return {
     ...metrics,
 
-    side: normalized.side || metrics.side,
-    tradeSide: normalized.tradeSide || sideToTradeSide(normalized.side || metrics.side),
+    side: tradeSide,
+    tradeSide,
 
     snapshotId: normalized.snapshotId || metrics.snapshotId || null,
 
@@ -976,7 +1054,7 @@ function enrichMetricsWithScannerAndLiveGates({
     mirrorOfSide: normalized.mirrorOfSide || null,
     scannerSide: normalized.scannerSide || null,
     actualScannerSide: normalized.actualScannerSide || null,
-    analysisSide: normalized.analysisSide || null,
+    analysisSide: normalized.analysisSide || tradeSide,
     liveEntryBlockedReason: normalized.liveEntryBlockedReason || null,
 
     passesMoveFilter: normalized.passesMoveFilter !== false,
@@ -1003,55 +1081,29 @@ function enrichMetricsWithScannerAndLiveGates({
   };
 }
 
-function processCandidateVariant({
-  variant,
-  data,
-  snapshotBtcState,
-  snapshotRegime
+function buildActualRiskWaitIfNeeded({
+  normalized,
+  scannerSide,
+  metricsRows
 }) {
-  const risk = buildRiskGeometry({
-    candidate: variant,
-    ob: data.ob,
-    candles15m: data.candles15m
-  });
-
-  if (!isValidRiskGeometry(risk, variant.side)) {
-    return {
-      action: isMirrorAnalysisRow(variant)
-        ? null
-        : waitAction(variant, 'RISK_INVALID'),
-      metrics: null
-    };
+  if (!VALID_TRADE_SIDES.has(scannerSide)) {
+    return null;
   }
 
-  const metrics = buildLiveMetrics({
-    candidate: variant,
-    ob: data.ob,
-    funding: data.funding,
-    candles15m: data.candles15m,
-    candles1h: data.candles1h,
-    btcState: variant.btcState || snapshotBtcState,
-    regime: variant.regime || snapshotRegime,
-    risk
-  });
+  const hasActualMetrics = metricsRows.some((row) => (
+    normalizeTradeSide(row.tradeSide || row.side) === scannerSide
+  ));
 
-  if (!metrics) {
-    return {
-      action: isMirrorAnalysisRow(variant)
-        ? null
-        : waitAction(variant, 'LIVE_METRICS_FAILED'),
-      metrics: null
-    };
-  }
+  if (hasActualMetrics) return null;
 
-  return {
-    action: null,
-    metrics: enrichMetricsWithScannerAndLiveGates({
-      metrics,
-      candidate: variant,
-      ob: data.ob
-    })
-  };
+  return waitAction(
+    {
+      ...normalized,
+      side: scannerSide,
+      tradeSide: scannerSide
+    },
+    'RISK_INVALID'
+  );
 }
 
 async function processCandidate(candidate) {
@@ -1089,17 +1141,50 @@ async function processCandidate(candidate) {
     };
   }
 
-  const variants = buildCandidateVariants(normalized);
-  const results = variants.map((variant) => processCandidateVariant({
-    variant,
-    data,
-    snapshotBtcState: normalized.btcState || candidate.btcState,
-    snapshotRegime: normalized.regime || candidate.regime
-  }));
+  const scannerSide = normalizeTradeSide(
+    normalized.tradeSide ||
+    normalized.side
+  );
+
+  const generatedMetrics = buildRiskAndLiveMetricsForBothSides({
+    candidate: normalized,
+    ob: data.ob,
+    funding: data.funding,
+    candles15m: data.candles15m,
+    candles1h: data.candles1h,
+    btcState: normalized.btcState || candidate.btcState,
+    regime: normalized.regime || candidate.regime
+  });
+
+  const metrics = generatedMetrics
+    .map((row) => {
+      const rowSide = normalizeTradeSide(row.tradeSide || row.side);
+
+      if (!VALID_TRADE_SIDES.has(rowSide)) return null;
+
+      const variant = buildAnalysisVariant(
+        normalized,
+        rowSide,
+        scannerSide
+      );
+
+      return enrichMetricsWithScannerAndLiveGates({
+        metrics: row,
+        candidate: variant,
+        ob: data.ob
+      });
+    })
+    .filter(Boolean);
+
+  const riskWait = buildActualRiskWaitIfNeeded({
+    normalized,
+    scannerSide,
+    metricsRows: metrics
+  });
 
   return {
-    actions: results.map((row) => row.action).filter(Boolean),
-    metrics: results.map((row) => row.metrics).filter(Boolean)
+    actions: riskWait ? [riskWait] : [],
+    metrics
   };
 }
 
@@ -1271,7 +1356,13 @@ export async function runTradeSystem(options = {}) {
     .flatMap((row) => Array.isArray(row?.metrics) ? row.metrics : [])
     .filter(Boolean);
 
+  const actualLiveRows = liveRows.filter(isLiveScannerRow).length;
+  const mirrorRows = liveRows.filter(isMirrorAnalysisRow).length;
+
   const analyzedRows = await analyzeCandidatesBatch(liveRows);
+
+  const analyzedActualRows = analyzedRows.filter(isLiveScannerRow).length;
+  const analyzedMirrorRows = analyzedRows.filter(isMirrorAnalysisRow).length;
 
   const openPositions = await getOpenPositions();
   const actions = [...earlyActions];
@@ -1345,7 +1436,7 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
-    const exposure = validateExposure(openPositions, row.side);
+    const exposure = validateExposure(openPositions, row.side || row.tradeSide);
 
     if (!exposure.ok) {
       actions.push({
@@ -1372,7 +1463,7 @@ export async function runTradeSystem(options = {}) {
 
     const riskCaps = checkRiskCaps({
       openPositions,
-      side: row.side,
+      side: row.side || row.tradeSide,
       btcRelation: row.btcRelation,
       riskFraction
     });
@@ -1411,9 +1502,6 @@ export async function runTradeSystem(options = {}) {
     actions.push(entry);
   }
 
-  const mirrorRows = liveRows.filter(isMirrorAnalysisRow).length;
-  const actualLiveRows = liveRows.length - mirrorRows;
-
   await setJson(
     durableRedis,
     KEYS.trade.lastProcessedSnapshot,
@@ -1431,6 +1519,9 @@ export async function runTradeSystem(options = {}) {
       mirrorRows,
 
       analyzedRows: analyzedRows.length,
+      analyzedActualRows,
+      analyzedMirrorRows,
+
       actions: actions.length,
 
       activeRotationId: activeContext.rotationId,
@@ -1458,6 +1549,8 @@ export async function runTradeSystem(options = {}) {
     mirrorRows,
 
     analyzedRows: analyzedRows.length,
+    analyzedActualRows,
+    analyzedMirrorRows,
 
     actions,
     actionCounts: actionCounts(actions),
