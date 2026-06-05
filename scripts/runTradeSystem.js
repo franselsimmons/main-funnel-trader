@@ -2,8 +2,14 @@
 
 import { runTradeSystem } from '../src/trade/tradeSystem.js';
 
+const VALID_TRADE_SIDES = new Set(['LONG', 'SHORT']);
+
 function now() {
   return Date.now();
+}
+
+function argv() {
+  return process.argv.slice(2);
 }
 
 function hasFlag(flag) {
@@ -45,12 +51,84 @@ function asArray(value) {
   return [];
 }
 
+function upper(value, fallback = '') {
+  const text = String(value || '').trim();
+
+  return text ? text.toUpperCase() : fallback;
+}
+
+function normalizeTradeSide(side) {
+  const raw = upper(side, 'UNKNOWN');
+
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
+
+  return 'UNKNOWN';
+}
+
+function inferSideFromIds(row = {}) {
+  const haystack = [
+    row.familyId,
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.id,
+    row.key
+  ]
+    .map((value) => upper(value))
+    .filter(Boolean)
+    .join('|');
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (
+    haystack.startsWith('LONG_') ||
+    haystack.includes('_LONG_') ||
+    haystack.includes('MICRO_LONG_') ||
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('TRADE_SIDE=LONG') ||
+    haystack.includes('SIDE=LONG')
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    haystack.startsWith('SHORT_') ||
+    haystack.includes('_SHORT_') ||
+    haystack.includes('MICRO_SHORT_') ||
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('TRADE_SIDE=SHORT') ||
+    haystack.includes('SIDE=SHORT')
+  ) {
+    return 'SHORT';
+  }
+
+  return 'UNKNOWN';
+}
+
+function getSide(row = {}) {
+  const direct = normalizeTradeSide(
+    row?.tradeSide ||
+    row?.side ||
+    row?.positionSide ||
+    row?.direction ||
+    row?.scannerSide ||
+    row?.analysisSide
+  );
+
+  if (VALID_TRADE_SIDES.has(direct)) return direct;
+
+  return inferSideFromIds(row);
+}
+
 function actionType(row = {}) {
-  return String(row?.action || row?.type || 'UNKNOWN').toUpperCase();
+  return upper(row?.action || row?.type || 'UNKNOWN', 'UNKNOWN');
 }
 
 function waitReason(row = {}) {
-  return String(row?.reason || row?.waitReason || 'UNKNOWN').toUpperCase();
+  return upper(row?.reason || row?.waitReason || 'UNKNOWN', 'UNKNOWN');
 }
 
 function getMicroFamilyId(row = {}) {
@@ -65,6 +143,8 @@ function getMicroFamilyId(row = {}) {
 
 function getMacroFamilyId(row = {}) {
   return (
+    row?.activeMacroFamilyId ||
+    row?.parentMacroFamilyId ||
     row?.macroFamilyId ||
     row?.parentMicroFamilyId ||
     row?.legacyMicroFamilyId ||
@@ -76,7 +156,7 @@ function getMacroFamilyId(row = {}) {
 }
 
 function getFamilyId(row = {}) {
-  return row?.familyId || null;
+  return row?.familyId || row?.family || null;
 }
 
 function getSymbol(row = {}) {
@@ -86,10 +166,6 @@ function getSymbol(row = {}) {
     row?.contractSymbol ||
     null
   );
-}
-
-function getSide(row = {}) {
-  return row?.tradeSide || row?.side || null;
 }
 
 function countBy(rows = [], selector) {
@@ -172,7 +248,12 @@ function summarizeWaits(actions = []) {
 
   return {
     count: waits.length,
+
     byReason: countBy(waits, waitReason),
+    bySide: countBy(waits, getSide),
+    byMicroFamily: countBy(waits, getMicroFamilyId),
+    byMacroFamily: countBy(waits, getMacroFamilyId),
+
     shadowOnly: waits.filter((row) => Boolean(row.shadowOnly)).length,
     liveEligibleFalse: waits.filter((row) => row.liveEligible === false).length
   };
@@ -189,12 +270,21 @@ function summarizeExits(result = {}) {
     real: realExits.length,
     shadow: shadowExits.length,
 
-    byReason: countBy(allExits, (row) => row?.exitReason || row?.reason || 'UNKNOWN'),
+    byReason: countBy(
+      allExits,
+      (row) => upper(row?.exitReason || row?.reason || 'UNKNOWN', 'UNKNOWN')
+    ),
+
+    bySide: countBy(allExits, getSide),
     byMicroFamily: countBy(allExits, getMicroFamilyId),
     byMacroFamily: countBy(allExits, getMacroFamilyId),
 
     realIds: uniqueStrings(realExits.map((row) => row?.tradeId || row?.id)),
-    shadowIds: uniqueStrings(shadowExits.map((row) => row?.tradeId || row?.id || row?.shadowId))
+    shadowIds: uniqueStrings(shadowExits.map((row) => (
+      row?.tradeId ||
+      row?.id ||
+      row?.shadowId
+    )))
   };
 }
 
@@ -205,9 +295,14 @@ function buildRequestedOptions() {
   };
 }
 
+function buildRunOptions(requested = {}) {
+  return {
+    forceProcessSnapshot: Boolean(requested.forceProcessSnapshot)
+  };
+}
+
 function buildCliResponse({
   result,
-  argv,
   requested,
   startedAt
 }) {
@@ -223,10 +318,10 @@ function buildCliResponse({
 
     source: 'CLI_RUN_TRADE_SYSTEM',
 
-    argv,
+    argv: argv(),
     requested,
 
-    forceProcessSnapshot: requested.forceProcessSnapshot,
+    forceProcessSnapshot: Boolean(requested.forceProcessSnapshot),
 
     runId: payload?.runId || null,
 
@@ -238,11 +333,22 @@ function buildCliResponse({
     reason: payload?.reason || null,
 
     candidates: payload?.candidates ?? null,
+    processed: payload?.processed ?? null,
+    earlyActions: payload?.earlyActions ?? null,
+
     liveRows: payload?.liveRows ?? null,
+    actualLiveRows: payload?.actualLiveRows ?? null,
+    mirrorRows: payload?.mirrorRows ?? null,
+
+    analyzedRows: payload?.analyzedRows ?? null,
+    analyzedActualRows: payload?.analyzedActualRows ?? null,
+    analyzedMirrorRows: payload?.analyzedMirrorRows ?? null,
 
     activeRotationId: payload?.activeRotationId || null,
     activeMicroFamilies: payload?.activeMicroFamilies ?? null,
     activeMacroFamilies: payload?.activeMacroFamilies ?? null,
+    trueMicroOnly: payload?.trueMicroOnly ?? null,
+    usedLegacyFallback: Boolean(payload?.usedLegacyFallback),
 
     actions: actions.length,
     actionCounts,
@@ -250,6 +356,8 @@ function buildCliResponse({
     entries,
     waits,
     exits,
+
+    scannerSnapshotStats: payload?.scannerSnapshotStats || null,
 
     durationMs: now() - startedAt,
 
@@ -259,7 +367,6 @@ function buildCliResponse({
 
 function buildCliError({
   error,
-  argv,
   requested,
   startedAt
 }) {
@@ -268,10 +375,10 @@ function buildCliError({
 
     source: 'CLI_RUN_TRADE_SYSTEM',
 
-    argv,
+    argv: argv(),
     requested,
 
-    forceProcessSnapshot: requested.forceProcessSnapshot,
+    forceProcessSnapshot: Boolean(requested.forceProcessSnapshot),
 
     error: error?.message || String(error),
     stack: error?.stack,
@@ -282,17 +389,15 @@ function buildCliError({
 
 async function main() {
   const startedAt = now();
-  const argv = process.argv.slice(2);
   const requested = buildRequestedOptions();
 
   try {
-    const result = await runTradeSystem({
-      forceProcessSnapshot: requested.forceProcessSnapshot
-    });
+    const result = await runTradeSystem(
+      buildRunOptions(requested)
+    );
 
     const response = buildCliResponse({
       result,
-      argv,
       requested,
       startedAt
     });
@@ -304,7 +409,6 @@ async function main() {
     console.error(JSON.stringify(
       buildCliError({
         error,
-        argv,
         requested,
         startedAt
       }),
