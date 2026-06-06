@@ -24,6 +24,20 @@ import { sendExitAlert } from '../discord/discord.js';
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 
+const SHORT_DIRECT = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL'
+]);
+
+const LONG_DIRECT = new Set([
+  'LONG',
+  'BULL',
+  'BULLISH',
+  'BUY'
+]);
+
 function now() {
   return Date.now();
 }
@@ -111,10 +125,12 @@ function normalizeTradeSide(value) {
   const direct = sideToTradeSide(value);
 
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (direct === 'LONG') return 'LONG';
 
   const raw = String(value || '').trim().toUpperCase();
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
+  if (SHORT_DIRECT.has(raw)) return TARGET_TRADE_SIDE;
+  if (LONG_DIRECT.has(raw)) return 'LONG';
 
   return 'UNKNOWN';
 }
@@ -123,62 +139,175 @@ function isShort(side) {
   return normalizeTradeSide(side) === TARGET_TRADE_SIDE;
 }
 
-function inferTradeSideFromIds(row = {}) {
-  const haystack = [
-    row.tradeSide,
-    row.side,
-    row.positionSide,
-    row.direction,
+function normalizedTextParts(row = {}) {
+  return [
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
 
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+  ]
+    .map((value) => String(value || '').toUpperCase())
+    .filter(Boolean);
+}
+
+function idText(row = {}) {
+  return [
     row.familyId,
+    row.family,
+    row.baseFamilyId,
+
     row.microFamilyId,
     row.trueMicroFamilyId,
+
     row.macroFamilyId,
     row.parentMacroFamilyId,
     row.parentMicroFamilyId,
-    row.id,
-    row.key,
+    row.parentFamilyId,
 
-    row.definition,
-    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
-    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    row.id,
+    row.key
   ]
     .map((value) => String(value || '').toUpperCase())
     .filter(Boolean)
     .join('|');
+}
 
-  if (!haystack) return 'UNKNOWN';
+function hasShortIdSignal(text = '') {
+  const raw = String(text || '').toUpperCase();
 
-  if (
-    haystack.includes('SHORT') ||
-    haystack.includes('BEAR') ||
-    haystack.includes('SELL') ||
-    haystack.includes('MICRO_SHORT_') ||
+  return (
+    raw.includes('MICRO_SHORT_') ||
+    raw.includes('SHORT_') ||
+    raw.includes('_SHORT_') ||
+    raw.endsWith('_SHORT') ||
+    raw.includes('TRADESIDE=SHORT') ||
+    raw.includes('TRADE_SIDE=SHORT') ||
+    raw.includes('SIDE=SHORT') ||
+    raw.includes('SIDE=BEAR') ||
+    raw.includes('DIRECTION=SHORT') ||
+    raw.includes('DIRECTION=BEAR') ||
+    raw.includes('POSITION_SIDE=SHORT') ||
+    raw.includes('POSITIONSIDE=SHORT')
+  );
+}
+
+function hasLongIdSignal(text = '') {
+  const raw = String(text || '').toUpperCase();
+
+  return (
+    raw.includes('MICRO_LONG_') ||
+    raw.includes('LONG_') ||
+    raw.includes('_LONG_') ||
+    raw.endsWith('_LONG') ||
+    raw.includes('TRADESIDE=LONG') ||
+    raw.includes('TRADE_SIDE=LONG') ||
+    raw.includes('SIDE=LONG') ||
+    raw.includes('SIDE=BULL') ||
+    raw.includes('DIRECTION=LONG') ||
+    raw.includes('DIRECTION=BULL') ||
+    raw.includes('POSITION_SIDE=LONG') ||
+    raw.includes('POSITIONSIDE=LONG')
+  );
+}
+
+function hasShortDefinitionSignal(parts = []) {
+  const haystack = parts.join('|');
+
+  return (
     haystack.includes('TRADESIDE=SHORT') ||
     haystack.includes('TRADE_SIDE=SHORT') ||
     haystack.includes('SIDE=SHORT') ||
     haystack.includes('SIDE=BEAR') ||
     haystack.includes('DIRECTION=SHORT') ||
-    haystack.includes('DIRECTION=BEAR')
-  ) {
+    haystack.includes('DIRECTION=BEAR') ||
+    haystack.includes('POSITION_SIDE=SHORT') ||
+    haystack.includes('POSITIONSIDE=SHORT') ||
+    haystack.includes('SIDE=SELL') ||
+    haystack.includes('DIRECTION=SELL')
+  );
+}
+
+function hasLongDefinitionSignal(parts = []) {
+  const haystack = parts.join('|');
+
+  return (
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('TRADE_SIDE=LONG') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('SIDE=BULL') ||
+    haystack.includes('DIRECTION=LONG') ||
+    haystack.includes('DIRECTION=BULL') ||
+    haystack.includes('POSITION_SIDE=LONG') ||
+    haystack.includes('POSITIONSIDE=LONG') ||
+    haystack.includes('SIDE=BUY') ||
+    haystack.includes('DIRECTION=BUY')
+  );
+}
+
+function inferTradeSideFromIds(row = {}) {
+  const haystack = idText(row);
+
+  if (!haystack) return 'UNKNOWN';
+
+  if (hasLongIdSignal(haystack)) return 'LONG';
+  if (hasShortIdSignal(haystack)) return TARGET_TRADE_SIDE;
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSideFromDefinitions(row = {}) {
+  const parts = normalizedTextParts(row);
+
+  if (!parts.length) return 'UNKNOWN';
+
+  if (hasLongDefinitionSignal(parts)) return 'LONG';
+  if (hasShortDefinitionSignal(parts)) return TARGET_TRADE_SIDE;
+
+  return 'UNKNOWN';
+}
+
+function inferPositionTradeSide(row = {}) {
+  const directSources = [
+    row.tradeSide,
+    row.positionSide,
+    row.direction,
+    row.signalSide,
+    row.scannerSide,
+    row.analysisSide,
+    row.actualScannerSide,
+    row.side
+  ];
+
+  for (const value of directSources) {
+    const side = normalizeTradeSide(value);
+
+    if (side === TARGET_TRADE_SIDE || side === 'LONG') return side;
+  }
+
+  const fromIds = inferTradeSideFromIds(row);
+
+  if (fromIds === TARGET_TRADE_SIDE || fromIds === 'LONG') return fromIds;
+
+  const fromDefinitions = inferTradeSideFromDefinitions(row);
+
+  if (fromDefinitions === TARGET_TRADE_SIDE || fromDefinitions === 'LONG') {
+    return fromDefinitions;
+  }
+
+  if (row.shortOnly === true && row.longDisabled === true) {
     return TARGET_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
 }
 
-function inferPositionTradeSide(row = {}) {
-  const direct = normalizeTradeSide(
-    row.tradeSide ||
-    row.side ||
-    row.positionSide ||
-    row.direction
-  );
-
-  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
-
-  return inferTradeSideFromIds(row);
+function isShortPosition(row = {}) {
+  return inferPositionTradeSide(row) === TARGET_TRADE_SIDE;
 }
 
 function idHasSchema(id, schema) {
@@ -218,7 +347,12 @@ function rowSchema(row = {}) {
 }
 
 function rowMicroId(row = {}) {
-  return String(row.microFamilyId || row.id || '').trim();
+  return String(
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.id ||
+    ''
+  ).trim();
 }
 
 function parentMacroFamilyId(row = {}) {
@@ -238,14 +372,17 @@ function isTrueMicroFamilyRow(row = {}) {
   const version = String(row.version || '').toUpperCase();
 
   if (!row || !id) return false;
+  if (!isShortPosition(row) && !hasShortIdSignal(id)) return false;
+
+  if (row.isLegacyMacro === true) return false;
   if (version.includes('MACRO')) return false;
 
-  if (row.isTrueMicro === true) return true;
+  if (row.isTrueMicro === true || row.trueMicro === true) return true;
+
   if (schema === microSchema) return true;
   if (idHasSchema(id, microSchema)) return true;
   if (definitionHasSchema(row, microSchema)) return true;
 
-  if (row.isLegacyMacro === true) return false;
   if (schema === macroSchema) return false;
   if (idHasSchema(id, macroSchema)) return false;
   if (definitionHasSchema(row, macroSchema)) return false;
@@ -262,12 +399,20 @@ function normalizeMicroIdentity(row = {}) {
 
   return {
     microFamilyId,
+    trueMicroFamilyId: microFamilyId,
     familyId: row.familyId || null,
 
     parentMacroFamilyId: macroId || null,
+    parentMicroFamilyId: row.parentMicroFamilyId || macroId || null,
     macroFamilyId: macroId || null,
 
     microFamilySchema: row.microFamilySchema || (
+      trueMicro
+        ? microSchema
+        : macroSchema
+    ),
+
+    schema: row.schema || row.microFamilySchema || (
       trueMicro
         ? microSchema
         : macroSchema
@@ -282,39 +427,53 @@ function normalizeMicroIdentity(row = {}) {
   };
 }
 
-function assertEntryTradeable(entry = {}) {
-  const tradeSide = inferPositionTradeSide(entry);
+function assertShortRiskGeometry(row = {}) {
+  const entryPrice = safeNumber(row.entry, 0);
+  const sl = safeNumber(row.sl, 0);
+  const tp = safeNumber(row.tp, 0);
 
-  if (tradeSide !== TARGET_TRADE_SIDE) {
+  if (!(entryPrice > 0 && sl > entryPrice && tp < entryPrice)) {
+    throw new Error('OPEN_POSITION_SHORT_RISK_GEOMETRY_INVALID');
+  }
+}
+
+function assertBasePositionFields(row = {}) {
+  if (inferPositionTradeSide(row) !== TARGET_TRADE_SIDE) {
     throw new Error('OPEN_POSITION_SHORT_ONLY_SYSTEM_REJECTED_NON_SHORT_ENTRY');
   }
 
-  if (!entry.microFamilyId) {
+  if (!row.microFamilyId) {
     throw new Error('OPEN_POSITION_MICRO_FAMILY_ID_MISSING');
   }
 
-  if (!entry.familyId) {
+  if (!row.familyId) {
     throw new Error('OPEN_POSITION_FAMILY_ID_MISSING');
   }
 
-  if (!entry.entry || !entry.sl || !entry.tp) {
+  if (!row.entry || !row.sl || !row.tp) {
     throw new Error('OPEN_POSITION_RISK_GEOMETRY_MISSING');
   }
+
+  if (!allowLegacyMacroLiveEntries() && !isTrueMicroFamilyRow(row)) {
+    throw new Error('OPEN_POSITION_REQUIRES_TRUE_MICRO_FAMILY');
+  }
+
+  assertShortRiskGeometry(row);
+}
+
+function assertEntryTradeable(entry = {}) {
+  assertBasePositionFields(entry);
 
   if (!entry.liveEligible) {
     throw new Error('OPEN_POSITION_NOT_LIVE_ELIGIBLE');
   }
+}
 
-  if (!allowLegacyMacroLiveEntries() && !isTrueMicroFamilyRow(entry)) {
-    throw new Error('OPEN_POSITION_REQUIRES_TRUE_MICRO_FAMILY');
-  }
+function assertPositionPersistable(position = {}) {
+  assertBasePositionFields(position);
 
-  const entryPrice = safeNumber(entry.entry, 0);
-  const sl = safeNumber(entry.sl, 0);
-  const tp = safeNumber(entry.tp, 0);
-
-  if (!(entryPrice > 0 && sl > entryPrice && tp < entryPrice)) {
-    throw new Error('OPEN_POSITION_SHORT_RISK_GEOMETRY_INVALID');
+  if (position.status && String(position.status).toUpperCase() !== 'OPEN') {
+    throw new Error('OPEN_POSITION_STATUS_MUST_BE_OPEN');
   }
 }
 
@@ -352,7 +511,7 @@ function applyLiveStopManagement(position) {
   const cfg = manageConfig();
 
   if (!cfg.applyLive) return position;
-  if (!isShort(position.tradeSide || position.side)) return position;
+  if (!isShortPosition(position)) return position;
 
   const entry = safeNumber(position.entry, 0);
   const initialSl = safeNumber(position.initialSl || position.sl, 0);
@@ -427,7 +586,7 @@ function detectExit({
     };
   }
 
-  if (!isShort(position.tradeSide || position.side)) {
+  if (!isShortPosition(position)) {
     return {
       shouldExit: false,
       reason: 'NON_SHORT_POSITION_IGNORED'
@@ -484,6 +643,20 @@ function detectExit({
   };
 }
 
+function forceShortPositionFields(row = {}) {
+  return {
+    ...row,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true
+  };
+}
+
 export async function getOpenPositions() {
   const redis = getDurableRedis();
   const keys = await getKeys(redis, KEYS.trade.openPattern, 1000);
@@ -496,6 +669,7 @@ export async function getOpenPositions() {
 
   return rows
     .filter(Boolean)
+    .filter(isShortPosition)
     .sort((a, b) => {
       return safeNumber(a.openedAt || a.createdAt, 0) -
         safeNumber(b.openedAt || b.createdAt, 0);
@@ -507,11 +681,16 @@ export async function getOpenPosition(symbol) {
 
   if (!keySymbol) return null;
 
-  return getJson(
+  const row = await getJson(
     getDurableRedis(),
     KEYS.trade.open(keySymbol),
     null
   );
+
+  if (!row) return null;
+  if (!isShortPosition(row)) return null;
+
+  return row;
 }
 
 export async function saveOpenPosition(position) {
@@ -521,42 +700,25 @@ export async function saveOpenPosition(position) {
     throw new Error('OPEN_POSITION_SYMBOL_MISSING');
   }
 
-  const identity = normalizeMicroIdentity(position);
-  const tradeSide = inferPositionTradeSide(position);
+  const normalized = forceShortPositionFields(position);
+  const identity = normalizeMicroIdentity(normalized);
 
-  const row = {
-    ...position,
+  const row = forceShortPositionFields({
+    ...normalized,
     ...identity,
 
-    symbol: position.symbol || keySymbol,
-    baseSymbol: position.baseSymbol || keySymbol,
-    contractSymbol: position.contractSymbol || null,
+    symbol: normalized.symbol || keySymbol,
+    baseSymbol: normalized.baseSymbol || keySymbol,
+    contractSymbol: normalized.contractSymbol || null,
 
-    side: tradeSide === TARGET_TRADE_SIDE
-      ? TARGET_DASHBOARD_SIDE
-      : position.side || null,
+    status: normalized.status || 'OPEN',
 
-    tradeSide: tradeSide === TARGET_TRADE_SIDE
-      ? TARGET_TRADE_SIDE
-      : position.tradeSide || null,
-
-    positionSide: tradeSide === TARGET_TRADE_SIDE
-      ? TARGET_TRADE_SIDE
-      : position.positionSide || null,
-
-    direction: tradeSide === TARGET_TRADE_SIDE
-      ? TARGET_TRADE_SIDE
-      : position.direction || null,
-
-    shortOnly: tradeSide === TARGET_TRADE_SIDE,
-    longDisabled: true,
-
-    status: position.status || 'OPEN',
-
-    strategyVersion: position.strategyVersion || CONFIG.strategyVersion,
+    strategyVersion: normalized.strategyVersion || CONFIG.strategyVersion,
 
     updatedAt: now()
-  };
+  });
+
+  assertPositionPersistable(row);
 
   await setJson(
     getDurableRedis(),
@@ -578,11 +740,12 @@ export async function deleteOpenPosition(symbol) {
 export function updatePathMetrics(position, price) {
   const cfg = manageConfig();
 
-  if (!isShort(position.tradeSide || position.side)) {
+  if (!isShortPosition(position)) {
     position.updatedAt = now();
     position.shortOnly = false;
     position.longDisabled = true;
     position.liveManagementSkippedReason = 'NON_SHORT_POSITION_IGNORED';
+
     return position;
   }
 
@@ -592,14 +755,20 @@ export function updatePathMetrics(position, price) {
   const tp = safeNumber(position.tp, 0);
 
   if (entry <= 0 || initialSl <= 0 || tp <= 0 || current <= 0) {
-    return position;
+    return forceShortPositionFields({
+      ...position,
+      updatedAt: now()
+    });
   }
 
   const riskDist = Math.abs(entry - initialSl);
   const rewardDist = Math.abs(tp - entry);
 
   if (riskDist <= 0 || rewardDist <= 0) {
-    return position;
+    return forceShortPositionFields({
+      ...position,
+      updatedAt: now()
+    });
   }
 
   const directionalMove = entry - current;
@@ -638,7 +807,6 @@ export function updatePathMetrics(position, price) {
   if (position.mfeR >= 1.0) position.reachedOneR = true;
   if (tpProgress >= 0.8) position.nearTpSeen = true;
 
-  // Counterfactual BE logic. Altijd meten, ook wanneer live management uit staat.
   if (position.mfeR >= cfg.beArmR) {
     position.beArmed = true;
 
@@ -663,12 +831,7 @@ export function updatePathMetrics(position, price) {
 
   applyLiveStopManagement(position);
 
-  position.side = TARGET_DASHBOARD_SIDE;
-  position.tradeSide = TARGET_TRADE_SIDE;
-  position.positionSide = TARGET_TRADE_SIDE;
-  position.direction = TARGET_TRADE_SIDE;
-  position.shortOnly = true;
-  position.longDisabled = true;
+  Object.assign(position, forceShortPositionFields(position));
 
   position.updatedAt = now();
 
@@ -676,36 +839,33 @@ export function updatePathMetrics(position, price) {
 }
 
 export function buildOpenPositionFromEntry(entry) {
-  assertEntryTradeable(entry);
+  const normalizedEntry = forceShortPositionFields(entry);
 
-  const keySymbol = storageSymbol(entry);
+  assertEntryTradeable(normalizedEntry);
+
+  const keySymbol = storageSymbol(normalizedEntry);
   const openedAt = now();
-  const identity = normalizeMicroIdentity(entry);
+  const identity = normalizeMicroIdentity(normalizedEntry);
 
-  return {
-    ...entry,
+  return forceShortPositionFields({
+    ...normalizedEntry,
     ...identity,
 
-    tradeId: entry.tradeId || randomId('trade'),
+    tradeId: normalizedEntry.tradeId || randomId('trade'),
 
-    symbol: entry.symbol || keySymbol,
-    baseSymbol: entry.baseSymbol || keySymbol,
-    contractSymbol: entry.contractSymbol || null,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
+    symbol: normalizedEntry.symbol || keySymbol,
+    baseSymbol: normalizedEntry.baseSymbol || keySymbol,
+    contractSymbol: normalizedEntry.contractSymbol || null,
 
     status: 'OPEN',
 
-    strategyVersion: entry.strategyVersion || CONFIG.strategyVersion,
+    strategyVersion: normalizedEntry.strategyVersion || CONFIG.strategyVersion,
 
     openedAt,
     createdAt: openedAt,
     updatedAt: openedAt,
 
-    initialSl: entry.initialSl || entry.sl,
+    initialSl: normalizedEntry.initialSl || normalizedEntry.sl,
 
     currentR: 0,
     mfeR: 0,
@@ -734,11 +894,8 @@ export function buildOpenPositionFromEntry(entry) {
     liveManaged: false,
     beLiveApplied: false,
     trailLiveApplied: false,
-    slManagementSource: null,
-
-    shortOnly: true,
-    longDisabled: true
-  };
+    slManagementSource: null
+  });
 }
 
 async function markPriceFetchFailed(position) {
@@ -746,7 +903,7 @@ async function markPriceFetchFailed(position) {
   position.lastPriceFetchFailedAt = now();
   position.updatedAt = now();
 
-  await saveOpenPosition(position);
+  await saveOpenPosition(forceShortPositionFields(position));
 
   return position;
 }
@@ -754,14 +911,9 @@ async function markPriceFetchFailed(position) {
 function enrichOutcomeIdentity(outcome = {}, position = {}) {
   const identity = normalizeMicroIdentity(position);
 
-  return {
+  return forceShortPositionFields({
     ...outcome,
     ...identity,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
 
     activeRotationId: position.activeRotationId || null,
     activeMacroFamilyId:
@@ -773,11 +925,8 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
 
     isTrueMicro: identity.isTrueMicro,
     isLegacyMacro: identity.isLegacyMacro,
-    trueMicroOnly: identity.trueMicroOnly,
-
-    shortOnly: true,
-    longDisabled: true
-  };
+    trueMicroOnly: identity.trueMicroOnly
+  });
 }
 
 async function monitorOnePosition({
@@ -785,7 +934,7 @@ async function monitorOnePosition({
   priceFetcher,
   timestamp
 }) {
-  if (!isShort(position.tradeSide || position.side)) {
+  if (!isShortPosition(position)) {
     return {
       type: 'IGNORED_NON_SHORT',
       position,
@@ -828,7 +977,7 @@ async function monitorOnePosition({
   }
 
   const baseOutcome = buildOutcomeFromPosition({
-    position,
+    position: forceShortPositionFields(position),
     exitPrice: price,
     exitReason: exit.reason,
     source: 'REAL'
