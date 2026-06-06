@@ -856,8 +856,9 @@
       microMode: "balanced",
       microSearch: "",
 
-      microFetchLimit: 80,
-      microSideLimit: 50,
+      microFetchLimit: 25,
+      microSideLimit: 25,
+      microBestLimit: 25,
 
       apiTimeoutMs: 22000
     };
@@ -1254,6 +1255,18 @@
       if (Array.isArray(data?.rows)) return data.rows;
       if (Array.isArray(data?.items)) return data.items;
       if (Array.isArray(data?.data)) return data.data;
+
+      return [];
+    }
+
+    function getFirstNonEmptyRows(data, keys = []) {
+      if (Array.isArray(data)) return data;
+
+      for (const key of keys) {
+        const rows = data?.[key];
+
+        if (Array.isArray(rows) && rows.length > 0) return rows;
+      }
 
       return [];
     }
@@ -1726,6 +1739,7 @@
       params.set("mode", extra.mode || state.microMode);
       params.set("side", ONLY_SIDE);
       params.set("limit", String(extra.limit || state.microFetchLimit));
+      params.set("bestLimit", String(extra.bestLimit || state.microBestLimit));
       params.set("sideLimit", String(extra.sideLimit || state.microSideLimit));
       params.set("sideEnsureLimit", String(extra.sideLimit || state.microSideLimit));
       params.set("includeActiveRotation", "0");
@@ -1747,28 +1761,69 @@
       return `${endpoints.rotation}?${params.toString()}`;
     }
 
+    function preferredMicroRowsFromPayload(data = {}) {
+      const bestRows = getFirstNonEmptyRows(data, [
+        "best25MicroFamilies",
+        "topMicroFamilies",
+        "bestMicroFamilies"
+      ]);
+
+      if (bestRows.length > 0) return bestRows;
+
+      return getFirstNonEmptyRows(data, [
+        "shortRows",
+        "rows",
+        "microFamilies",
+        "micros",
+        "items",
+        "data"
+      ]);
+    }
+
     async function fetchMicroRows(mode = state.microMode) {
       try {
         const data = await api(microUrl({
           mode,
           limit: state.microFetchLimit,
+          bestLimit: state.microBestLimit,
           sideLimit: state.microSideLimit
         }), {
           timeoutMs: 18000
         });
 
-        const rows = getRows(data, ["shortRows", "rows", "microFamilies", "micros"])
-          .filter((row) => isSide(row, ONLY_SIDE));
+        const bestRows = getFirstNonEmptyRows(data, [
+          "best25MicroFamilies",
+          "topMicroFamilies",
+          "bestMicroFamilies"
+        ]).filter((row) => isSide(row, ONLY_SIDE));
+
+        const fallbackRows = getFirstNonEmptyRows(data, [
+          "shortRows",
+          "rows",
+          "microFamilies",
+          "micros"
+        ]).filter((row) => isSide(row, ONLY_SIDE));
+
+        const rows = bestRows.length > 0
+          ? bestRows
+          : fallbackRows;
 
         return {
           ok: true,
           mode,
           sideMode: true,
           shortOnly: true,
+          alwaysBest25: Boolean(data.alwaysBest25 || bestRows.length > 0),
           source: data.source || null,
           raw: data,
+
+          best25MicroFamilies: bestRows,
+          topMicroFamilies: bestRows,
+
           shortRows: rows,
           rows,
+
+          fallbackRows,
           errors: [],
           activeRotation: data.activeRotation || null,
           activeMicroFamilyIds: data.activeMicroFamilyIds || [],
@@ -1783,9 +1838,13 @@
           mode,
           sideMode: true,
           shortOnly: true,
+          alwaysBest25: false,
           raw: null,
+          best25MicroFamilies: [],
+          topMicroFamilies: [],
           shortRows: [],
           rows: [],
+          fallbackRows: [],
           errors: [friendlyApiMessage(error)],
           activeRotation: null,
           activeMicroFamilyIds: [],
@@ -1826,8 +1885,9 @@
     }
 
     function currentMicroRows() {
-      return getRows(state.micros, ["rows", "shortRows", "microFamilies", "micros"])
-        .filter((row) => isSide(row, ONLY_SIDE));
+      const rows = preferredMicroRowsFromPayload(state.micros || {});
+
+      return rows.filter((row) => isSide(row, ONLY_SIDE));
     }
 
     async function ensureMicroRows({ force = false } = {}) {
@@ -2081,8 +2141,8 @@
       target.innerHTML = `
         <div class="section-title">
           <div>
-            <h2>Top ${state.microSideLimit} SHORT true micro families</h2>
-            <p>Beste short fingerprints volgens mode: ${escapeHtml(state.microMode)}.</p>
+            <h2>Beste ${state.microBestLimit} SHORT true micro families van het moment</h2>
+            <p>Primaire bron: best25MicroFamilies/topMicroFamilies. Mode: ${escapeHtml(state.microMode)}.</p>
           </div>
         </div>
         ${microRowsTable(split.shortRows, activeMicroSet(), activeMacroSet())}
@@ -2329,7 +2389,7 @@
         setMessage(data.errors.join("\n"), "warn");
       }
 
-      const rows = data.rows || [];
+      const rows = currentMicroRows();
       const filteredRows = filterMicroRows(rows);
       const split = splitTopMicroRows(filteredRows);
       const bestShort = bestMicroRowForSide(rows, ONLY_SIDE);
@@ -2342,7 +2402,7 @@
             `).join("")}
           </select>
 
-          <input id="microSearch" type="search" placeholder="Zoek SHORT true micro, macro, family, bucket..." value="${escapeAttr(state.microSearch)}" />
+          <input id="microSearch" type="search" placeholder="Zoek binnen beste 25 SHORT true micro, macro, family, bucket..." value="${escapeAttr(state.microSearch)}" />
 
           <button type="button" class="success" id="copyTopMicroIdsBtn">Copy visible SHORT true micro IDs</button>
           <button type="button" class="success" id="copyTopMacroIdsBtn">Copy visible SHORT macro IDs</button>
@@ -2352,7 +2412,7 @@
         <div class="section-title">
           <div>
             <h2>Beste SHORT micro-family selectie</h2>
-            <p>Frontend vraagt alleen /api/admin/micro-families?side=SHORT op. Geen LONG request meer.</p>
+            <p>Bron: best25MicroFamilies/topMicroFamilies uit /api/admin/micro-families. LONG request = 0.</p>
           </div>
         </div>
 
@@ -2361,20 +2421,21 @@
         </div>
 
         <div class="grid">
-          ${metricCard("Fetched SHORT rows", fmtInt(rows.length))}
+          ${metricCard("Best25 SHORT rows", fmtInt(rows.length))}
           ${metricCard("Visible SHORT rows", fmtInt(split.visibleRows.length))}
           ${metricCard("Mode", state.microMode)}
           ${metricCard("Active true micro", fmtInt(activeMicroSet().size))}
           ${metricCard("Active macro", fmtInt(activeMacroSet().size))}
           ${metricCard("SHORT visible", `${fmtInt(split.shortRows.length)} / ${fmtInt(split.totalShortRows)}`)}
           ${metricCard("LONG requests", "0")}
-          ${metricCard("Side request", data.ok ? "OK" : "Partial")}
+          ${metricCard("Best25 source", data.alwaysBest25 ? "OK" : "Fallback")}
         </div>
 
         <div class="card">
           <h3>Analyze view</h3>
           <div class="metric-extra">
-            SHORT-only actief. De UI haalt geen LONG side meer op, render-t geen LONG card en verstuurt geen LONG activation action.
+            Deze tab rendert standaard altijd de 25 beste SHORT true micro-families van het moment.
+            Filters zoals activeOnly/q op de backend worden niet nodig voor deze basisweergave.
           </div>
         </div>
 
@@ -2405,7 +2466,7 @@
       });
 
       $("downloadMicrosBtn")?.addEventListener("click", () => {
-        downloadJson("short-micro-families.json", data);
+        downloadJson("short-best25-micro-families.json", data);
       });
     }
 
