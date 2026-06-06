@@ -1476,7 +1476,9 @@ export async function getActiveRotation() {
     return sanitized;
   }
 
-  return autoBootstrapActiveRotation(redis);
+    // Puur-handmatig: nooit zelf activeren. Geen handmatige keuze = leeg = puur shadow, geen Discord.
+  return null;
+
 }
 
 export async function getActiveRotationSet() {
