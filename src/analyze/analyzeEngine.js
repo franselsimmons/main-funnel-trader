@@ -27,9 +27,14 @@ import { applyCosts } from '../trade/costModel.js';
 
 const WEEK_MICROS_CODEC = 'ANALYZE_WEEK_MICROS_GZIP_V1';
 const WEEK_MICRO_ROW_CODEC = 'ANALYZE_WEEK_MICRO_ROW_GZIP_V1';
+const WEEK_MICROS_TOP_CODEC = 'ANALYZE_WEEK_MICROS_TOP_GZIP_V1';
 
 const DEFAULT_MAX_REDIS_SET_BYTES = 9_500_000;
 const DEFAULT_MAX_ROW_SET_BYTES = 250_000;
+
+const DEFAULT_TOP_MICROS_SNAPSHOT_LIMIT = 300;
+const DEFAULT_MAX_FULL_READ_MICRO_ROWS = 1_500;
+const DEFAULT_FULL_READ_SOFT_TIMEOUT_MS = 2_400;
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
@@ -63,13 +68,16 @@ function sideTextToTradeSide(value) {
 
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
 
-  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'ASK', 'DOWN', 'DOWNSIDE', 'RED'].includes(raw)) {
+    return TARGET_TRADE_SIDE;
+  }
 
   const normalized = raw.replace(/[^A-Z0-9]+/g, '_');
 
   const shortPatterns = [
     'SHORT',
     'BEAR',
+    'BEARISH',
     'SELL',
     'SIDE_SHORT',
     'TRADE_SIDE_SHORT',
@@ -238,6 +246,26 @@ function getWeekStorageConfig() {
       Math.min(20, Math.floor(safeNumber(CONFIG.analyze?.storageConcurrency, 8)))
     ),
 
+    topMicrosSnapshotLimit: Math.max(
+      25,
+      Math.min(
+        1_000,
+        Math.floor(safeNumber(CONFIG.analyze?.topMicrosSnapshotLimit, DEFAULT_TOP_MICROS_SNAPSHOT_LIMIT))
+      )
+    ),
+
+    maxFullReadMicroRows: Math.max(
+      25,
+      Math.floor(safeNumber(CONFIG.analyze?.maxFullReadMicroRows, DEFAULT_MAX_FULL_READ_MICRO_ROWS))
+    ),
+
+    fullReadSoftTimeoutMs: Math.max(
+      250,
+      Math.floor(safeNumber(CONFIG.analyze?.fullReadSoftTimeoutMs, DEFAULT_FULL_READ_SOFT_TIMEOUT_MS))
+    ),
+
+    preferTopSnapshotOnLargeIndex: CONFIG.analyze?.preferTopSnapshotOnLargeIndex !== false,
+
     maxExamplesPerMicro: Math.max(
       0,
       Math.floor(safeNumber(CONFIG.analyze?.maxExamplesPerMicro, 8))
@@ -283,6 +311,10 @@ function getWeekMicrosIndexKey(weekKey) {
   return `${getWeekMicrosBaseKey(weekKey)}:INDEX`;
 }
 
+function getWeekMicrosTopKey(weekKey) {
+  return `${getWeekMicrosBaseKey(weekKey)}:TOP`;
+}
+
 function getWeekMicroRowKey(weekKey, microFamilyId) {
   return `${getWeekMicrosBaseKey(weekKey)}:ROW:${microFamilyId}`;
 }
@@ -315,6 +347,7 @@ async function mapLimit(items = [], concurrency = 8, worker) {
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [])
+      .flatMap((value) => Array.isArray(value) ? value : [value])
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -1355,7 +1388,7 @@ function decodeStoragePayload(payload) {
 
   if (
     typeof parsed === 'object' &&
-    [WEEK_MICROS_CODEC, WEEK_MICRO_ROW_CODEC].includes(parsed.codec) &&
+    [WEEK_MICROS_CODEC, WEEK_MICRO_ROW_CODEC, WEEK_MICROS_TOP_CODEC].includes(parsed.codec) &&
     typeof parsed.data === 'string'
   ) {
     return decodeCompressedBase64(parsed.data);
@@ -1523,6 +1556,41 @@ function encodeLegacyWeekMicrosPayload(micros = {}) {
   });
 }
 
+async function redisSetRawWithTtl(redis, key, value, ttlSec) {
+  const ttl = Math.max(1, Math.floor(safeNumber(ttlSec, 1)));
+
+  try {
+    return await redis.set(key, value, { ex: ttl });
+  } catch (errorA) {
+    try {
+      return await redis.set(key, value, { EX: ttl });
+    } catch (errorB) {
+      try {
+        return await redis.set(key, value, 'EX', ttl);
+      } catch {
+        throw errorA || errorB;
+      }
+    }
+  }
+}
+
+async function withSoftTimeout(promise, timeoutMs, fallbackValue = null) {
+  let timer = null;
+
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(fallbackValue), timeoutMs);
+  });
+
+  return Promise
+    .race([
+      promise.catch(() => fallbackValue),
+      timeout
+    ])
+    .finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+}
+
 async function getRawRedisValue(redis, key, fallback = null) {
   const direct = await redis.get(key).catch(() => undefined);
 
@@ -1543,6 +1611,161 @@ async function hasWeekMicrosIndex(redis, weekKey) {
   const index = await getWeekMicrosIndex(redis, weekKey);
 
   return Boolean(index && Array.isArray(index.ids));
+}
+
+function rowToObjectEntries(rows) {
+  if (!rows) return {};
+
+  if (Array.isArray(rows)) {
+    return Object.fromEntries(
+      rows
+        .filter(Boolean)
+        .map((row) => [
+          row.microFamilyId || row.trueMicroFamilyId || row.id || row.key,
+          row
+        ])
+        .filter(([id]) => Boolean(id))
+    );
+  }
+
+  if (typeof rows === 'object') return rows;
+
+  return {};
+}
+
+function compareTopMicros(a = {}, b = {}) {
+  const ar = refreshStats(a);
+  const br = refreshStats(b);
+
+  return (
+    safeNumber(br.dashboardBalancedScore ?? br.balancedScore, 0) -
+    safeNumber(ar.dashboardBalancedScore ?? ar.balancedScore, 0) ||
+
+    safeNumber(br.balancedScore, 0) -
+    safeNumber(ar.balancedScore, 0) ||
+
+    safeNumber(br.totalR, 0) -
+    safeNumber(ar.totalR, 0) ||
+
+    safeNumber(br.avgR, 0) -
+    safeNumber(ar.avgR, 0) ||
+
+    safeNumber(br.sampleAdjustedWinrate ?? br.fairWinrate ?? br.wilsonLowerBound, 0) -
+    safeNumber(ar.sampleAdjustedWinrate ?? ar.fairWinrate ?? ar.wilsonLowerBound, 0) ||
+
+    safeNumber(br.completed, 0) -
+    safeNumber(ar.completed, 0) ||
+
+    safeNumber(br.seen ?? br.observations, 0) -
+    safeNumber(ar.seen ?? ar.observations, 0) ||
+
+    String(ar.microFamilyId || '').localeCompare(String(br.microFamilyId || ''))
+  );
+}
+
+function selectTopMicrosObject(micros = {}, limit = DEFAULT_TOP_MICROS_SNAPSHOT_LIMIT) {
+  const safeLimit = Math.max(1, Math.floor(safeNumber(limit, DEFAULT_TOP_MICROS_SNAPSHOT_LIMIT)));
+
+  const normalized = normalizeMicros(micros);
+
+  return Object.fromEntries(
+    Object.values(normalized)
+      .filter(Boolean)
+      .filter(isShortOnlyRow)
+      .sort(compareTopMicros)
+      .slice(0, safeLimit)
+      .map((row) => [
+        row.microFamilyId,
+        row
+      ])
+      .filter(([id]) => Boolean(id))
+  );
+}
+
+async function readWeekMicrosTopSnapshot(redis, weekKey) {
+  const raw = await getRawRedisValue(
+    redis,
+    getWeekMicrosTopKey(weekKey),
+    null
+  ).catch(() => null);
+
+  if (!raw) return null;
+
+  const decoded = decodeStoragePayload(raw);
+  const rows = decoded?.rows || decoded?.micros || decoded;
+
+  return normalizeMicros(rowToObjectEntries(rows));
+}
+
+async function saveWeekMicrosTopSnapshot(redis, weekKey, micros = {}, {
+  mergeExisting = true
+} = {}) {
+  const cfg = getWeekStorageConfig();
+  const schemaMeta = getAnalyzeSchemaMeta();
+
+  const currentTop = mergeExisting
+    ? await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => ({}))
+    : {};
+
+  const merged = {
+    ...(currentTop || {}),
+    ...normalizeMicros(micros)
+  };
+
+  const topMicros = selectTopMicrosObject(
+    merged,
+    cfg.topMicrosSnapshotLimit
+  );
+
+  const ids = Object.keys(topMicros);
+
+  const encoded = encodeStoragePayload(
+    {
+      weekKey,
+      ids,
+      count: ids.length,
+      rows: topMicros,
+
+      shortOnly: true,
+      longDisabled: true,
+
+      storageMode: 'TOP_MICROS_SNAPSHOT',
+      codec: WEEK_MICROS_TOP_CODEC,
+
+      executionMicroRefined: shouldRefineExecutionMicroIds(),
+      executionMicroSuffix: EXECUTION_MICRO_SUFFIX,
+
+      schema: schemaMeta.schema,
+      macroSchema: schemaMeta.macroSchema,
+      microSchema: schemaMeta.microSchema,
+      strategyVersion: schemaMeta.strategyVersion,
+
+      updatedAt: now()
+    },
+    {
+      codec: WEEK_MICROS_TOP_CODEC,
+      maxBytes: cfg.maxRedisSetBytes,
+      count: ids.length,
+      extraMeta: {
+        storageMode: 'top-micros-snapshot'
+      }
+    }
+  );
+
+  await redisSetRawWithTtl(
+    redis,
+    getWeekMicrosTopKey(weekKey),
+    encoded.payload,
+    cfg.weekMicrosTtlSec
+  );
+
+  return {
+    ids,
+    count: ids.length,
+    payloadBytes: encoded.meta.payloadBytes,
+    rawBytes: encoded.meta.rawBytes,
+    compressedBytes: encoded.meta.compressedBytes || 0
+  };
 }
 
 async function readWeekMicroRowsByIds(redis, weekKey, ids = []) {
@@ -1578,6 +1801,7 @@ async function readWeekMicroRowsByIds(redis, weekKey, ids = []) {
 }
 
 async function readWeekMicrosSharded(redis, weekKey) {
+  const cfg = getWeekStorageConfig();
   const index = await getWeekMicrosIndex(redis, weekKey);
 
   if (!index || !Array.isArray(index.ids)) {
@@ -1589,6 +1813,21 @@ async function readWeekMicrosSharded(redis, weekKey) {
     .filter((id) => sideTextToTradeSide(id) === TARGET_TRADE_SIDE);
 
   if (!ids.length) return {};
+
+  if (
+    cfg.preferTopSnapshotOnLargeIndex &&
+    ids.length > cfg.maxFullReadMicroRows
+  ) {
+    const top = await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => null);
+
+    if (top && Object.keys(top).length > 0) return top;
+
+    return readWeekMicroRowsByIds(
+      redis,
+      weekKey,
+      ids.slice(0, cfg.maxFullReadMicroRows)
+    );
+  }
 
   return readWeekMicroRowsByIds(redis, weekKey, ids);
 }
@@ -1608,6 +1847,18 @@ async function getWeekMicrosByIds(weekKey, ids = []) {
 
     return normalizeMicros(
       await readWeekMicroRowsByIds(redis, weekKey, existingIds)
+    );
+  }
+
+  const top = await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => null);
+
+  if (top && Object.keys(top).length > 0) {
+    const normalizedTop = normalizeMicros(top);
+
+    return Object.fromEntries(
+      safeIds
+        .filter((id) => normalizedTop[id])
+        .map((id) => [id, normalizedTop[id]])
     );
   }
 
@@ -1665,12 +1916,11 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
 
       const encoded = encodeMicroRowPayload(row);
 
-      await redis.set(
+      await redisSetRawWithTtl(
+        redis,
         getWeekMicroRowKey(weekKey, id),
         encoded.payload,
-        {
-          ex: cfg.weekMicrosTtlSec
-        }
+        cfg.weekMicrosTtlSec
       );
 
       return {
@@ -1745,6 +1995,21 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
     }
   );
 
+  const topInput = Object.fromEntries(
+    writeIds
+      .filter((id) => micros[id])
+      .map((id) => [id, micros[id]])
+  );
+
+  await saveWeekMicrosTopSnapshot(
+    redis,
+    weekKey,
+    fullSave ? micros : topInput,
+    {
+      mergeExisting: !fullSave
+    }
+  ).catch(() => null);
+
   await redis.del(getWeekMicrosBaseKey(weekKey)).catch(() => null);
 
   return {
@@ -1760,24 +2025,67 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
 
 export async function getWeekMicros(weekKey = getIsoWeekKey()) {
   const redis = getDurableRedis();
+  const cfg = getWeekStorageConfig();
 
-  const sharded = await readWeekMicrosSharded(redis, weekKey);
+  const sharded = await withSoftTimeout(
+    readWeekMicrosSharded(redis, weekKey),
+    cfg.fullReadSoftTimeoutMs,
+    null
+  );
 
   if (sharded !== null) {
     return normalizeMicros(sharded || {});
   }
 
-  const raw = await getRawRedisValue(
-    redis,
-    getWeekMicrosBaseKey(weekKey),
+  const top = await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => null);
+
+  if (top && Object.keys(top).length > 0) {
+    return normalizeMicros(top);
+  }
+
+  const raw = await withSoftTimeout(
+    getRawRedisValue(
+      redis,
+      getWeekMicrosBaseKey(weekKey),
+      null
+    ),
+    cfg.fullReadSoftTimeoutMs,
     null
   );
 
   if (!raw) return {};
 
   const decoded = decodeStoragePayload(raw);
+  const normalized = normalizeMicros(decoded || {});
 
-  return normalizeMicros(decoded || {});
+  if (Object.keys(normalized).length > 0) {
+    await saveWeekMicrosTopSnapshot(
+      redis,
+      weekKey,
+      normalized,
+      {
+        mergeExisting: false
+      }
+    ).catch(() => null);
+  }
+
+  return normalized;
+}
+
+export async function getWeekTopMicros(weekKey = getIsoWeekKey(), {
+  limit = 25
+} = {}) {
+  const redis = getDurableRedis();
+  const top = await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => null);
+
+  if (top && Object.keys(top).length > 0) {
+    return selectTopMicrosObject(top, limit);
+  }
+
+  return selectTopMicrosObject(
+    await getWeekMicros(weekKey),
+    limit
+  );
 }
 
 export async function saveWeekMicros(
@@ -1797,6 +2105,7 @@ export async function saveWeekMicros(
   const schemaMeta = getAnalyzeSchemaMeta();
 
   let storage;
+  let topStorage = null;
 
   try {
     storage = await saveWeekMicrosSharded(
@@ -1807,6 +2116,12 @@ export async function saveWeekMicros(
         onlyIds
       }
     );
+
+    topStorage = await readWeekMicrosTopSnapshot(redis, weekKey)
+      .then((rows) => ({
+        count: Object.keys(rows || {}).length
+      }))
+      .catch(() => null);
   } catch (error) {
     if (onlyIds) {
       throw error;
@@ -1814,13 +2129,21 @@ export async function saveWeekMicros(
 
     const legacy = encodeLegacyWeekMicrosPayload(clean);
 
-    await redis.set(
+    await redisSetRawWithTtl(
+      redis,
       getWeekMicrosBaseKey(weekKey),
       legacy.payload,
-      {
-        ex: cfg.weekMicrosTtlSec
-      }
+      cfg.weekMicrosTtlSec
     );
+
+    topStorage = await saveWeekMicrosTopSnapshot(
+      redis,
+      weekKey,
+      clean,
+      {
+        mergeExisting: false
+      }
+    ).catch(() => null);
 
     storage = {
       ids: Object.keys(clean),
@@ -1871,6 +2194,13 @@ export async function saveWeekMicros(
 
         fallbackToLegacy: Boolean(storage.fallbackToLegacy),
         fallbackReason: storage.fallbackReason || null,
+
+        topSnapshot: {
+          enabled: true,
+          codec: WEEK_MICROS_TOP_CODEC,
+          limit: cfg.topMicrosSnapshotLimit,
+          count: topStorage?.count ?? topStorage?.ids?.length ?? null
+        },
 
         ttlSec: cfg.weekMicrosTtlSec
       }
