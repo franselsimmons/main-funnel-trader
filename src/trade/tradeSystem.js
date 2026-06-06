@@ -199,6 +199,10 @@ function allowLegacyMacroLiveEntries() {
   return Boolean(CONFIG.trade?.allowLegacyMacroLiveEntries);
 }
 
+function allowCoarseMicroAliasLiveEntries() {
+  return Boolean(CONFIG.trade?.allowCoarseMicroAliasLiveEntries);
+}
+
 function actionCounts(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
@@ -211,6 +215,11 @@ function actionCounts(actions = []) {
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [])
+      .flatMap((value) => {
+        if (Array.isArray(value)) return value;
+
+        return [value];
+      })
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -288,6 +297,9 @@ function inferSideFromIds(row = {}) {
     row.familyId,
     row.microFamilyId,
     row.trueMicroFamilyId,
+    row.coarseMicroFamilyId,
+    row.baseMicroFamilyId,
+    row.legacyMicroFamilyId,
     row.macroFamilyId,
     row.parentMacroFamilyId,
     row.parentMicroFamilyId,
@@ -315,7 +327,8 @@ function inferSideFromDefinitions(row = {}) {
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
     .map((value) => String(value || '').toUpperCase())
     .filter(Boolean)
@@ -483,7 +496,13 @@ function rowSchema(row = {}) {
 }
 
 function rowMicroId(row = {}) {
-  return String(row.microFamilyId || row.id || '').trim();
+  return String(
+    row.trueMicroFamilyId ||
+    row.microFamilyId ||
+    row.id ||
+    row.key ||
+    ''
+  ).trim();
 }
 
 function parentMacroFamilyId(row = {}) {
@@ -493,6 +512,28 @@ function parentMacroFamilyId(row = {}) {
     row.macroFamilyId ||
     ''
   ).trim();
+}
+
+function rowMicroAliasIds(row = {}, { includeCoarse = false } = {}) {
+  const base = [
+    row.trueMicroFamilyId,
+    row.microFamilyId,
+    row.id,
+    row.key
+  ];
+
+  const coarse = includeCoarse
+    ? [
+      row.coarseMicroFamilyId,
+      row.baseMicroFamilyId,
+      row.legacyMicroFamilyId
+    ]
+    : [];
+
+  return uniqueStrings([
+    ...base,
+    ...coarse
+  ]).filter(idLooksLikeShortFamily);
 }
 
 function isTrueMicroFamilyRow(row = {}) {
@@ -549,7 +590,31 @@ function isKnownTrueMicroFamilyId(id = '') {
   return idHasSchema(id, microSchema) || String(id).toUpperCase().startsWith('MICRO_SHORT_');
 }
 
+function addRowAliasesToMaps({
+  row,
+  rowByMicroId,
+  rowByAnyMicroId,
+  includeCoarseAliases = false
+}) {
+  if (!row) return;
+
+  const exactId = rowMicroId(row);
+
+  if (exactId) {
+    rowByMicroId.set(exactId, row);
+    rowByAnyMicroId.set(exactId, row);
+  }
+
+  for (const aliasId of rowMicroAliasIds(row, { includeCoarse: includeCoarseAliases })) {
+    if (!aliasId) continue;
+
+    rowByAnyMicroId.set(aliasId, row);
+  }
+}
+
 function buildActiveRotationContext(activeRotation) {
+  const includeCoarseAliases = allowCoarseMicroAliasLiveEntries();
+
   const rawRows = Array.isArray(activeRotation?.microFamilies)
     ? activeRotation.microFamilies
     : [];
@@ -561,13 +626,15 @@ function buildActiveRotationContext(activeRotation) {
   ));
 
   const rowByMicroId = new Map();
+  const rowByAnyMicroId = new Map();
 
   for (const row of rows) {
-    const id = rowMicroId(row);
-
-    if (!id) continue;
-
-    rowByMicroId.set(id, row);
+    addRowAliasesToMaps({
+      row,
+      rowByMicroId,
+      rowByAnyMicroId,
+      includeCoarseAliases
+    });
   }
 
   const configuredIds = uniqueStrings([
@@ -581,7 +648,7 @@ function buildActiveRotationContext(activeRotation) {
   const activeMicroFamilyIds = configuredIds.filter((id) => {
     if (!idLooksLikeShortFamily(id)) return false;
 
-    const row = rowByMicroId.get(id);
+    const row = rowByAnyMicroId.get(id) || rowByMicroId.get(id);
 
     if (allowLegacyMacroLiveEntries()) return true;
     if (row && isTrueMicroFamilyRow(row)) return true;
@@ -590,6 +657,21 @@ function buildActiveRotationContext(activeRotation) {
   });
 
   const activeMicroSet = new Set(activeMicroFamilyIds);
+
+  const activeMicroAliasIds = uniqueStrings([
+    ...activeMicroFamilyIds,
+    ...rows.flatMap((row) => {
+      const exact = rowMicroId(row);
+
+      if (!exact || !activeMicroSet.has(exact)) return [];
+
+      return rowMicroAliasIds(row, {
+        includeCoarse: includeCoarseAliases
+      });
+    })
+  ]);
+
+  const activeMicroAliasSet = new Set(activeMicroAliasIds);
 
   const activeMacroFamilyIds = uniqueStrings([
     ...(Array.isArray(activeRotation?.macroFamilyIds) ? activeRotation.macroFamilyIds : []),
@@ -617,6 +699,10 @@ function buildActiveRotationContext(activeRotation) {
 
     microToMacroFamilyId[microId] ||= macroId;
 
+    for (const aliasId of rowMicroAliasIds(row, { includeCoarse: includeCoarseAliases })) {
+      microToMacroFamilyId[aliasId] ||= macroId;
+    }
+
     if (!macroToMicroFamilyIds[macroId]) {
       macroToMicroFamilyIds[macroId] = [];
     }
@@ -636,17 +722,21 @@ function buildActiveRotationContext(activeRotation) {
 
     activeMicroFamilyIds,
     activeMicroSet,
+    activeMicroAliasIds,
+    activeMicroAliasSet,
 
     activeMacroFamilyIds,
     activeMacroSet,
 
     rowByMicroId,
+    rowByAnyMicroId,
 
     microToMacroFamilyId,
     macroToMicroFamilyIds,
 
     trueMicroOnly: activeRotation?.trueMicroOnly !== false,
     usedLegacyFallback: Boolean(activeRotation?.usedLegacyFallback),
+    allowCoarseMicroAliasLiveEntries: includeCoarseAliases,
 
     empty: !activeMicroFamilyIds.length,
 
@@ -655,10 +745,27 @@ function buildActiveRotationContext(activeRotation) {
   };
 }
 
-function getWeeklyStats(activeContext, microFamilyId) {
-  if (!activeContext || !microFamilyId) return null;
+function getWeeklyStats(activeContext, microFamilyId, row = {}) {
+  if (!activeContext) return null;
 
-  return activeContext.rowByMicroId.get(microFamilyId) || null;
+  const directId = String(microFamilyId || '').trim();
+
+  if (directId) {
+    const direct = activeContext.rowByMicroId.get(directId) ||
+      activeContext.rowByAnyMicroId.get(directId);
+
+    if (direct) return direct;
+  }
+
+  for (const aliasId of rowMicroAliasIds(row, {
+    includeCoarse: activeContext.allowCoarseMicroAliasLiveEntries
+  })) {
+    const stats = activeContext.rowByAnyMicroId.get(aliasId);
+
+    if (stats) return stats;
+  }
+
+  return null;
 }
 
 function hasActiveParentMacro(activeContext, row = {}) {
@@ -667,6 +774,19 @@ function hasActiveParentMacro(activeContext, row = {}) {
   if (!macroId) return false;
 
   return activeContext?.activeMacroSet?.has(macroId) || false;
+}
+
+function rowMatchesActiveMicro(activeContext, row = {}) {
+  if (!activeContext || activeContext.empty) return false;
+
+  const aliases = rowMicroAliasIds(row, {
+    includeCoarse: activeContext.allowCoarseMicroAliasLiveEntries
+  });
+
+  return aliases.some((id) => (
+    activeContext.activeMicroSet.has(id) ||
+    activeContext.activeMicroAliasSet.has(id)
+  ));
 }
 
 function buildRotationWaitReason(activeContext, row = {}) {
@@ -688,7 +808,7 @@ function buildRotationWaitReason(activeContext, row = {}) {
     return 'PARENT_MACRO_ACTIVE_BUT_TRUE_MICRO_NOT_ACTIVE';
   }
 
-  return 'SHORT_MICRO_FAMILY_NOT_IN_ACTIVE_ROTATION';
+  return 'SHORT_TRUE_MICRO_FAMILY_NOT_IN_ACTIVE_ROTATION';
 }
 
 function scannerGatePassed(row = {}) {
@@ -1350,13 +1470,19 @@ function buildEntryAction({
   riskCaps,
   liveGate
 }) {
+  const microFamilyId = rowMicroId(row);
+
   const activeMacroFamilyId =
     parentMacroFamilyId(row) ||
+    activeContext.microToMacroFamilyId[microFamilyId] ||
     activeContext.microToMacroFamilyId[row.microFamilyId] ||
     null;
 
   return {
     ...row,
+
+    microFamilyId,
+    trueMicroFamilyId: microFamilyId,
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -1549,19 +1675,26 @@ export async function runTradeSystem(options = {}) {
       tradeSide: TARGET_TRADE_SIDE
     }).catch(() => null);
 
-    const microFamilyId = row.microFamilyId;
+    const microFamilyId = rowMicroId(row);
     const trueMicroRow = isTrueMicroFamilyRow(row);
-    const activeExactMicro = activeContext.activeMicroSet.has(microFamilyId);
+    const activeExactMicro = rowMatchesActiveMicro(activeContext, row);
 
     if (!activeExactMicro || (!allowLegacyMacroLiveEntries() && !trueMicroRow)) {
       actions.push({
         ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: buildRotationWaitReason(activeContext, row),
         activeRotationId: activeContext.rotationId,
         activeMacroFamilyId: parentMacroFamilyId(row) || null,
         activeMicroFamilies: activeContext.activeMicroFamilyIds.length,
         activeMacroFamilies: activeContext.activeMacroFamilyIds.length,
+        activeMicroAliasIds: activeContext.activeMicroAliasIds,
+        rowMicroAliasIds: rowMicroAliasIds(row, {
+          includeCoarse: activeContext.allowCoarseMicroAliasLiveEntries
+        }),
+        allowCoarseMicroAliasLiveEntries: activeContext.allowCoarseMicroAliasLiveEntries,
         liveEligible: false,
         shadowOnly: true,
         shortOnly: true,
@@ -1576,6 +1709,8 @@ export async function runTradeSystem(options = {}) {
     if (!liveGate.ok) {
       actions.push({
         ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: liveGate.reason,
         activeRotationId: activeContext.rotationId,
@@ -1595,6 +1730,8 @@ export async function runTradeSystem(options = {}) {
     if (alreadyOpen) {
       actions.push({
         ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: 'SYMBOL_ALREADY_OPEN',
         activeRotationId: activeContext.rotationId,
@@ -1612,6 +1749,8 @@ export async function runTradeSystem(options = {}) {
     if (!exposure.ok) {
       actions.push({
         ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: exposure.reason,
         activeRotationId: activeContext.rotationId,
@@ -1627,7 +1766,8 @@ export async function runTradeSystem(options = {}) {
 
     const weeklyStats = getWeeklyStats(
       activeContext,
-      microFamilyId
+      microFamilyId,
+      row
     );
 
     const riskFraction = sizing.enabled
@@ -1644,6 +1784,8 @@ export async function runTradeSystem(options = {}) {
     if (!riskCaps.ok) {
       actions.push({
         ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: riskCaps.reason,
         activeRotationId: activeContext.rotationId,
@@ -1709,8 +1851,12 @@ export async function runTradeSystem(options = {}) {
       activeRotationId: activeContext.rotationId,
       activeMicroFamilies: activeContext.activeMicroFamilyIds.length,
       activeMacroFamilies: activeContext.activeMacroFamilyIds.length,
+      activeMicroFamilyIds: activeContext.activeMicroFamilyIds,
+      activeMicroAliasIds: activeContext.activeMicroAliasIds,
+      activeMacroFamilyIds: activeContext.activeMacroFamilyIds,
       trueMicroOnly: activeContext.trueMicroOnly,
-      usedLegacyFallback: activeContext.usedLegacyFallback
+      usedLegacyFallback: activeContext.usedLegacyFallback,
+      allowCoarseMicroAliasLiveEntries: activeContext.allowCoarseMicroAliasLiveEntries
     }
   );
 
@@ -1751,9 +1897,11 @@ export async function runTradeSystem(options = {}) {
     activeMicroFamilies: activeContext.activeMicroFamilyIds.length,
     activeMacroFamilies: activeContext.activeMacroFamilyIds.length,
     activeMicroFamilyIds: activeContext.activeMicroFamilyIds,
+    activeMicroAliasIds: activeContext.activeMicroAliasIds,
     activeMacroFamilyIds: activeContext.activeMacroFamilyIds,
     trueMicroOnly: activeContext.trueMicroOnly,
     usedLegacyFallback: activeContext.usedLegacyFallback,
+    allowCoarseMicroAliasLiveEntries: activeContext.allowCoarseMicroAliasLiveEntries,
 
     scannerSnapshotStats: {
       candidatesCount: snapshot.candidatesCount || candidates.length,
