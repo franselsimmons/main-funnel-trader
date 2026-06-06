@@ -24,11 +24,14 @@ const WINRATE_BAYES_BETA = 1;
 const SAMPLE_RELIABILITY_CAP = 50;
 const TRADABLE_SAMPLE_MIN = 5;
 
-const DEFAULT_LIMIT = 160;
+const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 300;
 
-const DEFAULT_SIDE_LIMIT = 50;
+const DEFAULT_SIDE_LIMIT = 25;
 const MAX_SIDE_LIMIT = 120;
+
+const DEFAULT_BEST_LIMIT = 25;
+const MAX_BEST_LIMIT = 100;
 
 // Belangrijk: als current week net gestart is en maar 1 fingerprint heeft,
 // merge dan previous week erbij zodat dashboard weer 50-100+ fingerprints toont.
@@ -1744,6 +1747,29 @@ function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
   }));
 }
 
+function selectBestMicroFamilies({
+  rows = [],
+  mode = 'balanced',
+  activeSet = new Set(),
+  activeMacroSet = new Set(),
+  limit = DEFAULT_BEST_LIMIT,
+  compact = true
+} = {}) {
+  const safeLimit = toSafeLimit(limit, DEFAULT_BEST_LIMIT, MAX_BEST_LIMIT);
+
+  const rankedRows = sortRowsByMode(
+    rows.filter((row) => inferTradeSide(row) !== 'LONG'),
+    mode
+  )
+    .slice(0, safeLimit)
+    .map((row, index) => ({
+      ...row,
+      rank: index + 1
+    }));
+
+  return normalizeRows(rankedRows, activeSet, activeMacroSet, compact);
+}
+
 function selectResponseRows({
   rankedRows = [],
   limit = DEFAULT_LIMIT,
@@ -1810,7 +1836,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-fast-safe-previous-week-merge');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-fast-safe-best25-previous-week-merge');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -1838,6 +1864,12 @@ export default async function handler(req, res) {
       ),
       DEFAULT_SIDE_LIMIT,
       MAX_SIDE_LIMIT
+    );
+
+    const bestLimit = toSafeLimit(
+      firstQueryValue(req.query?.bestLimit, DEFAULT_BEST_LIMIT),
+      DEFAULT_BEST_LIMIT,
+      MAX_BEST_LIMIT
     );
 
     const minPrimaryRowsForMerge = toSafeLimit(
@@ -1907,6 +1939,17 @@ export default async function handler(req, res) {
       }
     }
 
+    // Altijd tonen: beste micro families van het moment.
+    // Geen activeOnly/q/familyId/macroFamilyId filters hierop toepassen.
+    const best25MicroFamilies = selectBestMicroFamilies({
+      rows: mergedRows,
+      mode,
+      activeSet,
+      activeMacroSet,
+      limit: bestLimit,
+      compact
+    });
+
     const rankedRows = sortRowsByMode(filteredRows, mode)
       .map((row, index) => ({
         ...row,
@@ -1916,7 +1959,6 @@ export default async function handler(req, res) {
     const responseRows = selectResponseRows({
       rankedRows,
       limit,
-      sideLimit,
       filters
     });
 
@@ -1942,6 +1984,9 @@ export default async function handler(req, res) {
         : null,
       rankedRows.length === 0
         ? 'NO_ROWS_AFTER_FILTERS'
+        : null,
+      best25MicroFamilies.length === 0
+        ? 'NO_BEST25_MICRO_FAMILIES_AVAILABLE'
         : null
     ].filter(Boolean));
 
@@ -1949,6 +1994,7 @@ export default async function handler(req, res) {
       ok: true,
       fixed: true,
       shortFastSafe: true,
+      alwaysBest25: true,
 
       targetTradeSide: 'SHORT',
       shortOnly: true,
@@ -1977,6 +2023,11 @@ export default async function handler(req, res) {
       sideLimit,
       sideEnsureLimit: sideLimit,
 
+      bestLimit,
+      best25Count: best25MicroFamilies.length,
+      best25MicroFamilies,
+      topMicroFamilies: best25MicroFamilies,
+
       filters,
       compact,
 
@@ -1989,6 +2040,7 @@ export default async function handler(req, res) {
       rawSideCounts: sideCounts(mergedRows),
       filteredSideCounts: sideCounts(rankedRows),
       responseSideCounts: sideCounts(normalizedRows),
+      best25SideCounts: sideCounts(best25MicroFamilies),
 
       activeRotationId: activeRotation?.rotationId || null,
       activeRotation: includeActiveRotation
@@ -2015,7 +2067,8 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortFastSafeWithPreviousWeekMergeAndActiveRotationFallback'
+        path: 'shortFastSafeBest25WithPreviousWeekMergeAndActiveRotationFallback',
+        best25Source: 'mergedRowsBeforeFilters'
       },
 
       serverTs: Date.now()
