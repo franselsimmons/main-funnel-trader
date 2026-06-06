@@ -1071,14 +1071,6 @@ function sortRowsByMode(rows = [], mode = 'balanced') {
     .sort((a, b) => compareRowsByMode(a, b, mode));
 }
 
-function bestShortRow(rows = [], mode = 'balanced') {
-  const sideRows = rows.filter(isShortRow);
-
-  if (sideRows.length === 0) return null;
-
-  return sortRowsByMode(sideRows, mode)[0] || null;
-}
-
 function rotationMinCompleted() {
   return num(CONFIG.rotation?.minWeightedCompleted, 5);
 }
@@ -1169,21 +1161,7 @@ function microsSignature(micros = {}) {
   return `${count}:${first}:${middle}:${last}`;
 }
 
-async function getWeekRows(weekKey, startedAt = now()) {
-  const micros = await getWeekMicros(weekKey);
-  const signature = microsSignature(micros);
-  const cacheKey = `SHORT_ONLY|${weekKey}|${signature}`;
-  const cached = weekRowsCache.get(cacheKey);
-
-  if (cached && now() - cached.ts < WEEK_ROWS_CACHE_TTL_MS) {
-    return {
-      rows: cached.rows,
-      micros,
-      cacheHit: true,
-      cacheKey
-    };
-  }
-
+function normalizeRowsFromMicros(micros = {}, startedAt = now(), offset = 0) {
   const entries = Object.entries(micros || {});
   const rows = [];
 
@@ -1196,23 +1174,78 @@ async function getWeekRows(weekKey, startedAt = now()) {
       ...row,
       key,
       microFamilyId: row?.microFamilyId || row?.trueMicroFamilyId || key
-    }, index);
+    }, offset + index);
 
     if (normalized?.microFamilyId) rows.push(normalized);
   }
 
+  return rows;
+}
+
+function mergeRowsByMicroId(primaryRows = [], fallbackRows = []) {
+  const byId = new Map();
+
+  for (const row of fallbackRows) {
+    if (!row?.microFamilyId) continue;
+    byId.set(row.microFamilyId, row);
+  }
+
+  for (const row of primaryRows) {
+    if (!row?.microFamilyId) continue;
+    byId.set(row.microFamilyId, row);
+  }
+
+  return [...byId.values()];
+}
+
+async function getWeekRows(weekKey, startedAt = now()) {
+  const previousWeekKey = getPreviousIsoWeekKey();
+
+  const [primaryMicros, fallbackMicros] = await Promise.all([
+    getWeekMicros(weekKey),
+    weekKey !== previousWeekKey
+      ? getWeekMicros(previousWeekKey).catch(() => ({}))
+      : Promise.resolve({})
+  ]);
+
+  const primarySignature = microsSignature(primaryMicros);
+  const fallbackSignature = microsSignature(fallbackMicros);
+  const cacheKey = `SHORT_ONLY_BACKFILL|${weekKey}|${primarySignature}|${previousWeekKey}|${fallbackSignature}`;
+  const cached = weekRowsCache.get(cacheKey);
+
+  if (cached && now() - cached.ts < WEEK_ROWS_CACHE_TTL_MS) {
+    return {
+      rows: cached.rows,
+      micros: primaryMicros,
+      fallbackMicros,
+      cacheHit: true,
+      cacheKey,
+      primaryRows: cached.primaryRows,
+      fallbackRows: cached.fallbackRows
+    };
+  }
+
+  const primaryRows = normalizeRowsFromMicros(primaryMicros, startedAt, 0);
+  const fallbackRows = normalizeRowsFromMicros(fallbackMicros, startedAt, primaryRows.length);
+  const rows = mergeRowsByMicroId(primaryRows, fallbackRows);
+
   weekRowsCache.set(cacheKey, {
     ts: now(),
-    rows
+    rows,
+    primaryRows: primaryRows.length,
+    fallbackRows: fallbackRows.length
   });
 
   pruneWeekRowsCache();
 
   return {
     rows,
-    micros,
+    micros: primaryMicros,
+    fallbackMicros,
     cacheHit: false,
-    cacheKey
+    cacheKey,
+    primaryRows: primaryRows.length,
+    fallbackRows: fallbackRows.length
   };
 }
 
@@ -1224,7 +1257,9 @@ async function findBestWeekShortRow({
   const {
     rows,
     cacheHit,
-    cacheKey
+    cacheKey,
+    primaryRows,
+    fallbackRows
   } = await getWeekRows(weekKey, startedAt);
 
   const sideRows = rows.filter(isShortRow);
@@ -1280,7 +1315,10 @@ async function findBestWeekShortRow({
 
     weekRowsCacheHit: cacheHit,
     weekRowsCacheKey: cacheKey,
-    scannedRows: rows.length
+    scannedRows: rows.length,
+    primaryRows,
+    fallbackRows,
+    backfillEnabled: true
   };
 }
 
@@ -1293,8 +1331,11 @@ async function buildSelectedRotationRows({
   const {
     rows,
     micros,
+    fallbackMicros,
     cacheHit,
-    cacheKey
+    cacheKey,
+    primaryRows,
+    fallbackRows
   } = await getWeekRows(weekKey, startedAt);
 
   const microSet = new Set(microFamilyIds.filter(isShortId));
@@ -1337,7 +1378,11 @@ async function buildSelectedRotationRows({
     weekRowsCacheHit: cacheHit,
     weekRowsCacheKey: cacheKey,
     scannedRows: rows.length,
-    microsCount: Object.keys(micros || {}).length
+    primaryRows,
+    fallbackRows,
+    microsCount: Object.keys(micros || {}).length,
+    fallbackMicrosCount: Object.keys(fallbackMicros || {}).length,
+    backfillEnabled: true
   };
 }
 
@@ -1414,10 +1459,13 @@ async function activateBestBalanced(body, startedAt = now()) {
 
       perf: {
         durationMs: elapsed(startedAt),
-        source: 'short_only_findBestWeekShortRow',
+        source: 'short_only_findBestWeekShortRow_with_previous_backfill',
         weekRowsCacheHit: sideResult.weekRowsCacheHit,
         weekRowsCacheKey: sideResult.weekRowsCacheKey,
-        scannedRows: sideResult.scannedRows
+        scannedRows: sideResult.scannedRows,
+        primaryRows: sideResult.primaryRows,
+        fallbackRows: sideResult.fallbackRows,
+        backfillEnabled: true
       }
     };
   }
@@ -1506,10 +1554,13 @@ async function activateBestBalanced(body, startedAt = now()) {
 
     perf: {
       durationMs: elapsed(startedAt),
-      source: 'short_only_findBestWeekShortRow',
+      source: 'short_only_findBestWeekShortRow_with_previous_backfill',
       weekRowsCacheHit: sideResult.weekRowsCacheHit,
       weekRowsCacheKey: sideResult.weekRowsCacheKey,
-      scannedRows: sideResult.scannedRows
+      scannedRows: sideResult.scannedRows,
+      primaryRows: sideResult.primaryRows,
+      fallbackRows: sideResult.fallbackRows,
+      backfillEnabled: true
     }
   };
 }
@@ -1558,7 +1609,9 @@ async function activateBestSideMicro(body, forcedTradeSide = null, startedAt = n
     selectedTier,
     weekRowsCacheHit,
     weekRowsCacheKey,
-    scannedRows
+    scannedRows,
+    primaryRows,
+    fallbackRows
   } = sideResult;
 
   if (!selectedRow) {
@@ -1612,7 +1665,10 @@ async function activateBestSideMicro(body, forcedTradeSide = null, startedAt = n
         durationMs: elapsed(startedAt),
         weekRowsCacheHit,
         weekRowsCacheKey,
-        scannedRows
+        scannedRows,
+        primaryRows,
+        fallbackRows,
+        backfillEnabled: true
       }
     };
   }
@@ -1732,7 +1788,10 @@ async function activateBestSideMicro(body, forcedTradeSide = null, startedAt = n
       durationMs: elapsed(startedAt),
       weekRowsCacheHit,
       weekRowsCacheKey,
-      scannedRows
+      scannedRows,
+      primaryRows,
+      fallbackRows,
+      backfillEnabled: true
     }
   };
 }
@@ -1893,7 +1952,11 @@ async function activateSelected(body, forcedType = null, startedAt = now()) {
       weekRowsCacheHit: selectedResult.weekRowsCacheHit,
       weekRowsCacheKey: selectedResult.weekRowsCacheKey,
       scannedRows: selectedResult.scannedRows,
-      microsCount: selectedResult.microsCount
+      primaryRows: selectedResult.primaryRows,
+      fallbackRows: selectedResult.fallbackRows,
+      microsCount: selectedResult.microsCount,
+      fallbackMicrosCount: selectedResult.fallbackMicrosCount,
+      backfillEnabled: true
     }
   };
 }
@@ -2006,7 +2069,7 @@ async function handlePost(req, res) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Rotation-Mode', 'short-only');
+  res.setHeader('X-Admin-Rotation-Mode', 'short-only-current-plus-previous-backfill');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
 
