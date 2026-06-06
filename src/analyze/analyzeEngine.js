@@ -40,8 +40,6 @@ const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
-const VALID_TRADE_SIDES = new Set([TARGET_TRADE_SIDE]);
-
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
@@ -458,7 +456,7 @@ function isExecutionRefinedMicroId(value = '') {
 }
 
 function shouldRefineExecutionMicroIds() {
-  return bool(CONFIG.analyze?.refineExecutionMicroIds, false) === true;
+  return bool(CONFIG.analyze?.refineExecutionMicroIds, true) === true;
 }
 
 function shouldReclassifyAsTrueMicro(row = {}) {
@@ -751,52 +749,6 @@ function mergeDefinitionParts(...groups) {
   );
 }
 
-function getSymbolBucket(row = {}) {
-  const raw = String(
-    row.symbol ||
-    row.baseSymbol ||
-    row.contractSymbol ||
-    ''
-  ).toUpperCase();
-
-  const symbol = raw
-    .replace(/USDTUMCBL|USDCUMCBL|USDTPERP|USDCPERP|USDT|USDC|BUSD|PERP|SWAP|USD/g, '')
-    .replace(/[^A-Z0-9]/g, '');
-
-  if (!symbol) return 'SYM=NA';
-
-  const major = new Set([
-    'BTC',
-    'ETH',
-    'SOL',
-    'XRP',
-    'BNB',
-    'DOGE',
-    'ADA',
-    'AVAX',
-    'LINK',
-    'DOT',
-    'TON',
-    'TRX',
-    'LTC',
-    'BCH'
-  ]);
-
-  const meme = new Set([
-    'PEPE',
-    'SHIB',
-    'WIF',
-    'BONK',
-    'FLOKI',
-    'DOGE'
-  ]);
-
-  if (major.has(symbol)) return `SYM_CLASS=MAJOR_${symbol}`;
-  if (meme.has(symbol)) return `SYM_CLASS=MEME_${symbol}`;
-
-  return `SYM_BUCKET=${stableHash(symbol, 4)}`;
-}
-
 function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
   const scannerReason = firstDefined(
     classified.scannerReasonCoarse,
@@ -913,9 +865,7 @@ function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
     boolBucket(Boolean(row.pullbackConfirmed), 'PULLBACK'),
     boolBucket(Boolean(row.sweepConfirmed), 'SWEEP'),
     boolBucket(Boolean(row.fakeBreakout), 'FAKE_BO'),
-    boolBucket(Boolean(row.fakeBreakoutRisk), 'FAKE_RISK'),
-
-    getSymbolBucket(row)
+    boolBucket(Boolean(row.fakeBreakoutRisk), 'FAKE_RISK')
   ]);
 }
 
@@ -1916,9 +1866,7 @@ async function readWeekMicrosSharded(redis, weekKey) {
     return null;
   }
 
-  const ids = index.ids
-    .filter(Boolean)
-    .filter((id) => sideTextToTradeSide(id) === TARGET_TRADE_SIDE);
+  const ids = uniqueStrings(index.ids).filter(Boolean);
 
   if (!ids.length) return {};
 
@@ -1942,8 +1890,7 @@ async function readWeekMicrosSharded(redis, weekKey) {
 
 async function getWeekMicrosByIds(weekKey, ids = []) {
   const redis = getDurableRedis();
-  const safeIds = uniqueStrings(ids)
-    .filter((id) => sideTextToTradeSide(id) === TARGET_TRADE_SIDE);
+  const safeIds = uniqueStrings(ids);
 
   if (!safeIds.length) return {};
 
@@ -1995,13 +1942,13 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
 
   const cleanIds = Object.keys(micros || {})
     .filter(Boolean)
-    .filter((id) => sideTextToTradeSide(id) === TARGET_TRADE_SIDE)
+    .filter((id) => micros[id] && isShortOnlyRow(micros[id]))
     .sort();
 
   const writeIds = onlyIds
     ? uniqueStrings(onlyIds)
-      .filter((id) => sideTextToTradeSide(id) === TARGET_TRADE_SIDE)
       .filter((id) => micros[id])
+      .filter((id) => isShortOnlyRow(micros[id]))
     : cleanIds;
 
   const fullSave = !onlyIds;
@@ -2047,7 +1994,7 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
 
   const existingIndex = await getWeekMicrosIndex(redis, weekKey);
   const existingIds = Array.isArray(existingIndex?.ids)
-    ? existingIndex.ids.filter((id) => sideTextToTradeSide(id) === TARGET_TRADE_SIDE)
+    ? existingIndex.ids.filter(Boolean)
     : [];
 
   const ids = fullSave
