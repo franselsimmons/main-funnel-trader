@@ -163,6 +163,16 @@ function tradeConfig() {
       false
     ),
 
+    allowSyntheticRiskFallback: cfgBoolean(
+      CONFIG.trade?.allowSyntheticRiskFallback,
+      false
+    ),
+
+    allowSyntheticRiskLiveEntries: cfgBoolean(
+      CONFIG.trade?.allowSyntheticRiskLiveEntries,
+      false
+    ),
+
     minLiveScannerScore: Math.max(
       0,
       cfgNumber(CONFIG.trade?.minLiveScannerScore, 0)
@@ -883,6 +893,15 @@ function validateLiveEntryGates(row = {}) {
       ok: false,
       reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM',
       tradeSide
+    };
+  }
+
+  if (row.syntheticRisk && !cfg.allowSyntheticRiskLiveEntries) {
+    return {
+      ok: false,
+      reason: 'SYNTHETIC_RISK_NOT_LIVE',
+      syntheticRisk: true,
+      syntheticRiskReason: row.syntheticRiskReason || null
     };
   }
 
@@ -1849,6 +1868,7 @@ function buildActualRiskWaitIfNeeded({
 }
 
 async function processCandidate(candidate) {
+  const cfg = tradeConfig();
   const normalized = normalizeCandidate(candidate);
 
   if (!normalized.symbol || !normalized.contractSymbol) {
@@ -1967,11 +1987,17 @@ async function processCandidate(candidate) {
   const finalMetrics = hasValidShortRisk
     ? metrics
     : [
-      buildSyntheticShortRiskMetrics({
-        normalized,
-        data,
-        reason: 'RISK_ENGINE_EMPTY_SYNTHETIC_SHORT_RISK'
-      })
+      cfg.allowSyntheticRiskFallback
+        ? buildSyntheticShortRiskMetrics({
+          normalized,
+          data,
+          reason: 'RISK_ENGINE_EMPTY_SYNTHETIC_SHORT_RISK'
+        })
+        : buildObservationOnlyMetrics({
+          normalized,
+          data,
+          reason: 'RISK_ENGINE_EMPTY_SHORT_RISK_OBSERVATION_ONLY'
+        })
     ];
 
   const riskWait = buildActualRiskWaitIfNeeded({
@@ -2038,6 +2064,7 @@ function buildEntryAction({
     action: 'ENTRY',
     reason: 'ACTIVE_SHORT_TRUE_MICRO_FAMILY_ENTRY',
 
+    rotationMatchType: 'TRUE_MICRO_EXACT',
     activeRotationId: activeContext.rotationId,
     activeMacroFamilyId,
 
@@ -2355,6 +2382,27 @@ export async function runTradeSystem(options = {}) {
     };
 
     const microFamilyId = rowMicroId(rowWithShadow);
+
+    if (!hasValidRiskShape(rowWithShadow)) {
+      actions.push({
+        ...rowWithShadow,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
+        action: 'WAIT',
+        reason: rowWithShadow.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
+        activeRotationId: activeContext.rotationId,
+        activeMacroFamilyId: parentMacroFamilyId(rowWithShadow) || null,
+        liveEligible: false,
+        shadowOnly: true,
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false
+      });
+
+      continue;
+    }
+
     const trueMicroRow = isTrueMicroFamilyRow(rowWithShadow);
     const activeExactMicro = rowMatchesActiveMicro(activeContext, rowWithShadow);
 
