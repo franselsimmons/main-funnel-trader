@@ -9,10 +9,27 @@ import {
   sideToTradeSide
 } from '../utils.js';
 
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+
 const DISCORD_LIMITS = {
   fieldName: 256,
   fieldValue: 1024
 };
+
+const SHORT_TOKENS = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL'
+]);
+
+const LONG_TOKENS = new Set([
+  'LONG',
+  'BULL',
+  'BULLISH',
+  'BUY'
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -54,6 +71,14 @@ function fmtPrice(value) {
   return n.toFixed(10);
 }
 
+function fmtPct(value) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  return `${(n * 100).toFixed(2)}%`;
+}
+
 function fmtR(value) {
   const n = Number(value);
 
@@ -62,22 +87,191 @@ function fmtR(value) {
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}R`;
 }
 
-function normalizeSideLabel(side) {
-  const tradeSide = sideToTradeSide(side);
+function upper(value, fallback = '') {
+  const text = String(value ?? '').trim();
 
-  if (tradeSide === 'LONG') return 'LONG';
-  if (tradeSide === 'SHORT') return 'SHORT';
-
-  return String(side || 'UNKNOWN').toUpperCase();
+  return text ? text.toUpperCase() : fallback;
 }
 
-function discordColorForSide(side) {
-  const tradeSide = sideToTradeSide(side);
+function normalizeSideToken(value) {
+  const direct = sideToTradeSide(value);
 
-  if (tradeSide === 'LONG') return 0x22c55e;
-  if (tradeSide === 'SHORT') return 0xef4444;
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (direct === 'LONG') return 'LONG';
 
-  return 0x64748b;
+  const raw = upper(value);
+
+  if (!raw) return 'UNKNOWN';
+  if (SHORT_TOKENS.has(raw)) return TARGET_TRADE_SIDE;
+  if (LONG_TOKENS.has(raw)) return 'LONG';
+
+  return 'UNKNOWN';
+}
+
+function definitionParts(payload = {}) {
+  return [
+    payload.definition,
+    payload.microDefinition,
+    payload.macroDefinition,
+    payload.parentDefinition,
+
+    ...(Array.isArray(payload.definitionParts) ? payload.definitionParts : []),
+    ...(Array.isArray(payload.microDefinitionParts) ? payload.microDefinitionParts : []),
+    ...(Array.isArray(payload.macroDefinitionParts) ? payload.macroDefinitionParts : []),
+    ...(Array.isArray(payload.parentDefinitionParts) ? payload.parentDefinitionParts : [])
+  ]
+    .map((value) => upper(value))
+    .filter(Boolean);
+}
+
+function idHaystack(payload = {}) {
+  return [
+    payload.familyId,
+    payload.family,
+    payload.baseFamilyId,
+
+    payload.microFamilyId,
+    payload.trueMicroFamilyId,
+    payload.id,
+    payload.key,
+
+    payload.macroFamilyId,
+    payload.parentMacroFamilyId,
+    payload.parentMicroFamilyId,
+    payload.parentFamilyId,
+    payload.macroId,
+    payload.activeMacroFamilyId
+  ]
+    .map((value) => upper(value))
+    .filter(Boolean)
+    .join('|');
+}
+
+function hasShortIdSignal(value = '') {
+  const raw = upper(value);
+
+  return (
+    raw.includes('MICRO_SHORT_') ||
+    raw.includes('SHORT_') ||
+    raw.includes('_SHORT_') ||
+    raw.endsWith('_SHORT') ||
+    raw.includes('|SHORT_') ||
+    raw.includes('TRADESIDE=SHORT') ||
+    raw.includes('TRADE_SIDE=SHORT') ||
+    raw.includes('SIDE=SHORT') ||
+    raw.includes('SIDE=BEAR') ||
+    raw.includes('DIRECTION=SHORT') ||
+    raw.includes('DIRECTION=BEAR') ||
+    raw.includes('POSITION_SIDE=SHORT') ||
+    raw.includes('POSITIONSIDE=SHORT')
+  );
+}
+
+function hasLongIdSignal(value = '') {
+  const raw = upper(value);
+
+  return (
+    raw.includes('MICRO_LONG_') ||
+    raw.includes('LONG_') ||
+    raw.includes('_LONG_') ||
+    raw.endsWith('_LONG') ||
+    raw.includes('|LONG_') ||
+    raw.includes('TRADESIDE=LONG') ||
+    raw.includes('TRADE_SIDE=LONG') ||
+    raw.includes('SIDE=LONG') ||
+    raw.includes('SIDE=BULL') ||
+    raw.includes('DIRECTION=LONG') ||
+    raw.includes('DIRECTION=BULL') ||
+    raw.includes('POSITION_SIDE=LONG') ||
+    raw.includes('POSITIONSIDE=LONG')
+  );
+}
+
+function hasShortDefinitionSignal(parts = []) {
+  const haystack = parts.join('|');
+
+  return (
+    haystack.includes('TRADESIDE=SHORT') ||
+    haystack.includes('TRADE_SIDE=SHORT') ||
+    haystack.includes('SIDE=SHORT') ||
+    haystack.includes('SIDE=BEAR') ||
+    haystack.includes('DIRECTION=SHORT') ||
+    haystack.includes('DIRECTION=BEAR') ||
+    haystack.includes('POSITION_SIDE=SHORT') ||
+    haystack.includes('POSITIONSIDE=SHORT') ||
+    haystack.includes('SIDE=SELL') ||
+    haystack.includes('DIRECTION=SELL')
+  );
+}
+
+function hasLongDefinitionSignal(parts = []) {
+  const haystack = parts.join('|');
+
+  return (
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('TRADE_SIDE=LONG') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('SIDE=BULL') ||
+    haystack.includes('DIRECTION=LONG') ||
+    haystack.includes('DIRECTION=BULL') ||
+    haystack.includes('POSITION_SIDE=LONG') ||
+    haystack.includes('POSITIONSIDE=LONG') ||
+    haystack.includes('SIDE=BUY') ||
+    haystack.includes('DIRECTION=BUY')
+  );
+}
+
+function inferTradeSide(payload = {}) {
+  if (typeof payload !== 'object' || payload === null) {
+    return normalizeSideToken(payload);
+  }
+
+  const directSources = [
+    payload.tradeSide,
+    payload.positionSide,
+    payload.direction,
+    payload.signalSide,
+    payload.scannerSide,
+    payload.actualScannerSide,
+    payload.analysisSide,
+    payload.side
+  ];
+
+  for (const value of directSources) {
+    const side = normalizeSideToken(value);
+
+    if (side === TARGET_TRADE_SIDE || side === 'LONG') {
+      return side;
+    }
+  }
+
+  const ids = idHaystack(payload);
+
+  if (hasLongIdSignal(ids)) return 'LONG';
+  if (hasShortIdSignal(ids)) return TARGET_TRADE_SIDE;
+
+  const parts = definitionParts(payload);
+
+  if (hasLongDefinitionSignal(parts)) return 'LONG';
+  if (hasShortDefinitionSignal(parts)) return TARGET_TRADE_SIDE;
+
+  if (payload.shortOnly === true && payload.longDisabled === true) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function isShortPayload(payload = {}) {
+  return inferTradeSide(payload) === TARGET_TRADE_SIDE;
+}
+
+function normalizeSideLabel(payload = {}) {
+  return isShortPayload(payload) ? TARGET_TRADE_SIDE : 'NON_SHORT_SKIPPED';
+}
+
+function discordColorForSide(payload = {}) {
+  return isShortPayload(payload) ? 0xef4444 : 0x64748b;
 }
 
 function discordColorForResult(value) {
@@ -111,16 +305,32 @@ function extractResultR(outcome = {}) {
 }
 
 function compactPayload(payload = {}) {
+  const tradeSide = inferTradeSide(payload);
+
   return {
     symbol: payload.symbol || null,
     contractSymbol: payload.contractSymbol || null,
-    side: payload.side || null,
+
+    side: tradeSide === TARGET_TRADE_SIDE
+      ? TARGET_DASHBOARD_SIDE
+      : payload.side || null,
+
+    tradeSide,
+
     action: payload.action || null,
     reason: payload.reason || null,
     exitReason: payload.exitReason || null,
 
-    microFamilyId: payload.microFamilyId || null,
+    microFamilyId: payload.microFamilyId || payload.trueMicroFamilyId || null,
     familyId: payload.familyId || null,
+
+    macroFamilyId:
+      payload.activeMacroFamilyId ||
+      payload.parentMacroFamilyId ||
+      payload.parentMicroFamilyId ||
+      payload.macroFamilyId ||
+      null,
+
     activeRotationId: payload.activeRotationId || null,
 
     entry: payload.entry ?? null,
@@ -133,7 +343,10 @@ function compactPayload(payload = {}) {
     netR: payload.netR ?? null,
     grossR: payload.grossR ?? null,
     costR: payload.costR ?? null,
-    pnlPct: payload.pnlPct ?? null,
+    pnlPct: payload.pnlPct ?? payload.netPnlPct ?? null,
+
+    shortOnly: true,
+    longDisabled: true,
 
     ts: Date.now()
   };
@@ -203,20 +416,50 @@ async function logDiscord(type, payload, result) {
   }
 }
 
+async function skipNonShortDiscord(type, payload = {}) {
+  const result = {
+    ok: true,
+    skipped: true,
+    reason: 'DISCORD_SHORT_ONLY_SKIPPED_NON_SHORT',
+    detectedTradeSide: inferTradeSide(payload),
+    shortOnly: true,
+    longDisabled: true
+  };
+
+  await logDiscord(type, payload, result);
+
+  return result;
+}
+
 export async function sendEntryAlert(entry = {}) {
+  if (!isShortPayload(entry)) {
+    return skipNonShortDiscord('ENTRY_SKIPPED', entry);
+  }
+
   const symbol = normalizeBaseSymbol(entry.symbol || entry.contractSymbol);
-  const side = normalizeSideLabel(entry.side);
+  const side = normalizeSideLabel(entry);
 
   const content = {
     username: 'Micro-Family Trader',
     embeds: [
       {
         title: `${symbol || 'UNKNOWN'} ${side} ENTRY`,
-        color: discordColorForSide(entry.side),
+        color: discordColorForSide(entry),
         fields: [
           field('Entry', fmtPrice(entry.entry), true),
           field('TP', fmtPrice(entry.tp), true),
-          field('SL', fmtPrice(entry.sl), true)
+          field('SL', fmtPrice(entry.sl), true),
+          field('RR', fmtR(entry.rr), true),
+          field('Micro', entry.microFamilyId || 'NA', false),
+          field(
+            'Macro',
+            entry.activeMacroFamilyId ||
+              entry.parentMacroFamilyId ||
+              entry.parentMicroFamilyId ||
+              entry.macroFamilyId ||
+              'NA',
+            false
+          )
         ],
         timestamp: nowIso()
       }
@@ -230,8 +473,12 @@ export async function sendEntryAlert(entry = {}) {
 }
 
 export async function sendExitAlert(outcome = {}) {
+  if (!isShortPayload(outcome)) {
+    return skipNonShortDiscord('EXIT_SKIPPED', outcome);
+  }
+
   const symbol = normalizeBaseSymbol(outcome.symbol || outcome.contractSymbol);
-  const side = normalizeSideLabel(outcome.side);
+  const side = normalizeSideLabel(outcome);
   const exitPrice = extractExitPrice(outcome);
   const resultR = extractResultR(outcome);
 
@@ -244,7 +491,10 @@ export async function sendExitAlert(outcome = {}) {
         fields: [
           field('Exit', fmtPrice(exitPrice), true),
           field('Result', fmtR(resultR), true),
-          field('Reason', outcome.exitReason || 'EXIT', true)
+          field('Reason', outcome.exitReason || 'EXIT', true),
+          field('Cost', fmtR(outcome.costR), true),
+          field('PnL', fmtPct(outcome.pnlPct ?? outcome.netPnlPct), true),
+          field('Micro', outcome.microFamilyId || 'NA', false)
         ],
         timestamp: nowIso()
       }
@@ -257,6 +507,17 @@ export async function sendExitAlert(outcome = {}) {
   return result;
 }
 
+function bestShortId(rotation = {}) {
+  return (
+    rotation.bestShort?.microFamilyId ||
+    rotation.selectedMicroFamilyId ||
+    rotation.microFamilyIds?.[0] ||
+    rotation.activeMicroFamilyIds?.[0] ||
+    rotation.trueMicroFamilyIds?.[0] ||
+    'NA'
+  );
+}
+
 export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEKLY_ROTATION') {
   const rotation =
     rotationInput.rotation ||
@@ -264,11 +525,16 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
     rotationInput.nextRotation ||
     rotationInput;
 
-  const count =
+  const microCount =
     rotation.microFamilyIds?.length ||
     rotation.activeMicroFamilyIds?.length ||
     rotation.trueMicroFamilyIds?.length ||
     rotation.microFamilies?.length ||
+    0;
+
+  const macroCount =
+    rotation.macroFamilyIds?.length ||
+    rotation.activeMacroFamilyIds?.length ||
     0;
 
   const week =
@@ -281,12 +547,15 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
     username: 'Micro-Family Trader',
     embeds: [
       {
-        title: label,
+        title: `${label} SHORT ONLY`,
         color: rotation.empty ? 0xf59e0b : 0x7c3aed,
         fields: [
-          field('Count', String(count), true),
+          field('Micro count', String(microCount), true),
+          field('Macro count', String(macroCount), true),
           field('Mode', rotation.mode || 'NA', true),
-          field('Week', week, true)
+          field('Week', week, true),
+          field('Best SHORT', bestShortId(rotation), false),
+          field('Long disabled', 'true', true)
         ],
         timestamp: nowIso()
       }
@@ -294,7 +563,12 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
   };
 
   const result = await postDiscord(content);
-  await logDiscord('WEEKLY_ROTATION', rotation, result);
+  await logDiscord('WEEKLY_ROTATION', {
+    ...rotation,
+    bestLong: null,
+    shortOnly: true,
+    longDisabled: true
+  }, result);
 
   return result;
 }
@@ -311,7 +585,9 @@ export async function sendResetReport(report = {}) {
         fields: [
           field('OK', String(Boolean(report.ok)), true),
           field('Reason', report.reason || 'OK', true),
-          field('Deleted', String(deletedCount), true)
+          field('Deleted', String(deletedCount), true),
+          field('Short only', 'true', true),
+          field('Long disabled', 'true', true)
         ],
         timestamp: nowIso()
       }
@@ -319,7 +595,11 @@ export async function sendResetReport(report = {}) {
   };
 
   const result = await postDiscord(content);
-  await logDiscord('RESET', report, result);
+  await logDiscord('RESET', {
+    ...report,
+    shortOnly: true,
+    longDisabled: true
+  }, result);
 
   return result;
 }
