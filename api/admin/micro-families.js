@@ -30,6 +30,10 @@ const MAX_LIMIT = 300;
 const DEFAULT_SIDE_LIMIT = 50;
 const MAX_SIDE_LIMIT = 120;
 
+// Belangrijk: als current week net gestart is en maar 1 fingerprint heeft,
+// merge dan previous week erbij zodat dashboard weer 50-100+ fingerprints toont.
+const DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_WEEK_MERGE = 25;
+
 const ACTIVE_ROTATION_TIMEOUT_MS = 1_800;
 const WEEK_MICROS_TIMEOUT_MS = 9_500;
 const FALLBACK_WEEK_TIMEOUT_MS = 6_500;
@@ -418,6 +422,42 @@ function hasMicros(micros = {}) {
   return sourceEntriesFromMicros(micros).length > 0;
 }
 
+function microsCount(micros = {}) {
+  return sourceEntriesFromMicros(micros).length;
+}
+
+function mergeMicros(primaryMicros = {}, fallbackMicros = {}) {
+  const merged = {};
+
+  for (const [key, row] of sourceEntriesFromMicros(fallbackMicros)) {
+    if (!key || !row) continue;
+
+    const id = row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || key;
+    if (!id) continue;
+
+    merged[id] = {
+      ...row,
+      microFamilyId: id,
+      sourceWeekFallback: true
+    };
+  }
+
+  for (const [key, row] of sourceEntriesFromMicros(primaryMicros)) {
+    if (!key || !row) continue;
+
+    const id = row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || key;
+    if (!id) continue;
+
+    merged[id] = {
+      ...row,
+      microFamilyId: id,
+      sourceWeekPrimary: true
+    };
+  }
+
+  return merged;
+}
+
 function getCompletedSample(row = {}) {
   const realCompleted = num(row.realCompleted, 0);
   const shadowCompleted = num(row.shadowCompleted, 0);
@@ -657,6 +697,9 @@ function buildRawMicroRow(row = {}, key = '', index = 0, forcedTradeSide = null)
     inferredTradeSide,
     inferredFromShortOnlyMode: Boolean(row.inferredFromShortOnlyMode),
 
+    sourceWeekPrimary: Boolean(row.sourceWeekPrimary),
+    sourceWeekFallback: Boolean(row.sourceWeekFallback),
+
     seen: num(row.seen ?? row.observations, 0),
     observations: num(row.observations ?? row.seen, 0),
 
@@ -895,7 +938,7 @@ function extractActiveIds(activeRotation) {
       : [])
   ];
 
-  return uniqueStrings(ids);
+  return uniqueStrings(ids).filter((id) => !upper(id).includes('LONG'));
 }
 
 function extractActiveMacroIds(activeRotation) {
@@ -909,7 +952,7 @@ function extractActiveMacroIds(activeRotation) {
       : [])
   ];
 
-  return uniqueStrings(ids);
+  return uniqueStrings(ids).filter((id) => !upper(id).includes('LONG'));
 }
 
 function buildRowsFromActiveRotation(activeRotation) {
@@ -1020,6 +1063,9 @@ function normalizeMicroRow(
 
     inferredTradeSide: row.inferredTradeSide || inferredTradeSide,
     inferredFromShortOnlyMode: Boolean(row.inferredFromShortOnlyMode || inferredTradeSide === 'UNKNOWN'),
+
+    sourceWeekPrimary: Boolean(row.sourceWeekPrimary),
+    sourceWeekFallback: Boolean(row.sourceWeekFallback),
 
     active,
     macroActive,
@@ -1154,6 +1200,8 @@ function compactBestRow(row) {
 
   const inferredTradeSide = inferTradeSide(row);
   const tradeSide = inferredTradeSide === 'LONG' ? 'LONG' : 'SHORT';
+
+  if (tradeSide === 'LONG') return null;
 
   return {
     microFamilyId: row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || null,
@@ -1573,44 +1621,118 @@ async function getWeekMicrosCached(weekKey, timeoutMs) {
   }
 }
 
-async function getWeekMicrosWithFallback(requestedWeekKey, previousWeekKey) {
+async function getWeekMicrosWithFallback(
+  requestedWeekKey,
+  previousWeekKey,
+  {
+    minPrimaryRowsForMerge = DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_WEEK_MERGE
+  } = {}
+) {
   const primary = await getWeekMicrosCached(requestedWeekKey, WEEK_MICROS_TIMEOUT_MS);
+  const primaryCount = microsCount(primary.micros);
+  const warnings = primary.warning ? [primary.warning] : [];
 
-  if (hasMicros(primary.micros)) {
+  if (hasMicros(primary.micros) && requestedWeekKey === previousWeekKey) {
     return {
       ...primary,
       source: 'requestedWeek',
-      warnings: primary.warning ? [primary.warning] : []
+      primaryWeekKey: requestedWeekKey,
+      previousWeekKey,
+      primaryRows: primaryCount,
+      previousRows: 0,
+      mergedPreviousWeek: false,
+      warnings
     };
   }
 
-  const warnings = primary.warning ? [primary.warning] : [];
+  if (hasMicros(primary.micros) && primaryCount >= minPrimaryRowsForMerge) {
+    return {
+      ...primary,
+      source: 'requestedWeek',
+      primaryWeekKey: requestedWeekKey,
+      previousWeekKey,
+      primaryRows: primaryCount,
+      previousRows: 0,
+      mergedPreviousWeek: false,
+      warnings
+    };
+  }
 
   if (requestedWeekKey !== previousWeekKey) {
     const fallback = await getWeekMicrosCached(previousWeekKey, FALLBACK_WEEK_TIMEOUT_MS);
+    const fallbackCount = microsCount(fallback.micros);
 
-    if (hasMicros(fallback.micros)) {
+    if (hasMicros(primary.micros) && hasMicros(fallback.micros)) {
+      return {
+        weekKey: requestedWeekKey,
+        primaryWeekKey: requestedWeekKey,
+        previousWeekKey,
+        micros: mergeMicros(primary.micros, fallback.micros),
+        cacheHit: Boolean(primary.cacheHit && fallback.cacheHit),
+        stale: Boolean(primary.stale || fallback.stale),
+        source: 'requestedWeekMergedWithPreviousWeek',
+        primaryRows: primaryCount,
+        previousRows: fallbackCount,
+        mergedPreviousWeek: true,
+        warning: null,
+        warnings: uniqueStrings([
+          ...warnings,
+          ...(fallback.warning ? [fallback.warning] : []),
+          `PRIMARY_WEEK_LOW_ROWS:${requestedWeekKey}:${primaryCount}`,
+          `MERGED_PREVIOUS_WEEK:${previousWeekKey}:${fallbackCount}`
+        ])
+      };
+    }
+
+    if (!hasMicros(primary.micros) && hasMicros(fallback.micros)) {
       return {
         ...fallback,
         source: 'previousWeekFallback',
-        warnings: [
+        primaryWeekKey: requestedWeekKey,
+        previousWeekKey,
+        primaryRows: primaryCount,
+        previousRows: fallbackCount,
+        mergedPreviousWeek: false,
+        warnings: uniqueStrings([
           ...warnings,
           `REQUESTED_WEEK_EMPTY:${requestedWeekKey}`,
           ...(fallback.warning ? [fallback.warning] : [])
-        ]
+        ])
       };
     }
 
     if (fallback.warning) warnings.push(fallback.warning);
   }
 
+  if (hasMicros(primary.micros)) {
+    return {
+      ...primary,
+      source: 'requestedWeekLowRowsNoPreviousFallback',
+      primaryWeekKey: requestedWeekKey,
+      previousWeekKey,
+      primaryRows: primaryCount,
+      previousRows: 0,
+      mergedPreviousWeek: false,
+      warnings: uniqueStrings([
+        ...warnings,
+        `PRIMARY_WEEK_LOW_ROWS:${requestedWeekKey}:${primaryCount}`,
+        `NO_PREVIOUS_WEEK_ROWS_AVAILABLE:${previousWeekKey}`
+      ])
+    };
+  }
+
   return {
     ...primary,
     source: 'empty',
-    warnings: [
+    primaryWeekKey: requestedWeekKey,
+    previousWeekKey,
+    primaryRows: primaryCount,
+    previousRows: 0,
+    mergedPreviousWeek: false,
+    warnings: uniqueStrings([
       ...warnings,
       `NO_MICROS_FOUND_FOR_REQUESTED_OR_PREVIOUS_WEEK:${requestedWeekKey}`
-    ]
+    ])
   };
 }
 
@@ -1688,7 +1810,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-fast-safe');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-fast-safe-previous-week-merge');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -1718,6 +1840,15 @@ export default async function handler(req, res) {
       MAX_SIDE_LIMIT
     );
 
+    const minPrimaryRowsForMerge = toSafeLimit(
+      firstQueryValue(
+        req.query?.minPrimaryRowsForMerge,
+        Math.min(DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_WEEK_MERGE, sideLimit)
+      ),
+      Math.min(DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_WEEK_MERGE, sideLimit),
+      MAX_SIDE_LIMIT
+    );
+
     const includeActiveRotation = isTrue(firstQueryValue(req.query?.includeActiveRotation, false));
     const details = isTrue(firstQueryValue(req.query?.details, false));
     const compactRaw = firstQueryValue(req.query?.compact, null);
@@ -1732,7 +1863,13 @@ export default async function handler(req, res) {
 
     const [activeRotation, weekResult] = await Promise.all([
       getActiveRotationSafe(),
-      getWeekMicrosWithFallback(requestedWeekKey, previousWeekKey)
+      getWeekMicrosWithFallback(
+        requestedWeekKey,
+        previousWeekKey,
+        {
+          minPrimaryRowsForMerge
+        }
+      )
     ]);
 
     const activeMicroFamilyIds = extractActiveIds(activeRotation);
@@ -1825,6 +1962,12 @@ export default async function handler(req, res) {
       currentWeekKey,
       previousWeekKey,
 
+      primaryWeekKey: weekResult.primaryWeekKey || requestedWeekKey,
+      primaryWeekRows: weekResult.primaryRows ?? null,
+      previousWeekRows: weekResult.previousRows ?? null,
+      mergedPreviousWeek: Boolean(weekResult.mergedPreviousWeek),
+      minPrimaryRowsForMerge,
+
       mode,
       requestedMode,
 
@@ -1872,7 +2015,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortFastSafeWithPreviousWeekAndActiveRotationFallbackUnknownAsShort'
+        path: 'shortFastSafeWithPreviousWeekMergeAndActiveRotationFallback'
       },
 
       serverTs: Date.now()
