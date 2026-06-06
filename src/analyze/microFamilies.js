@@ -18,6 +18,9 @@ const FALLBACK_MICRO_SCHEMA = 'MF_V2';
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 
+const EXECUTION_MICRO_SUFFIX = 'XR';
+const EXECUTION_MICRO_HASH_LEN = 10;
+
 const SHORT_TOKENS = new Set([
   'SHORT',
   'BEAR',
@@ -44,6 +47,10 @@ function getMicroSchema() {
   ).toUpperCase();
 }
 
+function shouldRefineExecutionMicroIds() {
+  return CONFIG.analyze?.refineExecutionMicroIds !== false;
+}
+
 function toUpper(value, fallback = 'UNKNOWN') {
   const raw = String(value ?? '').trim();
 
@@ -54,6 +61,18 @@ function toUpper(value, fallback = 'UNKNOWN') {
 
 function boolToken(value) {
   return Boolean(value) ? 'true' : 'false';
+}
+
+function normalizeToken(value, fallback = 'NA', maxLength = 56) {
+  const text = String(value ?? '').trim();
+
+  if (!text) return fallback;
+
+  return text
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength) || fallback;
 }
 
 function normalizeTradeSideValue(value) {
@@ -171,6 +190,14 @@ function firstFinite(...values) {
   return NaN;
 }
 
+function firstValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+
+  return null;
+}
+
 function formatBucketNumber(value, decimals = 0) {
   if (!Number.isFinite(value)) return 'NA';
 
@@ -179,6 +206,14 @@ function formatBucketNumber(value, decimals = 0) {
     .replace(/\.?0+$/u, '')
     .replace('-', 'M')
     .replace('.', 'P');
+}
+
+function ratioToBps(value) {
+  const n = safeNumber(value, NaN);
+
+  if (!Number.isFinite(n)) return NaN;
+
+  return Math.abs(n) * 10000;
 }
 
 function numericBps(value) {
@@ -242,14 +277,6 @@ function signedScoreBucket(score, prefix) {
   if (s < -5) return `${prefix}_NEG_LO`;
 
   return `${prefix}_NEUTRAL`;
-}
-
-function ratioToBps(value) {
-  const n = safeNumber(value, NaN);
-
-  if (!Number.isFinite(n)) return NaN;
-
-  return Math.abs(n) * 10000;
 }
 
 function bucketBps(value, prefix) {
@@ -460,6 +487,57 @@ function assetClass(metrics = {}) {
   return 'CRYPTO';
 }
 
+function getCleanSymbol(metrics = {}) {
+  const raw = toUpper(
+    metrics.symbol ||
+    metrics.baseSymbol ||
+    metrics.contractSymbol ||
+    '',
+    ''
+  );
+
+  const cleaned = raw
+    .replace(/USDTUMCBL|USDCUMCBL|USDTPERP|USDCPERP|USDT|USDC|BUSD|PERP|SWAP|USD/gu, '')
+    .replace(/[^A-Z0-9]/gu, '');
+
+  return cleaned || 'UNKNOWN';
+}
+
+function symbolClassBucket(metrics = {}) {
+  const symbol = getCleanSymbol(metrics);
+
+  const majors = new Set([
+    'BTC',
+    'ETH',
+    'SOL',
+    'XRP',
+    'BNB',
+    'DOGE',
+    'ADA',
+    'AVAX',
+    'LINK',
+    'DOT',
+    'TON',
+    'TRX',
+    'LTC',
+    'BCH'
+  ]);
+
+  const memes = new Set([
+    'PEPE',
+    'SHIB',
+    'WIF',
+    'BONK',
+    'FLOKI',
+    'DOGE'
+  ]);
+
+  if (majors.has(symbol)) return `SYMBOL_MAJOR_${symbol}`;
+  if (memes.has(symbol)) return `SYMBOL_MEME_${symbol}`;
+
+  return `SYMBOL_HASH_${stableHash(symbol, 4)}`;
+}
+
 function getEntryDistancePct(metrics = {}) {
   return firstFinite(
     metrics.entryDistancePct,
@@ -540,6 +618,27 @@ function getCostR(metrics = {}) {
   );
 }
 
+function getConfluenceScore(metrics = {}) {
+  return firstFinite(
+    metrics.confluence,
+    metrics.sniperScore,
+    metrics.scannerScore,
+    metrics.moveScore
+  );
+}
+
+function getSpreadPct(metrics = {}) {
+  const spreadPct = firstFinite(metrics.spreadPct);
+
+  if (Number.isFinite(spreadPct)) return spreadPct;
+
+  const spreadBps = firstFinite(metrics.spreadBps);
+
+  if (Number.isFinite(spreadBps)) return spreadBps / 10000;
+
+  return NaN;
+}
+
 function costBucket(costR) {
   const c = safeNumber(costR, NaN);
 
@@ -551,6 +650,53 @@ function costBucket(costR) {
   if (c < 0.5) return 'COST_R_0P40_0P50';
 
   return 'COST_R_GT_0P50';
+}
+
+function numberBucket(value, prefix, {
+  step = 1,
+  min = -Infinity,
+  max = Infinity,
+  decimals = 0,
+  scale = 1
+} = {}) {
+  const n = safeNumber(value, NaN);
+
+  if (!Number.isFinite(n)) return `${prefix}_NA`;
+
+  const scaled = n * scale;
+  const clipped = Math.max(min, Math.min(max, scaled));
+  const bucket = Math.round(clipped / step) * step;
+
+  return `${prefix}_${formatBucketNumber(bucket, decimals)}`;
+}
+
+function ratioBucket(value, prefix, {
+  stepBps = 10,
+  maxBps = 300
+} = {}) {
+  const bps = ratioToBps(value);
+
+  if (!Number.isFinite(bps)) return `${prefix}_NA`;
+
+  const clipped = Math.max(0, Math.min(maxBps, bps));
+  const bucket = Math.round(clipped / stepBps) * stepBps;
+
+  return `${prefix}_${formatBucketNumber(bucket, 0)}BPS`;
+}
+
+function signedRatioBucket(value, prefix, {
+  stepBps = 10,
+  maxBps = 300
+} = {}) {
+  const n = safeNumber(value, NaN);
+
+  if (!Number.isFinite(n)) return `${prefix}_NA`;
+
+  const bps = n * 10000;
+  const clipped = Math.max(-maxBps, Math.min(maxBps, bps));
+  const bucket = Math.round(clipped / stepBps) * stepBps;
+
+  return `${prefix}_${formatBucketNumber(bucket, 0)}BPS`;
 }
 
 function buildMacroDefinitionParts(metrics = {}, familyId) {
@@ -589,7 +735,7 @@ function buildMacroDefinitionParts(metrics = {}, familyId) {
 }
 
 function buildMicroDefinitionParts(metrics = {}, parent) {
-  const spreadPct = safeNumber(metrics.spreadPct, NaN);
+  const spreadPct = getSpreadPct(metrics);
   const entryDistancePct = getEntryDistancePct(metrics);
   const slDistancePct = getSlDistancePct(metrics);
   const tpDistancePct = getTpDistancePct(metrics);
@@ -655,7 +801,147 @@ function buildMicroDefinitionParts(metrics = {}, parent) {
   ];
 }
 
-export function classifyFamily(metrics = {}) {
+function buildExecutionFingerprintParts(metrics = {}, parent) {
+  const spreadPct = getSpreadPct(metrics);
+  const entryDistancePct = getEntryDistancePct(metrics);
+  const slDistancePct = getSlDistancePct(metrics);
+  const tpDistancePct = getTpDistancePct(metrics);
+  const liqDistancePct = getLiquidationDistancePct(metrics);
+  const volatilityPct = getVolatilityPct(metrics);
+  const spoofScore = getSpoofScore(metrics);
+  const orderbookImbalance = getOrderbookImbalance(metrics);
+  const rsiSlope = getRsiSlope(metrics);
+  const costR = getCostR(metrics);
+  const confluence = getConfluenceScore(metrics);
+
+  const scannerReason = firstValue(
+    metrics.scannerReasonCoarse,
+    metrics.scannerReason,
+    metrics.reason,
+    metrics.signalReason
+  );
+
+  return [
+    `xrSchema=${EXECUTION_MICRO_SUFFIX}`,
+    `tradeSide=${TARGET_TRADE_SIDE}`,
+    `family=${normalizeToken(parent.familyId)}`,
+    `macro=${normalizeToken(parent.microFamilyId)}`,
+
+    `symbolClass=${symbolClassBucket(metrics)}`,
+    `assetClass=${normalizeToken(assetClass(metrics))}`,
+
+    `rsiExact=${normalizeToken(exactRsiZone(metrics.rsiZone))}`,
+    `rsiCoarse=${normalizeToken(coarseRsi(metrics.rsiZone))}`,
+    `rsiSlopeFine=${numberBucket(rsiSlope, 'RSI_SLOPE_FINE', {
+      step: 2.5,
+      min: -100,
+      max: 100,
+      decimals: 1
+    })}`,
+
+    `flowExact=${normalizeToken(exactFlow(metrics.flow))}`,
+    `flowCoarse=${normalizeToken(coarseFlow(metrics.flow))}`,
+
+    `obRelation=${normalizeToken(normalizeObRelation(metrics))}`,
+    `obImbFine=${numberBucket(orderbookImbalance, 'OB_IMB_FINE', {
+      step: 0.05,
+      min: -2,
+      max: 2,
+      decimals: 2
+    })}`,
+    `spoofFine=${numberBucket(spoofScore, 'SPOOF_FINE', {
+      step: 2.5,
+      min: 0,
+      max: 100,
+      decimals: 1
+    })}`,
+
+    `btcState=${normalizeToken(metrics.btcState || 'NEUTRAL')}`,
+    `btcRelation=${normalizeToken(btcRelation(TARGET_TRADE_SIDE, metrics.btcState))}`,
+
+    `regimeExact=${normalizeToken(exactRegime(metrics.regime))}`,
+    `regimeCoarse=${normalizeToken(coarseRegime(metrics.regime))}`,
+
+    `scannerExact=${normalizeToken(exactScannerReason(scannerReason))}`,
+    `scannerCoarse=${normalizeToken(coarseScannerReason(scannerReason))}`,
+
+    `spreadFine=${ratioBucket(spreadPct, 'SPREAD_FINE', {
+      stepBps: 1,
+      maxBps: 120
+    })}`,
+    `entryDistFine=${ratioBucket(entryDistancePct, 'ENTRY_DIST_FINE', {
+      stepBps: 5,
+      maxBps: 500
+    })}`,
+    `slDistFine=${ratioBucket(slDistancePct, 'SL_DIST_FINE', {
+      stepBps: 5,
+      maxBps: 500
+    })}`,
+    `tpDistFine=${ratioBucket(tpDistancePct, 'TP_DIST_FINE', {
+      stepBps: 10,
+      maxBps: 1000
+    })}`,
+    `liqDistFine=${ratioBucket(liqDistancePct, 'LIQ_DIST_FINE', {
+      stepBps: 10,
+      maxBps: 1500
+    })}`,
+    `volFine=${ratioBucket(volatilityPct, 'VOL_FINE', {
+      stepBps: 5,
+      maxBps: 500
+    })}`,
+
+    `depthFine=${numberBucket(metrics.depthMinUsd1p, 'DEPTH_FINE_USD', {
+      step: 25_000,
+      min: 0,
+      max: 3_000_000
+    })}`,
+    `fundingFine=${signedRatioBucket(metrics.fundingRate, 'FUNDING_FINE', {
+      stepBps: 1,
+      maxBps: 100
+    })}`,
+
+    `rrFine=${numberBucket(metrics.rr, 'RR_FINE', {
+      step: 0.1,
+      min: 0,
+      max: 10,
+      decimals: 1
+    })}`,
+    `costFine=${numberBucket(costR, 'COST_R_FINE', {
+      step: 0.05,
+      min: 0,
+      max: 2,
+      decimals: 2
+    })}`,
+    `confluenceFine=${numberBucket(confluence, 'CONFLUENCE_FINE', {
+      step: 2.5,
+      min: 0,
+      max: 100,
+      decimals: 1
+    })}`,
+
+    `entryQuality=${normalizeToken(entryQuality(metrics))}`,
+    `retest=${boolToken(metrics.retestConfirmed)}`,
+    `pullback=${boolToken(metrics.pullbackConfirmed)}`,
+    `sweep=${boolToken(metrics.sweepConfirmed)}`,
+    `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
+    `fakeBreakoutRisk=${boolToken(metrics.fakeBreakoutRisk)}`
+  ];
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [values])
+      .flatMap((value) => {
+        if (Array.isArray(value)) return value;
+
+        return [value];
+      })
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function classifyFamily(metrics = {}) {
   const sideSafeMetrics = {
     ...metrics,
     side: TARGET_TRADE_SIDE,
@@ -728,7 +1014,7 @@ export function buildMicroFamilyV1(metrics = {}) {
     shortOnly: true,
     longDisabled: true,
 
-    spreadBps: Number((safeNumber(metrics.spreadPct, 0) * 10000).toFixed(3))
+    spreadBps: Number((safeNumber(getSpreadPct(metrics), 0) * 10000).toFixed(3))
   };
 }
 
@@ -743,17 +1029,47 @@ export function buildMicroFamilyV2(metrics = {}) {
   };
 
   const parent = buildMicroFamilyV1(sideSafeMetrics);
-  const definitionParts = buildMicroDefinitionParts(sideSafeMetrics, parent);
-  const hash = stableHash(definitionParts.join('|'), 8);
+
+  const baseDefinitionParts = buildMicroDefinitionParts(sideSafeMetrics, parent);
+  const coarseHash = stableHash(baseDefinitionParts.join('|'), 8);
   const schema = getMicroSchema();
 
-  const microFamilyId = `MICRO_${TARGET_TRADE_SIDE}_${parent.familyId}_${schema}_${hash}`;
+  const baseMicroFamilyId = `MICRO_${TARGET_TRADE_SIDE}_${parent.familyId}_${schema}_${coarseHash}`;
+
+  const executionFingerprintParts = shouldRefineExecutionMicroIds()
+    ? buildExecutionFingerprintParts(sideSafeMetrics, parent)
+    : [];
+
+  const executionFingerprintHash = executionFingerprintParts.length
+    ? stableHash(executionFingerprintParts.join('|'), EXECUTION_MICRO_HASH_LEN)
+    : null;
+
+  const microFamilyId = executionFingerprintHash
+    ? `${baseMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionFingerprintHash}`
+    : baseMicroFamilyId;
+
+  const definitionParts = uniqueStrings([
+    ...baseDefinitionParts,
+    ...executionFingerprintParts,
+    `coarseMicroFamilyId=${baseMicroFamilyId}`,
+    executionFingerprintHash ? `executionFingerprintHash=${executionFingerprintHash}` : null,
+    executionFingerprintHash ? `executionFingerprintSchema=${EXECUTION_MICRO_SUFFIX}` : null
+  ].filter(Boolean));
 
   return {
     schema,
     version: 'micro',
     familyId: parent.familyId,
     microFamilyId,
+    trueMicroFamilyId: microFamilyId,
+
+    coarseMicroFamilyId: baseMicroFamilyId,
+    baseMicroFamilyId,
+    legacyMicroFamilyId: baseMicroFamilyId,
+
+    executionFingerprintHash,
+    executionFingerprintParts,
+    executionFingerprintSchema: executionFingerprintHash ? EXECUTION_MICRO_SUFFIX : null,
 
     macroFamilyId: parent.microFamilyId,
     parentMacroFamilyId: parent.microFamilyId,
@@ -789,7 +1105,7 @@ export function buildMicroFamilyV2(metrics = {}) {
     shortOnly: true,
     longDisabled: true,
 
-    spreadBps: Number((safeNumber(metrics.spreadPct, 0) * 10000).toFixed(3)),
+    spreadBps: Number((safeNumber(getSpreadPct(metrics), 0) * 10000).toFixed(3)),
     entryDistanceBps: numericBps(getEntryDistancePct(metrics)),
     slDistanceBps: numericBps(getSlDistancePct(metrics)),
     tpDistanceBps: numericBps(getTpDistancePct(metrics)),
@@ -868,6 +1184,15 @@ export function isMicroFamilyV2Id(id) {
   );
 }
 
+export function isExecutionRefinedMicroFamilyId(id) {
+  const value = String(id || '').toUpperCase();
+
+  return (
+    isMicroFamilyV2Id(value) &&
+    value.includes(`_${EXECUTION_MICRO_SUFFIX}_`)
+  );
+}
+
 export function attachMicroFamilies(metrics = {}) {
   const sideSafeMetrics = {
     ...metrics,
@@ -900,6 +1225,16 @@ export function attachMicroFamilies(metrics = {}) {
     parentMicroFamilyId: macro.microFamilyId,
 
     microFamilyId: micro.microFamilyId,
+    trueMicroFamilyId: micro.trueMicroFamilyId || micro.microFamilyId,
+
+    coarseMicroFamilyId: micro.coarseMicroFamilyId,
+    baseMicroFamilyId: micro.baseMicroFamilyId,
+    legacyMicroFamilyId: micro.legacyMicroFamilyId,
+
+    executionFingerprintHash: micro.executionFingerprintHash,
+    executionFingerprintParts: micro.executionFingerprintParts,
+    executionFingerprintSchema: micro.executionFingerprintSchema,
+
     microFamilySchema: micro.schema,
 
     microFamilyDefinition: micro.definition,
