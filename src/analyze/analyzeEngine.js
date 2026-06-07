@@ -7,7 +7,6 @@ import { KEYS } from '../keys.js';
 import { getDurableRedis, getJson, setJson } from '../redis.js';
 import {
   getIsoWeekKey,
-  randomId,
   safeNumber,
   sideToTradeSide
 } from '../utils.js';
@@ -51,7 +50,11 @@ function now() {
 }
 
 function normalizeSource(source) {
-  return String(source || 'REAL').toUpperCase();
+  const raw = String(source || 'REAL').toUpperCase();
+
+  if (raw === 'SHADOW') return 'REAL';
+
+  return raw;
 }
 
 function bool(value, fallback = false) {
@@ -63,13 +66,6 @@ function bool(value, fallback = false) {
   if (FALSE_VALUES.has(raw)) return false;
 
   return fallback;
-}
-
-function mirrorConfig() {
-  return {
-    enabled: false,
-    mirrorOutcomes: false
-  };
 }
 
 function sideTextToTradeSide(value) {
@@ -207,14 +203,8 @@ function isShortOnlyRow(row = {}, classified = {}) {
   return inferTradeSide(row, classified) === TARGET_TRADE_SIDE;
 }
 
-function dashboardSideFromTradeSide(side) {
-  return sideTextToTradeSide(side) === TARGET_TRADE_SIDE
-    ? TARGET_DASHBOARD_SIDE
-    : 'unknown';
-}
-
-function oppositeTradeSide() {
-  return OPPOSITE_TRADE_SIDE;
+function isLongSide() {
+  return false;
 }
 
 function normalizeClassificationInput(row = {}, forcedSide = null) {
@@ -257,14 +247,6 @@ function normalizeClassifiedSide(classified = {}) {
     longOnly: false,
     shortDisabled: false
   };
-}
-
-function buildOppositeSideRow() {
-  return null;
-}
-
-function isLongSide() {
-  return false;
 }
 
 function getAnalyzeSchemaMeta() {
@@ -572,10 +554,9 @@ function compactOutcome(outcome = {}) {
   if (inferTradeSide(outcome) !== TARGET_TRADE_SIDE) return null;
 
   return {
-    source: outcome.source || null,
+    source: normalizeSource(outcome.source || 'REAL'),
 
     tradeId: outcome.tradeId || null,
-    shadowId: outcome.shadowId || outcome.id || null,
 
     symbol: outcome.symbol || outcome.baseSymbol || outcome.contractSymbol || null,
     contractSymbol: outcome.contractSymbol || null,
@@ -1213,7 +1194,7 @@ function getMinimalMicroForStorage(row = {}) {
 
     completed: safeNumber(refreshed.completed, 0),
     realCompleted: safeNumber(refreshed.realCompleted, 0),
-    shadowCompleted: safeNumber(refreshed.shadowCompleted, 0),
+    shadowCompleted: 0,
 
     wins: safeNumber(refreshed.wins, 0),
     losses: safeNumber(refreshed.losses, 0),
@@ -1223,9 +1204,9 @@ function getMinimalMicroForStorage(row = {}) {
     realLosses: safeNumber(refreshed.realLosses, 0),
     realFlats: safeNumber(refreshed.realFlats, 0),
 
-    shadowWins: safeNumber(refreshed.shadowWins, 0),
-    shadowLosses: safeNumber(refreshed.shadowLosses, 0),
-    shadowFlats: safeNumber(refreshed.shadowFlats, 0),
+    shadowWins: 0,
+    shadowLosses: 0,
+    shadowFlats: 0,
 
     winrate: safeNumber(refreshed.winrate, 0),
     bayesianWinrate: safeNumber(refreshed.bayesianWinrate, 0),
@@ -1234,7 +1215,7 @@ function getMinimalMicroForStorage(row = {}) {
 
     totalR: safeNumber(refreshed.totalR, 0),
     realTotalR: safeNumber(refreshed.realTotalR, 0),
-    shadowTotalR: safeNumber(refreshed.shadowTotalR, 0),
+    shadowTotalR: 0,
 
     avgR: safeNumber(refreshed.avgR, 0),
     avgWinR: safeNumber(refreshed.avgWinR, 0),
@@ -2392,6 +2373,8 @@ export async function analyzeCandidatesBatch(
           shortDisabled: false,
           weekKey,
           strategyVersion: CONFIG.strategyVersion,
+          source: 'REAL',
+          analysisType: 'REAL_TRADE_SETUP_OBSERVATION',
           createdAt: batch.metrics.createdAt || now()
         });
 
@@ -2412,7 +2395,8 @@ export async function analyzeCandidatesBatch(
           longDisabled: true,
           longOnly: false,
           shortDisabled: false,
-          analysisType: 'OBSERVATION',
+          source: 'REAL',
+          analysisType: 'REAL_TRADE_SETUP_OBSERVATION',
           observationRecorded: Boolean(firstObservation),
           mirrorMicroFamiliesCreated: 0,
           mirrorMicroFamilyIds: [],
@@ -2434,10 +2418,6 @@ export async function analyzeCandidatesBatch(
   }
 
   return analyzed;
-}
-
-function buildMirroredOutcome() {
-  return null;
 }
 
 export async function recordOutcome(
@@ -2482,11 +2462,8 @@ export async function recordOutcome(
     };
   }
 
-  const mirrorOutcome = buildMirroredOutcome(row);
-
   const touchedIds = uniqueStrings([
-    row.microFamilyId,
-    mirrorOutcome?.microFamilyId
+    row.microFamilyId
   ]);
 
   const redis = getDurableRedis();
@@ -2504,6 +2481,7 @@ export async function recordOutcome(
 
   updateOutcome(micro, {
     ...row,
+    source: src,
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
@@ -2534,143 +2512,12 @@ export async function recordOutcome(
   };
 }
 
-function hasValidShortRiskShape(row = {}) {
-  const entry = safeNumber(row.entry, 0);
-  const sl = safeNumber(row.sl, 0);
-  const tp = safeNumber(row.tp, 0);
-  const rr = safeNumber(row.rr, 0);
-
-  if (entry <= 0 || sl <= 0 || tp <= 0 || rr <= 0) return false;
-
-  return sl > entry && tp < entry;
-}
-
-export async function createShadowPosition(metrics = {}) {
-  if (!CONFIG.analyze.shadowEnabled) {
-    return {
-      ok: false,
-      created: false,
-      skipped: true,
-      reason: 'SHADOW_DISABLED'
-    };
-  }
-
-  if (!isShortOnlyRow(metrics)) {
-    return {
-      ok: false,
-      created: false,
-      skipped: true,
-      reason: 'SHORT_ONLY_SHADOW_SKIPPED'
-    };
-  }
-
-  const classified = enrichWithMicroFamily(metrics);
-
-  if (!classified?.microFamilyId) {
-    return {
-      ok: false,
-      created: false,
-      skipped: true,
-      reason: 'MICRO_MISSING'
-    };
-  }
-
-  if (!hasValidShortRiskShape(classified)) {
-    return {
-      ok: false,
-      created: false,
-      skipped: true,
-      reason: 'RISK_MISSING'
-    };
-  }
-
-  const redis = getDurableRedis();
-
-  const dedupeKey = KEYS.analyze.shadowLast(
-    classified.symbol || classified.contractSymbol || 'UNKNOWN',
-    classified.microFamilyId
-  );
-
-  const first = await redis.set(dedupeKey, '1', {
-    nx: true,
-    ex: CONFIG.analyze.shadowDedupeTtlSec
-  });
-
-  if (!first) {
-    return {
-      ok: false,
-      created: false,
-      skipped: true,
-      reason: 'SHADOW_DEDUPED'
-    };
-  }
-
-  const id = randomId('shadow');
-  const createdAt = now();
-
-  const row = {
-    ...classified,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    id,
-    source: 'SHADOW',
-    status: 'OPEN',
-
-    strategyVersion: CONFIG.strategyVersion,
-
-    createdAt,
-    openedAt: classified.openedAt || classified.createdAt || createdAt,
-    monitorUntil: createdAt + CONFIG.analyze.shadowHorizonMin * 60 * 1000,
-
-    ticks: 0,
-    maxPnlPct: 0,
-    minPnlPct: 0,
-    mfeR: 0,
-    maeR: 0,
-
-    directToSL: false,
-    nearTpSeen: false,
-    reachedHalfR: false,
-    reachedOneR: false,
-
-    beArmed: false,
-    beWouldExit: false,
-    beExitR: 0,
-
-    gaveBackAfterHalfR: false,
-    gaveBackAfterOneR: false,
-    nearTpThenLoss: false
-  };
-
-  await setJson(
-    redis,
-    KEYS.analyze.shadowOpen(id),
-    row,
-    {
-      ex: Math.ceil(CONFIG.analyze.shadowHorizonMin * 60 * 1.2)
-    }
-  );
-
+export async function createShadowPosition() {
   return {
-    ok: true,
-    created: true,
-    skipped: false,
-    reason: 'SHADOW_CREATED',
-    shadowId: id,
-    microFamilyId: row.microFamilyId,
-    macroFamilyId: row.parentMacroFamilyId || row.macroFamilyId || null
+    ok: false,
+    created: false,
+    skipped: true,
+    reason: 'SHADOW_DISABLED_REAL_TRADES_ONLY'
   };
 }
 
@@ -2859,7 +2706,6 @@ export function buildOutcomeFromPosition({
     strategyVersion: CONFIG.strategyVersion,
 
     tradeId: position.tradeId,
-    shadowId: position.shadowId || position.id || null,
 
     symbol: position.symbol,
     contractSymbol: position.contractSymbol,
