@@ -26,6 +26,16 @@ const MAX_TOP_N_PER_SIDE = 160;
 const DEFAULT_MIN_WEIGHTED_COMPLETED = 0.35;
 const DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_MERGE = 25;
 
+const MANUAL_ACTIVE_SOURCES = new Set([
+  'ADMIN_MANUAL_SELECTION_SHORT_TRUE_MICRO_ONLY',
+  'ADMIN_ACTIVATE_SELECTED_SHORT_TRUE_MICROS',
+  'ADMIN_ACTIVATE_SELECTED_SHORT_MACRO_EXPANDED_TRUE_MICROS',
+  'ADMIN_ACTIVATE_TOP_SHORT_TRUE_MICROS',
+  'ADMIN_ACTIVATE_TOP_BALANCED_SHORT_TRUE_MICROS',
+  'ADMIN_ACTIVATE_TOP_BALANCED_SHORT_TRUE_MICROS',
+  'ADMIN_ACTIVATE_SELECTED_SHORT_TRUE_MICROS'
+]);
+
 function now() {
   return Date.now();
 }
@@ -104,10 +114,6 @@ function minPrimaryRowsForPreviousMerge() {
 
 function defaultRotationMode() {
   return CONFIG.rotation?.mode || 'balanced';
-}
-
-function allowLegacyMacroActivation() {
-  return false;
 }
 
 function allowManualUnknownTrueMicroIds() {
@@ -516,6 +522,23 @@ function isManualEligible(row = {}) {
   if (allowManualBelowMinCompleted()) return true;
 
   return rotationEligibilityTier(row) !== 'NONE';
+}
+
+function isManualActiveRotation(rotation = {}) {
+  if (!rotation || typeof rotation !== 'object') return false;
+
+  const source = String(rotation.source || '').trim().toUpperCase();
+  const mode = String(rotation.mode || '').trim().toUpperCase();
+
+  if (rotation.manualOnly === true) return true;
+  if (rotation.adminSelected === true) return true;
+  if (mode === 'MANUAL' || mode === 'SELECTED') return true;
+  if (source.includes('MANUAL')) return true;
+  if (source.includes('SELECTED')) return true;
+  if (source.startsWith('ADMIN_')) return true;
+  if (MANUAL_ACTIVE_SOURCES.has(source)) return true;
+
+  return false;
 }
 
 function compactRotationRow(row = {}, rank = 0) {
@@ -1031,6 +1054,10 @@ function buildEmptyRotation({
     usedRawFallback: false,
     usedPreviousWeekMerge,
 
+    manualOnly: false,
+    autoRotation: true,
+    liveSelectable: false,
+
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
     maxPerMacroFamily: maxPerMacroFamily(),
@@ -1163,6 +1190,10 @@ export async function buildRotationFromWeek({
     usedRawFallback,
     usedPreviousWeekMerge,
 
+    manualOnly: false,
+    autoRotation: true,
+    liveSelectable: false,
+
     minWeightedCompleted: minWeightedCompleted(),
     topNPerSide: topNPerSide(),
     maxPerMacroFamily: maxPerMacroFamily(),
@@ -1249,6 +1280,11 @@ export async function freezeWeeklyRotation({
 
       trueMicroOnly: true,
 
+      manualOnly: false,
+      autoRotation: true,
+      liveSelectable: false,
+      activationDisabled: true,
+
       usedLegacyFallback: false,
       usedSoftFallback: rotation.usedSoftFallback,
       usedObservationFallback: rotation.usedObservationFallback,
@@ -1286,6 +1322,11 @@ export async function freezeWeeklyRotation({
 
     trueMicroOnly: true,
 
+    manualOnly: false,
+    autoRotation: true,
+    liveSelectable: false,
+    activationDisabled: true,
+
     selectedMicroFamilies: rotation.microFamilyIds.length,
     selectedMacroFamilies: rotation.macroFamilyIds.length,
 
@@ -1302,8 +1343,14 @@ export async function freezeWeeklyRotation({
   };
 }
 
-function sanitizeActiveRotation(rotation = {}) {
+function sanitizeActiveRotation(rotation = {}, {
+  requireManual = false
+} = {}) {
   if (!rotation || typeof rotation !== 'object') return null;
+
+  if (requireManual && !isManualActiveRotation(rotation)) {
+    return null;
+  }
 
   const rows = Array.isArray(rotation.microFamilies)
     ? rotation.microFamilies
@@ -1316,6 +1363,7 @@ function sanitizeActiveRotation(rotation = {}) {
     .filter((row) => row.microFamilyId);
 
   const indexes = buildSelectionIndexes(shortRows);
+  const manual = isManualActiveRotation(rotation);
 
   return {
     ...rotation,
@@ -1330,6 +1378,11 @@ function sanitizeActiveRotation(rotation = {}) {
 
     trueMicroOnly: true,
     usedLegacyFallback: false,
+
+    manualOnly: manual,
+    adminSelected: manual,
+    autoRotation: !manual,
+    liveSelectable: manual && shortRows.length > 0,
 
     microFamilies: shortRows,
 
@@ -1349,102 +1402,26 @@ function sanitizeActiveRotation(rotation = {}) {
 
     empty: shortRows.length === 0,
     emptyReason: shortRows.length === 0
-      ? 'ACTIVE_ROTATION_CONTAINED_NO_SHORT_TRUE_MICRO_FAMILIES'
+      ? 'ACTIVE_ROTATION_CONTAINED_NO_MANUAL_SHORT_TRUE_MICRO_FAMILIES'
       : null
   };
 }
 
-async function autoBootstrapActiveRotation(redis) {
-  const weekKey = getIsoWeekKey();
-
-  const rotation = await buildRotationFromWeek({
-    weekKey,
-    activeWeekKey: weekKey,
-    mode: defaultRotationMode()
-  }).catch(() => null);
-
-  if (!rotation || rotation.empty || !rotation.microFamilyIds?.length) {
-    return null;
-  }
-
-  const active = sanitizeActiveRotation({
-    ...rotation,
-    source: 'AUTO_BOOTSTRAP_ACTIVE_ROTATION_SHORT_TRUE_MICRO_ONLY',
-    activeWeekKey: weekKey,
-    activatedAt: now(),
-    autoBootstrapped: true
-  });
-
-  if (!active || active.empty) return null;
-
-  await setJson(
-    redis,
-    KEYS.analyze.activeRotation,
-    active
-  ).catch(() => null);
-
-  return active;
+async function autoBootstrapActiveRotation() {
+  return null;
 }
 
 export async function activateNextRotation() {
-  const redis = getDurableRedis();
-
-  const next = await getJson(
-    redis,
-    KEYS.analyze.nextRotation,
-    null
-  );
-
-  if (!next) {
-    return {
-      ok: false,
-      reason: 'NEXT_ROTATION_MISSING'
-    };
-  }
-
-  const active = sanitizeActiveRotation({
-    ...next,
-    source: 'ANALYZE_NEXT_ROTATION_ACTIVATED_SHORT_TRUE_MICRO_ONLY',
-    activatedAt: now()
-  });
-
-  await setJson(
-    redis,
-    KEYS.analyze.activeRotation,
-    active
-  );
-
-  await sendWeeklyRotationReport(
-    active,
-    'ACTIVE_ROTATION_ACTIVATED'
-  ).catch(() => null);
-
   return {
-    ok: true,
-    activeRotation: active,
-    rotationId: active.rotationId,
-    activatedCount: active.microFamilyIds?.length || 0,
-    activatedMicroCount: active.microFamilyIds?.length || 0,
-    activatedMacroCount: active.macroFamilyIds?.length || 0,
-
+    ok: false,
+    reason: 'AUTO_ROTATION_ACTIVATION_DISABLED_MANUAL_ONLY',
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
-
     shortOnly: true,
     longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
     trueMicroOnly: true,
-
-    usedSoftFallback: active.usedSoftFallback,
-    usedObservationFallback: active.usedObservationFallback,
-    usedRawFallback: active.usedRawFallback,
-    usedPreviousWeekMerge: active.usedPreviousWeekMerge,
-
-    missingSides: active.missingSides || [],
-    bestLong: null,
-    bestShort: active.bestShort
+    manualOnly: true,
+    activationDisabled: true
   };
 }
 
@@ -1457,28 +1434,30 @@ export async function getActiveRotation() {
     null
   );
 
-  const sanitized = sanitizeActiveRotation(raw);
+  const sanitized = sanitizeActiveRotation(raw, {
+    requireManual: true
+  });
 
-  if (sanitized && !sanitized.empty && sanitized.microFamilyIds?.length) {
-    if (
-      raw?.longOnly === true ||
-      raw?.shortDisabled === true ||
-      raw?.targetTradeSide === 'LONG' ||
-      raw?.dashboardSide === 'bull'
-    ) {
-      await setJson(
-        redis,
-        KEYS.analyze.activeRotation,
-        sanitized
-      ).catch(() => null);
-    }
-
-    return sanitized;
+  if (!sanitized || sanitized.empty || !sanitized.microFamilyIds?.length) {
+    return null;
   }
 
-    // Puur-handmatig: nooit zelf activeren. Geen handmatige keuze = leeg = puur shadow, geen Discord.
-  return null;
+  if (
+    raw?.longOnly === true ||
+    raw?.shortDisabled === true ||
+    raw?.targetTradeSide === 'LONG' ||
+    raw?.dashboardSide === 'bull' ||
+    raw?.manualOnly !== true ||
+    raw?.liveSelectable !== true
+  ) {
+    await setJson(
+      redis,
+      KEYS.analyze.activeRotation,
+      sanitized
+    ).catch(() => null);
+  }
 
+  return sanitized;
 }
 
 export async function getActiveRotationSet() {
@@ -1764,7 +1743,7 @@ export async function activateSelectedMicroFamilies({
 
   const indexes = buildSelectionIndexes(microFamilies);
 
-  const active = {
+  const active = sanitizeActiveRotation({
     rotationId: randomId(`ROT_${weekKey}_manual_short_only`),
     source: 'ADMIN_MANUAL_SELECTION_SHORT_TRUE_MICRO_ONLY',
     mode,
@@ -1789,6 +1768,10 @@ export async function activateSelectedMicroFamilies({
     shortDisabled: false,
 
     trueMicroOnly: true,
+    manualOnly: true,
+    adminSelected: true,
+    autoRotation: false,
+    liveSelectable: indexes.microFamilyIds.length > 0,
 
     usedLegacyFallback: false,
     usedSoftFallback: microFamilies.some((row) => row.rotationEligibilityTier === 'SOFT'),
@@ -1827,19 +1810,58 @@ export async function activateSelectedMicroFamilies({
     macroToMicroFamilyIds: indexes.macroToMicroFamilyIds,
 
     microFamilies
+  }, {
+    requireManual: true
+  });
+
+  const finalActive = active || {
+    rotationId: randomId(`ROT_${weekKey}_manual_short_empty`),
+    source: 'ADMIN_MANUAL_SELECTION_SHORT_TRUE_MICRO_ONLY',
+    mode,
+    sourceWeekKey: weekKey,
+    activeWeekKey: getIsoWeekKey(),
+    generatedAt: now(),
+    activatedAt: now(),
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    shortOnly: true,
+    longDisabled: true,
+    trueMicroOnly: true,
+    manualOnly: true,
+    adminSelected: true,
+    autoRotation: false,
+    liveSelectable: false,
+    empty: true,
+    emptyReason: 'NO_SHORT_TRUE_MICRO_IDS_SELECTED',
+    microFamilies: [],
+    microFamilyIds: [],
+    activeMicroFamilyIds: [],
+    trueMicroFamilyIds: [],
+    macroFamilyIds: [],
+    activeMacroFamilyIds: [],
+    microToMacroFamilyId: {},
+    macroToMicroFamilyIds: {},
+    requestedMicroFamilyIds: requestedIds,
+    ignoredRequestedIds: ignoredIds,
+    expandedFromMacro,
+    bestLong: null,
+    bestShort: null,
+    missingSides: [TARGET_TRADE_SIDE]
   };
 
   await setJson(
     redis,
     KEYS.analyze.activeRotation,
-    active
+    finalActive
   );
 
-  return active;
+  return finalActive;
 }
 
 function sanitizeDashboardRotation(rotation) {
-  return sanitizeActiveRotation(rotation);
+  return sanitizeActiveRotation(rotation, {
+    requireManual: false
+  });
 }
 
 export async function getRotationDashboard() {
@@ -1851,7 +1873,10 @@ export async function getRotationDashboard() {
     getJson(redis, KEYS.analyze.rotationValidFrom, null)
   ]);
 
-  const active = sanitizeDashboardRotation(activeRaw);
+  const active = sanitizeActiveRotation(activeRaw, {
+    requireManual: true
+  });
+
   const next = sanitizeDashboardRotation(nextRaw);
 
   const activeRows = Array.isArray(active?.microFamilies)
@@ -1907,6 +1932,10 @@ export async function getRotationDashboard() {
 
     usedPreviousWeekMerge: Boolean(active?.usedPreviousWeekMerge),
     nextUsedPreviousWeekMerge: Boolean(next?.usedPreviousWeekMerge),
+
+    manualOnly: true,
+    autoRotationActivationDisabled: true,
+    activeLiveSelectable: Boolean(active?.liveSelectable),
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
