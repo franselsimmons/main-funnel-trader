@@ -24,6 +24,9 @@ import { sendExitAlert } from '../discord/discord.js';
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 
+const POSITION_SOURCE = 'VIRTUAL';
+const OUTCOME_SOURCE = 'SHADOW';
+
 const SHORT_DIRECT = new Set([
   'SHORT',
   'BEAR',
@@ -66,6 +69,37 @@ function manageConfig() {
   };
 }
 
+function costConfig() {
+  return {
+    takerFeePct: safeNumber(
+      CONFIG.cost?.takerFeePct ??
+      CONFIG.cost?.feePct ??
+      0.0006,
+      0.0006
+    ),
+
+    slippagePct: safeNumber(
+      CONFIG.cost?.slippagePct ??
+      CONFIG.cost?.marketSlippagePct ??
+      0.0002,
+      0.0002
+    ),
+
+    marketImpactPct: safeNumber(
+      CONFIG.cost?.marketImpactPct ??
+      CONFIG.cost?.impactPct ??
+      0.0001,
+      0.0001
+    ),
+
+    fallbackSpreadPct: safeNumber(
+      CONFIG.cost?.fallbackSpreadPct ??
+      0.0008,
+      0.0008
+    )
+  };
+}
+
 function schemaConfig() {
   const macroSchema = String(
     CONFIG.analyze?.macroSchema ||
@@ -92,6 +126,10 @@ function schemaConfig() {
 
 function round4(value) {
   return Number(safeNumber(value, 0).toFixed(4));
+}
+
+function round6(value) {
+  return Number(safeNumber(value, 0).toFixed(6));
 }
 
 function roundPrice(value) {
@@ -145,7 +183,8 @@ function normalizedTextParts(row = {}) {
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
     .map((value) => String(value || '').toUpperCase())
     .filter(Boolean);
@@ -315,7 +354,8 @@ function idHasSchema(id, schema) {
   return (
     value.includes(`_${target}_`) ||
     value.endsWith(`_${target}`) ||
-    value.includes(`|SCHEMA=${target}`)
+    value.includes(`|SCHEMA=${target}`) ||
+    value.includes(`SCHEMA=${target}`)
   );
 }
 
@@ -324,15 +364,17 @@ function definitionHasSchema(row = {}, schema) {
 
   if (!target) return false;
 
-  const parts = Array.isArray(row.definitionParts)
-    ? row.definitionParts
-    : [];
+  const parts = [
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
+  ];
 
   if (parts.some((part) => String(part).toUpperCase() === `SCHEMA=${target}`)) {
     return true;
   }
 
-  return String(row.definition || '').toUpperCase().includes(`SCHEMA=${target}`);
+  return String(row.definition || row.microDefinition || '').toUpperCase().includes(`SCHEMA=${target}`);
 }
 
 function rowSchema(row = {}) {
@@ -349,6 +391,7 @@ function rowMicroId(row = {}) {
     row.trueMicroFamilyId ||
     row.microFamilyId ||
     row.id ||
+    row.key ||
     ''
   ).trim();
 }
@@ -358,6 +401,18 @@ function parentMacroFamilyId(row = {}) {
     row.parentMacroFamilyId ||
     row.parentMicroFamilyId ||
     row.macroFamilyId ||
+    row.familyMacroId ||
+    ''
+  ).trim();
+}
+
+function fallbackFamilyId(row = {}) {
+  return String(
+    row.familyId ||
+    row.family ||
+    row.baseFamilyId ||
+    parentMacroFamilyId(row) ||
+    rowMicroId(row) ||
     ''
   ).trim();
 }
@@ -398,7 +453,7 @@ function normalizeMicroIdentity(row = {}) {
   return {
     microFamilyId,
     trueMicroFamilyId: microFamilyId,
-    familyId: row.familyId || null,
+    familyId: fallbackFamilyId(row) || microFamilyId || null,
 
     parentMacroFamilyId: macroId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroId || null,
@@ -457,14 +512,6 @@ function assertBasePositionFields(row = {}) {
   }
 
   assertShortRiskGeometry(row);
-}
-
-function assertEntryTradeable(entry = {}) {
-  assertBasePositionFields(entry);
-
-  if (!entry.liveEligible) {
-    throw new Error('OPEN_POSITION_NOT_LIVE_ELIGIBLE');
-  }
 }
 
 function assertPositionPersistable(position = {}) {
@@ -660,6 +707,159 @@ function forceShortPositionFields(row = {}) {
   };
 }
 
+function buildVirtualFlags(row = {}) {
+  return {
+    source: POSITION_SOURCE,
+    outcomeSource: OUTCOME_SOURCE,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    liveEligible: Boolean(row.liveEligible),
+    discordAlertEligible: Boolean(row.discordAlertEligible),
+    selectedMicroFamilyAlert: Boolean(row.selectedMicroFamilyAlert)
+  };
+}
+
+function calcGrossRFromPosition({
+  position,
+  exitPrice
+} = {}) {
+  const entry = safeNumber(position.entry, 0);
+  const initialSl = safeNumber(position.initialSl || position.sl, 0);
+  const exit = safeNumber(exitPrice, 0);
+
+  if (entry <= 0 || initialSl <= 0 || exit <= 0) return 0;
+
+  const riskDistance = Math.abs(entry - initialSl);
+
+  if (riskDistance <= 0) return 0;
+
+  return (entry - exit) / riskDistance;
+}
+
+function calcRoundTripCostBreakdownR({
+  position,
+  exitPrice
+} = {}) {
+  const cfg = costConfig();
+
+  const entry = safeNumber(position.entry, 0);
+  const exit = safeNumber(exitPrice, 0);
+  const initialSl = safeNumber(position.initialSl || position.sl, 0);
+  const spreadPct = safeNumber(
+    position.spreadPct ??
+    position.liveSpreadPct ??
+    position.orderbookSpreadPct,
+    cfg.fallbackSpreadPct
+  );
+
+  if (entry <= 0 || exit <= 0 || initialSl <= 0) {
+    return {
+      costR: 0,
+      feeR: 0,
+      slippageR: 0,
+      marketImpactR: 0,
+      spreadCostR: 0
+    };
+  }
+
+  const riskDistance = Math.abs(entry - initialSl);
+
+  if (riskDistance <= 0) {
+    return {
+      costR: 0,
+      feeR: 0,
+      slippageR: 0,
+      marketImpactR: 0,
+      spreadCostR: 0
+    };
+  }
+
+  const notionalSum = entry + exit;
+
+  const feePrice = notionalSum * cfg.takerFeePct;
+  const slippagePrice = notionalSum * cfg.slippagePct;
+  const marketImpactPrice = notionalSum * cfg.marketImpactPct;
+  const spreadCostPrice = notionalSum * Math.max(0, spreadPct) * 0.5;
+
+  const feeR = feePrice / riskDistance;
+  const slippageR = slippagePrice / riskDistance;
+  const marketImpactR = marketImpactPrice / riskDistance;
+  const spreadCostR = spreadCostPrice / riskDistance;
+
+  const costR = feeR + slippageR + marketImpactR + spreadCostR;
+
+  return {
+    costR: round6(costR),
+    feeR: round6(feeR),
+    slippageR: round6(slippageR),
+    marketImpactR: round6(marketImpactR),
+    spreadCostR: round6(spreadCostR)
+  };
+}
+
+function applyNetCostModelToOutcome({
+  outcome,
+  position,
+  exitPrice
+} = {}) {
+  if (!outcome || typeof outcome !== 'object') return outcome;
+
+  if (outcome.costModelApplied === true || outcome.netCostModelApplied === true) {
+    return outcome;
+  }
+
+  const grossR = safeNumber(
+    outcome.grossR ??
+    outcome.rawR ??
+    outcome.realizedGrossR ??
+    outcome.realizedR ??
+    outcome.r,
+    calcGrossRFromPosition({
+      position,
+      exitPrice
+    })
+  );
+
+  const cost = calcRoundTripCostBreakdownR({
+    position,
+    exitPrice
+  });
+
+  const netR = grossR - cost.costR;
+
+  return {
+    ...outcome,
+
+    grossR: round6(grossR),
+    rawR: round6(grossR),
+    realizedGrossR: round6(grossR),
+
+    costR: cost.costR,
+    avgCostR: cost.costR,
+    feeR: cost.feeR,
+    slippageR: cost.slippageR,
+    marketImpactR: cost.marketImpactR,
+    spreadCostR: cost.spreadCostR,
+
+    netR: round6(netR),
+    realizedNetR: round6(netR),
+    realizedR: round6(netR),
+    r: round6(netR),
+
+    win: netR > 0,
+    loss: netR < 0,
+    flat: netR === 0,
+    isWin: netR > 0,
+
+    costModelApplied: true,
+    netCostModelApplied: true,
+    costModel: 'TAKER_FEE_PLUS_SLIPPAGE_SPREAD_IMPACT_R_V1'
+  };
+}
+
 export async function getOpenPositions() {
   const redis = getDurableRedis();
   const keys = await getKeys(redis, KEYS.trade.openPattern, 1000);
@@ -709,16 +909,13 @@ export async function saveOpenPosition(position) {
   const row = forceShortPositionFields({
     ...normalized,
     ...identity,
+    ...buildVirtualFlags(normalized),
 
     symbol: normalized.symbol || keySymbol,
     baseSymbol: normalized.baseSymbol || keySymbol,
     contractSymbol: normalized.contractSymbol || null,
 
-    source: 'REAL',
     status: normalized.status || 'OPEN',
-
-    shadowOnly: false,
-    liveEligible: normalized.liveEligible !== false,
 
     strategyVersion: normalized.strategyVersion || CONFIG.strategyVersion,
 
@@ -847,16 +1044,14 @@ export function updatePathMetrics(position, price) {
 
 export function buildOpenPositionFromEntry(entry) {
   const normalizedEntry = forceShortPositionFields(entry);
-
-  assertEntryTradeable(normalizedEntry);
-
   const keySymbol = storageSymbol(normalizedEntry);
   const openedAt = now();
   const identity = normalizeMicroIdentity(normalizedEntry);
 
-  return forceShortPositionFields({
+  const position = forceShortPositionFields({
     ...normalizedEntry,
     ...identity,
+    ...buildVirtualFlags(normalizedEntry),
 
     tradeId: normalizedEntry.tradeId || randomId('trade'),
 
@@ -864,11 +1059,7 @@ export function buildOpenPositionFromEntry(entry) {
     baseSymbol: normalizedEntry.baseSymbol || keySymbol,
     contractSymbol: normalizedEntry.contractSymbol || null,
 
-    source: 'REAL',
     status: 'OPEN',
-
-    shadowOnly: false,
-    liveEligible: true,
 
     strategyVersion: normalizedEntry.strategyVersion || CONFIG.strategyVersion,
 
@@ -907,6 +1098,10 @@ export function buildOpenPositionFromEntry(entry) {
     trailLiveApplied: false,
     slManagementSource: null
   });
+
+  assertPositionPersistable(position);
+
+  return position;
 }
 
 async function markPriceFetchFailed(position) {
@@ -926,20 +1121,64 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     ...outcome,
     ...identity,
 
-    source: 'REAL',
+    source: OUTCOME_SOURCE,
+    positionSource: position.source || POSITION_SOURCE,
 
     activeRotationId: position.activeRotationId || null,
+    selectedRotationId: position.selectedRotationId || position.activeRotationId || null,
+
     activeMacroFamilyId:
       position.activeMacroFamilyId ||
       identity.parentMacroFamilyId ||
       null,
 
+    selectedMacroFamilyId:
+      position.selectedMacroFamilyId ||
+      position.activeMacroFamilyId ||
+      identity.parentMacroFamilyId ||
+      null,
+
+    selectedMicroFamilyAlert: Boolean(position.selectedMicroFamilyAlert),
+    discordAlertEligible: Boolean(position.discordAlertEligible),
+
     weeklyStats: position.weeklyStats || null,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
 
     isTrueMicro: identity.isTrueMicro,
     isLegacyMacro: identity.isLegacyMacro,
     trueMicroOnly: true
   });
+}
+
+async function maybeSendExitAlert(position, outcome) {
+  if (!position.discordAlertEligible && !position.selectedMicroFamilyAlert) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: 'POSITION_NOT_SELECTED_FOR_DISCORD_EXIT_ALERT'
+    };
+  }
+
+  try {
+    await sendExitAlert(outcome);
+
+    return {
+      sent: true,
+      skipped: false,
+      reason: 'DISCORD_EXIT_ALERT_SENT'
+    };
+  } catch (error) {
+    return {
+      sent: false,
+      skipped: false,
+      failed: true,
+      reason: 'DISCORD_EXIT_ALERT_FAILED',
+      error: error?.message || String(error)
+    };
+  }
 }
 
 async function monitorOnePosition({
@@ -993,26 +1232,37 @@ async function monitorOnePosition({
     position: forceShortPositionFields(position),
     exitPrice: price,
     exitReason: exit.reason,
-    source: 'REAL'
+    source: OUTCOME_SOURCE
   });
 
-  const outcome = enrichOutcomeIdentity(baseOutcome, position);
+  const netOutcome = applyNetCostModelToOutcome({
+    outcome: baseOutcome,
+    position,
+    exitPrice: price
+  });
+
+  const outcome = enrichOutcomeIdentity(netOutcome, position);
 
   const analyzeOutcome = clonePlainObject(outcome);
   const discordOutcome = clonePlainObject(outcome);
 
   await recordOutcome(analyzeOutcome, {
-    source: 'REAL'
+    source: OUTCOME_SOURCE,
+    costModelApplied: true
   });
 
-  await sendExitAlert(discordOutcome).catch(() => null);
+  const discordResult = await maybeSendExitAlert(position, discordOutcome);
 
   await deleteOpenPosition(position.symbol || position.contractSymbol);
 
   return {
     type: 'EXIT',
     position,
-    outcome: discordOutcome
+    outcome: {
+      ...discordOutcome,
+      discordExitAlertResult: discordResult,
+      discordExitAlertSent: Boolean(discordResult.sent)
+    }
   };
 }
 
