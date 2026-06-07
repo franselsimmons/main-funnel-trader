@@ -882,6 +882,7 @@
     };
 
     const tabs = ["overview", "scanner", "trade", "micros", "rotation", "discord", "reset"];
+    const validMicroModes = ["balanced", "winrate", "totalR", "avgR", "directSL", "observed"];
 
     const COIN_NAMES = {
       BTC: "Bitcoin",
@@ -963,8 +964,23 @@
       return escapeHtml(value).replaceAll("`", "&#096;");
     }
 
+    function upper(value) {
+      return String(value || "").trim().toUpperCase();
+    }
+
+    function cleanSideHaystack(value = "") {
+      return upper(value)
+        .replaceAll("LONG_DISABLED", "")
+        .replaceAll("LONGDISABLED", "")
+        .replaceAll("BLOCK_LONG", "")
+        .replaceAll("LONG_ENABLED_FALSE", "")
+        .replaceAll("SHORT_ONLY", "SHORT")
+        .replaceAll("SHORT-ONLY", "SHORT")
+        .replaceAll("SHORT_ONLY_MODE", "SHORT");
+    }
+
     function normalizeSide(side) {
-      const s = String(side || "").trim().toUpperCase();
+      const s = cleanSideHaystack(side);
 
       if (["LONG", "BULL", "BULLISH", "BUY"].includes(s)) return "LONG";
       if (["SHORT", "BEAR", "BEARISH", "SELL"].includes(s)) return "SHORT";
@@ -973,42 +989,111 @@
     }
 
     function shortIdHit(text = "") {
-      const value = String(text || "").toUpperCase();
+      const value = ` ${cleanSideHaystack(text)} `;
 
       return (
-        value.includes("SHORT") ||
-        value.includes("BEAR") ||
-        value.includes("SELL") ||
         value.includes("MICRO_SHORT_") ||
         value.includes("TRADESIDE=SHORT") ||
         value.includes("TRADE_SIDE=SHORT") ||
         value.includes("SIDE=SHORT") ||
         value.includes("SIDE=BEAR") ||
         value.includes("DIRECTION=SHORT") ||
-        value.includes("DIRECTION=BEAR")
+        value.includes("DIRECTION=BEAR") ||
+        value.includes("POSITION_SIDE=SHORT") ||
+        value.includes("POSITIONSIDE=SHORT") ||
+        value.includes("SIDE=SELL") ||
+        value.includes("DIRECTION=SELL") ||
+        value.includes(" SHORT ") ||
+        value.includes(" SHORT_") ||
+        value.includes("_SHORT ") ||
+        value.includes("_SHORT_") ||
+        value.includes("|SHORT|") ||
+        value.includes(":SHORT") ||
+        value.includes("=SHORT") ||
+        value.includes(" BEAR ") ||
+        value.includes("_BEAR") ||
+        value.includes("BEAR_") ||
+        value.includes("|BEAR|") ||
+        value.includes(":BEAR") ||
+        value.includes("=BEAR") ||
+        value.includes(" SELL ") ||
+        value.includes("_SELL") ||
+        value.includes("SELL_") ||
+        value.includes("|SELL|") ||
+        value.includes(":SELL") ||
+        value.includes("=SELL")
       );
     }
 
     function longIdHit(text = "") {
-      const value = String(text || "").toUpperCase();
+      const value = ` ${cleanSideHaystack(text)} `;
 
       return (
-        value.includes("LONG") ||
-        value.includes("BULL") ||
-        value.includes("BUY") ||
         value.includes("MICRO_LONG_") ||
         value.includes("TRADESIDE=LONG") ||
         value.includes("TRADE_SIDE=LONG") ||
         value.includes("SIDE=LONG") ||
         value.includes("SIDE=BULL") ||
         value.includes("DIRECTION=LONG") ||
-        value.includes("DIRECTION=BULL")
+        value.includes("DIRECTION=BULL") ||
+        value.includes("POSITION_SIDE=LONG") ||
+        value.includes("POSITIONSIDE=LONG") ||
+        value.includes("SIDE=BUY") ||
+        value.includes("DIRECTION=BUY") ||
+        value.includes(" LONG ") ||
+        value.includes(" LONG_") ||
+        value.includes("_LONG ") ||
+        value.includes("_LONG_") ||
+        value.includes("|LONG|") ||
+        value.includes(":LONG") ||
+        value.includes("=LONG") ||
+        value.includes(" BULL ") ||
+        value.includes("_BULL") ||
+        value.includes("BULL_") ||
+        value.includes("|BULL|") ||
+        value.includes(":BULL") ||
+        value.includes("=BULL") ||
+        value.includes(" BUY ") ||
+        value.includes("_BUY") ||
+        value.includes("BUY_") ||
+        value.includes("|BUY|") ||
+        value.includes(":BUY") ||
+        value.includes("=BUY")
       );
     }
 
+    function idAllowedInShortOnly(id = "") {
+      const value = String(id || "").trim();
+
+      if (!value) return false;
+
+      const shortHit = shortIdHit(value);
+      const longHit = longIdHit(value);
+
+      if (longHit && !shortHit) return false;
+
+      return true;
+    }
+
     function rowSide(row = {}) {
+      if (typeof row === "string") {
+        const direct = normalizeSide(row);
+
+        if (direct === "SHORT" || direct === "LONG") return direct;
+
+        const shortHit = shortIdHit(row);
+        const longHit = longIdHit(row);
+
+        if (shortHit && !longHit) return "SHORT";
+        if (longHit && !shortHit) return "LONG";
+        if (shortHit) return "SHORT";
+
+        return "NA";
+      }
+
       const directFields = [
         row.tradeSide,
+        row.targetTradeSide,
         row.positionSide,
         row.direction,
         row.scannerSide,
@@ -1016,7 +1101,10 @@
         row.analysisSide,
         row.signalSide,
         row.entrySide,
-        row.side
+        row.dashboardSide,
+        row.side,
+        row.bias,
+        row.marketBias
       ];
 
       for (const value of directFields) {
@@ -1029,29 +1117,47 @@
       const probe = [
         row.microFamilyId,
         row.trueMicroFamilyId,
+        row.liveMicroFamilyId,
+        row.realMicroFamilyId,
+        row.executionMicroFamilyId,
         row.id,
         row.key,
         row.coarseMicroFamilyId,
         row.baseMicroFamilyId,
         row.legacyMicroFamilyId,
+
         row.macroFamilyId,
         row.parentMacroFamilyId,
         row.parentMicroFamilyId,
+        row.parentFamilyId,
+        row.macroId,
+
         row.familyId,
         row.family,
-        row.definition,
-        row.parentDefinition,
-        Array.isArray(row.definitionParts) ? row.definitionParts.join("|") : "",
-        Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts.join("|") : ""
-      ].map((value) => String(value || "").toUpperCase());
+        row.baseFamilyId,
 
-      const hasShort = probe.some(shortIdHit);
-      const hasLong = probe.some(longIdHit);
+        row.definition,
+        row.microDefinition,
+        row.macroDefinition,
+        row.parentDefinition,
+        row.scannerReason,
+        row.reason,
+        row.signalReason,
+        row.actionReason,
+
+        Array.isArray(row.definitionParts) ? row.definitionParts.join("|") : "",
+        Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts.join("|") : "",
+        Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts.join("|") : "",
+        Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts.join("|") : "",
+        Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts.join("|") : ""
+      ].join(" | ");
+
+      const hasShort = shortIdHit(probe);
+      const hasLong = longIdHit(probe);
 
       if (hasShort && !hasLong) return "SHORT";
       if (hasLong && !hasShort) return "LONG";
       if (hasShort) return "SHORT";
-      if (hasLong) return "LONG";
 
       if (
         row.shortOnly === true ||
@@ -1329,7 +1435,7 @@
       }
 
       if (status === 404) {
-        return "Admin endpoint niet gevonden. Controleer routepad/deploy.";
+        return "Admin endpoint niet gevonden of gevraagde SHORT family bestaat niet.";
       }
 
       return raw || "Onbekende API fout.";
@@ -1464,7 +1570,7 @@
             if (Array.isArray(value)) return value;
 
             return String(value || "")
-              .split(/[\s,]+/g)
+              .split(/[\s,;\n\r]+/g)
               .map((part) => part.trim());
           })
           .map((value) => String(value || "").trim())
@@ -1481,6 +1587,8 @@
         row?.macroFamilyId ||
         row?.parentMacroFamilyId ||
         row?.parentMicroFamilyId ||
+        row?.parentFamilyId ||
+        row?.macroId ||
         row?.legacyMicroFamilyId ||
         row?.coarseMicroFamilyId ||
         row?.familyMacroId ||
@@ -1490,13 +1598,37 @@
     }
 
     function familyId(row = {}) {
-      return row?.familyId || row?.family || "";
+      return row?.familyId || row?.family || row?.baseFamilyId || "";
+    }
+
+    function microCompleted(row = {}) {
+      const real = Number(row.realCompleted || 0);
+      const shadow = Number(row.shadowCompleted || 0);
+      const explicit = real + shadow;
+
+      if (Number.isFinite(Number(row.outcomeSample))) return Number(row.outcomeSample);
+      if (explicit > 0) return explicit;
+      if (Number.isFinite(Number(row.completed))) return Number(row.completed);
+
+      return 0;
+    }
+
+    function microObservationSample(row = {}) {
+      const values = [
+        row.observationSample,
+        row.seen,
+        row.observations,
+        row.winrateSample,
+        microCompleted(row)
+      ].map(Number).filter(Number.isFinite);
+
+      return values.length ? Math.max(...values, 0) : 0;
     }
 
     function looksLikeMicroRow(row = {}) {
       if (!row || typeof row !== "object" || Array.isArray(row)) return false;
 
-      const id = String(
+      const id = upper(
         row.microFamilyId ||
         row.trueMicroFamilyId ||
         row.id ||
@@ -1504,14 +1636,15 @@
         ""
       );
 
-      const macro = String(
+      const macro = upper(
         row.parentMacroFamilyId ||
         row.parentMicroFamilyId ||
         row.macroFamilyId ||
+        row.parentFamilyId ||
         ""
       );
 
-      const family = String(row.familyId || row.family || "");
+      const family = upper(row.familyId || row.family || "");
 
       if (id && (id.includes("MICRO_") || shortIdHit(id) || longIdHit(id))) return true;
       if (macro && (macro.includes("MICRO_") || shortIdHit(macro) || longIdHit(macro))) return true;
@@ -1520,7 +1653,10 @@
       return (
         row.definition !== undefined ||
         row.definitionParts !== undefined ||
+        row.microDefinitionParts !== undefined ||
         row.completed !== undefined ||
+        row.outcomeSample !== undefined ||
+        row.observationSample !== undefined ||
         row.seen !== undefined ||
         row.observations !== undefined ||
         row.winrate !== undefined ||
@@ -1549,9 +1685,9 @@
         if (!row || typeof row !== "object" || Array.isArray(row)) continue;
 
         const normalized = {
+          ...row,
           microFamilyId: row.microFamilyId || row.trueMicroFamilyId || key,
-          trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || key,
-          ...row
+          trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || key
         };
 
         if (looksLikeMicroRow(normalized)) rows.push(normalized);
@@ -1581,6 +1717,7 @@
     function sanitizeShortRows(rows = []) {
       return (Array.isArray(rows) ? rows : [])
         .filter(Boolean)
+        .filter((row) => !longIdHit(microId(row)) || shortIdHit(microId(row)) || isShortRow(row))
         .filter(isShortRow);
     }
 
@@ -1711,7 +1848,7 @@
             ? rotation.microFamilies.map((row) => microId(row))
             : []
         )
-      ]).filter(shortIdHit);
+      ]).filter(idAllowedInShortOnly);
     }
 
     function extractMacroIdsFromRotation(rotation = {}) {
@@ -1724,7 +1861,7 @@
             ? rotation.microFamilies.map((row) => macroId(row))
             : []
         )
-      ]).filter(shortIdHit);
+      ]).filter(idAllowedInShortOnly);
     }
 
     function activeIdsFromState() {
@@ -1732,9 +1869,13 @@
         extractIdsFromRotation(state.rotation?.active || {}),
         extractIdsFromRotation(state.rotation?.activeRotation || {}),
         extractIdsFromRotation(state.micros?.activeRotation || {}),
+        extractIdsFromRotation(state.trade?.activeRotation || {}),
+        extractIdsFromRotation(state.overview?.activeRotation || {}),
+        state.rotation?.activeMicroFamilyIds || [],
         state.micros?.activeMicroFamilyIds || [],
-        extractIdsFromRotation(state.overview?.activeRotation || {})
-      ]).filter(shortIdHit);
+        state.trade?.activeMicroFamilyIds || [],
+        state.overview?.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
     }
 
     function activeMacroIdsFromState() {
@@ -1742,9 +1883,13 @@
         extractMacroIdsFromRotation(state.rotation?.active || {}),
         extractMacroIdsFromRotation(state.rotation?.activeRotation || {}),
         extractMacroIdsFromRotation(state.micros?.activeRotation || {}),
+        extractMacroIdsFromRotation(state.trade?.activeRotation || {}),
+        extractMacroIdsFromRotation(state.overview?.activeRotation || {}),
+        state.rotation?.activeMacroFamilyIds || [],
         state.micros?.activeMacroFamilyIds || [],
-        extractMacroIdsFromRotation(state.overview?.activeRotation || {})
-      ]).filter(shortIdHit);
+        state.trade?.activeMacroFamilyIds || [],
+        state.overview?.activeMacroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
     }
 
     function activeMicroSet() {
@@ -1797,6 +1942,7 @@
       if (tier === "SOFT") return '<span class="pill soft">SOFT</span>';
       if (tier === "OBSERVATION") return '<span class="pill observation">OBS</span>';
       if (tier === "RAW" || tier === "RAW_SIDE") return '<span class="pill raw">RAW</span>';
+      if (tier.includes("FALLBACK")) return `<span class="pill raw">${escapeHtml(tier)}</span>`;
       if (tier === "MANUAL") return '<span class="pill purple">MANUAL</span>';
 
       return `<span class="pill">${escapeHtml(tier || "NA")}</span>`;
@@ -1811,7 +1957,7 @@
           return [];
         })
         .map(normalizeSide)
-        .filter((side) => ["LONG", "SHORT"].includes(side));
+        .filter((side) => side === ONLY_SIDE);
 
       return uniqueStrings(values);
     }
@@ -1947,12 +2093,12 @@
 
     async function copyText(text, label = "Gekopieerd.") {
       try {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(String(text || ""));
         setMessage(label, "ok");
         return;
       } catch {
         const area = document.createElement("textarea");
-        area.value = text;
+        area.value = String(text || "");
         document.body.appendChild(area);
         area.select();
         document.execCommand("copy");
@@ -1979,7 +2125,7 @@
     function microUrl(extra = {}) {
       const params = new URLSearchParams();
 
-      params.set("mode", extra.mode || state.microMode);
+      params.set("mode", validMicroModes.includes(extra.mode || state.microMode) ? (extra.mode || state.microMode) : "balanced");
       params.set("side", ONLY_SIDE);
       params.set("tradeSide", ONLY_SIDE);
       params.set("targetTradeSide", ONLY_SIDE);
@@ -2004,6 +2150,8 @@
       params.set("nextRowsLimit", String(extra.nextRowsLimit || 0));
       params.set("side", ONLY_SIDE);
       params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
       params.set("compact", "1");
 
       return `${endpoints.rotation}?${params.toString()}`;
@@ -2064,6 +2212,7 @@
 
           best25MicroFamilies: bestRows,
           topMicroFamilies: bestRows,
+          bestMicroFamilies: bestRows,
 
           shortRows: rows,
           rows,
@@ -2076,11 +2225,11 @@
           activeMicroFamilyIds: uniqueStrings([
             data.activeMicroFamilyIds || [],
             extractIdsFromRotation(activeRotation || {})
-          ]).filter(shortIdHit),
+          ]).filter(idAllowedInShortOnly),
           activeMacroFamilyIds: uniqueStrings([
             data.activeMacroFamilyIds || [],
             extractMacroIdsFromRotation(activeRotation || {})
-          ]).filter(shortIdHit),
+          ]).filter(idAllowedInShortOnly),
           summary: data.summary || null,
           perf: data.perf || null,
           serverTs: Date.now()
@@ -2097,6 +2246,7 @@
           raw: null,
           best25MicroFamilies: [],
           topMicroFamilies: [],
+          bestMicroFamilies: [],
           shortRows: [],
           rows: [],
           fallbackRows: [],
@@ -2144,16 +2294,7 @@
       if (normalizedSide !== ONLY_SIDE) return null;
 
       return sanitizeShortRows(rows)
-        .filter((row) => microId(row))
-        .sort((a, b) => {
-          const scoreDelta =
-            Number(b.dashboardBalancedScore ?? b.balancedScore ?? 0) -
-            Number(a.dashboardBalancedScore ?? a.balancedScore ?? 0);
-
-          if (scoreDelta !== 0) return scoreDelta;
-
-          return Number(b.seen ?? b.observations ?? 0) - Number(a.seen ?? a.observations ?? 0);
-        })[0] || null;
+        .filter((row) => microId(row))[0] || null;
     }
 
     async function ensureMicroRows({ force = false } = {}) {
@@ -2174,7 +2315,7 @@
     }
 
     function microTrades(row = {}) {
-      return Number(row.winrateSample ?? row.completed ?? 0);
+      return microCompleted(row);
     }
 
     function microWinrateText(row = {}) {
@@ -2182,7 +2323,7 @@
     }
 
     function microFairWinrateText(row = {}) {
-      return fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound);
+      return fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound);
     }
 
     function microPnlText(row = {}) {
@@ -2194,20 +2335,20 @@
     }
 
     function microNarrative(row = {}) {
-      const trades = microTrades(row);
-      const seen = Number(row.seen ?? row.observations ?? 0);
+      const completed = microCompleted(row);
+      const seen = microObservationSample(row);
       const winrate = Number(row.winrate);
       const totalR = Number(row.totalR);
       const avgR = Number(row.avgR);
       const directSL = Number(row.directSLPct);
 
-      if (trades <= 0 && seen > 0) {
+      if (completed <= 0 && seen > 0) {
         return `Deze SHORT micro-family krijgt al analyze-observations maar heeft nog geen gesloten shadow outcome. Completed/winrate/AvgR/TotalR blijven daarom echte 0 tot shadow exits sluiten. Seen=${seen}.`;
       }
 
-      const sampleText = trades < 5
+      const sampleText = completed < 5
         ? "lage sample, behandelen als vroege SHORT fingerprint"
-        : trades < 15
+        : completed < 15
           ? "bruikbare sample, maar nog niet zwaar bewezen"
           : "sterkere sample met genoeg outcomes";
 
@@ -2263,10 +2404,10 @@
       const micro = microId(row);
       const macro = macroId(row);
       const family = familyId(row);
-      const active = activeMicroSet().has(micro);
+      const active = activeMicroSet().has(micro) || activeMacroSet().has(macro);
       const score = row.dashboardBalancedScore ?? row.balancedScore;
-      const trades = microTrades(row);
-      const seen = row.seen ?? row.observations ?? 0;
+      const completed = microCompleted(row);
+      const seen = microObservationSample(row);
       const tier = tierValue(row);
 
       return `
@@ -2291,7 +2432,7 @@
 
           <div class="micro-performance-grid">
             <div class="micro-performance-stat"><span>Seen</span><strong>${escapeHtml(fmt(seen, 2))}</strong></div>
-            <div class="micro-performance-stat"><span>Completed</span><strong>${escapeHtml(fmt(trades, 2))}</strong></div>
+            <div class="micro-performance-stat"><span>Outcome</span><strong>${escapeHtml(fmt(completed, 2))}</strong></div>
             <div class="micro-performance-stat"><span>Winrate</span><strong>${escapeHtml(microWinrateText(row))}</strong></div>
             <div class="micro-performance-stat"><span>Fair WR</span><strong>${escapeHtml(microFairWinrateText(row))}</strong></div>
             <div class="micro-performance-stat"><span>Net PnL</span><strong>${escapeHtml(microPnlText(row))}</strong></div>
@@ -2371,10 +2512,12 @@
         { label: "IDs", render: idStack },
         { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
         { label: "Tier", render: (row) => tierValue(row) ? tierPill(tierValue(row)) : '<span class="pill">NA</span>' },
+        { label: "Learning", render: (row) => `<span class="pill ${row.awaitingOutcomes ? "observation" : ""}">${escapeHtml(row.learningStatus || "NA")}</span>` },
         { label: "Seen", render: (row) => fmtInt(row.seen ?? row.observations) },
-        { label: "Completed", render: (row) => fmt(row.completed, 2) },
-        { label: "Sample", render: (row) => fmt(row.winrateSample ?? row.completed, 2) },
-        { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
+        { label: "Obs sample", render: (row) => fmt(microObservationSample(row), 2) },
+        { label: "Outcome", render: (row) => fmt(microCompleted(row), 2) },
+        { label: "WR sample", render: (row) => fmt(row.winrateSample ?? microCompleted(row), 2) },
+        { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
         { label: "Winrate", render: (row) => fmtPctRatio(row.winrate) },
         { label: "Net AvgR", render: (row) => fmt(row.avgR, 3) },
         { label: "Net TotalR", render: (row) => fmt(row.totalR, 3) },
@@ -2414,7 +2557,7 @@
         <div class="section-title">
           <div>
             <h2>Beste ${state.microBestLimit} SHORT true micro families</h2>
-            <p>Completed=0 blijft echte 0 tot shadow exits sluiten. Seen/observations tonen of analyze data binnenkomt.</p>
+            <p>Outcome=0 blijft echte 0 tot shadow exits sluiten. Seen/observations tonen of analyze data binnenkomt.</p>
           </div>
         </div>
         ${microRowsTable(split.shortRows, activeMicroSet(), activeMacroSet())}
@@ -2429,21 +2572,30 @@
       const data = await api(endpoints.overview);
       state.overview = data;
 
+      const activeMicroIds = uniqueStrings([
+        data.activeMicroFamilyIds || [],
+        extractIdsFromRotation(data.activeRotation || {})
+      ]).filter(idAllowedInShortOnly);
+
+      const activeMacroIds = uniqueStrings([
+        data.activeMacroFamilyIds || [],
+        extractMacroIdsFromRotation(data.activeRotation || {})
+      ]).filter(idAllowedInShortOnly);
+
       const activeMicroCount =
-        data.activeRotation?.microFamilyIds?.length ||
+        activeMicroIds.length ||
         data.activeRotationCount ||
         data.activeMicroFamilies ||
         0;
 
       const activeMacroCount =
-        data.activeRotation?.macroFamilyIds?.length ||
-        data.activeRotation?.activeMacroFamilyIds?.length ||
+        activeMacroIds.length ||
         data.activeMacroFamilies ||
         0;
 
       $("overview").innerHTML = `
         <div class="grid">
-          ${metricCard("Current week", data.weekKey || data.currentWeek || "-")}
+          ${metricCard("Current week", data.weekKey || data.currentWeekKey || data.currentWeek || "-")}
           ${metricCard("Previous week", data.previousWeekKey || "-")}
           ${metricCard("Active true micro", activeMicroCount)}
           ${metricCard("Active macro", activeMacroCount)}
@@ -2463,14 +2615,14 @@
         <div class="grid-3">
           <div class="card">
             <h3>Scanner</h3>
-            <div class="metric-value">${escapeHtml(fmtInt(data.latestScan?.candidatesCount || 0))}</div>
-            <div class="metric-extra">laatste candidates</div>
+            <div class="metric-value">${escapeHtml(fmtInt(data.latestScan?.candidatesCount || data.scannerCandidates || 0))}</div>
+            <div class="metric-extra">laatste SHORT candidates</div>
           </div>
 
           <div class="card">
             <h3>TradeSystem</h3>
             <div class="metric-value">${escapeHtml(fmtInt(data.openPositions || 0))}</div>
-            <div class="metric-extra">open posities</div>
+            <div class="metric-extra">open SHORT posities</div>
           </div>
 
           <div class="card">
@@ -2489,7 +2641,7 @@
 
         <div class="card">
           <h3>Trade meta</h3>
-          ${jsonBlock(data.tradeMeta || data.runMeta || null)}
+          ${jsonBlock(data.tradeMeta || data.runMeta || data.tradeSummary || null)}
         </div>
       `;
     }
@@ -2511,7 +2663,7 @@
         </div>
 
         <div class="grid">
-          ${metricCard("Snapshot ID", snapshot.snapshotId || "-")}
+          ${metricCard("Snapshot ID", snapshot.snapshotId || data.snapshotId || "-")}
           ${metricCard("Snapshot age", ageText(snapshot.createdAt), fmtTs(snapshot.createdAt))}
           ${metricCard("BTC state", snapshot.btcState || "-")}
           ${metricCard("Regime", snapshot.regime || "-")}
@@ -2579,6 +2731,16 @@
       const topPositions = positions.slice(0, 12);
       const runMeta = data.runMeta || data.tradeMeta || data.lastRun || data.run || {};
 
+      const activeMicroCount =
+        Array.isArray(data.activeMicroFamilyIds)
+          ? data.activeMicroFamilyIds.length
+          : data.activeMicroCount ?? runMeta.activeMicroFamilies ?? 0;
+
+      const activeMacroCount =
+        Array.isArray(data.activeMacroFamilyIds)
+          ? data.activeMacroFamilyIds.length
+          : data.activeMacroCount ?? runMeta.activeMacroFamilies ?? 0;
+
       $("trade").innerHTML = `
         <div class="toolbar">
           <button type="button" class="primary" id="runTradeBtn">Run TradeSystem now</button>
@@ -2590,8 +2752,8 @@
           ${metricCard("In sync", data.scannerAndTradeInSync ? "YES" : "NO")}
           ${metricCard("Last processed", data.lastProcessed?.snapshotId || data.lastProcessedSnapshot || data.lastProcessedSnapshotId || "-")}
           ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
-          ${metricCard("Active true micro", fmtInt(runMeta.activeMicroFamilies || data.activeMicroFamilies || 0))}
-          ${metricCard("Active macro", fmtInt(runMeta.activeMacroFamilies || data.activeMacroFamilies || 0))}
+          ${metricCard("Active true micro", fmtInt(activeMicroCount))}
+          ${metricCard("Active macro", fmtInt(activeMacroCount))}
           ${metricCard("Last run", fmtTs(runMeta.completedAt || runMeta.startedAt || data.lastRunAt))}
           ${metricCard("Actions", runMeta.actionCounts ? Object.entries(runMeta.actionCounts).map(([key, value]) => `${key}:${value}`).join(" ") : "NA")}
         </div>
@@ -2652,7 +2814,7 @@
     }
 
     async function renderMicros(mode = state.microMode) {
-      state.microMode = mode || "balanced";
+      state.microMode = validMicroModes.includes(mode) ? mode : "balanced";
       showLoading("micros");
 
       const data = await fetchMicroRows(state.microMode);
@@ -2667,13 +2829,13 @@
       const split = splitTopMicroRows(filteredRows);
       const bestShort = bestMicroRowForSide(rows, ONLY_SIDE);
 
-      const completedRows = rows.filter((row) => Number(row.completed || 0) > 0);
-      const observationOnlyRows = rows.filter((row) => Number(row.completed || 0) <= 0 && Number(row.seen ?? row.observations ?? 0) > 0);
+      const completedRows = rows.filter((row) => microCompleted(row) > 0);
+      const observationOnlyRows = rows.filter((row) => microCompleted(row) <= 0 && microObservationSample(row) > 0);
 
       $("micros").innerHTML = `
         <div class="toolbar">
           <select id="microMode">
-            ${["balanced", "winrate", "totalR", "avgR", "directSL", "observed"].map((modeName) => `
+            ${validMicroModes.map((modeName) => `
               <option value="${escapeAttr(modeName)}" ${modeName === state.microMode ? "selected" : ""}>${escapeHtml(modeName)}</option>
             `).join("")}
           </select>
@@ -2710,7 +2872,7 @@
         <div class="card">
           <h3>Analyze status</h3>
           <div class="metric-extra">
-            Completed/winrate/AvgR/TotalR worden pas groter dan 0 na gesloten shadow outcomes.
+            Outcome/winrate/AvgR/TotalR worden pas groter dan 0 na gesloten shadow outcomes.
             Seen/observations > 0 betekent dat analyze daadwerkelijk data krijgt.
           </div>
         </div>
@@ -2752,12 +2914,12 @@
       $("activateBestShortBtn")?.addEventListener("click", () => activateBestShortMicro());
 
       $("copyTopMicroIdsBtn")?.addEventListener("click", () => {
-        const ids = uniqueStrings(currentVisibleMicroRows().map(microId));
+        const ids = uniqueStrings(currentVisibleMicroRows().map(microId)).filter(idAllowedInShortOnly);
         copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} SHORT true microFamilyIds gekopieerd.`);
       });
 
       $("copyTopMacroIdsBtn")?.addEventListener("click", () => {
-        const ids = uniqueStrings(currentVisibleMicroRows().map(macroId));
+        const ids = uniqueStrings(currentVisibleMicroRows().map(macroId)).filter(idAllowedInShortOnly);
         copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} SHORT macroFamilyIds gekopieerd.`);
       });
 
@@ -2849,12 +3011,14 @@
 
       const selectedMicroId =
         data.selectedMicroFamilyId ||
-        microId(data.selectedRow || {}) ||
+        microId(data.selectedRow || active.bestShort || {}) ||
+        activeMicroIds[0] ||
         "UNKNOWN_MICRO";
 
       const selectedMacroId =
         data.selectedMacroFamilyId ||
-        macroId(data.selectedRow || {}) ||
+        macroId(data.selectedRow || active.bestShort || {}) ||
+        activeMacroIds[0] ||
         "UNKNOWN_MACRO";
 
       setMessage(
@@ -2899,6 +3063,44 @@
         const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}`, {
           timeoutMs: 18000
         });
+
+        if (data.type === "MACRO_FAMILY_DETAIL") {
+          const rows = sanitizeShortRows(data.microFamilies || data.relatedMicroFamilies || []);
+
+          drawer.innerHTML = `
+            <div class="drawer-head">
+              <div>
+                <h2>${escapeHtml(id)}</h2>
+                <div class="metric-extra">Macro family detail · ${escapeHtml(fmtInt(rows.length))} SHORT micro-families</div>
+              </div>
+              <button type="button" id="closeDrawerBtn">Close</button>
+            </div>
+
+            <div class="toolbar">
+              <button type="button" class="success" id="copyDrawerMacroBtn">Copy macro ID</button>
+              <button type="button" id="copyDrawerJsonBtn">Copy JSON</button>
+            </div>
+
+            <div class="card">
+              <h3>Macro summary</h3>
+              ${jsonBlock(data.summary || data.macroSummary || null)}
+            </div>
+
+            ${microRowsTable(rows, activeMicroSet(), activeMacroSet())}
+
+            <div class="card">
+              <h3>Raw detail JSON</h3>
+              ${jsonBlock(data)}
+            </div>
+          `;
+
+          $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
+          $("copyDrawerMacroBtn")?.addEventListener("click", () => copyText(id, "MacroFamilyId gekopieerd."));
+          $("copyDrawerJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "MacroFamily JSON gekopieerd."));
+          bindMicroTableEvents();
+          return;
+        }
+
         const row = data.row || data.microFamily || data;
 
         drawer.innerHTML = `
@@ -2920,8 +3122,8 @@
 
           <div class="grid">
             ${metricCard("Seen", fmtInt(row.seen ?? row.observations))}
-            ${metricCard("Completed", fmt(row.completed, 2))}
-            ${metricCard("Fair WR", fmtPctRatio(row.fairWinrate))}
+            ${metricCard("Outcome", fmt(microCompleted(row), 2))}
+            ${metricCard("Fair WR", fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate))}
             ${metricCard("Balanced", fmt(row.dashboardBalancedScore ?? row.balancedScore, 2))}
             ${metricCard("AvgR", fmt(row.avgR, 3))}
             ${metricCard("TotalR", fmt(row.totalR, 3))}
@@ -2937,7 +3139,10 @@
                 macroFamilyId: macroId(row),
                 familyId: familyId(row),
                 active: row.active,
-                tradeSide: row.tradeSide || row.side || null
+                macroActive: row.macroActive,
+                tradeSide: row.tradeSide || row.side || null,
+                learningStatus: row.learningStatus || null,
+                selectedTier: row.selectedTier || row.rotationEligibilityTier || null
               })}
             </div>
 
@@ -2946,11 +3151,14 @@
               ${jsonBlock({
                 seen: row.seen,
                 observations: row.observations,
+                observationSample: row.observationSample,
+                outcomeSample: row.outcomeSample,
                 completed: row.completed,
                 realCompleted: row.realCompleted,
                 shadowCompleted: row.shadowCompleted,
                 winrate: row.winrate,
                 fairWinrate: row.fairWinrate,
+                sampleAdjustedWinrate: row.sampleAdjustedWinrate,
                 avgR: row.avgR,
                 totalR: row.totalR,
                 profitFactor: row.profitFactor,
@@ -3036,7 +3244,7 @@
 
       const activeRows = shortActiveRows.length
         ? shortActiveRows
-        : activeIds.map((id, index) => ({ rank: index + 1, microFamilyId: id, tradeSide: ONLY_SIDE }));
+        : activeIds.map((id, index) => ({ rank: index + 1, microFamilyId: id, tradeSide: ONLY_SIDE, side: DASHBOARD_SIDE }));
 
       const selectedTier = active.selectedTier || data.selectedTier || "NA";
       const missing = missingSidesArray(data, active);
@@ -3076,7 +3284,7 @@
           ${metricCard("Eligible", fmtInt(active.eligibleCount || 0))}
           ${metricCard("Rotation ID", active.rotationId || "NA")}
           ${metricCard("Selected tier", selectedTier)}
-          ${metricCard("Missing sides", missing.length ? missing.join(", ") : "NONE")}
+          ${metricCard("Missing SHORT", missing.length ? missing.join(", ") : "NONE")}
           ${metricCard("Soft fallback", boolText(active.usedSoftFallback || data.usedSoftFallback))}
           ${metricCard("Observation fallback", boolText(active.usedObservationFallback || data.usedObservationFallback))}
         </div>
@@ -3095,8 +3303,9 @@
           { label: "IDs", render: idStack },
           { label: "Side", render: (row) => `<span class="pill ${escapeAttr(rowSideClass(row))}">${escapeHtml(rowSideLabel(row))}</span>` },
           { label: "Tier", render: (row) => tierValue(row) ? tierPill(tierValue(row)) : tierPill(active.selectedTier || "NA") },
-          { label: "Completed", render: (row) => fmt(row.completed, 2) },
-          { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
+          { label: "Outcome", render: (row) => fmt(microCompleted(row), 2) },
+          { label: "Obs sample", render: (row) => fmt(microObservationSample(row), 2) },
+          { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
           { label: "AvgR", render: (row) => fmt(row.avgR, 3) },
           { label: "TotalR", render: (row) => fmt(row.totalR, 3) },
           { label: "DirectSL", render: (row) => fmtPctRatio(row.directSLPct) },
@@ -3133,7 +3342,9 @@
               force: true,
               mode: "balanced",
               side: ONLY_SIDE,
-              tradeSide: ONLY_SIDE
+              tradeSide: ONLY_SIDE,
+              targetTradeSide: ONLY_SIDE,
+              dashboardSide: DASHBOARD_SIDE
             })
           });
 
@@ -3187,7 +3398,7 @@
           { label: "True Micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row))}</code>` },
           { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row.payload || row))}</code>` },
           { label: "Result", render: (row) => escapeHtml(row.result ? JSON.stringify(row.result) : row.message || row.content || "") }
-        ])}
+        ], "Geen Discord logs.")}
       `;
 
       $("copyDiscordJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
@@ -3263,7 +3474,10 @@
           timeoutMs: 25000,
           body: JSON.stringify({
             confirm: true,
-            confirmed: true
+            confirmed: true,
+            side: ONLY_SIDE,
+            tradeSide: ONLY_SIDE,
+            targetTradeSide: ONLY_SIDE
           })
         });
 
@@ -3293,7 +3507,10 @@
             confirm: "FACTORY_RESET_CONFIRMED",
             confirmed: "FACTORY_RESET_CONFIRMED",
             force: forceValue,
-            forceClosePositions: forceValue
+            forceClosePositions: forceValue,
+            side: ONLY_SIDE,
+            tradeSide: ONLY_SIDE,
+            targetTradeSide: ONLY_SIDE
           })
         });
 
