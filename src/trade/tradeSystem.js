@@ -24,10 +24,7 @@ import {
   analyzeOrderBook
 } from '../market/bitgetClient.js';
 import {
-  analyzeCandidatesBatch,
-  createShadowPosition,
-  buildOutcomeFromPosition,
-  recordOutcome
+  analyzeCandidatesBatch
 } from '../analyze/analyzeEngine.js';
 import { getActiveRotation } from '../analyze/rotationEngine.js';
 import {
@@ -38,8 +35,7 @@ import {
   getOpenPositions,
   getOpenPosition,
   saveOpenPosition,
-  monitorOpenPositions,
-  updatePathMetrics
+  monitorOpenPositions
 } from './positionEngine.js';
 import {
   riskFractionForEntry,
@@ -185,18 +181,6 @@ function tradeConfig() {
   };
 }
 
-function analyzeConfig() {
-  return {
-    shadowEnabled: CONFIG.analyze?.shadowEnabled !== false,
-    shadowHorizonMin: cfgNumber(CONFIG.analyze?.shadowHorizonMin, 6 * 60),
-
-    maxShadowMonitorsPerRun: positiveInt(
-      CONFIG.analyze?.maxShadowMonitorsPerRun,
-      80
-    )
-  };
-}
-
 function sizingConfig() {
   return {
     enabled: CONFIG.sizing?.enabled !== false,
@@ -226,10 +210,6 @@ function schemaConfig() {
     macroSchema,
     microSchema
   };
-}
-
-function allowLegacyMacroLiveEntries() {
-  return Boolean(CONFIG.trade?.allowLegacyMacroLiveEntries);
 }
 
 function allowCoarseMicroAliasLiveEntries() {
@@ -283,10 +263,6 @@ function normalizeTradeSide(side) {
   if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
 
   return 'UNKNOWN';
-}
-
-function isTargetSide(side) {
-  return normalizeTradeSide(side) === TARGET_TRADE_SIDE;
 }
 
 function idLooksLikeTargetFamily(id = '') {
@@ -416,10 +392,6 @@ function isTargetRow(row = {}) {
   return inferRowTradeSide(row) === TARGET_TRADE_SIDE;
 }
 
-function isShort(side) {
-  return normalizeTradeSide(side) === TARGET_TRADE_SIDE;
-}
-
 function isMirrorAnalysisRow(row = {}) {
   return Boolean(
     row.isMirrorMicroFamily ||
@@ -502,9 +474,12 @@ function idHasSchema(id, schema) {
 
   if (!value || !target) return false;
 
-  return value.includes(`_${target}_`) ||
+  return (
+    value.includes(`_${target}_`) ||
     value.endsWith(`_${target}`) ||
-    value.includes(`|SCHEMA=${target}`);
+    value.includes(`|SCHEMA=${target}`) ||
+    value.includes(`SCHEMA=${target}`)
+  );
 }
 
 function definitionHasSchema(row = {}, schema) {
@@ -512,15 +487,17 @@ function definitionHasSchema(row = {}, schema) {
 
   if (!target) return false;
 
-  const parts = Array.isArray(row.definitionParts)
-    ? row.definitionParts
-    : [];
+  const parts = [
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
+  ];
 
   if (parts.some((part) => String(part).toUpperCase() === `SCHEMA=${target}`)) {
     return true;
   }
 
-  return String(row.definition || '').toUpperCase().includes(`SCHEMA=${target}`);
+  return String(row.definition || row.microDefinition || '').toUpperCase().includes(`SCHEMA=${target}`);
 }
 
 function rowSchema(row = {}) {
@@ -584,7 +561,7 @@ function isTrueMicroFamilyRow(row = {}) {
   if (!isTargetRow(row) && !idLooksLikeTargetFamily(id)) return false;
   if (version.includes('MACRO')) return false;
 
-  if (row.isTrueMicro === true) return true;
+  if (row.isTrueMicro === true || row.trueMicro === true) return true;
   if (schema === microSchema) return true;
   if (idHasSchema(id, microSchema)) return true;
   if (definitionHasSchema(row, microSchema)) return true;
@@ -597,26 +574,6 @@ function isTrueMicroFamilyRow(row = {}) {
   return Boolean(parentMacroFamilyId(row));
 }
 
-function isLegacyMacroFamilyRow(row = {}) {
-  const { macroSchema } = schemaConfig();
-
-  const id = rowMicroId(row);
-  const schema = rowSchema(row);
-  const version = String(row.version || '').toUpperCase();
-
-  if (!row || !id) return false;
-  if (!isTargetRow(row) && !idLooksLikeTargetFamily(id)) return false;
-  if (isTrueMicroFamilyRow(row)) return false;
-
-  if (row.isLegacyMacro === true) return true;
-  if (version.includes('MACRO')) return true;
-  if (schema === macroSchema) return true;
-  if (idHasSchema(id, macroSchema)) return true;
-  if (definitionHasSchema(row, macroSchema)) return true;
-
-  return !parentMacroFamilyId(row);
-}
-
 function isKnownTrueMicroFamilyId(id = '') {
   const { microSchema, macroSchema } = schemaConfig();
 
@@ -624,7 +581,10 @@ function isKnownTrueMicroFamilyId(id = '') {
   if (!idLooksLikeTargetFamily(id)) return false;
   if (idHasSchema(id, macroSchema)) return false;
 
-  return idHasSchema(id, microSchema) || String(id).toUpperCase().startsWith('MICRO_SHORT_');
+  return (
+    idHasSchema(id, microSchema) ||
+    String(id).toUpperCase().startsWith('MICRO_SHORT_')
+  );
 }
 
 function addRowAliasesToMaps({
@@ -649,7 +609,7 @@ function addRowAliasesToMaps({
   }
 }
 
-function buildActiveRotationContext(activeRotation) {
+function buildSelectedAlertContext(activeRotation) {
   const includeCoarseAliases = allowCoarseMicroAliasLiveEntries();
 
   const rawRows = Array.isArray(activeRotation?.microFamilies)
@@ -682,25 +642,24 @@ function buildActiveRotationContext(activeRotation) {
     ...rows.map(rowMicroId)
   ]);
 
-  const activeMicroFamilyIds = configuredIds.filter((id) => {
+  const selectedMicroFamilyIds = configuredIds.filter((id) => {
     if (!idLooksLikeTargetFamily(id)) return false;
 
     const row = rowByAnyMicroId.get(id) || rowByMicroId.get(id);
 
-    if (allowLegacyMacroLiveEntries()) return true;
     if (row && isTrueMicroFamilyRow(row)) return true;
 
     return isKnownTrueMicroFamilyId(id);
   });
 
-  const activeMicroSet = new Set(activeMicroFamilyIds);
+  const selectedMicroSet = new Set(selectedMicroFamilyIds);
 
-  const activeMicroAliasIds = uniqueStrings([
-    ...activeMicroFamilyIds,
+  const selectedMicroAliasIds = uniqueStrings([
+    ...selectedMicroFamilyIds,
     ...rows.flatMap((row) => {
       const exact = rowMicroId(row);
 
-      if (!exact || !activeMicroSet.has(exact)) return [];
+      if (!exact || !selectedMicroSet.has(exact)) return [];
 
       return rowMicroAliasIds(row, {
         includeCoarse: includeCoarseAliases
@@ -708,16 +667,14 @@ function buildActiveRotationContext(activeRotation) {
     })
   ]);
 
-  const activeMicroAliasSet = new Set(activeMicroAliasIds);
+  const selectedMicroAliasSet = new Set(selectedMicroAliasIds);
 
-  const activeMacroFamilyIds = uniqueStrings([
+  const selectedMacroFamilyIds = uniqueStrings([
     ...(Array.isArray(activeRotation?.macroFamilyIds) ? activeRotation.macroFamilyIds : []),
     ...(Array.isArray(activeRotation?.activeMacroFamilyIds) ? activeRotation.activeMacroFamilyIds : []),
     ...(Array.isArray(activeRotation?.macroIds) ? activeRotation.macroIds : []),
     ...rows.map(parentMacroFamilyId)
   ]).filter(idLooksLikeTargetFamily);
-
-  const activeMacroSet = new Set(activeMacroFamilyIds);
 
   const macroToMicroFamilyIds = {
     ...(activeRotation?.macroToMicroFamilyIds || {})
@@ -755,15 +712,14 @@ function buildActiveRotationContext(activeRotation) {
 
   return {
     rotationId: activeRotation?.rotationId || null,
-    activeRotation: activeRotation || null,
+    selectedRotation: activeRotation || null,
 
-    activeMicroFamilyIds,
-    activeMicroSet,
-    activeMicroAliasIds,
-    activeMicroAliasSet,
+    selectedMicroFamilyIds,
+    selectedMicroSet,
+    selectedMicroAliasIds,
+    selectedMicroAliasSet,
 
-    activeMacroFamilyIds,
-    activeMacroSet,
+    selectedMacroFamilyIds,
 
     rowByMicroId,
     rowByAnyMicroId,
@@ -775,81 +731,50 @@ function buildActiveRotationContext(activeRotation) {
     usedLegacyFallback: Boolean(activeRotation?.usedLegacyFallback),
     allowCoarseMicroAliasLiveEntries: includeCoarseAliases,
 
-    empty: !activeMicroFamilyIds.length,
+    empty: !selectedMicroFamilyIds.length,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
     shortOnly: true,
     longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
+    selectionPurpose: 'DISCORD_ALERT_ONLY'
   };
 }
 
-function getWeeklyStats(activeContext, microFamilyId, row = {}) {
-  if (!activeContext) return null;
+function rowMatchesSelectedAlertMicro(alertContext, row = {}) {
+  if (!alertContext || alertContext.empty) return false;
+
+  const aliases = rowMicroAliasIds(row, {
+    includeCoarse: alertContext.allowCoarseMicroAliasLiveEntries
+  });
+
+  return aliases.some((id) => (
+    alertContext.selectedMicroSet.has(id) ||
+    alertContext.selectedMicroAliasSet.has(id)
+  ));
+}
+
+function getSelectedWeeklyStats(alertContext, microFamilyId, row = {}) {
+  if (!alertContext) return null;
 
   const directId = String(microFamilyId || '').trim();
 
   if (directId) {
-    const direct = activeContext.rowByMicroId.get(directId) ||
-      activeContext.rowByAnyMicroId.get(directId);
+    const direct = alertContext.rowByMicroId.get(directId) ||
+      alertContext.rowByAnyMicroId.get(directId);
 
     if (direct) return direct;
   }
 
   for (const aliasId of rowMicroAliasIds(row, {
-    includeCoarse: activeContext.allowCoarseMicroAliasLiveEntries
+    includeCoarse: alertContext.allowCoarseMicroAliasLiveEntries
   })) {
-    const stats = activeContext.rowByAnyMicroId.get(aliasId);
+    const stats = alertContext.rowByAnyMicroId.get(aliasId);
 
     if (stats) return stats;
   }
 
   return null;
-}
-
-function hasActiveParentMacro(activeContext, row = {}) {
-  const macroId = parentMacroFamilyId(row);
-
-  if (!macroId) return false;
-
-  return activeContext?.activeMacroSet?.has(macroId) || false;
-}
-
-function rowMatchesActiveMicro(activeContext, row = {}) {
-  if (!activeContext || activeContext.empty) return false;
-
-  const aliases = rowMicroAliasIds(row, {
-    includeCoarse: activeContext.allowCoarseMicroAliasLiveEntries
-  });
-
-  return aliases.some((id) => (
-    activeContext.activeMicroSet.has(id) ||
-    activeContext.activeMicroAliasSet.has(id)
-  ));
-}
-
-function buildRotationWaitReason(activeContext, row = {}) {
-  if (!isTargetRow(row)) {
-    return 'LONG_DISABLED_SHORT_ONLY_SYSTEM';
-  }
-
-  if (!activeContext || activeContext.empty) {
-    return 'ACTIVE_SHORT_ROTATION_EMPTY';
-  }
-
-  if (!allowLegacyMacroLiveEntries() && !isTrueMicroFamilyRow(row)) {
-    return isLegacyMacroFamilyRow(row)
-      ? 'LEGACY_MACRO_FAMILY_NOT_TRADEABLE'
-      : 'LIVE_ROW_NOT_TRUE_MICRO_FAMILY';
-  }
-
-  if (hasActiveParentMacro(activeContext, row)) {
-    return 'PARENT_MACRO_ACTIVE_BUT_TRUE_MICRO_NOT_ACTIVE';
-  }
-
-  return 'SHORT_TRUE_MICRO_FAMILY_NOT_IN_ACTIVE_ROTATION';
 }
 
 function scannerGatePassed(row = {}) {
@@ -1412,144 +1337,6 @@ function validateExposure(openPositions, side) {
   };
 }
 
-function detectShadowExit(shadow, price) {
-  const current = safeNumber(price, 0);
-  const tp = safeNumber(shadow.tp, 0);
-  const sl = safeNumber(shadow.sl, 0);
-
-  if (current <= 0 || tp <= 0 || sl <= 0) {
-    return {
-      shouldExit: false,
-      reason: null
-    };
-  }
-
-  if (!isShort(shadow.side || shadow.tradeSide)) {
-    return {
-      shouldExit: true,
-      reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM'
-    };
-  }
-
-  if (current <= tp) return { shouldExit: true, reason: 'TP' };
-  if (current >= sl) return { shouldExit: true, reason: 'SL' };
-
-  if (now() >= safeNumber(shadow.monitorUntil, 0)) {
-    return {
-      shouldExit: true,
-      reason: 'TIME_STOP'
-    };
-  }
-
-  return {
-    shouldExit: false,
-    reason: null
-  };
-}
-
-async function monitorOneShadowPosition(redis, key) {
-  const cfg = analyzeConfig();
-
-  const shadow = await getJson(redis, key, null);
-
-  if (!shadow || shadow.status !== 'OPEN') {
-    return null;
-  }
-
-  const shadowSide = inferRowTradeSide(shadow);
-
-  if (shadowSide !== TARGET_TRADE_SIDE) {
-    await redis.del(key).catch(() => null);
-
-    return {
-      skipped: true,
-      reason: 'NON_SHORT_SHADOW_REMOVED',
-      symbol: shadow.symbol || shadow.contractSymbol || null,
-      tradeSide: shadowSide
-    };
-  }
-
-  const price = await fetchMidPrice(
-    shadow.contractSymbol ||
-    shadow.symbol
-  ).catch(() => 0);
-
-  if (!price) return null;
-
-  updatePathMetrics(shadow, price);
-
-  const exit = detectShadowExit(shadow, price);
-
-  if (!exit.shouldExit) {
-    await setJson(
-      redis,
-      key,
-      shadow,
-      {
-        ex: Math.ceil(cfg.shadowHorizonMin * 60 * 1.2)
-      }
-    );
-
-    return null;
-  }
-
-  if (exit.reason === 'LONG_DISABLED_SHORT_ONLY_SYSTEM') {
-    await redis.del(key).catch(() => null);
-
-    return {
-      skipped: true,
-      reason: 'NON_SHORT_SHADOW_REMOVED',
-      symbol: shadow.symbol || shadow.contractSymbol || null,
-      tradeSide: shadowSide
-    };
-  }
-
-  const outcome = buildOutcomeFromPosition({
-    position: {
-      ...shadow,
-      side: TARGET_DASHBOARD_SIDE,
-      tradeSide: TARGET_TRADE_SIDE,
-      positionSide: TARGET_TRADE_SIDE,
-      direction: TARGET_TRADE_SIDE
-    },
-    exitPrice: price,
-    exitReason: exit.reason,
-    source: 'SHADOW'
-  });
-
-  await recordOutcome(outcome, {
-    source: 'SHADOW'
-  });
-
-  await redis.del(key);
-
-  return outcome;
-}
-
-async function monitorShadowPositions() {
-  const cfg = analyzeConfig();
-
-  if (!cfg.shadowEnabled) return [];
-
-  const redis = getDurableRedis();
-
-  const keys = await getKeys(
-    redis,
-    KEYS.analyze.shadowOpenPattern,
-    cfg.maxShadowMonitorsPerRun
-  );
-
-  if (!keys.length) return [];
-
-  const results = await mapConcurrent(
-    keys,
-    tradeConfig().dataConcurrency,
-    (key) => monitorOneShadowPosition(redis, key)
-  );
-
-  return results.filter(Boolean);
-}
-
 function enrichMetricsWithScannerAndLiveGates({
   metrics,
   candidate,
@@ -1717,8 +1504,6 @@ function buildObservationOnlyMetrics({
 
       observationOnly: true,
       analysisInputOnly: true,
-      shadowEligible: false,
-
       learningOnly: true,
       liveRiskValid: false,
       liveEntryBlockedReason: reason
@@ -1816,7 +1601,6 @@ function buildSyntheticShortRiskMetrics({
       syntheticRiskReason: reason,
       observationOnly: false,
       analysisInputOnly: false,
-      shadowEligible: true,
 
       learningOnly: false,
       liveRiskValid: true,
@@ -2036,18 +1820,19 @@ async function safeProcessCandidate(candidate) {
 
 function buildEntryAction({
   row,
-  activeContext,
-  weeklyStats,
+  alertContext,
+  selectedWeeklyStats,
   riskFraction,
   riskCaps,
-  liveGate
+  liveGate,
+  discordAlertEligible
 }) {
   const microFamilyId = rowMicroId(row);
 
-  const activeMacroFamilyId =
+  const selectedMacroFamilyId =
     parentMacroFamilyId(row) ||
-    activeContext.microToMacroFamilyId[microFamilyId] ||
-    activeContext.microToMacroFamilyId[row.microFamilyId] ||
+    alertContext.microToMacroFamilyId[microFamilyId] ||
+    alertContext.microToMacroFamilyId[row.microFamilyId] ||
     null;
 
   return {
@@ -2062,13 +1847,22 @@ function buildEntryAction({
     direction: TARGET_TRADE_SIDE,
 
     action: 'ENTRY',
-    reason: 'ACTIVE_SHORT_TRUE_MICRO_FAMILY_ENTRY',
+    reason: 'SHORT_ENTRY_RISK_VALID',
 
-    rotationMatchType: 'TRUE_MICRO_EXACT',
-    activeRotationId: activeContext.rotationId,
-    activeMacroFamilyId,
+    selectedRotationId: alertContext.rotationId,
+    activeRotationId: alertContext.rotationId,
 
-    weeklyStats,
+    selectedMicroFamilyAlert: Boolean(discordAlertEligible),
+    discordAlertEligible: Boolean(discordAlertEligible),
+    discordAlertReason: discordAlertEligible
+      ? 'SELECTED_SHORT_TRUE_MICRO_FAMILY_MATCH'
+      : 'MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT',
+
+    selectedMacroFamilyId,
+    activeMacroFamilyId: selectedMacroFamilyId,
+
+    selectedWeeklyStats,
+    weeklyStats: selectedWeeklyStats,
 
     riskFraction,
     riskCaps,
@@ -2091,74 +1885,29 @@ function buildEntryAction({
   };
 }
 
-function normalizeShadowResult(result) {
-  if (!result || typeof result !== 'object') {
+async function maybeSendDiscordEntryAlert(entry = {}) {
+  if (!entry.discordAlertEligible) {
     return {
-      created: true,
-      skipped: false,
-      reason: 'SHADOW_CREATED'
-    };
-  }
-
-  return {
-    created: result.created !== false && result.skipped !== true,
-    skipped: Boolean(result.skipped),
-    reason: result.reason || (result.skipped ? 'SHADOW_SKIPPED' : 'SHADOW_CREATED'),
-    ...result
-  };
-}
-
-async function createShadowForRow(row = {}) {
-  const cfg = analyzeConfig();
-
-  if (!cfg.shadowEnabled) {
-    return {
-      created: false,
+      sent: false,
       skipped: true,
-      reason: 'SHADOW_DISABLED'
-    };
-  }
-
-  if (!isTargetRow(row)) {
-    return {
-      created: false,
-      skipped: true,
-      reason: 'NON_SHORT_SHADOW_SKIPPED'
-    };
-  }
-
-  if (!hasValidRiskShape(row)) {
-    return {
-      created: false,
-      skipped: true,
-      reason: 'SHADOW_RISK_INVALID'
-    };
-  }
-
-  if (row.shadowEligible === false) {
-    return {
-      created: false,
-      skipped: true,
-      reason: row.shadowBlockedReason || 'SHADOW_NOT_ELIGIBLE'
+      reason: 'MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT'
     };
   }
 
   try {
-    const result = await createShadowPosition({
-      ...row,
-      side: TARGET_DASHBOARD_SIDE,
-      tradeSide: TARGET_TRADE_SIDE,
-      positionSide: TARGET_TRADE_SIDE,
-      direction: TARGET_TRADE_SIDE
-    });
+    await sendEntryAlert(entry);
 
-    return normalizeShadowResult(result);
+    return {
+      sent: true,
+      skipped: false,
+      reason: 'DISCORD_ALERT_SENT'
+    };
   } catch (error) {
     return {
-      created: false,
+      sent: false,
       skipped: false,
       failed: true,
-      reason: 'SHADOW_CREATE_ERROR',
+      reason: 'DISCORD_ALERT_FAILED',
       error: error?.message || String(error)
     };
   }
@@ -2210,7 +1959,7 @@ export async function runTradeSystem(options = {}) {
   const priceFetcher = async (symbol) => fetchMidPrice(symbol);
 
   const realExits = await monitorOpenPositions({ priceFetcher });
-  const shadowExits = await monitorShadowPositions();
+  const shadowExits = [];
 
   if (monitorOnly) {
     return saveRunMeta({
@@ -2284,7 +2033,7 @@ export async function runTradeSystem(options = {}) {
   }
 
   const activeRotation = await getActiveRotation();
-  const activeContext = buildActiveRotationContext(activeRotation);
+  const alertContext = buildSelectedAlertContext(activeRotation);
 
   const candidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
     .filter((candidate) => candidateTradeSide(candidate) === TARGET_TRADE_SIDE)
@@ -2347,20 +2096,59 @@ export async function runTradeSystem(options = {}) {
   const openPositions = await getOpenPositions();
   const actions = [...earlyActions];
 
-  let shadowCreatedRows = 0;
-  let shadowSkippedRows = 0;
-  let shadowFailedRows = 0;
+  let entryRows = 0;
+  let waitRows = earlyActions.length;
+
+  let discordAlertEligibleRows = 0;
+  let discordAlertsSent = 0;
+  let discordAlertsSkippedNoSelectedMicro = 0;
+  let discordAlertsFailed = 0;
+
+  let selectedMicroMatchRows = 0;
+  let unselectedMicroEntryRows = 0;
+
+  const shadowCreatedRows = 0;
+  const shadowSkippedRows = 0;
+  const shadowFailedRows = 0;
 
   for (const row of analyzedRows) {
+    const microFamilyId = rowMicroId(row);
+
     if (!isTargetRow(row)) {
+      waitRows += 1;
+
       actions.push({
         ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM',
-        activeRotationId: activeContext.rotationId,
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
+        liveEligible: false,
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false
+      });
+
+      continue;
+    }
+
+    if (!hasValidRiskShape(row)) {
+      waitRows += 1;
+
+      actions.push({
+        ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
+        action: 'WAIT',
+        reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
         activeMacroFamilyId: parentMacroFamilyId(row) || null,
         liveEligible: false,
-        shadowOnly: true,
+        shadowOnly: false,
         shortOnly: true,
         longDisabled: true,
         longOnly: false,
@@ -2370,83 +2158,23 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
-    const shadowResult = await createShadowForRow(row);
-
-    if (shadowResult.failed) shadowFailedRows += 1;
-    else if (shadowResult.skipped) shadowSkippedRows += 1;
-    else if (shadowResult.created) shadowCreatedRows += 1;
-
-    const rowWithShadow = {
-      ...row,
-      shadowResult
-    };
-
-    const microFamilyId = rowMicroId(rowWithShadow);
-
-    if (!hasValidRiskShape(rowWithShadow)) {
-      actions.push({
-        ...rowWithShadow,
-        microFamilyId,
-        trueMicroFamilyId: microFamilyId,
-        action: 'WAIT',
-        reason: rowWithShadow.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
-        activeRotationId: activeContext.rotationId,
-        activeMacroFamilyId: parentMacroFamilyId(rowWithShadow) || null,
-        liveEligible: false,
-        shadowOnly: true,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false
-      });
-
-      continue;
-    }
-
-    const trueMicroRow = isTrueMicroFamilyRow(rowWithShadow);
-    const activeExactMicro = rowMatchesActiveMicro(activeContext, rowWithShadow);
-
-    if (!activeExactMicro || (!allowLegacyMacroLiveEntries() && !trueMicroRow)) {
-      actions.push({
-        ...rowWithShadow,
-        microFamilyId,
-        trueMicroFamilyId: microFamilyId,
-        action: 'WAIT',
-        reason: buildRotationWaitReason(activeContext, rowWithShadow),
-        activeRotationId: activeContext.rotationId,
-        activeMacroFamilyId: parentMacroFamilyId(rowWithShadow) || null,
-        activeMicroFamilies: activeContext.activeMicroFamilyIds.length,
-        activeMacroFamilies: activeContext.activeMacroFamilyIds.length,
-        activeMicroAliasIds: activeContext.activeMicroAliasIds,
-        rowMicroAliasIds: rowMicroAliasIds(rowWithShadow, {
-          includeCoarse: activeContext.allowCoarseMicroAliasLiveEntries
-        }),
-        allowCoarseMicroAliasLiveEntries: activeContext.allowCoarseMicroAliasLiveEntries,
-        liveEligible: false,
-        shadowOnly: true,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false
-      });
-
-      continue;
-    }
-
-    const liveGate = validateLiveEntryGates(rowWithShadow);
+    const liveGate = validateLiveEntryGates(row);
 
     if (!liveGate.ok) {
+      waitRows += 1;
+
       actions.push({
-        ...rowWithShadow,
+        ...row,
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: liveGate.reason,
-        activeRotationId: activeContext.rotationId,
-        activeMacroFamilyId: parentMacroFamilyId(rowWithShadow) || null,
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
+        activeMacroFamilyId: parentMacroFamilyId(row) || null,
         liveGate,
         liveEligible: false,
-        shadowOnly: true,
+        shadowOnly: false,
         shortOnly: true,
         longDisabled: true,
         longOnly: false,
@@ -2456,16 +2184,19 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
-    const alreadyOpen = await getOpenPosition(rowWithShadow.symbol);
+    const alreadyOpen = await getOpenPosition(row.symbol);
 
     if (alreadyOpen) {
+      waitRows += 1;
+
       actions.push({
-        ...rowWithShadow,
+        ...row,
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: 'SYMBOL_ALREADY_OPEN',
-        activeRotationId: activeContext.rotationId,
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
         liveEligible: false,
         shadowOnly: false,
         shortOnly: true,
@@ -2480,13 +2211,16 @@ export async function runTradeSystem(options = {}) {
     const exposure = validateExposure(openPositions, TARGET_TRADE_SIDE);
 
     if (!exposure.ok) {
+      waitRows += 1;
+
       actions.push({
-        ...rowWithShadow,
+        ...row,
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: exposure.reason,
-        activeRotationId: activeContext.rotationId,
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
         exposure,
         liveEligible: false,
         shadowOnly: false,
@@ -2499,31 +2233,36 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
-    const weeklyStats = getWeeklyStats(
-      activeContext,
+    const selectedWeeklyStats = getSelectedWeeklyStats(
+      alertContext,
       microFamilyId,
-      rowWithShadow
+      row
     );
 
+    const sizingStats = selectedWeeklyStats || row;
+
     const riskFraction = sizing.enabled
-      ? riskFractionForEntry({ weeklyStats })
+      ? riskFractionForEntry({ weeklyStats: sizingStats })
       : sizing.baseRiskPct;
 
     const riskCaps = checkRiskCaps({
       openPositions,
       side: TARGET_TRADE_SIDE,
-      btcRelation: rowWithShadow.btcRelation,
+      btcRelation: row.btcRelation,
       riskFraction
     });
 
     if (!riskCaps.ok) {
+      waitRows += 1;
+
       actions.push({
-        ...rowWithShadow,
+        ...row,
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
         reason: riskCaps.reason,
-        activeRotationId: activeContext.rotationId,
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
         riskCaps,
         liveEligible: false,
         shadowOnly: false,
@@ -2536,13 +2275,24 @@ export async function runTradeSystem(options = {}) {
       continue;
     }
 
+    const discordAlertEligible = rowMatchesSelectedAlertMicro(alertContext, row);
+
+    if (discordAlertEligible) {
+      discordAlertEligibleRows += 1;
+      selectedMicroMatchRows += 1;
+    } else {
+      discordAlertsSkippedNoSelectedMicro += 1;
+      unselectedMicroEntryRows += 1;
+    }
+
     const entry = buildEntryAction({
-      row: rowWithShadow,
-      activeContext,
-      weeklyStats,
+      row,
+      alertContext,
+      selectedWeeklyStats,
       riskFraction,
       riskCaps,
-      liveGate
+      liveGate,
+      discordAlertEligible
     });
 
     const position = buildOpenPositionFromEntry(entry);
@@ -2550,10 +2300,18 @@ export async function runTradeSystem(options = {}) {
     await saveOpenPosition(position);
 
     openPositions.push(position);
+    entryRows += 1;
 
-    await sendEntryAlert(entry).catch(() => null);
+    const discordResult = await maybeSendDiscordEntryAlert(entry);
 
-    actions.push(entry);
+    if (discordResult.sent) discordAlertsSent += 1;
+    if (discordResult.failed) discordAlertsFailed += 1;
+
+    actions.push({
+      ...entry,
+      discordAlertResult: discordResult,
+      discordAlertSent: Boolean(discordResult.sent)
+    });
   }
 
   await setJson(
@@ -2605,18 +2363,41 @@ export async function runTradeSystem(options = {}) {
       shadowCreatedRows,
       shadowSkippedRows,
       shadowFailedRows,
+      shadowDisabled: true,
+
+      entryRows,
+      waitRows,
+
+      discordAlertEligibleRows,
+      discordAlertsSent,
+      discordAlertsSkippedNoSelectedMicro,
+      discordAlertsFailed,
+
+      selectedMicroMatchRows,
+      unselectedMicroEntryRows,
 
       actions: actions.length,
 
-      activeRotationId: activeContext.rotationId,
-      activeMicroFamilies: activeContext.activeMicroFamilyIds.length,
-      activeMacroFamilies: activeContext.activeMacroFamilyIds.length,
-      activeMicroFamilyIds: activeContext.activeMicroFamilyIds,
-      activeMicroAliasIds: activeContext.activeMicroAliasIds,
-      activeMacroFamilyIds: activeContext.activeMacroFamilyIds,
-      trueMicroOnly: activeContext.trueMicroOnly,
-      usedLegacyFallback: activeContext.usedLegacyFallback,
-      allowCoarseMicroAliasLiveEntries: activeContext.allowCoarseMicroAliasLiveEntries
+      selectedRotationId: alertContext.rotationId,
+      activeRotationId: alertContext.rotationId,
+
+      selectedMicroFamilies: alertContext.selectedMicroFamilyIds.length,
+      selectedMacroFamilies: alertContext.selectedMacroFamilyIds.length,
+      selectedMicroFamilyIds: alertContext.selectedMicroFamilyIds,
+      selectedMicroAliasIds: alertContext.selectedMicroAliasIds,
+      selectedMacroFamilyIds: alertContext.selectedMacroFamilyIds,
+
+      activeMicroFamilies: alertContext.selectedMicroFamilyIds.length,
+      activeMacroFamilies: alertContext.selectedMacroFamilyIds.length,
+      activeMicroFamilyIds: alertContext.selectedMicroFamilyIds,
+      activeMicroAliasIds: alertContext.selectedMicroAliasIds,
+      activeMacroFamilyIds: alertContext.selectedMacroFamilyIds,
+
+      trueMicroOnly: alertContext.trueMicroOnly,
+      usedLegacyFallback: alertContext.usedLegacyFallback,
+      allowCoarseMicroAliasLiveEntries: alertContext.allowCoarseMicroAliasLiveEntries,
+
+      selectionPurpose: 'DISCORD_ALERT_ONLY'
     }
   );
 
@@ -2669,6 +2450,18 @@ export async function runTradeSystem(options = {}) {
     shadowCreatedRows,
     shadowSkippedRows,
     shadowFailedRows,
+    shadowDisabled: true,
+
+    entryRows,
+    waitRows,
+
+    discordAlertEligibleRows,
+    discordAlertsSent,
+    discordAlertsSkippedNoSelectedMicro,
+    discordAlertsFailed,
+
+    selectedMicroMatchRows,
+    unselectedMicroEntryRows,
 
     actions,
     actionCounts: actionCounts(actions),
@@ -2676,15 +2469,26 @@ export async function runTradeSystem(options = {}) {
     realExits,
     shadowExits,
 
-    activeRotationId: activeContext.rotationId,
-    activeMicroFamilies: activeContext.activeMicroFamilyIds.length,
-    activeMacroFamilies: activeContext.activeMacroFamilyIds.length,
-    activeMicroFamilyIds: activeContext.activeMicroFamilyIds,
-    activeMicroAliasIds: activeContext.activeMicroAliasIds,
-    activeMacroFamilyIds: activeContext.activeMacroFamilyIds,
-    trueMicroOnly: activeContext.trueMicroOnly,
-    usedLegacyFallback: activeContext.usedLegacyFallback,
-    allowCoarseMicroAliasLiveEntries: activeContext.allowCoarseMicroAliasLiveEntries,
+    selectedRotationId: alertContext.rotationId,
+    activeRotationId: alertContext.rotationId,
+
+    selectedMicroFamilies: alertContext.selectedMicroFamilyIds.length,
+    selectedMacroFamilies: alertContext.selectedMacroFamilyIds.length,
+    selectedMicroFamilyIds: alertContext.selectedMicroFamilyIds,
+    selectedMicroAliasIds: alertContext.selectedMicroAliasIds,
+    selectedMacroFamilyIds: alertContext.selectedMacroFamilyIds,
+
+    activeMicroFamilies: alertContext.selectedMicroFamilyIds.length,
+    activeMacroFamilies: alertContext.selectedMacroFamilyIds.length,
+    activeMicroFamilyIds: alertContext.selectedMicroFamilyIds,
+    activeMicroAliasIds: alertContext.selectedMicroAliasIds,
+    activeMacroFamilyIds: alertContext.selectedMacroFamilyIds,
+
+    trueMicroOnly: alertContext.trueMicroOnly,
+    usedLegacyFallback: alertContext.usedLegacyFallback,
+    allowCoarseMicroAliasLiveEntries: alertContext.allowCoarseMicroAliasLiveEntries,
+
+    selectionPurpose: 'DISCORD_ALERT_ONLY',
 
     scannerSnapshotStats: {
       candidatesCount: snapshot.candidatesCount || candidates.length,
