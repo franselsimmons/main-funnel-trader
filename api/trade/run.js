@@ -10,6 +10,41 @@ const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
+const DEFAULT_LOCK_TTL_SEC = 180;
+
+function now() {
+  return Date.now();
+}
+
+function baseFlags() {
+  return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+    source: 'VIRTUAL',
+
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    noExchangeOrders: true,
+
+    learningOnly: true,
+    microFamilyLearning: true
+  };
+}
+
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET, POST');
 
@@ -17,14 +52,7 @@ function methodNotAllowed(res) {
     ok: false,
     error: 'METHOD_NOT_ALLOWED',
     allowed: ['GET', 'POST'],
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
+    ...baseFlags()
   });
 }
 
@@ -77,15 +105,16 @@ function isTrue(value) {
 
   const raw = String(value ?? '').trim().toLowerCase();
 
-  return ['true', '1', 'yes', 'y', 'on', 'force'].includes(raw);
+  return ['true', '1', 'yes', 'y', 'on', 'force', 'forced'].includes(raw);
 }
 
 function getLockTtlSec() {
-  const ttl = Number(CONFIG.trade?.lockTtlSec || 180);
+  const ttl = Number(CONFIG.trade?.lockTtlSec || DEFAULT_LOCK_TTL_SEC);
 
-  return Number.isFinite(ttl) && ttl > 0
-    ? Math.floor(ttl)
-    : 180;
+  if (!Number.isFinite(ttl)) return DEFAULT_LOCK_TTL_SEC;
+  if (ttl <= 0) return DEFAULT_LOCK_TTL_SEC;
+
+  return Math.floor(ttl);
 }
 
 function shouldForceProcessSnapshot(req, body = {}) {
@@ -128,13 +157,244 @@ function getRunSource(req, body = {}) {
   );
 
   return manual
-    ? 'ADMIN_MANUAL_RUN'
-    : 'CRON_OR_API_RUN';
+    ? 'ADMIN_MANUAL_TRADE_RUN'
+    : 'CRON_OR_API_TRADE_RUN';
+}
+
+function upper(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY', 'SHORT');
+}
+
+function normalizeTradeSide(value) {
+  const raw = cleanSideText(value);
+
+  if (!raw) return 'UNKNOWN';
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return OPPOSITE_TRADE_SIDE;
+
+  return 'UNKNOWN';
+}
+
+function hasShortSignal(value = '') {
+  const text = cleanSideText(value);
+
+  return (
+    text.includes('MICRO_SHORT_') ||
+    text.includes('TRADESIDE=SHORT') ||
+    text.includes('TRADE_SIDE=SHORT') ||
+    text.includes('POSITION_SIDE=SHORT') ||
+    text.includes('POSITIONSIDE=SHORT') ||
+    text.includes('SIDE=SHORT') ||
+    text.includes('SIDE=BEAR') ||
+    text.includes('SIDE=SELL') ||
+    text.includes('DIRECTION=SHORT') ||
+    text.includes('DIRECTION=BEAR') ||
+    text.includes('DIRECTION=SELL') ||
+    text.startsWith('SHORT_') ||
+    text.includes('_SHORT_') ||
+    text.endsWith('_SHORT') ||
+    text.startsWith('BEAR_') ||
+    text.includes('_BEAR_') ||
+    text.endsWith('_BEAR') ||
+    text.startsWith('SELL_') ||
+    text.includes('_SELL_') ||
+    text.endsWith('_SELL') ||
+    text.includes('|SHORT|') ||
+    text.includes('|BEAR|') ||
+    text.includes('|SELL|') ||
+    text.includes('=SHORT') ||
+    text.includes('=BEAR') ||
+    text.includes('=SELL')
+  );
+}
+
+function hasLongSignal(value = '') {
+  const text = cleanSideText(value);
+
+  return (
+    text.includes('MICRO_LONG_') ||
+    text.includes('TRADESIDE=LONG') ||
+    text.includes('TRADE_SIDE=LONG') ||
+    text.includes('POSITION_SIDE=LONG') ||
+    text.includes('POSITIONSIDE=LONG') ||
+    text.includes('SIDE=LONG') ||
+    text.includes('SIDE=BULL') ||
+    text.includes('SIDE=BUY') ||
+    text.includes('DIRECTION=LONG') ||
+    text.includes('DIRECTION=BULL') ||
+    text.includes('DIRECTION=BUY') ||
+    text.startsWith('LONG_') ||
+    text.includes('_LONG_') ||
+    text.endsWith('_LONG') ||
+    text.startsWith('BULL_') ||
+    text.includes('_BULL_') ||
+    text.endsWith('_BULL') ||
+    text.startsWith('BUY_') ||
+    text.includes('_BUY_') ||
+    text.endsWith('_BUY') ||
+    text.includes('|LONG|') ||
+    text.includes('|BULL|') ||
+    text.includes('|BUY|') ||
+    text.includes('=LONG') ||
+    text.includes('=BULL') ||
+    text.includes('=BUY')
+  );
+}
+
+function inferTradeSideFromText(value) {
+  const text = cleanSideText(value);
+
+  if (!text) return 'UNKNOWN';
+
+  const shortHit = hasShortSignal(text);
+  const longHit = hasLongSignal(text);
+
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+
+  if (shortHit && longHit) {
+    if (text.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (text.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+    if (text.includes('TRADE_SIDE=SHORT') || text.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
+    if (text.includes('TRADE_SIDE=LONG') || text.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferActionTradeSide(row = {}) {
+  if (typeof row === 'string') return inferTradeSideFromText(row);
+
+  if (!row || typeof row !== 'object') return 'UNKNOWN';
+
+  const direct = normalizeTradeSide(
+    row.tradeSide ||
+    row.positionSide ||
+    row.direction ||
+    row.signalSide ||
+    row.scannerSide ||
+    row.actualScannerSide ||
+    row.analysisSide ||
+    row.entrySide ||
+    row.side
+  );
+
+  if (direct !== 'UNKNOWN') return direct;
+
+  const reasonSide = inferTradeSideFromText(
+    row.scannerReason ||
+    row.reason ||
+    row.signalReason ||
+    row.actionReason ||
+    row.exitReason ||
+    ''
+  );
+
+  if (reasonSide !== 'UNKNOWN') return reasonSide;
+
+  const haystack = [
+    row.familyId,
+    row.family,
+    row.baseFamilyId,
+
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.liveMicroFamilyId,
+    row.realMicroFamilyId,
+    row.executionMicroFamilyId,
+    row.id,
+    row.key,
+
+    row.macroFamilyId,
+    row.parentMacroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentFamilyId,
+    row.macroId,
+
+    row.definition,
+    row.microDefinition,
+    row.macroDefinition,
+    row.parentDefinition,
+
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join('|');
+
+  const side = inferTradeSideFromText(haystack);
+
+  if (side !== 'UNKNOWN') return side;
+
+  if (row.shortOnly === true || row.longDisabled === true) return TARGET_TRADE_SIDE;
+
+  return 'UNKNOWN';
+}
+
+function isShortAction(row = {}) {
+  return inferActionTradeSide(row) === TARGET_TRADE_SIDE;
+}
+
+function isLongAction(row = {}) {
+  return inferActionTradeSide(row) === OPPOSITE_TRADE_SIDE;
+}
+
+function forceShortVirtualRow(row = {}) {
+  return {
+    ...row,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    source: row.source || 'VIRTUAL',
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: row.shadowOnly !== false,
+    realTrade: false,
+    exchangeOrder: false,
+    exchangeOrdersDisabled: true,
+    noExchangeOrders: true
+  };
+}
+
+function countActionsByType(actions = []) {
+  return actions.reduce((acc, row) => {
+    const key = row?.action || row?.type || 'UNKNOWN';
+
+    acc[key] = (acc[key] || 0) + 1;
+
+    return acc;
+  }, {});
 }
 
 function unwrapLockResult(lockResult) {
   if (!lockResult) return null;
 
+  if (lockResult.result?.result?.result) return lockResult.result.result.result;
   if (lockResult.result?.result) return lockResult.result.result;
   if (lockResult.result) return lockResult.result;
 
@@ -183,325 +443,164 @@ function responseSnapshotId(lockResult) {
   return payload?.snapshotId || null;
 }
 
-function normalizeTradeSide(value) {
-  const raw = String(value || '').trim().toUpperCase();
-
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
-
-  return 'UNKNOWN';
-}
-
-function inferTradeSideFromText(value) {
-  const text = String(value || '').toUpperCase();
-
-  if (!text) return 'UNKNOWN';
-
-  const shortHit = (
-    text.includes('MICRO_SHORT_') ||
-    text.includes('TRADESIDE=SHORT') ||
-    text.includes('TRADE_SIDE=SHORT') ||
-    text.includes('SIDE=SHORT') ||
-    text.includes('SIDE=BEAR') ||
-    text.includes('DIRECTION=SHORT') ||
-    text.includes('DIRECTION=BEAR') ||
-    text.includes('SIDE=SELL') ||
-    text.includes('DIRECTION=SELL') ||
-    text.includes('SHORT_') ||
-    text.includes('_SHORT') ||
-    text.includes('BEAR_') ||
-    text.includes('_BEAR') ||
-    text.includes('SELL_') ||
-    text.includes('_SELL')
-  );
-
-  const longHit = (
-    text.includes('MICRO_LONG_') ||
-    text.includes('TRADESIDE=LONG') ||
-    text.includes('TRADE_SIDE=LONG') ||
-    text.includes('SIDE=LONG') ||
-    text.includes('SIDE=BULL') ||
-    text.includes('DIRECTION=LONG') ||
-    text.includes('DIRECTION=BULL') ||
-    text.includes('SIDE=BUY') ||
-    text.includes('DIRECTION=BUY') ||
-    text.includes('LONG_') ||
-    text.includes('_LONG') ||
-    text.includes('BULL_') ||
-    text.includes('_BULL') ||
-    text.includes('BUY_') ||
-    text.includes('_BUY')
-  );
-
-  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
-  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
-
-  if (shortHit) return TARGET_TRADE_SIDE;
-  if (longHit) return OPPOSITE_TRADE_SIDE;
-
-  return 'UNKNOWN';
-}
-
-function inferActionTradeSide(row = {}) {
-  if (typeof row === 'string') {
-    return inferTradeSideFromText(row);
-  }
-
-  if (!row || typeof row !== 'object') return 'UNKNOWN';
-
-  const direct = normalizeTradeSide(
-    row.tradeSide ||
-    row.positionSide ||
-    row.direction ||
-    row.signalSide ||
-    row.scannerSide ||
-    row.actualScannerSide ||
-    row.analysisSide ||
-    row.entrySide ||
-    row.side
-  );
-
-  if (direct !== 'UNKNOWN') return direct;
-
-  const haystack = [
-    row.familyId,
-    row.family,
-    row.baseFamilyId,
-
-    row.microFamilyId,
-    row.trueMicroFamilyId,
-    row.liveMicroFamilyId,
-    row.realMicroFamilyId,
-    row.executionMicroFamilyId,
-    row.id,
-    row.key,
-
-    row.macroFamilyId,
-    row.parentMacroFamilyId,
-    row.parentMicroFamilyId,
-    row.parentFamilyId,
-    row.macroId,
-
-    row.definition,
-    row.microDefinition,
-    row.macroDefinition,
-    row.parentDefinition,
-
-    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
-    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
-    ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
-    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
-  ]
-    .map((value) => String(value || '').toUpperCase())
-    .filter(Boolean)
-    .join('|');
-
-  return inferTradeSideFromText(haystack);
-}
-
-function isShortAction(row = {}) {
-  return inferActionTradeSide(row) === TARGET_TRADE_SIDE;
-}
-
-function isLongAction(row = {}) {
-  return inferActionTradeSide(row) === OPPOSITE_TRADE_SIDE;
-}
-
-function forceShortAction(row = {}) {
-  return {
-    ...row,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
-  };
-}
-
-function countActionsByType(actions = []) {
-  return actions.reduce((acc, row) => {
-    const key = row?.action || row?.type || 'UNKNOWN';
-    acc[key] = (acc[key] || 0) + 1;
-
-    return acc;
-  }, {});
-}
-
-function responseActionCounts(lockResult) {
-  const payload = unwrapLockResult(lockResult);
-
-  const rawActions = Array.isArray(payload?.actions)
-    ? payload.actions
-    : [];
-
-  if (rawActions.length > 0) {
-    const shortActions = rawActions
-      .filter(isShortAction)
-      .map(forceShortAction);
-
-    return {
-      ...countActionsByType(shortActions),
-
-      targetTradeSide: TARGET_TRADE_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-      shortOnly: true,
-      longDisabled: true,
-      longOnly: false,
-      shortDisabled: false
-    };
-  }
-
-  return {
-    ...(payload?.actionCounts || {}),
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
-  };
-}
-
-function responseCounts(lockResult) {
-  const payload = unwrapLockResult(lockResult);
-
-  const actions = Array.isArray(payload?.actions)
-    ? payload.actions
-    : [];
-
-  const shortActions = actions.filter(isShortAction);
-  const longActions = actions.filter(isLongAction);
-  const unknownActions = actions.filter((row) => inferActionTradeSide(row) === 'UNKNOWN');
-
-  const realExits = Array.isArray(payload?.realExits)
-    ? payload.realExits
-    : [];
-
-  const shadowExits = Array.isArray(payload?.shadowExits)
-    ? payload.shadowExits
-    : [];
-
-  const shortRealExits = realExits.filter(isShortAction);
-  const shortShadowExits = shadowExits.filter(isShortAction);
-
-  return {
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    candidates: Number(payload?.candidates || 0),
-    shortCandidateCount: Number(payload?.shortCandidateCount || payload?.targetCandidateCount || 0),
-    nonShortCandidateCount: Number(payload?.nonShortCandidateCount || payload?.nonTargetCandidateCount || 0),
-
-    processed: Number(payload?.processed || 0),
-    earlyActions: Number(payload?.earlyActions || 0),
-
-    liveRows: Number(payload?.liveRows || 0),
-    analyzeInputRows: Number(payload?.analyzeInputRows || 0),
-    actualLiveRows: Number(payload?.actualLiveRows || 0),
-    mirrorRows: Number(payload?.mirrorRows || 0),
-    observationOnlyRows: Number(payload?.observationOnlyRows || 0),
-    syntheticRiskRows: Number(payload?.syntheticRiskRows || 0),
-    learningOnlyRows: Number(payload?.learningOnlyRows || 0),
-    riskValidRows: Number(payload?.riskValidRows || 0),
-
-    analyzedRowsRaw: Number(payload?.analyzedRowsRaw || 0),
-    analyzedRows: Number(payload?.analyzedRows || 0),
-    analyzedActualRows: Number(payload?.analyzedActualRows || 0),
-    analyzedMirrorRows: Number(payload?.analyzedMirrorRows || 0),
-    analyzedRiskValidRows: Number(payload?.analyzedRiskValidRows || 0),
-    analyzedSyntheticRiskRows: Number(payload?.analyzedSyntheticRiskRows || 0),
-
-    shadowCreatedRows: Number(payload?.shadowCreatedRows || 0),
-    shadowSkippedRows: Number(payload?.shadowSkippedRows || 0),
-    shadowFailedRows: Number(payload?.shadowFailedRows || 0),
-
-    actions: actions.length || Number(payload?.actionsCount || 0),
-    shortActions: shortActions.length,
-    longActionsBlockedOrIgnored: longActions.length,
-    unknownSideActionsIgnored: unknownActions.length,
-
-    entries: shortActions.filter((row) => row?.action === 'ENTRY').length,
-    waits: shortActions.filter((row) => row?.action === 'WAIT').length,
-
-    realExits: shortRealExits.length || Number(payload?.realExitsCount || 0),
-    shadowExits: shortShadowExits.length || Number(payload?.shadowExitsCount || 0),
-
-    longRealExitsIgnored: realExits.filter(isLongAction).length,
-    longShadowExitsIgnored: shadowExits.filter(isLongAction).length,
-
-    activeMicroFamilies: Number(payload?.activeMicroFamilies || 0),
-    activeMacroFamilies: Number(payload?.activeMacroFamilies || 0),
-
-    selectedTargetCandidateCount: Number(payload?.selectedTargetCandidateCount || 0),
-    selectedOppositeCandidateCount: Number(payload?.selectedOppositeCandidateCount || 0)
-  };
+function sanitizeArray(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(isShortAction)
+    .map(forceShortVirtualRow);
 }
 
 function sanitizeRunPayload(payload) {
   if (!payload || typeof payload !== 'object') return payload;
 
-  const actions = Array.isArray(payload.actions)
-    ? payload.actions.filter(isShortAction).map(forceShortAction)
-    : payload.actions;
+  const rawActions = Array.isArray(payload.actions) ? payload.actions : [];
+  const rawRealExits = Array.isArray(payload.realExits) ? payload.realExits : [];
+  const rawShadowExits = Array.isArray(payload.shadowExits) ? payload.shadowExits : [];
+  const rawVirtualExits = Array.isArray(payload.virtualExits) ? payload.virtualExits : [];
 
-  const realExits = Array.isArray(payload.realExits)
-    ? payload.realExits.filter(isShortAction).map(forceShortAction)
-    : payload.realExits;
+  const actions = sanitizeArray(rawActions);
+  const realExits = sanitizeArray(rawRealExits);
+  const shadowExits = sanitizeArray(rawShadowExits);
+  const virtualExits = sanitizeArray(rawVirtualExits.length ? rawVirtualExits : rawShadowExits);
 
-  const shadowExits = Array.isArray(payload.shadowExits)
-    ? payload.shadowExits.filter(isShortAction).map(forceShortAction)
-    : payload.shadowExits;
+  const ignoredLongActions = rawActions.filter(isLongAction).length;
+  const ignoredUnknownSideActions = rawActions.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
 
-  const actionCounts = Array.isArray(actions)
-    ? countActionsByType(actions)
-    : payload.actionCounts;
+  const ignoredLongRealExits = rawRealExits.filter(isLongAction).length;
+  const ignoredLongShadowExits = rawShadowExits.filter(isLongAction).length;
+  const ignoredLongVirtualExits = rawVirtualExits.filter(isLongAction).length;
 
   return {
     ...payload,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    ...baseFlags(),
 
     actions,
     realExits,
     shadowExits,
-    actionCounts,
+    virtualExits,
 
-    actionsCount: Array.isArray(actions) ? actions.length : payload.actionsCount,
-    realExitsCount: Array.isArray(realExits) ? realExits.length : payload.realExitsCount,
-    shadowExitsCount: Array.isArray(shadowExits) ? shadowExits.length : payload.shadowExitsCount
+    actionCounts: countActionsByType(actions),
+
+    actionsCount: actions.length,
+    realExitsCount: realExits.length,
+    shadowExitsCount: shadowExits.length,
+    virtualExitsCount: virtualExits.length,
+
+    ignoredLongActions,
+    ignoredUnknownSideActions,
+    ignoredLongRealExits,
+    ignoredLongShadowExits,
+    ignoredLongVirtualExits,
+
+    longActionsBlockedOrIgnored: ignoredLongActions,
+    longExitsBlockedOrIgnored: ignoredLongRealExits + ignoredLongShadowExits + ignoredLongVirtualExits,
+
+    realTradesOnly: false,
+    virtualLearningOnly: true,
+    shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED'
+  };
+}
+
+function responseActionCounts(lockResult) {
+  const payload = sanitizeRunPayload(unwrapLockResult(lockResult));
+
+  const actions = Array.isArray(payload?.actions)
+    ? payload.actions
+    : [];
+
+  if (actions.length > 0) {
+    return {
+      ...countActionsByType(actions),
+      ...baseFlags()
+    };
+  }
+
+  return {
+    ...(payload?.actionCounts || {}),
+    ...baseFlags()
+  };
+}
+
+function responseCounts(lockResult) {
+  const payload = sanitizeRunPayload(unwrapLockResult(lockResult)) || {};
+
+  const actions = Array.isArray(payload.actions) ? payload.actions : [];
+  const realExits = Array.isArray(payload.realExits) ? payload.realExits : [];
+  const shadowExits = Array.isArray(payload.shadowExits) ? payload.shadowExits : [];
+  const virtualExits = Array.isArray(payload.virtualExits) ? payload.virtualExits : [];
+
+  return {
+    ...baseFlags(),
+
+    candidates: Number(payload.candidates || payload.candidatesCount || 0),
+    shortCandidateCount: Number(payload.shortCandidateCount || payload.targetCandidateCount || payload.shortCandidatesCount || 0),
+    nonShortCandidateCount: Number(payload.nonShortCandidateCount || payload.nonTargetCandidateCount || 0),
+
+    processed: Number(payload.processed || 0),
+    earlyActions: Number(payload.earlyActions || 0),
+
+    liveRows: Number(payload.liveRows || 0),
+    analyzeInputRows: Number(payload.analyzeInputRows || 0),
+    actualLiveRows: Number(payload.actualLiveRows || 0),
+
+    observationOnlyRows: Number(payload.observationOnlyRows || 0),
+    learningOnlyRows: Number(payload.learningOnlyRows || 0),
+
+    riskValidRows: Number(payload.riskValidRows || payload.analyzedRiskValidRows || 0),
+    riskInvalidRows: Number(payload.riskInvalidRows || 0),
+
+    analyzedRowsRaw: Number(payload.analyzedRowsRaw || 0),
+    analyzedRows: Number(payload.analyzedRows || 0),
+    analyzedActualRows: Number(payload.analyzedActualRows || 0),
+    analyzedRiskValidRows: Number(payload.analyzedRiskValidRows || 0),
+
+    virtualOpenedRows: Number(
+      payload.virtualOpenedRows ||
+      payload.shadowCreatedRows ||
+      actions.filter((row) => row.action === 'ENTRY').length ||
+      0
+    ),
+
+    virtualSkippedRows: Number(payload.virtualSkippedRows || payload.shadowSkippedRows || 0),
+    virtualFailedRows: Number(payload.virtualFailedRows || payload.shadowFailedRows || 0),
+
+    shadowCreatedRows: Number(payload.shadowCreatedRows || 0),
+    shadowSkippedRows: Number(payload.shadowSkippedRows || 0),
+    shadowFailedRows: Number(payload.shadowFailedRows || 0),
+
+    actions: actions.length || Number(payload.actionsCount || 0),
+    shortActions: actions.length,
+
+    entries: actions.filter((row) => row?.action === 'ENTRY').length,
+    waits: actions.filter((row) => row?.action === 'WAIT').length,
+
+    realExits: realExits.length,
+    shadowExits: shadowExits.length,
+    virtualExits: virtualExits.length,
+
+    activeMicroFamilies: Number(payload.activeMicroFamilies || 0),
+    activeMacroFamilies: Number(payload.activeMacroFamilies || 0),
+
+    selectedTargetCandidateCount: Number(payload.selectedTargetCandidateCount || 0),
+    selectedOppositeCandidateCount: Number(payload.selectedOppositeCandidateCount || 0),
+
+    discordEligibleEntries: Number(payload.discordEligibleEntries || 0),
+    discordSkippedNotSelected: Number(payload.discordSkippedNotSelected || 0),
+
+    ignoredLongActions: Number(payload.ignoredLongActions || 0),
+    ignoredUnknownSideActions: Number(payload.ignoredUnknownSideActions || 0),
+    longActionsBlockedOrIgnored: Number(payload.longActionsBlockedOrIgnored || 0),
+    longExitsBlockedOrIgnored: Number(payload.longExitsBlockedOrIgnored || 0)
   };
 }
 
 function resolveStatus(error) {
-  if (Number.isFinite(error?.statusCode)) {
-    return error.statusCode;
-  }
+  if (Number.isFinite(error?.statusCode)) return error.statusCode;
 
   if (
     error?.reason === 'LOCK_NOT_ACQUIRED' ||
     error?.message === 'LOCK_NOT_ACQUIRED' ||
-    error?.message?.includes?.('LOCK')
+    String(error?.message || '').includes('LOCK')
   ) {
     return 409;
   }
@@ -518,9 +617,14 @@ function buildRunOptions(req, body = {}) {
     forceProcessSnapshot,
     monitorOnly,
 
+    monitorOpenPositionsFirst: true,
+    processScannerSnapshot: !monitorOnly,
+
     targetTradeSide: TARGET_TRADE_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
-    side: TARGET_TRADE_SIDE,
+    side: TARGET_DASHBOARD_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
 
     dashboardSide: TARGET_DASHBOARD_SIDE,
 
@@ -529,7 +633,26 @@ function buildRunOptions(req, body = {}) {
     disableLong: true,
 
     longOnly: false,
-    shortDisabled: false
+    shortDisabled: false,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+    source: 'VIRTUAL',
+
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    noExchangeOrders: true,
+
+    learningOnly: true,
+    microFamilyLearning: true,
+
+    allowLearningWithoutActiveRotation: true,
+    ignoreMaxOpenPositionsForLearning: true,
+    ignoreRiskCapsForLearning: true,
+    oneOpenPositionPerSymbol: true,
+
+    discordOnlyForSelectedMicroFamilies: true
   };
 }
 
@@ -539,8 +662,10 @@ export default async function handler(req, res) {
   res.setHeader('X-Dashboard-Side', TARGET_DASHBOARD_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
+  res.setHeader('X-Virtual-Only', 'true');
+  res.setHeader('X-Exchange-Orders-Disabled', 'true');
 
-  const startedAt = Date.now();
+  const startedAt = now();
 
   try {
     if (!isAllowedMethod(req.method)) {
@@ -570,17 +695,12 @@ export default async function handler(req, res) {
 
       source: getRunSource(req, body),
 
-      targetTradeSide: TARGET_TRADE_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-
-      shortOnly: true,
-      longDisabled: true,
-      longOnly: false,
-      shortDisabled: false,
+      ...baseFlags(),
 
       force: runOptions.force,
       forceProcessSnapshot: runOptions.forceProcessSnapshot,
       monitorOnly: runOptions.monitorOnly,
+      monitorOpenPositionsFirst: runOptions.monitorOpenPositionsFirst,
 
       runId: responseRunId(result),
       snapshotId: responseSnapshotId(result),
@@ -592,12 +712,16 @@ export default async function handler(req, res) {
       activeMicroFamilies: Number(payload?.activeMicroFamilies || 0),
       activeMacroFamilies: Number(payload?.activeMacroFamilies || 0),
 
+      activeMicroFamilyIds: Array.isArray(payload?.activeMicroFamilyIds)
+        ? payload.activeMicroFamilyIds
+        : [],
+
       selectedSnapshotSource: payload?.selectedSnapshotSource || null,
       selectedSnapshotReason: payload?.selectedSnapshotReason || null,
       selectedTargetCandidateCount: Number(payload?.selectedTargetCandidateCount || 0),
       selectedOppositeCandidateCount: Number(payload?.selectedOppositeCandidateCount || 0),
 
-      durationMs: Date.now() - startedAt,
+      durationMs: now() - startedAt,
 
       run: payload,
       result
@@ -606,16 +730,10 @@ export default async function handler(req, res) {
     return res.status(resolveStatus(error)).json({
       ok: false,
 
-      targetTradeSide: TARGET_TRADE_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-
-      shortOnly: true,
-      longDisabled: true,
-      longOnly: false,
-      shortDisabled: false,
+      ...baseFlags(),
 
       error: error?.message || String(error),
-      durationMs: Date.now() - startedAt,
+      durationMs: now() - startedAt,
       stack: process.env.NODE_ENV === 'production'
         ? undefined
         : error?.stack
