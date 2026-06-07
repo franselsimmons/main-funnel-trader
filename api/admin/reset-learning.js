@@ -52,12 +52,21 @@ function modeFlags() {
     virtualLearning: true,
     virtualTracked: true,
     shadowOnly: true,
+    virtualOutcomesIncluded: true,
+    shadowOutcomesIncluded: true,
+    learningOutcomesOnly: true,
+    outcomesSourceMode: 'ALL_LEARNING_OUTCOMES',
 
     observationFirst: true,
     netOutcomesOnly: true,
 
     noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+
     manualSelectionOnly: true,
+    manualSelectionPreserved: true,
+    activeRotationPreserved: true,
     autoRotationActivationDisabled: true,
     discordOnlyForSelectedMicroFamilies: true
   };
@@ -108,7 +117,8 @@ async function readBody(req) {
 function isConfirmed(body = {}) {
   return (
     body.confirm === CONFIRM_TEXT ||
-    body.confirmed === CONFIRM_TEXT
+    body.confirmed === CONFIRM_TEXT ||
+    body.confirmation === CONFIRM_TEXT
   );
 }
 
@@ -126,8 +136,18 @@ function isTrue(value) {
   );
 }
 
+function wantsForbiddenRotationReset(body = {}) {
+  return (
+    isTrue(body.resetRotation) ||
+    isTrue(body.clearRotation) ||
+    isTrue(body.resetManualSelection) ||
+    isTrue(body.clearManualSelection) ||
+    isTrue(body.wipeRotation)
+  );
+}
+
 async function acquireLock(redis, key, token) {
-  if (!key) return true;
+  if (!redis || !key || !token) return true;
 
   const acquired = await redis.set(key, token, {
     nx: true,
@@ -139,7 +159,7 @@ async function acquireLock(redis, key, token) {
 
 async function releaseLock(redis, key, token) {
   try {
-    if (!key) return false;
+    if (!redis || !key || !token) return false;
 
     const current = await redis.get(key);
 
@@ -160,6 +180,13 @@ async function acquireOneLock({
   reason,
   acquired
 }) {
+  if (!key) {
+    return {
+      ok: true,
+      acquired
+    };
+  }
+
   const ok = await acquireLock(redis, key, token);
 
   if (!ok) {
@@ -234,13 +261,13 @@ async function releaseLocks(redis, keys, token) {
 }
 
 async function delKey(redis, key) {
-  if (!key) return 0;
+  if (!redis || !key) return 0;
 
   return redis.del(key).catch(() => 0);
 }
 
 async function delPatternSafe(redis, pattern, count = DELETE_SCAN_COUNT) {
-  if (!pattern) return 0;
+  if (!redis || !pattern) return 0;
 
   return delPattern(redis, pattern, count).catch(() => 0);
 }
@@ -272,19 +299,35 @@ function getWeekKeyCandidates(body = {}) {
   ]);
 }
 
+function weekMicrosKey(weekKey) {
+  if (typeof KEYS.analyze?.weekMicros === 'function') {
+    return KEYS.analyze.weekMicros(weekKey);
+  }
+
+  return `ANALYZE:WEEK:${weekKey}:MICROS`;
+}
+
+function weekMetaKey(weekKey) {
+  if (typeof KEYS.analyze?.weekMeta === 'function') {
+    return KEYS.analyze.weekMeta(weekKey);
+  }
+
+  return `ANALYZE:WEEK:${weekKey}:META`;
+}
+
 function getWeekStorageKeys(weekKey) {
-  const base = KEYS.analyze.weekMicros(weekKey);
+  const base = weekMicrosKey(weekKey);
 
   return [
     base,
     `${base}:INDEX`,
     `${base}:TOP`,
-    KEYS.analyze.weekMeta(weekKey)
+    weekMetaKey(weekKey)
   ].filter(Boolean);
 }
 
 function getWeekRowPatterns(weekKey) {
-  const base = KEYS.analyze.weekMicros(weekKey);
+  const base = weekMicrosKey(weekKey);
 
   return [
     `${base}:ROW:*`
@@ -338,6 +381,11 @@ async function runLearningDeleteSteps(redis, body = {}) {
       'ANALYZE:OBS:LAST:*'
     ),
 
+    outcomeDedupe: await delPatternSafe(
+      redis,
+      'ANALYZE:OUTCOME:*'
+    ),
+
     shadowAnalyzeData: await delPatternSafe(
       redis,
       'ANALYZE:SHADOW:*'
@@ -354,6 +402,8 @@ async function runLearningDeleteSteps(redis, body = {}) {
       redis,
       'ANALYZE:WEEK:*'
     );
+  } else {
+    deleted.allWeekAnalyzeData = 0;
   }
 
   deleted.nextRotation = await delKey(
@@ -366,16 +416,21 @@ async function runLearningDeleteSteps(redis, body = {}) {
     KEYS.analyze?.rotationValidFrom
   );
 
+  deleted.activeRotation = 0;
+
   return deleted;
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Reset-Learning-Mode', 'short-only-virtual-learning');
+  res.setHeader('X-Admin-Reset-Learning-Mode', 'short-only-virtual-learning-v2');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Virtual-Only', 'true');
+  res.setHeader('X-Net-Outcomes-Only', 'true');
   res.setHeader('X-Manual-Selection-Preserved', 'true');
+  res.setHeader('X-Active-Rotation-Preserved', 'true');
+  res.setHeader('X-Real-Orders-Disabled', 'true');
 
   const token = randomUUID();
   let redis = null;
@@ -394,6 +449,16 @@ export default async function handler(req, res) {
         blocked: true,
         reason: 'CONFIRMATION_REQUIRED',
         required: CONFIRM_TEXT,
+        ...modeFlags()
+      });
+    }
+
+    if (wantsForbiddenRotationReset(body)) {
+      return res.status(400).json({
+        ok: false,
+        blocked: true,
+        reason: 'ROTATION_RESET_NOT_ALLOWED_HERE',
+        note: 'reset-learning wist alleen leerdata. Gebruik reset-rotation apart als je handmatige selectie bewust wilt wissen.',
         ...modeFlags()
       });
     }
@@ -424,6 +489,10 @@ export default async function handler(req, res) {
 
       ...modeFlags(),
 
+      exchangeTouched: false,
+      bitgetOrdersTouched: false,
+      realOrdersTouched: false,
+
       deleted,
 
       preserved: {
@@ -433,7 +502,9 @@ export default async function handler(req, res) {
         scannerSnapshots: true,
         tradeRunMeta: true,
         resetLogs: true,
-        discordLogs: true
+        discordLogs: true,
+        environmentVariables: true,
+        deploymentConfig: true
       },
 
       removed: {
@@ -442,9 +513,14 @@ export default async function handler(req, res) {
         weekTopSnapshots: true,
         shardedWeekRows: true,
         observationDedupe: true,
+        outcomeDedupe: true,
         shadowAnalyzeData: true,
+        legacyMicroData: true,
         nextRotation: true,
-        rotationValidFrom: true
+        rotationValidFrom: true,
+        activeRotation: false,
+        manualSelection: false,
+        openVirtualPositions: false
       },
 
       resetAt: now()
