@@ -2,7 +2,11 @@
 
 import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
-import { getDurableRedis } from '../../src/redis.js';
+import {
+  getDurableRedis,
+  getJson,
+  setJson
+} from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
 import {
   getIsoWeekKey,
@@ -11,9 +15,54 @@ import {
 import { freezeWeeklyRotation } from '../../src/analyze/rotationEngine.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+
+const DEFAULT_LOCK_TTL_SEC = 600;
 
 function now() {
   return Date.now();
+}
+
+function activeRotationKey() {
+  return KEYS.analyze?.activeRotation || 'ANALYZE:ACTIVE_ROTATION';
+}
+
+function nextRotationKey() {
+  return KEYS.analyze?.nextRotation || 'ANALYZE:NEXT_ROTATION';
+}
+
+function rotationValidFromKey() {
+  return KEYS.analyze?.rotationValidFrom || 'ANALYZE:ROTATION_VALID_FROM';
+}
+
+function freezeLockKey() {
+  return KEYS.analyze?.freezeLock || 'ANALYZE:WEEKLY_FREEZE_LOCK';
+}
+
+function flags() {
+  return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    nextRotationOnly: true,
+    activeRotationPreserved: true,
+    autoActivationDisabled: true,
+    activateNextRotationDisabled: true,
+    manualSelectionRemainsLeading: true,
+
+    noRealOrders: true,
+    virtualLearningOnly: true
+  };
 }
 
 function methodNotAllowed(res) {
@@ -22,12 +71,9 @@ function methodNotAllowed(res) {
   return res.status(405).json({
     ok: false,
     error: 'METHOD_NOT_ALLOWED',
-    allowed: ['GET', 'POST']
+    allowed: ['GET', 'POST'],
+    ...flags()
   });
-}
-
-function isAllowedMethod(method) {
-  return method === 'GET' || method === 'POST';
 }
 
 function parseJson(text) {
@@ -60,56 +106,33 @@ async function readBody(req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  const text = Buffer.concat(chunks).toString('utf8');
-
-  return parseJson(text);
+  return parseJson(Buffer.concat(chunks).toString('utf8'));
 }
 
-function isTrue(value) {
-  return (
-    value === true ||
-    value === 'true' ||
-    value === 'TRUE' ||
-    value === 1 ||
-    value === '1' ||
-    value === 'yes' ||
-    value === 'YES'
-  );
-}
-
-function firstValue(value) {
-  if (Array.isArray(value)) return value[0];
+function firstValue(value, fallback = null) {
+  if (Array.isArray(value)) return value[0] ?? fallback;
+  if (value === undefined || value === null || value === '') return fallback;
 
   return value;
 }
 
-function query(req = {}) {
-  return req.query || {};
-}
+function getParam(req, body, key, fallback = null) {
+  const bodyValue = firstValue(body?.[key], null);
+  const queryValue = firstValue(req.query?.[key], null);
 
-function getParam(req, body, key, fallback = undefined) {
-  const q = query(req);
-
-  const bodyValue = firstValue(body?.[key]);
-  const queryValue = firstValue(q?.[key]);
-
-  if (bodyValue !== undefined && bodyValue !== null && bodyValue !== '') {
-    return bodyValue;
-  }
-
-  if (queryValue !== undefined && queryValue !== null && queryValue !== '') {
-    return queryValue;
-  }
+  if (bodyValue !== null && bodyValue !== '') return bodyValue;
+  if (queryValue !== null && queryValue !== '') return queryValue;
 
   return fallback;
 }
 
 function getFreezeLockTtlSec() {
-  const ttl = Number(CONFIG.analyze?.freezeLockTtlSec || 600);
+  const ttl = Number(CONFIG.analyze?.freezeLockTtlSec || DEFAULT_LOCK_TTL_SEC);
 
-  return Number.isFinite(ttl) && ttl > 0
-    ? Math.floor(ttl)
-    : 600;
+  if (!Number.isFinite(ttl)) return DEFAULT_LOCK_TTL_SEC;
+  if (ttl <= 0) return DEFAULT_LOCK_TTL_SEC;
+
+  return Math.floor(ttl);
 }
 
 function getRotationMode(req, body = {}) {
@@ -139,68 +162,128 @@ function getActiveWeekKey(req, body = {}) {
     getParam(req, body, 'activeWeekKey', null) ||
     getParam(req, body, 'nextWeekKey', null);
 
-  if (explicit) {
-    return String(explicit).trim();
-  }
+  if (explicit) return String(explicit).trim();
 
   return getNextIsoWeekKey();
 }
 
-function isManualRun(req, body = {}) {
+function upper(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY', 'SHORT');
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [values])
+      .flatMap((value) => Array.isArray(value) ? value : [value])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function hasLongSignal(value = '') {
+  const text = cleanSideText(value);
+
   return (
-    isTrue(getParam(req, body, 'force', false)) ||
-    isTrue(getParam(req, body, 'manual', false)) ||
-    Boolean(getParam(req, body, 'weekKey', null)) ||
-    Boolean(getParam(req, body, 'activeWeekKey', null)) ||
-    Boolean(getParam(req, body, 'nextWeekKey', null)) ||
-    Boolean(getParam(req, body, 'mode', null))
+    text.includes('MICRO_LONG_') ||
+    text.includes('TRADESIDE=LONG') ||
+    text.includes('TRADE_SIDE=LONG') ||
+    text.includes('POSITION_SIDE=LONG') ||
+    text.includes('POSITIONSIDE=LONG') ||
+    text.includes('SIDE=LONG') ||
+    text.includes('SIDE=BULL') ||
+    text.includes('SIDE=BUY') ||
+    text.includes('DIRECTION=LONG') ||
+    text.includes('DIRECTION=BULL') ||
+    text.includes('DIRECTION=BUY') ||
+    text.startsWith('LONG_') ||
+    text.includes('_LONG_') ||
+    text.endsWith('_LONG') ||
+    text.startsWith('BULL_') ||
+    text.includes('_BULL_') ||
+    text.endsWith('_BULL') ||
+    text.includes('|LONG|') ||
+    text.includes('|BULL|') ||
+    text.includes('|BUY|') ||
+    text.includes('=LONG') ||
+    text.includes('=BULL') ||
+    text.includes('=BUY')
   );
 }
 
-function unwrapLockResult(lockResult) {
-  if (
-    lockResult &&
-    typeof lockResult === 'object' &&
-    Object.prototype.hasOwnProperty.call(lockResult, 'result')
-  ) {
-    return lockResult.result;
+function hasShortSignal(value = '') {
+  const text = cleanSideText(value);
+
+  return (
+    text.includes('MICRO_SHORT_') ||
+    text.includes('TRADESIDE=SHORT') ||
+    text.includes('TRADE_SIDE=SHORT') ||
+    text.includes('POSITION_SIDE=SHORT') ||
+    text.includes('POSITIONSIDE=SHORT') ||
+    text.includes('SIDE=SHORT') ||
+    text.includes('SIDE=BEAR') ||
+    text.includes('SIDE=SELL') ||
+    text.includes('DIRECTION=SHORT') ||
+    text.includes('DIRECTION=BEAR') ||
+    text.includes('DIRECTION=SELL') ||
+    text.startsWith('SHORT_') ||
+    text.includes('_SHORT_') ||
+    text.endsWith('_SHORT') ||
+    text.startsWith('BEAR_') ||
+    text.includes('_BEAR_') ||
+    text.endsWith('_BEAR') ||
+    text.includes('|SHORT|') ||
+    text.includes('|BEAR|') ||
+    text.includes('|SELL|') ||
+    text.includes('=SHORT') ||
+    text.includes('=BEAR') ||
+    text.includes('=SELL')
+  );
+}
+
+function inferTradeSideFromText(value = '') {
+  const text = cleanSideText(value);
+
+  if (!text) return 'UNKNOWN';
+
+  const shortSignal = hasShortSignal(text);
+  const longSignal = hasLongSignal(text);
+
+  if (shortSignal && !longSignal) return TARGET_TRADE_SIDE;
+  if (longSignal && !shortSignal) return 'LONG';
+
+  if (shortSignal && longSignal) {
+    if (text.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (text.includes('MICRO_LONG_')) return 'LONG';
   }
-
-  return lockResult || null;
-}
-
-function payloadOk(lockResult, payload) {
-  if (lockResult?.ok === false) return false;
-  if (payload?.ok === false) return false;
-
-  return true;
-}
-
-function normalizeTradeSide(value) {
-  const raw = String(value || '').trim().toUpperCase();
-
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
 
   return 'UNKNOWN';
 }
 
 function inferRowTradeSide(row = {}) {
-  if (typeof row === 'string') {
-    return inferRowTradeSide({ microFamilyId: row });
-  }
+  if (typeof row === 'string') return inferTradeSideFromText(row);
 
-  const direct = normalizeTradeSide(
+  const direct = cleanSideText(
     row.tradeSide ||
-    row.side ||
     row.positionSide ||
     row.direction ||
     row.signalSide ||
     row.scannerSide ||
-    row.analysisSide
+    row.analysisSide ||
+    row.side ||
+    ''
   );
 
-  if (direct !== 'UNKNOWN') return direct;
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(direct)) return TARGET_TRADE_SIDE;
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(direct)) return 'LONG';
 
   const haystack = [
     row.familyId,
@@ -226,39 +309,18 @@ function inferRowTradeSide(row = {}) {
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
-    .map((value) => String(value || '').toUpperCase())
+    .map((value) => String(value || '').trim())
     .filter(Boolean)
     .join('|');
 
-  if (
-    haystack.includes('MICRO_SHORT_') ||
-    haystack.includes('TRADESIDE=SHORT') ||
-    haystack.includes('TRADE_SIDE=SHORT') ||
-    haystack.includes('SIDE=SHORT') ||
-    haystack.includes('SIDE=BEAR') ||
-    haystack.includes('DIRECTION=SHORT') ||
-    haystack.includes('DIRECTION=BEAR') ||
-    haystack.includes('SHORT_') ||
-    haystack.includes('_SHORT')
-  ) {
-    return 'SHORT';
-  }
+  const textSide = inferTradeSideFromText(haystack);
 
-  if (
-    haystack.includes('MICRO_LONG_') ||
-    haystack.includes('TRADESIDE=LONG') ||
-    haystack.includes('TRADE_SIDE=LONG') ||
-    haystack.includes('SIDE=LONG') ||
-    haystack.includes('SIDE=BULL') ||
-    haystack.includes('DIRECTION=LONG') ||
-    haystack.includes('DIRECTION=BULL') ||
-    haystack.includes('LONG_') ||
-    haystack.includes('_LONG')
-  ) {
-    return 'LONG';
-  }
+  if (textSide !== 'UNKNOWN') return textSide;
+
+  if (row.shortOnly === true || row.longDisabled === true) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
@@ -267,132 +329,323 @@ function isShortRow(row = {}) {
   return inferRowTradeSide(row) === TARGET_TRADE_SIDE;
 }
 
-function rotationFromPayload(payload = {}) {
+function isLongRow(row = {}) {
+  return inferRowTradeSide(row) === 'LONG';
+}
+
+function getMicroFamilyId(row = {}, fallback = null) {
   return (
-    payload?.rotation ||
-    payload?.nextRotation ||
-    payload?.activeRotation ||
-    payload ||
-    {}
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.id ||
+    row.key ||
+    fallback ||
+    null
   );
 }
 
-function shortRotationRows(payload = {}) {
-  const rotation = rotationFromPayload(payload);
-  const rows = Array.isArray(rotation?.microFamilies)
+function getMacroFamilyId(row = {}) {
+  return (
+    row.parentMacroFamilyId ||
+    row.macroFamilyId ||
+    row.parentMicroFamilyId ||
+    row.parentFamilyId ||
+    row.macroId ||
+    row.familyId ||
+    null
+  );
+}
+
+function forceShortRow(row = {}, index = 0) {
+  const microFamilyId = getMicroFamilyId(row);
+  const macroFamilyId = getMacroFamilyId(row);
+
+  return {
+    ...row,
+
+    rank: Number.isFinite(Number(row.rank))
+      ? Number(row.rank)
+      : index + 1,
+
+    microFamilyId,
+    trueMicroFamilyId: microFamilyId,
+
+    macroFamilyId,
+    parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
+    parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
+
+    ...flags()
+  };
+}
+
+function shortIdsFromRows(rows = []) {
+  return uniqueStrings(
+    rows
+      .filter(isShortRow)
+      .map((row) => getMicroFamilyId(row))
+      .filter(Boolean)
+  );
+}
+
+function shortMacroIdsFromRows(rows = []) {
+  return uniqueStrings(
+    rows
+      .filter(isShortRow)
+      .map((row) => getMacroFamilyId(row))
+      .filter(Boolean)
+  );
+}
+
+function filterShortIds(ids = []) {
+  return uniqueStrings(ids).filter((id) => inferTradeSideFromText(id) === TARGET_TRADE_SIDE);
+}
+
+function extractRotationFromPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  return (
+    payload.nextRotation ||
+    payload.rotation ||
+    payload.result?.nextRotation ||
+    payload.result?.rotation ||
+    null
+  );
+}
+
+function normalizeShortRotation(rotation = {}, fallback = {}) {
+  if (!rotation || typeof rotation !== 'object') {
+    return null;
+  }
+
+  const rawRows = Array.isArray(rotation.microFamilies)
     ? rotation.microFamilies
     : [];
 
-  return rows.filter(isShortRow);
+  const microFamilies = rawRows
+    .filter((row) => !isLongRow(row))
+    .filter(isShortRow)
+    .map((row, index) => forceShortRow(row, index))
+    .filter((row) => row.microFamilyId);
+
+  const rowMicroIds = shortIdsFromRows(microFamilies);
+  const rowMacroIds = shortMacroIdsFromRows(microFamilies);
+
+  const explicitMicroIds = filterShortIds([
+    ...(Array.isArray(rotation.microFamilyIds) ? rotation.microFamilyIds : []),
+    ...(Array.isArray(rotation.activeMicroFamilyIds) ? rotation.activeMicroFamilyIds : []),
+    ...(Array.isArray(rotation.trueMicroFamilyIds) ? rotation.trueMicroFamilyIds : []),
+    ...(Array.isArray(rotation.ids) ? rotation.ids : [])
+  ]);
+
+  const explicitMacroIds = filterShortIds([
+    ...(Array.isArray(rotation.macroFamilyIds) ? rotation.macroFamilyIds : []),
+    ...(Array.isArray(rotation.activeMacroFamilyIds) ? rotation.activeMacroFamilyIds : []),
+    ...(Array.isArray(rotation.macroIds) ? rotation.macroIds : [])
+  ]);
+
+  const microFamilyIds = rowMicroIds.length
+    ? rowMicroIds
+    : explicitMicroIds;
+
+  const macroFamilyIds = rowMacroIds.length
+    ? rowMacroIds
+    : explicitMacroIds;
+
+  const empty = microFamilyIds.length === 0 && microFamilies.length === 0;
+
+  return {
+    ...fallback,
+    ...rotation,
+
+    source: rotation.source || fallback.source || 'WEEKLY_FREEZE_NEXT_ROTATION_SHORT_ONLY',
+
+    ...flags(),
+
+    trueMicroOnly: true,
+    autoRotation: false,
+    activeRotationWriteBlocked: true,
+
+    bestLong: null,
+    bestShort: microFamilies[0] || null,
+
+    missingSides: empty ? [TARGET_TRADE_SIDE] : [],
+
+    empty,
+    emptyReason: empty
+      ? rotation.emptyReason || 'NO_SHORT_MICRO_FAMILIES_FOR_NEXT_ROTATION'
+      : null,
+
+    microFamilies,
+
+    microFamilyIds,
+    activeMicroFamilyIds: microFamilyIds,
+    trueMicroFamilyIds: microFamilyIds,
+
+    macroFamilyIds,
+    activeMacroFamilyIds: macroFamilyIds,
+
+    count: microFamilyIds.length || microFamilies.length,
+    activeCount: microFamilyIds.length || microFamilies.length,
+
+    rawMicroFamiliesCount: rawRows.length,
+    ignoredLongMicroFamilies: rawRows.filter(isLongRow).length
+  };
 }
 
-function responseWeekKey(payload, fallbackWeekKey = null) {
-  return (
-    payload?.weekKey ||
-    payload?.rotation?.sourceWeekKey ||
-    fallbackWeekKey ||
-    null
-  );
+function sanitizePayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const rotation = extractRotationFromPayload(payload);
+  const sanitizedRotation = rotation
+    ? normalizeShortRotation(rotation)
+    : null;
+
+  return {
+    ...payload,
+
+    ...flags(),
+
+    rotation: sanitizedRotation || payload.rotation || null,
+    nextRotation: sanitizedRotation || payload.nextRotation || null,
+
+    activeRotation: undefined,
+    active: undefined,
+
+    bestLong: null,
+    bestShort: sanitizedRotation?.bestShort || null,
+
+    microFamilyIds: sanitizedRotation?.microFamilyIds || [],
+    macroFamilyIds: sanitizedRotation?.macroFamilyIds || [],
+
+    selectedMicroFamilies: sanitizedRotation?.microFamilyIds?.length || 0,
+    selectedMacroFamilies: sanitizedRotation?.macroFamilyIds?.length || 0
+  };
 }
 
-function responseActiveWeekKey(payload, fallbackActiveWeekKey = null) {
-  return (
-    payload?.activeWeekKey ||
-    payload?.rotation?.activeWeekKey ||
-    fallbackActiveWeekKey ||
-    null
-  );
+function stableStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
-function responseRotationId(payload) {
-  return (
-    payload?.rotationId ||
-    payload?.rotation?.rotationId ||
-    null
-  );
-}
+async function restoreActiveRotation(redis, activeBefore) {
+  const key = activeRotationKey();
+  const activeAfter = await getJson(redis, key, null).catch(() => null);
 
-function responseMicroFamilyIds(payload) {
-  const rotation = rotationFromPayload(payload);
-  const rows = shortRotationRows(payload);
+  const changed = stableStringify(activeBefore) !== stableStringify(activeAfter);
 
-  if (rows.length > 0) {
-    return rows
-      .map((row) => row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)
-      .filter(Boolean);
+  if (activeBefore === null || activeBefore === undefined) {
+    await redis.del(key).catch(() => null);
+
+    return {
+      activeRotationRestored: changed,
+      activeRotationExistedBefore: false,
+      activeRotationRemovedBecauseFreezeCreatedIt: activeAfter !== null && activeAfter !== undefined
+    };
   }
 
-  const ids = Array.isArray(rotation?.microFamilyIds)
-    ? rotation.microFamilyIds
-    : [];
+  await setJson(redis, key, activeBefore).catch(() => null);
 
-  return ids.filter((id) => inferRowTradeSide(id) === TARGET_TRADE_SIDE);
+  return {
+    activeRotationRestored: changed,
+    activeRotationExistedBefore: true,
+    activeRotationRemovedBecauseFreezeCreatedIt: false
+  };
 }
 
-function responseMacroFamilyIds(payload) {
-  const rotation = rotationFromPayload(payload);
-  const rows = shortRotationRows(payload);
+async function persistSanitizedNextRotation({
+  redis,
+  payload,
+  weekKey,
+  activeWeekKey,
+  mode
+}) {
+  const nextRaw =
+    extractRotationFromPayload(payload) ||
+    await getJson(redis, nextRotationKey(), null).catch(() => null);
 
-  if (rows.length > 0) {
-    return [...new Set(
-      rows
-        .map((row) => (
-          row.parentMacroFamilyId ||
-          row.parentMicroFamilyId ||
-          row.macroFamilyId ||
-          row.familyId
-        ))
-        .filter(Boolean)
-    )];
+  const nextRotation = normalizeShortRotation(nextRaw, {
+    sourceWeekKey: weekKey,
+    activeWeekKey,
+    mode
+  });
+
+  if (!nextRotation) {
+    return {
+      nextRotation: null,
+      nextRotationPersisted: false
+    };
   }
 
-  const ids = Array.isArray(rotation?.macroFamilyIds)
-    ? rotation.macroFamilyIds
-    : [];
+  await setJson(redis, nextRotationKey(), nextRotation);
 
-  return ids.filter((id) => inferRowTradeSide(id) === TARGET_TRADE_SIDE);
+  await setJson(redis, rotationValidFromKey(), {
+    validFrom: activeWeekKey,
+    ts: now(),
+
+    source: 'WEEKLY_FREEZE_NEXT_ONLY_ACTIVE_NOT_TOUCHED',
+
+    sourceWeekKey: weekKey,
+    activeWeekKey,
+    mode,
+
+    rotationId: nextRotation.rotationId || null,
+
+    ...flags(),
+
+    selectedMicroFamilies: nextRotation.microFamilyIds.length,
+    selectedMacroFamilies: nextRotation.macroFamilyIds.length,
+
+    bestShort: nextRotation.bestShort?.microFamilyId || null,
+    bestLong: null,
+
+    missingSides: nextRotation.missingSides || []
+  });
+
+  return {
+    nextRotation,
+    nextRotationPersisted: true
+  };
 }
 
-function responseSelectedCount(payload) {
-  return responseMicroFamilyIds(payload).length;
+function unwrapLockResult(lockResult) {
+  if (
+    lockResult &&
+    typeof lockResult === 'object' &&
+    Object.prototype.hasOwnProperty.call(lockResult, 'result')
+  ) {
+    return lockResult.result;
+  }
+
+  return lockResult || null;
 }
 
-function responseEligibleCount(payload) {
+function payloadOk(lockResult, payload) {
+  if (lockResult?.ok === false) return false;
+  if (payload?.ok === false) return false;
+
+  return true;
+}
+
+function responseReason(payload = {}) {
   return (
-    payload?.rotation?.shortEligibleCount ||
-    payload?.rotation?.eligibleShortCount ||
-    payload?.rotation?.eligibleCount ||
-    0
-  );
-}
-
-function responseRankedCount(payload) {
-  return (
-    payload?.rotation?.shortRankedCount ||
-    payload?.rotation?.rankedShortCount ||
-    payload?.rotation?.rankedCount ||
-    0
-  );
-}
-
-function responseEmptyReason(payload) {
-  return (
-    payload?.rotation?.emptyReason ||
-    payload?.emptyReason ||
-    payload?.reason ||
+    payload.reason ||
+    payload.emptyReason ||
+    payload.rotation?.emptyReason ||
+    payload.nextRotation?.emptyReason ||
     null
   );
 }
 
 function errorStatus(error) {
-  if (Number.isFinite(error?.statusCode)) {
-    return error.statusCode;
-  }
+  if (Number.isFinite(error?.statusCode)) return error.statusCode;
 
   if (
     error?.reason === 'LOCK_NOT_ACQUIRED' ||
     error?.message === 'LOCK_NOT_ACQUIRED' ||
-    error?.message?.includes?.('LOCK')
+    String(error?.message || '').includes('LOCK')
   ) {
     return 409;
   }
@@ -402,24 +655,191 @@ function errorStatus(error) {
 
 async function runFreeze({
   req,
-  body
+  body,
+  redis
 }) {
   const weekKey = getWeekKey(req, body);
   const activeWeekKey = getActiveWeekKey(req, body);
   const mode = getRotationMode(req, body);
 
-  return freezeWeeklyRotation({
+  const activeBefore = await getJson(redis, activeRotationKey(), null).catch(() => null);
+
+  let rawPayload = null;
+  let activeProtection = null;
+
+  try {
+    rawPayload = await freezeWeeklyRotation({
+      weekKey,
+      activeWeekKey,
+      mode,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+      side: TARGET_DASHBOARD_SIDE,
+      positionSide: TARGET_TRADE_SIDE,
+      direction: TARGET_TRADE_SIDE,
+
+      shortOnly: true,
+      longDisabled: true,
+      disableLong: true,
+
+      nextRotationOnly: true,
+      preserveActiveRotation: true,
+      doNotActivate: true,
+      activateNextRotation: false,
+      autoActivate: false
+    });
+  } finally {
+    activeProtection = await restoreActiveRotation(redis, activeBefore);
+  }
+
+  const sanitizedPayload = sanitizePayload(rawPayload);
+
+  const {
+    nextRotation,
+    nextRotationPersisted
+  } = await persistSanitizedNextRotation({
+    redis,
+    payload: sanitizedPayload,
+    weekKey,
+    activeWeekKey,
+    mode
+  });
+
+  return {
+    ok: rawPayload?.ok !== false,
+    type: 'WEEKLY_FREEZE_NEXT_ROTATION_ONLY',
+
+    ...flags(),
+
     weekKey,
     activeWeekKey,
     mode,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    side: TARGET_TRADE_SIDE,
+    rotationId: nextRotation?.rotationId || sanitizedPayload?.rotationId || null,
 
-    shortOnly: true,
-    longDisabled: true,
-    disableLong: true
+    selectedMicroFamilies: nextRotation?.microFamilyIds?.length || 0,
+    selectedMacroFamilies: nextRotation?.macroFamilyIds?.length || 0,
+
+    empty: Boolean(nextRotation?.empty),
+    emptyReason: nextRotation?.emptyReason || responseReason(sanitizedPayload),
+
+    microFamilyIds: nextRotation?.microFamilyIds || [],
+    macroFamilyIds: nextRotation?.macroFamilyIds || [],
+
+    nextRotation,
+    nextRotationPersisted,
+
+    activeProtection,
+
+    result: sanitizedPayload
+  };
+}
+
+async function handleGet(req, res) {
+  const startedAt = now();
+  const redis = getDurableRedis();
+
+  const [activeRotationRaw, nextRotationRaw, validFrom] = await Promise.all([
+    getJson(redis, activeRotationKey(), null).catch(() => null),
+    getJson(redis, nextRotationKey(), null).catch(() => null),
+    getJson(redis, rotationValidFromKey(), null).catch(() => null)
+  ]);
+
+  const activeRotation = activeRotationRaw
+    ? normalizeShortRotation(activeRotationRaw)
+    : null;
+
+  const nextRotation = nextRotationRaw
+    ? normalizeShortRotation(nextRotationRaw)
+    : null;
+
+  return res.status(200).json({
+    ok: true,
+    skipped: true,
+    reason: 'GET_READ_ONLY_WEEKLY_FREEZE_DOES_NOT_BUILD_OR_ACTIVATE',
+
+    ...flags(),
+
+    endpointMode: 'READ_ONLY_FOR_GET',
+    cronDisabledExpected: true,
+
+    currentWeekKey: getIsoWeekKey(),
+    nextWeekKey: getNextIsoWeekKey(),
+
+    activeRotation,
+    nextRotation,
+    validFrom,
+
+    activeRotationId: activeRotation?.rotationId || null,
+    nextRotationId: nextRotation?.rotationId || null,
+
+    activeMicroFamilyIds: activeRotation?.microFamilyIds || [],
+    nextMicroFamilyIds: nextRotation?.microFamilyIds || [],
+
+    durationMs: now() - startedAt,
+    serverTs: Date.now()
+  });
+}
+
+async function handlePost(req, res) {
+  const startedAt = now();
+  const body = await readBody(req);
+  const redis = getDurableRedis();
+
+  const lockResult = await withRedisLock(
+    redis,
+    freezeLockKey(),
+    getFreezeLockTtlSec(),
+    async () => runFreeze({
+      req,
+      body,
+      redis
+    })
+  );
+
+  const payload = unwrapLockResult(lockResult);
+  const ok = payloadOk(lockResult, payload);
+
+  return res.status(ok ? 200 : 500).json({
+    ok,
+    skipped: Boolean(lockResult?.skipped || payload?.skipped),
+
+    source: 'API_WEEKLY_FREEZE_NEXT_ROTATION_ONLY',
+    type: payload?.type || 'WEEKLY_FREEZE_NEXT_ROTATION_ONLY',
+
+    ...flags(),
+
+    weekKey: payload?.weekKey || getWeekKey(req, body),
+    activeWeekKey: payload?.activeWeekKey || getActiveWeekKey(req, body),
+    mode: payload?.mode || getRotationMode(req, body),
+
+    rotationId: payload?.rotationId || null,
+
+    selectedMicroFamilies: payload?.selectedMicroFamilies || 0,
+    selectedMacroFamilies: payload?.selectedMacroFamilies || 0,
+
+    empty: Boolean(payload?.empty),
+    emptyReason: payload?.emptyReason || responseReason(payload),
+
+    microFamilyIds: payload?.microFamilyIds || [],
+    macroFamilyIds: payload?.macroFamilyIds || [],
+
+    nextRotation: payload?.nextRotation || null,
+    nextRotationPersisted: Boolean(payload?.nextRotationPersisted),
+
+    activeProtection: payload?.activeProtection || null,
+
+    result: payload?.result || payload,
+
+    lock: {
+      ok: lockResult?.ok !== false,
+      skipped: Boolean(lockResult?.skipped),
+      reason: lockResult?.reason || null
+    },
+
+    durationMs: now() - startedAt,
+    serverTs: Date.now()
   });
 }
 
@@ -427,89 +847,27 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.setHeader('X-Rotation-Target-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
-
-  const startedAt = now();
+  res.setHeader('X-Next-Rotation-Only', 'true');
+  res.setHeader('X-Active-Rotation-Preserved', 'true');
+  res.setHeader('X-Auto-Activation-Disabled', 'true');
 
   try {
-    if (!isAllowedMethod(req.method)) {
-      return methodNotAllowed(res);
+    if (req.method === 'GET') {
+      return await handleGet(req, res);
     }
 
-    const body = await readBody(req);
+    if (req.method === 'POST') {
+      return await handlePost(req, res);
+    }
 
-    const redis = getDurableRedis();
-    const lockKey = KEYS.analyze?.freezeLock || 'ANALYZE:WEEKLY_FREEZE_LOCK';
-    const lockTtlSec = getFreezeLockTtlSec();
-
-    const weekKey = getWeekKey(req, body);
-    const activeWeekKey = getActiveWeekKey(req, body);
-    const mode = getRotationMode(req, body);
-
-    const lockResult = await withRedisLock(
-      redis,
-      lockKey,
-      lockTtlSec,
-      async () => runFreeze({
-        req,
-        body
-      })
-    );
-
-    const payload = unwrapLockResult(lockResult);
-    const microFamilyIds = responseMicroFamilyIds(payload);
-    const macroFamilyIds = responseMacroFamilyIds(payload);
-
-    return res.status(200).json({
-      ok: payloadOk(lockResult, payload),
-      skipped: Boolean(lockResult?.skipped || payload?.skipped),
-
-      source: isManualRun(req, body)
-        ? 'ADMIN_MANUAL_FREEZE'
-        : 'CRON_OR_API_FREEZE',
-
-      type: payload?.type || 'NEXT_ROTATION_READY',
-
-      targetTradeSide: TARGET_TRADE_SIDE,
-      shortOnly: true,
-      longDisabled: true,
-
-      weekKey: responseWeekKey(payload, weekKey),
-      activeWeekKey: responseActiveWeekKey(payload, activeWeekKey),
-      mode,
-
-      rotationId: responseRotationId(payload),
-
-      selectedMicroFamilies: responseSelectedCount(payload),
-      selectedMacroFamilies: macroFamilyIds.length,
-
-      eligibleCount: responseEligibleCount(payload),
-      rankedCount: responseRankedCount(payload),
-
-      empty: microFamilyIds.length === 0 || Boolean(payload?.rotation?.empty),
-      emptyReason: responseEmptyReason(payload),
-
-      microFamilyIds,
-      macroFamilyIds,
-
-      durationMs: now() - startedAt,
-
-      result: payload,
-      lock: {
-        ok: lockResult?.ok !== false,
-        skipped: Boolean(lockResult?.skipped),
-        reason: lockResult?.reason || null
-      }
-    });
+    return methodNotAllowed(res);
   } catch (error) {
     return res.status(errorStatus(error)).json({
       ok: false,
 
-      targetTradeSide: TARGET_TRADE_SIDE,
-      shortOnly: true,
-      longDisabled: true,
+      ...flags(),
 
       error: error?.message || String(error),
-      durationMs: now() - startedAt,
       stack: process.env.NODE_ENV === 'production'
         ? undefined
         : error?.stack
