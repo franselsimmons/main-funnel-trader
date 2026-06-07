@@ -845,6 +845,8 @@ function applyNetCostModelToOutcome({
     spreadCostR: cost.spreadCostR,
 
     netR: round6(netR),
+    exitR: round6(netR),
+    pnlPct: round6(outcome.netPnlPct ?? outcome.pnlPct ?? 0),
     realizedNetR: round6(netR),
     realizedR: round6(netR),
     r: round6(netR),
@@ -1157,28 +1159,20 @@ async function maybeSendExitAlert(position, outcome) {
   if (!position.discordAlertEligible && !position.selectedMicroFamilyAlert) {
     return {
       sent: false,
+      queued: false,
       skipped: true,
       reason: 'POSITION_NOT_SELECTED_FOR_DISCORD_EXIT_ALERT'
     };
   }
 
-  try {
-    await sendExitAlert(outcome);
+  sendExitAlert(outcome).catch(() => null);
 
-    return {
-      sent: true,
-      skipped: false,
-      reason: 'DISCORD_EXIT_ALERT_SENT'
-    };
-  } catch (error) {
-    return {
-      sent: false,
-      skipped: false,
-      failed: true,
-      reason: 'DISCORD_EXIT_ALERT_FAILED',
-      error: error?.message || String(error)
-    };
-  }
+  return {
+    sent: false,
+    queued: true,
+    skipped: false,
+    reason: 'DISCORD_EXIT_ALERT_QUEUED_FIRE_AND_FORGET'
+  };
 }
 
 async function monitorOnePosition({
@@ -1247,8 +1241,7 @@ async function monitorOnePosition({
   const discordOutcome = clonePlainObject(outcome);
 
   await recordOutcome(analyzeOutcome, {
-    source: OUTCOME_SOURCE,
-    costModelApplied: true
+    source: OUTCOME_SOURCE
   });
 
   const discordResult = await maybeSendExitAlert(position, discordOutcome);
@@ -1261,7 +1254,8 @@ async function monitorOnePosition({
     outcome: {
       ...discordOutcome,
       discordExitAlertResult: discordResult,
-      discordExitAlertSent: Boolean(discordResult.sent)
+      discordExitAlertSent: Boolean(discordResult.sent),
+      discordExitAlertQueued: Boolean(discordResult.queued)
     }
   };
 }
