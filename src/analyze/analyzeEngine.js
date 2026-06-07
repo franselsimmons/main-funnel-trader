@@ -1,5 +1,3 @@
-// ================= FILE: src/analyze/analyzeEngine.js =================
-
 import { gzipSync, gunzipSync } from 'zlib';
 import { createHash } from 'crypto';
 import { CONFIG } from '../config.js';
@@ -39,6 +37,9 @@ const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
+const OBSERVATION_SOURCE = 'VIRTUAL';
+const OUTCOME_SOURCE = 'SHADOW';
+
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
@@ -50,11 +51,20 @@ function now() {
 }
 
 function normalizeSource(source) {
-  const raw = String(source || 'REAL').toUpperCase();
+  const raw = String(source || OUTCOME_SOURCE).trim().toUpperCase();
 
-  if (raw === 'SHADOW') return 'REAL';
+  if (raw === 'VIRTUAL') return OUTCOME_SOURCE;
+  if (raw === 'SHADOW') return OUTCOME_SOURCE;
+  if (raw === 'REAL') return 'REAL';
 
-  return raw;
+  return raw || OUTCOME_SOURCE;
+}
+
+function obsDedupeTtlSec() {
+  return Math.max(
+    60,
+    Math.floor(safeNumber(CONFIG.analyze?.obsDedupeTtlSec, 60 * 60 * 24))
+  );
 }
 
 function bool(value, fallback = false) {
@@ -523,19 +533,38 @@ function compactExample(example, maxStringLength = 480) {
     symbol: example.symbol || example.baseSymbol || example.contractSymbol || null,
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
+    source: example.source || OBSERVATION_SOURCE,
+
     rsiZone: example.rsiZone || null,
     rsiCoarse: example.rsiCoarse || null,
+
     flow: example.flow || null,
     flowCoarse: example.flowCoarse || null,
+
     obRelation: example.obRelation || null,
+
     btcRelation: example.btcRelation || null,
     btcState: example.btcState || null,
+
     regime: example.regime || null,
+    regimeCoarse: example.regimeCoarse || null,
+
     scannerReason: example.scannerReason || null,
     scannerReasonCoarse: example.scannerReasonCoarse || null,
+
+    microFamilyId: example.microFamilyId || example.trueMicroFamilyId || null,
+    trueMicroFamilyId: example.trueMicroFamilyId || example.microFamilyId || null,
+    macroFamilyId: example.macroFamilyId || example.parentMacroFamilyId || null,
+    parentMacroFamilyId: example.parentMacroFamilyId || example.macroFamilyId || null,
+
+    observationOnly: Boolean(example.observationOnly),
+    analysisInputOnly: Boolean(example.analysisInputOnly),
+    learningOnly: Boolean(example.learningOnly),
+
     isMirrorMicroFamily: false,
     observationMirror: false,
     analysisMirror: false,
+
     ts: safeNumber(example.ts || example.createdAt, null)
   };
 }
@@ -553,13 +582,17 @@ function compactOutcome(outcome = {}) {
   if (!outcome || typeof outcome !== 'object') return null;
   if (inferTradeSide(outcome) !== TARGET_TRADE_SIDE) return null;
 
+  const src = normalizeSource(outcome.source || OUTCOME_SOURCE);
+
   return {
-    source: normalizeSource(outcome.source || 'REAL'),
+    source: src,
+    positionSource: outcome.positionSource || null,
 
     tradeId: outcome.tradeId || null,
 
     symbol: outcome.symbol || outcome.baseSymbol || outcome.contractSymbol || null,
     contractSymbol: outcome.contractSymbol || null,
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
 
@@ -575,6 +608,8 @@ function compactOutcome(outcome = {}) {
 
     costR: safeNumber(outcome.costR, 0),
     costPct: safeNumber(outcome.costPct, 0),
+    feePct: safeNumber(outcome.feePct, 0),
+    slippagePct: safeNumber(outcome.slippagePct, 0),
 
     mfeR: safeNumber(outcome.mfeR, 0),
     maeR: safeNumber(outcome.maeR, 0),
@@ -591,6 +626,14 @@ function compactOutcome(outcome = {}) {
     gaveBackAfterHalfR: Boolean(outcome.gaveBackAfterHalfR),
     gaveBackAfterOneR: Boolean(outcome.gaveBackAfterOneR),
     nearTpThenLoss: Boolean(outcome.nearTpThenLoss),
+
+    virtualOnly: Boolean(outcome.virtualOnly),
+    virtualTracked: Boolean(outcome.virtualTracked),
+    shadowOnly: Boolean(outcome.shadowOnly || src === OUTCOME_SOURCE),
+
+    costModelApplied: Boolean(outcome.costModelApplied),
+    netCostModelApplied: Boolean(outcome.netCostModelApplied),
+    costModel: outcome.costModel || null,
 
     isMirrorMicroFamily: false,
 
@@ -711,6 +754,53 @@ function bpsBucket(value, label, step = 2, max = 80) {
   });
 }
 
+function coarseNumberTier(value, {
+  label,
+  low,
+  high,
+  fallback = 'NA',
+  lowLabel = 'LO',
+  midLabel = 'MID',
+  highLabel = 'HI'
+} = {}) {
+  const n = safeNumber(value, null);
+
+  if (!Number.isFinite(n)) return `${label}=${fallback}`;
+  if (n < low) return `${label}=${lowLabel}`;
+  if (n >= high) return `${label}=${highLabel}`;
+
+  return `${label}=${midLabel}`;
+}
+
+function coarsePctTier(value, {
+  label,
+  low,
+  high,
+  fallback = 'NA',
+  lowLabel = 'LO',
+  midLabel = 'MID',
+  highLabel = 'HI'
+} = {}) {
+  const n = safeNumber(value, null);
+
+  if (!Number.isFinite(n)) return `${label}=${fallback}`;
+
+  const pct = Math.abs(n) <= 1 ? n * 100 : n;
+
+  if (pct < low) return `${label}=${lowLabel}`;
+  if (pct >= high) return `${label}=${highLabel}`;
+
+  return `${label}=${midLabel}`;
+}
+
+function confirmationBucket(row = {}) {
+  if (row.retestConfirmed) return 'CONFIRM=RETEST';
+  if (row.pullbackConfirmed) return 'CONFIRM=PULLBACK';
+  if (row.sweepConfirmed) return 'CONFIRM=SWEEP';
+
+  return 'CONFIRM=RAW';
+}
+
 function stableHash(value, length = EXECUTION_MICRO_HASH_LEN) {
   return createHash('sha256')
     .update(String(value || ''))
@@ -777,12 +867,14 @@ function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
   const slDistancePct = firstDefined(
     row.slDistancePct,
     row.stopDistancePct,
-    row.stopLossDistancePct
+    row.stopLossDistancePct,
+    row.riskPct
   );
 
   const tpDistancePct = firstDefined(
     row.tpDistancePct,
-    row.takeProfitDistancePct
+    row.takeProfitDistancePct,
+    row.rewardPct
   );
 
   const volatilityPct = firstDefined(
@@ -799,52 +891,129 @@ function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
     row.moveScore
   );
 
+  const rr = firstDefined(
+    row.rr,
+    row.riskReward,
+    row.rewardRisk
+  );
+
   return mergeDefinitionParts([
     `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
-    `FAMILY=${normalizeBucketText(classified.familyId || row.familyId || 'NO_FAMILY')}`,
-    `MACRO=${normalizeBucketText(classified.macroFamilyId || classified.parentMacroFamilyId || macro.microFamilyId || row.macroFamilyId || row.parentMacroFamilyId || 'NO_MACRO')}`,
 
-    `ASSET=${normalizeBucketText(classified.assetClass || row.assetClass || 'NA')}`,
+    `FAMILY=${normalizeBucketText(classified.familyId || row.familyId || 'NO_FAMILY')}`,
+    `MACRO=${normalizeBucketText(
+      classified.macroFamilyId ||
+      classified.parentMacroFamilyId ||
+      macro.microFamilyId ||
+      row.macroFamilyId ||
+      row.parentMacroFamilyId ||
+      'NO_MACRO'
+    )}`,
 
     `RSI=${normalizeBucketText(classified.rsiZone || row.rsiZone || 'NA')}`,
     `RSI_COARSE=${normalizeBucketText(classified.rsiCoarse || row.rsiCoarse || 'NA')}`,
-    numericBucket(row.rsiSlope, { label: 'RSI_SLOPE', step: 5, min: -100, max: 100 }),
-    numericBucket(row.rsiVelocity, { label: 'RSI_VEL', step: 5, min: -100, max: 100 }),
-    numericBucket(row.rsiDelta, { label: 'RSI_DELTA', step: 5, min: -100, max: 100 }),
-    numericBucket(row.rsiMomentum, { label: 'RSI_MOM', step: 5, min: -100, max: 100 }),
 
-    `FLOW=${normalizeBucketText(classified.flow || row.flow || 'NA')}`,
-    `FLOW_COARSE=${normalizeBucketText(classified.flowCoarse || row.flowCoarse || 'NA')}`,
+    `FLOW=${normalizeBucketText(classified.flowCoarse || row.flowCoarse || classified.flow || row.flow || 'NA')}`,
 
     `OB_REL=${normalizeBucketText(classified.obRelation || row.obRelation || 'NA')}`,
-    numericBucket(orderbookImbalance, { label: 'OB_IMB', step: 0.1, min: -2, max: 2 }),
-    numericBucket(spoofScore, { label: 'SPOOF', step: 5, min: 0, max: 100 }),
+    coarseNumberTier(orderbookImbalance, {
+      label: 'OB_IMB',
+      low: -0.25,
+      high: 0.25,
+      lowLabel: 'ASK_HEAVY',
+      midLabel: 'BALANCED',
+      highLabel: 'BID_HEAVY'
+    }),
+    coarseNumberTier(spoofScore, {
+      label: 'SPOOF',
+      low: 30,
+      high: 70
+    }),
 
     `BTC_STATE=${normalizeBucketText(classified.btcState || row.btcState || 'NA')}`,
     `BTC_REL=${normalizeBucketText(classified.btcRelation || row.btcRelation || 'NA')}`,
 
-    `REGIME=${normalizeBucketText(classified.regime || row.regime || 'NA')}`,
-    `REGIME_COARSE=${normalizeBucketText(classified.regimeCoarse || row.regimeCoarse || 'NA')}`,
+    `REGIME=${normalizeBucketText(classified.regimeCoarse || row.regimeCoarse || classified.regime || row.regime || 'NA')}`,
 
     `SCANNER=${normalizeBucketText(scannerReason || 'NA')}`,
 
-    bpsBucket(spreadBps, 'SPREAD_BPS', 2, 80),
-    numericBucket(row.depthMinUsd1p, { label: 'DEPTH_1P_USD', step: 25_000, min: 0, max: 2_000_000 }),
-    ratioBucket(row.fundingRate, 'FUNDING', 0.01, 1),
+    coarseNumberTier(spreadBps, {
+      label: 'SPREAD',
+      low: 4,
+      high: 15,
+      lowLabel: 'TIGHT',
+      midLabel: 'NORMAL',
+      highLabel: 'WIDE'
+    }),
+    coarseNumberTier(row.depthMinUsd1p, {
+      label: 'DEPTH',
+      low: 50_000,
+      high: 300_000
+    }),
 
-    ratioBucket(entryDistancePct, 'ENTRY_DIST', 0.25, 15),
-    ratioBucket(slDistancePct, 'SL_DIST', 0.25, 20),
-    ratioBucket(tpDistancePct, 'TP_DIST', 0.5, 40),
-    ratioBucket(liqDistancePct, 'LIQ_DIST', 0.5, 50),
-    ratioBucket(volatilityPct, 'VOL', 0.25, 25),
+    coarsePctTier(row.fundingRate, {
+      label: 'FUNDING',
+      low: -0.01,
+      high: 0.01,
+      lowLabel: 'NEG',
+      midLabel: 'FLAT',
+      highLabel: 'POS'
+    }),
 
-    numericBucket(confluence, { label: 'CONFLUENCE', step: 5, min: 0, max: 100 }),
+    coarsePctTier(entryDistancePct, {
+      label: 'ENTRY_DIST',
+      low: 0.25,
+      high: 1.5,
+      lowLabel: 'NEAR',
+      midLabel: 'MID',
+      highLabel: 'FAR'
+    }),
+    coarsePctTier(slDistancePct, {
+      label: 'RISK',
+      low: 0.7,
+      high: 2.0,
+      lowLabel: 'TIGHT',
+      midLabel: 'NORMAL',
+      highLabel: 'WIDE'
+    }),
+    coarsePctTier(tpDistancePct, {
+      label: 'REWARD',
+      low: 1.0,
+      high: 3.5,
+      lowLabel: 'SMALL',
+      midLabel: 'NORMAL',
+      highLabel: 'LARGE'
+    }),
+    coarsePctTier(liqDistancePct, {
+      label: 'LIQ_DIST',
+      low: 1.0,
+      high: 5.0,
+      lowLabel: 'NEAR',
+      midLabel: 'MID',
+      highLabel: 'FAR'
+    }),
+    coarsePctTier(volatilityPct, {
+      label: 'VOL',
+      low: 1.0,
+      high: 4.0
+    }),
+
+    coarseNumberTier(rr, {
+      label: 'RR',
+      low: 1.2,
+      high: 2.0
+    }),
+
+    coarseNumberTier(confluence, {
+      label: 'CONFLUENCE',
+      low: 35,
+      high: 70
+    }),
 
     `ENTRY_QUALITY=${normalizeBucketText(row.entryQuality || 'NA')}`,
 
-    boolBucket(Boolean(row.retestConfirmed), 'RETEST'),
-    boolBucket(Boolean(row.pullbackConfirmed), 'PULLBACK'),
-    boolBucket(Boolean(row.sweepConfirmed), 'SWEEP'),
+    confirmationBucket(row),
+
     boolBucket(Boolean(row.fakeBreakout), 'FAKE_BO'),
     boolBucket(Boolean(row.fakeBreakoutRisk), 'FAKE_RISK')
   ]);
@@ -877,7 +1046,8 @@ function refineExecutionMicroFamily(classified = {}, row = {}, macro = {}) {
     [
       `COARSE_MICRO=${coarseMicroFamilyId}`,
       `EXECUTION_HASH=${executionHash}`,
-      `EXECUTION_SCHEMA=${EXECUTION_MICRO_SUFFIX}`
+      `EXECUTION_SCHEMA=${EXECUTION_MICRO_SUFFIX}`,
+      `SCHEMA=${getAnalyzeSchemaMeta().microSchema}`
     ]
   );
 
@@ -1194,7 +1364,7 @@ function getMinimalMicroForStorage(row = {}) {
 
     completed: safeNumber(refreshed.completed, 0),
     realCompleted: safeNumber(refreshed.realCompleted, 0),
-    shadowCompleted: 0,
+    shadowCompleted: safeNumber(refreshed.shadowCompleted, 0),
 
     wins: safeNumber(refreshed.wins, 0),
     losses: safeNumber(refreshed.losses, 0),
@@ -1204,9 +1374,9 @@ function getMinimalMicroForStorage(row = {}) {
     realLosses: safeNumber(refreshed.realLosses, 0),
     realFlats: safeNumber(refreshed.realFlats, 0),
 
-    shadowWins: 0,
-    shadowLosses: 0,
-    shadowFlats: 0,
+    shadowWins: safeNumber(refreshed.shadowWins, 0),
+    shadowLosses: safeNumber(refreshed.shadowLosses, 0),
+    shadowFlats: safeNumber(refreshed.shadowFlats, 0),
 
     winrate: safeNumber(refreshed.winrate, 0),
     bayesianWinrate: safeNumber(refreshed.bayesianWinrate, 0),
@@ -1215,7 +1385,7 @@ function getMinimalMicroForStorage(row = {}) {
 
     totalR: safeNumber(refreshed.totalR, 0),
     realTotalR: safeNumber(refreshed.realTotalR, 0),
-    shadowTotalR: 0,
+    shadowTotalR: safeNumber(refreshed.shadowTotalR, 0),
 
     avgR: safeNumber(refreshed.avgR, 0),
     avgWinR: safeNumber(refreshed.avgWinR, 0),
@@ -2348,7 +2518,7 @@ export async function analyzeCandidatesBatch(
 
       const firstObservation = await redis.set(obsKey, '1', {
         nx: true,
-        ex: CONFIG.analyze.obsDedupeTtlSec
+        ex: obsDedupeTtlSec()
       });
 
       const micro = getOrCreateMicro(
@@ -2361,20 +2531,29 @@ export async function analyzeCandidatesBatch(
         updateObservation(micro, {
           ...batch.metrics,
           ...classified,
+
           side: TARGET_DASHBOARD_SIDE,
           tradeSide: TARGET_TRADE_SIDE,
           positionSide: TARGET_TRADE_SIDE,
           direction: TARGET_TRADE_SIDE,
+
           targetTradeSide: TARGET_TRADE_SIDE,
           dashboardSide: TARGET_DASHBOARD_SIDE,
+
           shortOnly: true,
           longDisabled: true,
           longOnly: false,
           shortDisabled: false,
+
           weekKey,
           strategyVersion: CONFIG.strategyVersion,
-          source: 'REAL',
-          analysisType: 'REAL_TRADE_SETUP_OBSERVATION',
+
+          source: OBSERVATION_SOURCE,
+          analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
+
+          virtualOnly: true,
+          virtualTracked: true,
+
           createdAt: batch.metrics.createdAt || now()
         });
 
@@ -2385,21 +2564,31 @@ export async function analyzeCandidatesBatch(
         analyzed.push({
           ...batch.metrics,
           ...classified,
+
           side: TARGET_DASHBOARD_SIDE,
           tradeSide: TARGET_TRADE_SIDE,
           positionSide: TARGET_TRADE_SIDE,
           direction: TARGET_TRADE_SIDE,
+
           targetTradeSide: TARGET_TRADE_SIDE,
           dashboardSide: TARGET_DASHBOARD_SIDE,
+
           shortOnly: true,
           longDisabled: true,
           longOnly: false,
           shortDisabled: false,
-          source: 'REAL',
-          analysisType: 'REAL_TRADE_SETUP_OBSERVATION',
+
+          source: OBSERVATION_SOURCE,
+          analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
+
           observationRecorded: Boolean(firstObservation),
+
           mirrorMicroFamiliesCreated: 0,
           mirrorMicroFamilyIds: [],
+
+          virtualOnly: true,
+          virtualTracked: true,
+
           weekKey,
           strategyVersion: CONFIG.strategyVersion
         });
@@ -2423,7 +2612,7 @@ export async function analyzeCandidatesBatch(
 export async function recordOutcome(
   outcome = {},
   {
-    source = outcome.source || 'REAL',
+    source = outcome.source || OUTCOME_SOURCE,
     weekKey = getIsoWeekKey(outcome.closedAt || outcome.completedAt || now())
   } = {}
 ) {
@@ -2446,7 +2635,11 @@ export async function recordOutcome(
     ...outcome,
     source: src,
     weekKey,
-    strategyVersion: CONFIG.strategyVersion
+    strategyVersion: CONFIG.strategyVersion,
+
+    virtualOnly: outcome.virtualOnly !== false,
+    virtualTracked: outcome.virtualTracked !== false,
+    shadowOnly: true
   });
 
   if (!row) {
@@ -2481,17 +2674,33 @@ export async function recordOutcome(
 
   updateOutcome(micro, {
     ...row,
+
     source: src,
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
+
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
-    shortDisabled: false
+    shortDisabled: false,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    netR: safeNumber(row.netR ?? row.exitR, 0),
+    exitR: safeNumber(row.exitR ?? row.netR, 0),
+    costR: safeNumber(row.costR, 0),
+    grossR: safeNumber(row.grossR, 0),
+
+    costModelApplied: Boolean(row.costModelApplied),
+    netCostModelApplied: Boolean(row.netCostModelApplied)
   }, src);
 
   await saveWeekMicros(
@@ -2517,7 +2726,7 @@ export async function createShadowPosition() {
     ok: false,
     created: false,
     skipped: true,
-    reason: 'SHADOW_DISABLED_REAL_TRADES_ONLY'
+    reason: 'SHADOW_POSITION_CREATION_MOVED_TO_POSITION_ENGINE_VIRTUAL_TRACKING'
   };
 }
 
@@ -2668,7 +2877,7 @@ export function buildOutcomeFromPosition({
   position,
   exitPrice,
   exitReason,
-  source = 'REAL'
+  source = OUTCOME_SOURCE
 }) {
   if (!position) {
     throw new Error('POSITION_REQUIRED_FOR_OUTCOME');
@@ -2699,16 +2908,20 @@ export function buildOutcomeFromPosition({
   });
 
   const closedAt = now();
+  const src = normalizeSource(source);
 
   return {
     type: 'OUTCOME',
-    source: normalizeSource(source),
+    source: src,
+    positionSource: position.source || 'VIRTUAL',
+
     strategyVersion: CONFIG.strategyVersion,
 
     tradeId: position.tradeId,
 
     symbol: position.symbol,
     contractSymbol: position.contractSymbol,
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
@@ -2721,6 +2934,10 @@ export function buildOutcomeFromPosition({
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: src === OUTCOME_SOURCE,
 
     ...copyMicroClassificationFields(position),
 
@@ -2735,17 +2952,32 @@ export function buildOutcomeFromPosition({
     exitReason,
 
     grossR: cost.grossR,
+    rawR: cost.grossR,
+    realizedGrossR: cost.grossR,
     grossPnlPct: cost.grossPnlPct,
 
     exitR: cost.netR,
     pnlPct: cost.netPnlPct,
     netR: cost.netR,
+    realizedNetR: cost.netR,
+    realizedR: cost.netR,
+    r: cost.netR,
     netPnlPct: cost.netPnlPct,
 
     costR: cost.costR,
+    avgCostR: cost.costR,
     costPct: cost.costPct,
     feePct: cost.feePct,
     slippagePct: cost.slippagePct,
+
+    win: cost.netR > 0,
+    loss: cost.netR < 0,
+    flat: cost.netR === 0,
+    isWin: cost.netR > 0,
+
+    costModelApplied: true,
+    netCostModelApplied: true,
+    costModel: 'APPLY_COSTS_NET_R_V1',
 
     mfeR: safeNumber(position.mfeR, 0),
     maeR: safeNumber(position.maeR, 0),
@@ -2768,6 +3000,7 @@ export function buildOutcomeFromPosition({
     nearTpThenLoss: Boolean(position.nearTpThenLoss),
 
     openedAt: position.openedAt || position.createdAt || null,
-    closedAt
+    closedAt,
+    completedAt: closedAt
   };
 }
