@@ -17,6 +17,8 @@ const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 
 const LOCK_TTL_SEC = 300;
+const DEFAULT_CONFIRM_TEXT = 'FACTORY_RESET_CONFIRMED';
+const DEFAULT_ROTATION_CONFIRM_TEXT = 'RESET_ROTATION_CONFIRMED';
 
 const LOCK_KEYS = {
   admin: 'ADMIN:FACTORY_RESET:LOCK',
@@ -64,7 +66,9 @@ function modePayload() {
     manualSelectionRequired: true,
     discordOnlyForSelectedMicroFamilies: true,
 
-    autoRotationActivationDisabled: true
+    autoRotationActivationDisabled: true,
+    manualRotationPreservedByDefault: true,
+    explicitRotationResetRequired: true
   };
 }
 
@@ -105,19 +109,36 @@ async function readBody(req) {
 }
 
 function isTrue(value) {
-  return (
-    value === true ||
-    value === 'true' ||
-    value === 'TRUE' ||
-    value === 1 ||
-    value === '1'
-  );
+  if (value === true || value === 1) return true;
+
+  const raw = String(value || '').trim().toLowerCase();
+
+  return ['true', '1', 'yes', 'y', 'on'].includes(raw);
 }
 
 function isConfirmed(body = {}, requiredText) {
   return (
     body.confirm === requiredText ||
-    body.confirmed === requiredText
+    body.confirmed === requiredText ||
+    body.confirmation === requiredText
+  );
+}
+
+function wantsRotationReset(body = {}) {
+  return (
+    isTrue(body.resetRotation) ||
+    isTrue(body.resetManualSelection) ||
+    isTrue(body.clearManualSelection) ||
+    isTrue(body.wipeRotation)
+  );
+}
+
+function isRotationResetConfirmed(body = {}, requiredText) {
+  return (
+    body.confirmRotation === requiredText ||
+    body.rotationConfirm === requiredText ||
+    body.rotationConfirmation === requiredText ||
+    body.confirmResetRotation === requiredText
   );
 }
 
@@ -268,6 +289,8 @@ function openPositionSymbols(openPositions = []) {
 }
 
 function normalizeOpenPosition(position = {}) {
+  const source = String(position.source || 'VIRTUAL').toUpperCase();
+
   return {
     tradeId: position.tradeId || null,
 
@@ -291,11 +314,17 @@ function normalizeOpenPosition(position = {}) {
 
     shortOnly: true,
     longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
 
-    source: position.source || 'VIRTUAL',
-    virtualOnly: position.virtualOnly !== false,
-    virtualTracked: position.virtualTracked !== false,
+    source: source === 'VIRTUAL' ? 'VIRTUAL' : source,
+    virtualOnly: true,
+    virtualTracked: true,
     shadowOnly: position.shadowOnly !== false,
+
+    exchangeTouched: false,
+    bitgetOrdersTouched: false,
+    realOrdersTouched: false,
 
     openedAt: position.openedAt || position.createdAt || null,
     updatedAt: position.updatedAt || null
@@ -304,9 +333,11 @@ function normalizeOpenPosition(position = {}) {
 
 async function runDeleteSteps({
   durable,
-  volatile
+  volatile,
+  resetRotation = false
 }) {
   const deleted = {};
+  const preserved = {};
 
   // Scanner volatile data.
   deleted.scanSnapshots = await delPatternSafe(
@@ -382,11 +413,18 @@ async function runDeleteSteps({
     10000
   );
 
-  // Rotation: explicit factory reset may wipe manual selection.
-  deleted.activeRotation = await delKey(
-    durable,
-    KEYS.analyze?.activeRotation
-  );
+  // Rotation policy:
+  // - activeRotation = jouw handmatige selectie, standaard bewaren.
+  // - nextRotation/validFrom = pending/legacy state, altijd verwijderen tegen auto-activatie.
+  if (resetRotation) {
+    deleted.activeRotation = await delKey(
+      durable,
+      KEYS.analyze?.activeRotation
+    );
+  } else {
+    deleted.activeRotation = 0;
+    preserved.activeRotation = true;
+  }
 
   deleted.nextRotation = await delKey(
     durable,
@@ -417,7 +455,10 @@ async function runDeleteSteps({
     10000
   );
 
-  return deleted;
+  return {
+    deleted,
+    preserved
+  };
 }
 
 function buildBlockedResponse({
@@ -437,11 +478,12 @@ function buildBlockedResponse({
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Factory-Reset-Mode', 'short-only-virtual-learning-v2');
+  res.setHeader('X-Admin-Factory-Reset-Mode', 'short-only-virtual-learning-v3');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Real-Orders-Disabled', 'true');
   res.setHeader('X-Virtual-Positions-Only', 'true');
+  res.setHeader('X-Manual-Rotation-Preserved-By-Default', 'true');
 
   const token = randomUUID();
   let acquiredLocks = [];
@@ -454,12 +496,17 @@ export default async function handler(req, res) {
     const body = await readBody(req);
 
     const requiredConfirmText =
-      CONFIG.reset?.confirmText || 'FACTORY_RESET_CONFIRMED';
+      CONFIG.reset?.confirmText || DEFAULT_CONFIRM_TEXT;
+
+    const requiredRotationConfirmText =
+      CONFIG.reset?.rotationConfirmText || DEFAULT_ROTATION_CONFIRM_TEXT;
 
     const confirmed = isConfirmed(body, requiredConfirmText);
+    const resetRotation = wantsRotationReset(body);
 
-    const force =
+    const forceDeleteVirtualPositions =
       isTrue(body.force) ||
+      isTrue(body.forceDeleteVirtualPositions) ||
       isTrue(body.forceClosePositions);
 
     if (!confirmed) {
@@ -468,6 +515,18 @@ export default async function handler(req, res) {
           reason: 'CONFIRMATION_REQUIRED',
           extra: {
             required: requiredConfirmText
+          }
+        })
+      );
+    }
+
+    if (resetRotation && !isRotationResetConfirmed(body, requiredRotationConfirmText)) {
+      return res.status(400).json(
+        buildBlockedResponse({
+          reason: 'ROTATION_RESET_CONFIRMATION_REQUIRED',
+          extra: {
+            required: requiredRotationConfirmText,
+            note: 'activeRotation bevat je handmatige micro-family keuze en wordt standaard bewaard.'
           }
         })
       );
@@ -500,7 +559,7 @@ export default async function handler(req, res) {
 
     const openPositions = await getOpenPositions();
 
-    if (openPositions.length > 0 && !force) {
+    if (openPositions.length > 0 && !forceDeleteVirtualPositions) {
       return res.status(409).json(
         buildBlockedResponse({
           reason: 'OPEN_VIRTUAL_POSITIONS_EXIST',
@@ -508,15 +567,20 @@ export default async function handler(req, res) {
             count: openPositions.length,
             symbols: openPositionSymbols(openPositions),
             openPositions: openPositions.map(normalizeOpenPosition),
-            requiredForceFlag: 'force=true'
+            requiredForceFlag: 'forceDeleteVirtualPositions=true',
+            deprecatedAcceptedForceFlag: 'forceClosePositions=true',
+            exchangeTouched: false,
+            bitgetOrdersTouched: false,
+            realOrdersTouched: false
           }
         })
       );
     }
 
-    const deleted = await runDeleteSteps({
+    const deleteResult = await runDeleteSteps({
       durable,
-      volatile
+      volatile,
+      resetRotation
     });
 
     const report = {
@@ -525,7 +589,12 @@ export default async function handler(req, res) {
 
       ...modePayload(),
 
-      force,
+      force: forceDeleteVirtualPositions,
+      forceDeleteVirtualPositions,
+
+      resetRotation,
+      manualRotationPreserved: !resetRotation,
+      pendingRotationStateCleared: true,
 
       exchangeTouched: false,
       bitgetOrdersTouched: false,
@@ -535,13 +604,15 @@ export default async function handler(req, res) {
       openPositionSymbols: openPositionSymbols(openPositions),
       openPositions: openPositions.map(normalizeOpenPosition),
 
-      deleted,
+      deleted: deleteResult.deleted,
 
       preserved: {
+        ...deleteResult.preserved,
         resetLogs: true,
         discordLogs: true,
         environmentVariables: true,
-        deploymentConfig: true
+        deploymentConfig: true,
+        activeRotation: !resetRotation
       },
 
       resetAt: now()
