@@ -1,11 +1,18 @@
 // ================= FILE: api/admin/scanner.js =================
 
 import { KEYS } from '../../src/keys.js';
-import { getVolatileRedis, getJson } from '../../src/redis.js';
+import {
+  getVolatileRedis,
+  getJson,
+  getKeys
+} from '../../src/redis.js';
 import { sideToTradeSide, safeNumber } from '../../src/utils.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
+
+const SNAPSHOT_SEARCH_LIMIT = 80;
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'GET');
@@ -17,8 +24,29 @@ function methodNotAllowed(res) {
   });
 }
 
+function now() {
+  return Date.now();
+}
+
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY', 'SHORT');
+}
+
+function snapshotPattern() {
+  try {
+    return KEYS.scan.snapshot('*');
+  } catch {
+    return 'SCAN:SNAPSHOT:*';
+  }
 }
 
 function extractSnapshotId(latest) {
@@ -49,6 +77,16 @@ function hasFullSnapshotShape(value) {
   );
 }
 
+function snapshotCreatedAt(snapshot = {}) {
+  return safeNumber(
+    snapshot.createdAt ||
+    snapshot.completedAt ||
+    snapshot.ts ||
+    snapshot.scannerTs,
+    0
+  );
+}
+
 function getDefinitionHaystack(row = {}) {
   return [
     row.definition,
@@ -58,30 +96,18 @@ function getDefinitionHaystack(row = {}) {
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
-    .map((value) => upper(value))
+    .map((value) => cleanSideText(value))
     .join(' | ');
 }
 
 function inferTradeSide(row = {}) {
   if (typeof row === 'string') {
-    const value = upper(row);
+    const value = cleanSideText(row);
 
     if (!value) return 'UNKNOWN';
-
-    if (
-      value.includes('MICRO_SHORT_') ||
-      value.includes('TRADESIDE=SHORT') ||
-      value.includes('TRADE_SIDE=SHORT') ||
-      value.includes('SIDE=SHORT') ||
-      value.includes('SIDE=BEAR') ||
-      value.includes('DIRECTION=SHORT') ||
-      value.includes('DIRECTION=BEAR') ||
-      value.includes('SHORT')
-    ) {
-      return 'SHORT';
-    }
 
     if (
       value.includes('MICRO_LONG_') ||
@@ -91,9 +117,35 @@ function inferTradeSide(row = {}) {
       value.includes('SIDE=BULL') ||
       value.includes('DIRECTION=LONG') ||
       value.includes('DIRECTION=BULL') ||
-      value.includes('LONG')
+      value.includes('POSITION_SIDE=LONG') ||
+      value.includes('POSITIONSIDE=LONG')
     ) {
-      return 'LONG';
+      return OPPOSITE_TRADE_SIDE;
+    }
+
+    if (
+      value.includes('MICRO_SHORT_') ||
+      value.includes('TRADESIDE=SHORT') ||
+      value.includes('TRADE_SIDE=SHORT') ||
+      value.includes('SIDE=SHORT') ||
+      value.includes('SIDE=BEAR') ||
+      value.includes('DIRECTION=SHORT') ||
+      value.includes('DIRECTION=BEAR') ||
+      value.includes('POSITION_SIDE=SHORT') ||
+      value.includes('POSITIONSIDE=SHORT') ||
+      value.includes('SHORT') ||
+      value.includes('BEAR') ||
+      value.includes('SELL')
+    ) {
+      return TARGET_TRADE_SIDE;
+    }
+
+    if (
+      value.includes('LONG') ||
+      value.includes('BULL') ||
+      value.includes('BUY')
+    ) {
+      return OPPOSITE_TRADE_SIDE;
     }
 
     return 'UNKNOWN';
@@ -106,21 +158,25 @@ function inferTradeSide(row = {}) {
     row.direction ||
     row.signalSide ||
     row.scannerSide ||
+    row.actualScannerSide ||
+    row.analysisSide ||
     row.entrySide ||
     row.bias ||
     row.marketBias
   );
 
-  if (direct !== 'UNKNOWN') return direct;
+  if (direct === TARGET_TRADE_SIDE || direct === OPPOSITE_TRADE_SIDE) {
+    return direct;
+  }
 
-  const rawSide = upper(row.side);
+  const rawSide = cleanSideText(row.side);
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(rawSide)) return 'SHORT';
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(rawSide)) return 'LONG';
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(rawSide)) return TARGET_TRADE_SIDE;
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(rawSide)) return OPPOSITE_TRADE_SIDE;
 
-  const familyId = upper(row.familyId || row.family || row.baseFamilyId);
+  const familyId = cleanSideText(row.familyId || row.family || row.baseFamilyId);
 
-  const macroFamilyId = upper(
+  const macroFamilyId = cleanSideText(
     row.parentMacroFamilyId ||
     row.macroFamilyId ||
     row.parentMicroFamilyId ||
@@ -128,26 +184,29 @@ function inferTradeSide(row = {}) {
     row.macroId
   );
 
-  const microFamilyId = upper(
+  const microFamilyId = cleanSideText(
     row.microFamilyId ||
     row.trueMicroFamilyId ||
     row.id ||
     row.key
   );
 
-  if (familyId.startsWith('SHORT_')) return 'SHORT';
-  if (familyId.startsWith('LONG_')) return 'LONG';
+  if (familyId.startsWith('SHORT_')) return TARGET_TRADE_SIDE;
+  if (familyId.startsWith('LONG_')) return OPPOSITE_TRADE_SIDE;
 
-  if (macroFamilyId.includes('SHORT')) return 'SHORT';
-  if (macroFamilyId.includes('LONG')) return 'LONG';
+  if (macroFamilyId.includes('MICRO_LONG_') || macroFamilyId.startsWith('LONG_')) return OPPOSITE_TRADE_SIDE;
+  if (macroFamilyId.includes('MICRO_SHORT_') || macroFamilyId.startsWith('SHORT_')) return TARGET_TRADE_SIDE;
 
-  if (microFamilyId.includes('MICRO_SHORT_')) return 'SHORT';
-  if (microFamilyId.includes('MICRO_LONG_')) return 'LONG';
+  if (macroFamilyId.includes('TRADESIDE=LONG') || macroFamilyId.includes('SIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+  if (macroFamilyId.includes('TRADESIDE=SHORT') || macroFamilyId.includes('SIDE=SHORT')) return TARGET_TRADE_SIDE;
 
-  if (microFamilyId.includes('TRADESIDE=SHORT')) return 'SHORT';
-  if (microFamilyId.includes('TRADESIDE=LONG')) return 'LONG';
+  if (microFamilyId.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  if (microFamilyId.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
 
-  const scannerReason = upper(
+  if (microFamilyId.includes('TRADESIDE=LONG') || microFamilyId.includes('SIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+  if (microFamilyId.includes('TRADESIDE=SHORT') || microFamilyId.includes('SIDE=SHORT')) return TARGET_TRADE_SIDE;
+
+  const scannerReason = cleanSideText(
     row.scannerReason ||
     row.reason ||
     row.signalReason ||
@@ -155,37 +214,24 @@ function inferTradeSide(row = {}) {
   );
 
   if (
-    scannerReason.includes('SHORT') ||
-    scannerReason.includes('BEAR') ||
-    scannerReason.includes('SELL') ||
-    scannerReason.includes('DOWNSIDE')
-  ) {
-    return 'SHORT';
-  }
-
-  if (
     scannerReason.includes('LONG') ||
     scannerReason.includes('BULL') ||
     scannerReason.includes('BUY') ||
     scannerReason.includes('UPSIDE')
   ) {
-    return 'LONG';
+    return OPPOSITE_TRADE_SIDE;
+  }
+
+  if (
+    scannerReason.includes('SHORT') ||
+    scannerReason.includes('BEAR') ||
+    scannerReason.includes('SELL') ||
+    scannerReason.includes('DOWNSIDE')
+  ) {
+    return TARGET_TRADE_SIDE;
   }
 
   const definition = getDefinitionHaystack(row);
-
-  if (
-    definition.includes('TRADESIDE=SHORT') ||
-    definition.includes('TRADE_SIDE=SHORT') ||
-    definition.includes('SIDE=SHORT') ||
-    definition.includes('SIDE=BEAR') ||
-    definition.includes('DIRECTION=SHORT') ||
-    definition.includes('DIRECTION=BEAR') ||
-    definition.includes('SIDE=SELL') ||
-    definition.includes('DIRECTION=SELL')
-  ) {
-    return 'SHORT';
-  }
 
   if (
     definition.includes('TRADESIDE=LONG') ||
@@ -195,13 +241,37 @@ function inferTradeSide(row = {}) {
     definition.includes('DIRECTION=LONG') ||
     definition.includes('DIRECTION=BULL') ||
     definition.includes('SIDE=BUY') ||
-    definition.includes('DIRECTION=BUY')
+    definition.includes('DIRECTION=BUY') ||
+    definition.includes('POSITION_SIDE=LONG') ||
+    definition.includes('POSITIONSIDE=LONG')
   ) {
-    return 'LONG';
+    return OPPOSITE_TRADE_SIDE;
   }
 
-  if (microFamilyId.includes('SHORT')) return 'SHORT';
-  if (microFamilyId.includes('LONG')) return 'LONG';
+  if (
+    definition.includes('TRADESIDE=SHORT') ||
+    definition.includes('TRADE_SIDE=SHORT') ||
+    definition.includes('SIDE=SHORT') ||
+    definition.includes('SIDE=BEAR') ||
+    definition.includes('DIRECTION=SHORT') ||
+    definition.includes('DIRECTION=BEAR') ||
+    definition.includes('SIDE=SELL') ||
+    definition.includes('DIRECTION=SELL') ||
+    definition.includes('POSITION_SIDE=SHORT') ||
+    definition.includes('POSITIONSIDE=SHORT')
+  ) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  if (microFamilyId.includes('LONG')) return OPPOSITE_TRADE_SIDE;
+  if (microFamilyId.includes('SHORT')) return TARGET_TRADE_SIDE;
+
+  if (macroFamilyId.includes('LONG')) return OPPOSITE_TRADE_SIDE;
+  if (macroFamilyId.includes('SHORT')) return TARGET_TRADE_SIDE;
+
+  if (row.shortOnly === true || row.longDisabled === true) {
+    return TARGET_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
@@ -211,17 +281,25 @@ function isShortCandidate(candidate = {}) {
 }
 
 function isLongCandidate(candidate = {}) {
-  return inferTradeSide(candidate) === 'LONG';
+  return inferTradeSide(candidate) === OPPOSITE_TRADE_SIDE;
 }
 
 function normalizeShortCandidate(candidate = {}) {
   return {
     ...candidate,
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
     targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
-    longDisabled: true
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
   };
 }
 
@@ -235,12 +313,12 @@ function splitCandidatesBySide(candidates = []) {
   for (const candidate of rows) {
     const tradeSide = inferTradeSide(candidate);
 
-    if (tradeSide === 'SHORT') {
+    if (tradeSide === TARGET_TRADE_SIDE) {
       shortCandidates.push(candidate);
       continue;
     }
 
-    if (tradeSide === 'LONG') {
+    if (tradeSide === OPPOSITE_TRADE_SIDE) {
       longCandidates.push(candidate);
       continue;
     }
@@ -287,26 +365,44 @@ function averageScannerScore(candidates = []) {
   return Number((total / candidates.length).toFixed(2));
 }
 
-function normalizeLatest(latest, snapshot = null) {
-  if (!latest || typeof latest !== 'object') return latest;
+function normalizeLatest(latest, snapshot = null, meta = {}) {
+  const snapshotId = extractSnapshotId(latest) || snapshot?.snapshotId || meta.snapshotId || null;
 
   const candidates = Array.isArray(snapshot?.candidates)
     ? snapshot.candidates
     : [];
 
   const scannerGateCandidates = candidates.filter((candidate) => candidate.scannerGatePassed);
-  const analyzeOnlyCandidates = candidates.filter((candidate) => candidate.tradeDiscoveryOnly);
+  const analyzeOnlyCandidates = candidates.filter((candidate) => (
+    candidate.tradeDiscoveryOnly ||
+    candidate.discoveryOnly ||
+    candidate.analyzeOnly
+  ));
+
+  const base = latest && typeof latest === 'object'
+    ? latest
+    : {
+      snapshotId
+    };
 
   return {
-    ...latest,
+    ...base,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
     longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
 
-    candidatesCount: candidates.length || safeNumber(latest.shortCandidatesCount, 0),
-    shortCandidatesCount: candidates.length || safeNumber(latest.shortCandidatesCount, 0),
+    snapshotId,
+
+    selectedSnapshotSource: meta.snapshotSource || null,
+    selectedSnapshotReason: meta.snapshotReason || null,
+
+    candidatesCount: candidates.length || safeNumber(base.shortCandidatesCount, 0),
+    shortCandidatesCount: candidates.length || safeNumber(base.shortCandidatesCount, 0),
     longCandidatesCount: 0,
 
     scannerGateCandidatesCount: scannerGateCandidates.length,
@@ -324,7 +420,7 @@ function normalizeLatest(latest, snapshot = null) {
   };
 }
 
-function normalizeSnapshot(snapshot, fallbackId = null) {
+function normalizeSnapshot(snapshot, fallbackId = null, meta = {}) {
   if (!snapshot || typeof snapshot !== 'object') {
     return null;
   }
@@ -341,22 +437,22 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
 
   const candidates = shortCandidates.map(normalizeShortCandidate);
 
-  const createdAt = safeNumber(
-    snapshot.createdAt ||
-    snapshot.ts ||
-    snapshot.scannerTs,
-    0
-  );
+  const createdAt = snapshotCreatedAt(snapshot);
 
   const snapshotAgeSec = createdAt > 0
-    ? Math.max(0, Math.floor((Date.now() - createdAt) / 1000))
+    ? Math.max(0, Math.floor((now() - createdAt) / 1000))
     : null;
 
   const cleanCandidates = candidates.filter((candidate) => !candidate.fakeBreakout);
   const fakeBreakouts = candidates.filter((candidate) => candidate.fakeBreakout);
   const fakeRiskCandidates = candidates.filter((candidate) => candidate.fakeBreakoutRisk);
+
   const scannerGateCandidates = candidates.filter((candidate) => candidate.scannerGatePassed);
-  const analyzeOnlyCandidates = candidates.filter((candidate) => candidate.tradeDiscoveryOnly);
+  const analyzeOnlyCandidates = candidates.filter((candidate) => (
+    candidate.tradeDiscoveryOnly ||
+    candidate.discoveryOnly ||
+    candidate.analyzeOnly
+  ));
 
   const sideCounts = countCandidatesBySide(candidates);
 
@@ -375,10 +471,16 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
     longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
 
     snapshotId: snapshot.snapshotId || fallbackId || null,
+
+    selectedSnapshotSource: meta.snapshotSource || null,
+    selectedSnapshotReason: meta.snapshotReason || null,
 
     rawCandidatesCount: rawCandidates.length,
     rawLongCandidatesIgnored: longCandidates.length,
@@ -419,37 +521,179 @@ function normalizeSnapshot(snapshot, fallbackId = null) {
   };
 }
 
-async function loadSnapshot(redis, latest) {
-  const snapshotId = extractSnapshotId(latest);
+function targetCandidateCount(snapshot = {}) {
+  const candidates = Array.isArray(snapshot.candidates)
+    ? snapshot.candidates
+    : [];
 
-  if (hasFullSnapshotShape(latest)) {
-    const snapshot = normalizeSnapshot(latest, snapshotId);
+  return candidates.filter(isShortCandidate).length;
+}
 
-    return {
-      snapshot,
-      snapshotSource: 'SCAN:LATEST_FULL_SNAPSHOT',
-      snapshotId
-    };
-  }
+function oppositeCandidateCount(snapshot = {}) {
+  const candidates = Array.isArray(snapshot.candidates)
+    ? snapshot.candidates
+    : [];
 
-  if (!snapshotId) {
-    return {
-      snapshot: null,
-      snapshotSource: 'NO_SNAPSHOT_ID',
-      snapshotId: null
-    };
-  }
+  return candidates.filter(isLongCandidate).length;
+}
 
-  const snapshot = await getJson(
+async function safeGetSnapshotJson(redis, key, fallback = null) {
+  return getJson(redis, key, fallback).catch(() => fallback);
+}
+
+async function loadRecentSnapshotCandidates(redis) {
+  const keys = await getKeys(
     redis,
-    KEYS.scan.snapshot(snapshotId),
-    null
+    snapshotPattern(),
+    SNAPSHOT_SEARCH_LIMIT
+  ).catch(() => []);
+
+  if (!keys.length) return [];
+
+  const rows = await Promise.all(
+    keys.map(async (key) => {
+      const snapshot = await safeGetSnapshotJson(redis, key, null);
+
+      if (!hasFullSnapshotShape(snapshot)) return null;
+
+      return {
+        source: `SCAN:RECENT_SEARCH:${key}`,
+        snapshot,
+        snapshotId: snapshot.snapshotId || key,
+        targetCount: targetCandidateCount(snapshot),
+        oppositeCount: oppositeCandidateCount(snapshot),
+        createdAt: snapshotCreatedAt(snapshot)
+      };
+    })
   );
 
+  return rows
+    .filter(Boolean)
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function loadSnapshot(redis, latest) {
+  const snapshotId = extractSnapshotId(latest);
+  const candidates = [];
+
+  if (hasFullSnapshotShape(latest)) {
+    candidates.push({
+      snapshot: latest,
+      snapshotSource: 'SCAN:LATEST_FULL_SNAPSHOT',
+      snapshotReason: 'LATEST_FULL_SNAPSHOT',
+      snapshotId,
+      targetCount: targetCandidateCount(latest),
+      oppositeCount: oppositeCandidateCount(latest),
+      createdAt: snapshotCreatedAt(latest)
+    });
+  }
+
+  if (snapshotId) {
+    const byId = await safeGetSnapshotJson(
+      redis,
+      KEYS.scan.snapshot(snapshotId),
+      null
+    );
+
+    if (hasFullSnapshotShape(byId)) {
+      candidates.push({
+        snapshot: byId,
+        snapshotSource: 'SCAN:SNAPSHOT_BY_ID',
+        snapshotReason: 'SNAPSHOT_REFERENCED_BY_LATEST_ID',
+        snapshotId,
+        targetCount: targetCandidateCount(byId),
+        oppositeCount: oppositeCandidateCount(byId),
+        createdAt: snapshotCreatedAt(byId)
+      });
+    }
+  }
+
+  const recent = await loadRecentSnapshotCandidates(redis);
+
+  for (const item of recent) {
+    candidates.push({
+      ...item,
+      snapshotSource: item.source,
+      snapshotReason: 'RECENT_SNAPSHOT_SEARCH'
+    });
+  }
+
+  const unique = new Map();
+
+  for (const item of candidates) {
+    const id = item.snapshot?.snapshotId || item.snapshotId || item.snapshotSource;
+
+    if (!id) continue;
+
+    const previous = unique.get(id);
+
+    if (!previous) {
+      unique.set(id, item);
+      continue;
+    }
+
+    if (
+      item.targetCount > previous.targetCount ||
+      (
+        item.targetCount === previous.targetCount &&
+        item.createdAt > previous.createdAt
+      )
+    ) {
+      unique.set(id, item);
+    }
+  }
+
+  const sorted = [...unique.values()]
+    .filter((item) => hasFullSnapshotShape(item.snapshot))
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  const selectedTarget = sorted.find((item) => item.targetCount > 0);
+
+  if (selectedTarget) {
+    return {
+      snapshot: normalizeSnapshot(
+        selectedTarget.snapshot,
+        selectedTarget.snapshotId,
+        {
+          snapshotSource: selectedTarget.snapshotSource,
+          snapshotReason: 'NEWEST_SHORT_SNAPSHOT_WITH_CANDIDATES'
+        }
+      ),
+      snapshotSource: selectedTarget.snapshotSource,
+      snapshotReason: 'NEWEST_SHORT_SNAPSHOT_WITH_CANDIDATES',
+      snapshotId: selectedTarget.snapshotId,
+      rawTargetCount: selectedTarget.targetCount,
+      rawOppositeCount: selectedTarget.oppositeCount
+    };
+  }
+
+  const selectedAny = sorted[0] || null;
+
+  if (!selectedAny) {
+    return {
+      snapshot: null,
+      snapshotSource: snapshotId ? 'SNAPSHOT_NOT_FOUND' : 'NO_SNAPSHOT_ID',
+      snapshotReason: snapshotId ? 'LATEST_REFERENCED_MISSING_SNAPSHOT' : 'NO_LATEST_SNAPSHOT_ID',
+      snapshotId: snapshotId || null,
+      rawTargetCount: 0,
+      rawOppositeCount: 0
+    };
+  }
+
   return {
-    snapshot: normalizeSnapshot(snapshot, snapshotId),
-    snapshotSource: 'SCAN:SNAPSHOT_BY_ID',
-    snapshotId
+    snapshot: normalizeSnapshot(
+      selectedAny.snapshot,
+      selectedAny.snapshotId,
+      {
+        snapshotSource: selectedAny.snapshotSource,
+        snapshotReason: 'NO_SHORT_SNAPSHOT_FOUND_USING_NEWEST_AVAILABLE'
+      }
+    ),
+    snapshotSource: selectedAny.snapshotSource,
+    snapshotReason: 'NO_SHORT_SNAPSHOT_FOUND_USING_NEWEST_AVAILABLE',
+    snapshotId: selectedAny.snapshotId,
+    rawTargetCount: selectedAny.targetCount,
+    rawOppositeCount: selectedAny.oppositeCount
   };
 }
 
@@ -480,7 +724,7 @@ function emptyStats() {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Scanner-Mode', 'short-only');
+  res.setHeader('X-Admin-Scanner-Mode', 'short-only-wide-snapshot-search');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
 
@@ -495,22 +739,32 @@ export default async function handler(req, res) {
     const {
       snapshot,
       snapshotSource,
-      snapshotId
+      snapshotReason,
+      snapshotId,
+      rawTargetCount,
+      rawOppositeCount
     } = await loadSnapshot(redis, latestRaw);
 
     const candidates = Array.isArray(snapshot?.candidates)
       ? snapshot.candidates
       : [];
 
-    const latest = normalizeLatest(latestRaw, snapshot);
+    const latest = normalizeLatest(latestRaw, snapshot, {
+      snapshotId,
+      snapshotSource,
+      snapshotReason
+    });
 
     return res.status(200).json({
       ok: true,
 
       targetTradeSide: TARGET_TRADE_SIDE,
       dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
       longDisabled: true,
+      longOnly: false,
+      shortDisabled: false,
 
       latest,
       snapshot,
@@ -518,10 +772,14 @@ export default async function handler(req, res) {
 
       snapshotId,
       snapshotSource,
+      snapshotReason,
 
       candidatesCount: candidates.length,
       shortCandidatesCount: candidates.length,
       longCandidatesCount: 0,
+
+      rawTargetCount,
+      rawOppositeCount,
 
       stats: snapshot?.stats || emptyStats(),
 
@@ -532,8 +790,12 @@ export default async function handler(req, res) {
       ok: false,
 
       targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
       longDisabled: true,
+      longOnly: false,
+      shortDisabled: false,
 
       error: error?.message || String(error),
       stack: process.env.NODE_ENV === 'production'
