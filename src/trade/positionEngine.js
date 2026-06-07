@@ -48,7 +48,11 @@ function tradeConfig() {
       1,
       Math.floor(safeNumber(CONFIG.trade?.dataConcurrency, 5))
     ),
-    positionTimeStopMin: safeNumber(CONFIG.trade?.positionTimeStopMin, 12 * 60)
+
+    positionTimeStopMin: safeNumber(
+      CONFIG.trade?.positionTimeStopMin,
+      12 * 60
+    )
   };
 }
 
@@ -84,10 +88,6 @@ function schemaConfig() {
     macroSchema,
     microSchema
   };
-}
-
-function allowLegacyMacroLiveEntries() {
-  return Boolean(CONFIG.trade?.allowLegacyMacroLiveEntries);
 }
 
 function round4(value) {
@@ -135,10 +135,6 @@ function normalizeTradeSide(value) {
   return 'UNKNOWN';
 }
 
-function isShort(side) {
-  return normalizeTradeSide(side) === TARGET_TRADE_SIDE;
-}
-
 function normalizedTextParts(row = {}) {
   return [
     row.definition,
@@ -161,8 +157,8 @@ function idText(row = {}) {
     row.family,
     row.baseFamilyId,
 
-    row.microFamilyId,
     row.trueMicroFamilyId,
+    row.microFamilyId,
 
     row.macroFamilyId,
     row.parentMacroFamilyId,
@@ -316,9 +312,11 @@ function idHasSchema(id, schema) {
 
   if (!value || !target) return false;
 
-  return value.includes(`_${target}_`) ||
+  return (
+    value.includes(`_${target}_`) ||
     value.endsWith(`_${target}`) ||
-    value.includes(`|SCHEMA=${target}`);
+    value.includes(`|SCHEMA=${target}`)
+  );
 }
 
 function definitionHasSchema(row = {}, schema) {
@@ -348,8 +346,8 @@ function rowSchema(row = {}) {
 
 function rowMicroId(row = {}) {
   return String(
-    row.microFamilyId ||
     row.trueMicroFamilyId ||
+    row.microFamilyId ||
     row.id ||
     ''
   ).trim();
@@ -423,7 +421,7 @@ function normalizeMicroIdentity(row = {}) {
     isTrueMicro: trueMicro,
     isLegacyMacro: !trueMicro,
 
-    trueMicroOnly: row.trueMicroOnly !== false
+    trueMicroOnly: true
   };
 }
 
@@ -454,7 +452,7 @@ function assertBasePositionFields(row = {}) {
     throw new Error('OPEN_POSITION_RISK_GEOMETRY_MISSING');
   }
 
-  if (!allowLegacyMacroLiveEntries() && !isTrueMicroFamilyRow(row)) {
+  if (!isTrueMicroFamilyRow(row)) {
     throw new Error('OPEN_POSITION_REQUIRES_TRUE_MICRO_FAMILY');
   }
 
@@ -652,8 +650,13 @@ function forceShortPositionFields(row = {}) {
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
-    longDisabled: true
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
   };
 }
 
@@ -670,10 +673,10 @@ export async function getOpenPositions() {
   return rows
     .filter(Boolean)
     .filter(isShortPosition)
-    .sort((a, b) => {
-      return safeNumber(a.openedAt || a.createdAt, 0) -
-        safeNumber(b.openedAt || b.createdAt, 0);
-    });
+    .sort((a, b) => (
+      safeNumber(a.openedAt || a.createdAt, 0) -
+      safeNumber(b.openedAt || b.createdAt, 0)
+    ));
 }
 
 export async function getOpenPosition(symbol) {
@@ -711,7 +714,11 @@ export async function saveOpenPosition(position) {
     baseSymbol: normalized.baseSymbol || keySymbol,
     contractSymbol: normalized.contractSymbol || null,
 
+    source: 'REAL',
     status: normalized.status || 'OPEN',
+
+    shadowOnly: false,
+    liveEligible: normalized.liveEligible !== false,
 
     strategyVersion: normalized.strategyVersion || CONFIG.strategyVersion,
 
@@ -857,7 +864,11 @@ export function buildOpenPositionFromEntry(entry) {
     baseSymbol: normalizedEntry.baseSymbol || keySymbol,
     contractSymbol: normalizedEntry.contractSymbol || null,
 
+    source: 'REAL',
     status: 'OPEN',
+
+    shadowOnly: false,
+    liveEligible: true,
 
     strategyVersion: normalizedEntry.strategyVersion || CONFIG.strategyVersion,
 
@@ -915,6 +926,8 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     ...outcome,
     ...identity,
 
+    source: 'REAL',
+
     activeRotationId: position.activeRotationId || null,
     activeMacroFamilyId:
       position.activeMacroFamilyId ||
@@ -925,7 +938,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
 
     isTrueMicro: identity.isTrueMicro,
     isLegacyMacro: identity.isLegacyMacro,
-    trueMicroOnly: identity.trueMicroOnly
+    trueMicroOnly: true
   });
 }
 
