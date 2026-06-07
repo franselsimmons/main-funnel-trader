@@ -75,6 +75,8 @@ function modePayload() {
     virtualOutcomesIncluded: true,
     shadowOutcomesIncluded: true,
     netOutcomesOnly: true,
+    learningOutcomesOnly: true,
+    outcomesSourceMode: 'ALL_LEARNING_OUTCOMES',
 
     manualSelectionOnly: true,
     autoRotationActivationDisabled: true,
@@ -198,6 +200,20 @@ function pruneCacheMap(map) {
     .forEach(([key]) => map.delete(key));
 }
 
+function normalizeMode(value) {
+  const raw = String(value || 'balanced').trim();
+
+  if (VALID_MODES.has(raw)) return raw;
+
+  const lower = raw.toLowerCase();
+
+  if (lower === 'totalr') return 'totalR';
+  if (lower === 'avgr') return 'avgR';
+  if (lower === 'directsl') return 'directSL';
+
+  return VALID_MODES.has(lower) ? lower : 'balanced';
+}
+
 function normalizeRequestedTradeSide(value) {
   const raw = upper(value);
 
@@ -281,6 +297,8 @@ function cleanSideHaystack(text = '') {
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORT_ONLY', 'SHORT');
 }
 
@@ -491,6 +509,7 @@ function inferTradeSide(input = {}) {
   if (macroFamilyId.includes('LONG')) return 'LONG';
 
   if (input.shortOnly === true || input.longDisabled === true) return TARGET_TRADE_SIDE;
+  if (input.longOnly === true || input.shortDisabled === true) return 'LONG';
 
   return 'UNKNOWN';
 }
@@ -571,53 +590,47 @@ function recentIsoWeekKeys(startWeekKey, count = DEFAULT_RECENT_WEEK_LOOKBACK) {
   return keys;
 }
 
+function shadowKeyFromReal(realKey = '') {
+  if (!realKey || !realKey.startsWith('real')) return null;
+
+  return `shadow${realKey.slice(4)}`;
+}
+
+function getLearningCount(row = {}, aggregateKey, realKey = null, shadowKey = null) {
+  if (aggregateKey && hasValue(row[aggregateKey])) {
+    return num(row[aggregateKey], 0);
+  }
+
+  return num(realKey ? row[realKey] : 0, 0) +
+    num(shadowKey ? row[shadowKey] : 0, 0);
+}
+
 function getOutcomeCounts(row = {}) {
-  const realWins = num(row.realWins, 0);
-  const realLosses = num(row.realLosses, 0);
-  const realFlats = num(row.realFlats, 0);
-  const realTotal = realWins + realLosses + realFlats;
+  const wins = getLearningCount(row, 'wins', 'realWins', 'shadowWins');
+  const losses = getLearningCount(row, 'losses', 'realLosses', 'shadowLosses');
+  const flats = getLearningCount(row, 'flats', 'realFlats', 'shadowFlats');
 
-  if (realTotal > 0) {
-    return {
-      wins: realWins,
-      losses: realLosses,
-      flats: realFlats,
-      total: realTotal
-    };
-  }
+  const explicitCompleted = Math.max(
+    num(row.completed, 0),
+    num(row.outcomeSample, 0),
+    num(row.realCompleted, 0) + num(row.shadowCompleted, 0),
+    0
+  );
 
-  const wins = num(row.wins, 0);
-  const losses = num(row.losses, 0);
-  const flats = num(row.flats, 0);
-  const total = wins + losses + flats;
-
-  if (total > 0) {
-    return {
-      wins,
-      losses,
-      flats,
-      total
-    };
-  }
+  const countedTotal = wins + losses + flats;
+  const total = Math.max(countedTotal, explicitCompleted, 0);
+  const inferredFlats = Math.max(0, total - wins - losses);
 
   return {
-    wins: 0,
-    losses: 0,
-    flats: 0,
-    total: 0
+    wins,
+    losses,
+    flats: Math.max(flats, inferredFlats),
+    total
   };
 }
 
 function getCompletedSample(row = {}) {
-  const counts = getOutcomeCounts(row);
-
-  return Math.max(
-    counts.total,
-    num(row.realCompleted, 0),
-    num(row.completed, 0),
-    num(row.outcomeSample, 0),
-    0
-  );
+  return getOutcomeCounts(row).total;
 }
 
 function getObservationSample(row = {}) {
@@ -630,102 +643,128 @@ function getObservationSample(row = {}) {
 }
 
 function getTotalR(row = {}) {
-  if (hasValue(row.realTotalR) && num(row.realCompleted, 0) > 0) {
-    return num(row.realTotalR, 0);
-  }
+  const completed = getCompletedSample(row);
+
+  if (completed <= 0) return 0;
 
   if (hasValue(row.netTotalR)) return num(row.netTotalR, 0);
   if (hasValue(row.totalNetR)) return num(row.totalNetR, 0);
   if (hasValue(row.totalR)) return num(row.totalR, 0);
 
-  return 0;
+  return num(row.realTotalR, 0) + num(row.shadowTotalR, 0);
 }
 
 function getAvgR(row = {}) {
-  if (hasValue(row.realAvgR) && num(row.realCompleted, 0) > 0) {
-    return num(row.realAvgR, 0);
-  }
+  const completed = getCompletedSample(row);
+
+  if (completed <= 0) return 0;
 
   if (hasValue(row.avgNetR)) return num(row.avgNetR, 0);
   if (hasValue(row.netAvgR)) return num(row.netAvgR, 0);
   if (hasValue(row.avgR)) return num(row.avgR, 0);
 
-  const completed = getCompletedSample(row);
-  if (completed > 0) return getTotalR(row) / completed;
-
-  return 0;
+  return getTotalR(row) / completed;
 }
 
 function getTotalCostR(row = {}) {
-  if (hasValue(row.realTotalCostR) && num(row.realCompleted, 0) > 0) {
-    return num(row.realTotalCostR, 0);
-  }
+  const completed = getCompletedSample(row);
+
+  if (completed <= 0) return 0;
 
   if (hasValue(row.totalCostR)) return num(row.totalCostR, 0);
 
-  const completed = getCompletedSample(row);
-  if (completed > 0 && hasValue(row.avgCostR)) {
-    return num(row.avgCostR, 0) * completed;
-  }
+  const combined = num(row.realTotalCostR, 0) + num(row.shadowTotalCostR, 0);
+
+  if (combined > 0) return combined;
+  if (hasValue(row.avgCostR)) return num(row.avgCostR, 0) * completed;
 
   return 0;
 }
 
 function getAvgCostR(row = {}) {
-  if (hasValue(row.realAvgCostR) && num(row.realCompleted, 0) > 0) {
-    return num(row.realAvgCostR, 0);
-  }
+  const completed = getCompletedSample(row);
+
+  if (completed <= 0) return 0;
 
   if (hasValue(row.avgCostR)) return num(row.avgCostR, 0);
 
-  const completed = getCompletedSample(row);
-  if (completed > 0) return getTotalCostR(row) / completed;
+  return getTotalCostR(row) / completed;
+}
 
-  return 0;
+function getPositiveR(row = {}, aggregateKey, realKey = null, shadowKey = null) {
+  if (aggregateKey && hasValue(row[aggregateKey])) {
+    return Math.max(0, num(row[aggregateKey], 0));
+  }
+
+  return Math.max(
+    0,
+    num(realKey ? row[realKey] : 0, 0) +
+      num(shadowKey ? row[shadowKey] : 0, 0)
+  );
+}
+
+function getAbsLossR(row = {}, aggregateKey, realKey = null, shadowKey = null) {
+  if (aggregateKey && hasValue(row[aggregateKey])) {
+    return Math.abs(num(row[aggregateKey], 0));
+  }
+
+  return Math.abs(
+    num(realKey ? row[realKey] : 0, 0) +
+      num(shadowKey ? row[shadowKey] : 0, 0)
+  );
 }
 
 function getProfitFactor(row = {}) {
-  if (hasValue(row.realProfitFactor) && num(row.realCompleted, 0) > 0) {
-    return num(row.realProfitFactor, 0);
-  }
-
+  if (hasValue(row.netProfitFactor)) return num(row.netProfitFactor, 0);
   if (hasValue(row.profitFactor)) return num(row.profitFactor, 0);
 
-  const avgWinR = Math.max(0, num(row.avgWinR ?? row.realAvgWinR, 0));
-  const avgLossR = Math.abs(Math.min(0, num(row.avgLossR ?? row.realAvgLossR, 0)));
-  const counts = getOutcomeCounts(row);
+  const winR = Math.max(
+    getPositiveR(row, 'netWinR', 'realNetWinR', 'shadowNetWinR'),
+    getPositiveR(row, 'totalWinR', 'realTotalWinR', 'shadowTotalWinR'),
+    getPositiveR(row, 'grossWinR', 'realGrossWinR', 'shadowGrossWinR'),
+    0
+  );
 
-  const grossWinR = avgWinR * counts.wins;
-  const grossLossR = avgLossR * counts.losses;
+  const lossR = Math.max(
+    getAbsLossR(row, 'netLossR', 'realNetLossR', 'shadowNetLossR'),
+    getAbsLossR(row, 'totalLossR', 'realTotalLossR', 'shadowTotalLossR'),
+    getAbsLossR(row, 'grossLossR', 'realGrossLossR', 'shadowGrossLossR'),
+    0
+  );
 
-  if (grossLossR <= 0) return grossWinR > 0 ? 99 : 0;
+  if (winR <= 0 && lossR <= 0) return 0;
+  if (lossR <= 0) return winR > 0 ? 99 : 0;
 
-  return grossWinR / grossLossR;
+  return winR / lossR;
 }
 
 function getCountMetric(row = {}, realCountKey, aggregateCountKey) {
-  if (hasValue(row[realCountKey]) && num(row.realCompleted, 0) > 0) {
-    return num(row[realCountKey], 0);
-  }
+  const shadowCountKey = shadowKeyFromReal(realCountKey);
 
-  return num(row[aggregateCountKey], 0);
+  return getLearningCount(
+    row,
+    aggregateCountKey,
+    realCountKey,
+    shadowCountKey
+  );
 }
 
-function getPctMetric(row = {}, realPctKey, realCountKey, aggregatePctKey) {
-  if (hasValue(row[realPctKey]) && num(row.realCompleted, 0) > 0) {
-    return clamp(row[realPctKey], 0, 1);
-  }
-
+function getPctMetric(row = {}, realPctKey, realCountKey, aggregatePctKey, aggregateCountKey = null) {
   if (hasValue(row[aggregatePctKey])) {
     return clamp(row[aggregatePctKey], 0, 1);
   }
 
+  if (hasValue(row[realPctKey]) && num(row.shadowCompleted, 0) <= 0) {
+    return clamp(row[realPctKey], 0, 1);
+  }
+
   const completed = getCompletedSample(row);
-  const count = getCountMetric(row, realCountKey, '');
+  const fallbackCountKey = aggregateCountKey || String(aggregatePctKey || '').replace(/Pct$/i, 'Count');
+  const count = getCountMetric(row, realCountKey, fallbackCountKey);
 
-  if (completed > 0) return clamp(count / completed, 0, 1);
+  if (completed <= 0 || count <= 0) return 0;
 
-  return 0;
+  return clamp(count / completed, 0, 1);
 }
 
 function wilsonLowerBound(successes, trials, z = WINRATE_Z) {
@@ -842,9 +881,9 @@ function getPerformanceBalancedScore(row = {}, meta = null) {
   const avgR = Math.max(0, getAvgR(row));
   const profitFactor = Math.min(Math.max(0, getProfitFactor(row)), 20);
 
-  const directSLPct = getPctMetric(row, 'realDirectSLPct', 'realDirectSLCount', 'directSLPct');
-  const nearTpThenLossPct = getPctMetric(row, 'realNearTpThenLossPct', 'realNearTpThenLossCount', 'nearTpThenLossPct');
-  const gaveBackAfterOneRPct = getPctMetric(row, 'realGaveBackAfterOneRPct', 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRPct');
+  const directSLPct = getPctMetric(row, 'realDirectSLPct', 'realDirectSLCount', 'directSLPct', 'directSLCount');
+  const nearTpThenLossPct = getPctMetric(row, 'realNearTpThenLossPct', 'realNearTpThenLossCount', 'nearTpThenLossPct', 'nearTpThenLossCount');
+  const gaveBackAfterOneRPct = getPctMetric(row, 'realGaveBackAfterOneRPct', 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRPct', 'gaveBackAfterOneRCount');
   const avgCostR = Math.max(0, getAvgCostR(row));
 
   const winrateComponent = winrateMeta.score * 100;
@@ -932,6 +971,7 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
   const completed = getCompletedSample(row);
   const totalR = getTotalR(row);
   const totalCostR = getTotalCostR(row);
+  const counts = getOutcomeCounts(row);
 
   return {
     sourceIndex: index,
@@ -953,6 +993,9 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     sourceWeekPrimary: Boolean(row.sourceWeekPrimary),
     sourceWeekFallback: Boolean(row.sourceWeekFallback),
 
+    active: Boolean(row.active),
+    macroActive: Boolean(row.macroActive),
+
     seen: num(row.seen ?? row.observations, 0),
     observations: num(row.observations ?? row.seen, 0),
 
@@ -960,9 +1003,9 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     realCompleted: num(row.realCompleted, 0),
     shadowCompleted: num(row.shadowCompleted, 0),
 
-    wins: round(num(row.wins ?? row.realWins, 0), 4),
-    losses: round(num(row.losses ?? row.realLosses, 0), 4),
-    flats: round(num(row.flats ?? row.realFlats, 0), 4),
+    wins: round(counts.wins, 4),
+    losses: round(counts.losses, 4),
+    flats: round(counts.flats, 4),
 
     realWins: num(row.realWins, 0),
     realLosses: num(row.realLosses, 0),
@@ -987,26 +1030,26 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     profitFactor: round(getProfitFactor(row), 4),
 
     directSLCount: round(getCountMetric(row, 'realDirectSLCount', 'directSLCount'), 4),
-    directSLPct: round(getPctMetric(row, 'realDirectSLPct', 'realDirectSLCount', 'directSLPct'), 4),
+    directSLPct: round(getPctMetric(row, 'realDirectSLPct', 'realDirectSLCount', 'directSLPct', 'directSLCount'), 4),
 
     nearTpCount: round(getCountMetric(row, 'realNearTpCount', 'nearTpCount'), 4),
-    nearTpPct: round(getPctMetric(row, 'realNearTpPct', 'realNearTpCount', 'nearTpPct'), 4),
+    nearTpPct: round(getPctMetric(row, 'realNearTpPct', 'realNearTpCount', 'nearTpPct', 'nearTpCount'), 4),
 
     reachedHalfRCount: round(getCountMetric(row, 'realReachedHalfRCount', 'reachedHalfRCount'), 4),
     reachedOneRCount: round(getCountMetric(row, 'realReachedOneRCount', 'reachedOneRCount'), 4),
-    reachedHalfRPct: round(getPctMetric(row, 'realReachedHalfRPct', 'realReachedHalfRCount', 'reachedHalfRPct'), 4),
-    reachedOneRPct: round(getPctMetric(row, 'realReachedOneRPct', 'realReachedOneRCount', 'reachedOneRPct'), 4),
+    reachedHalfRPct: round(getPctMetric(row, 'realReachedHalfRPct', 'realReachedHalfRCount', 'reachedHalfRPct', 'reachedHalfRCount'), 4),
+    reachedOneRPct: round(getPctMetric(row, 'realReachedOneRPct', 'realReachedOneRCount', 'reachedOneRPct', 'reachedOneRCount'), 4),
 
     beWouldExitCount: round(getCountMetric(row, 'realBeWouldExitCount', 'beWouldExitCount'), 4),
-    beWouldExitPct: round(getPctMetric(row, 'realBeWouldExitPct', 'realBeWouldExitCount', 'beWouldExitPct'), 4),
+    beWouldExitPct: round(getPctMetric(row, 'realBeWouldExitPct', 'realBeWouldExitCount', 'beWouldExitPct', 'beWouldExitCount'), 4),
 
     gaveBackAfterHalfRCount: round(getCountMetric(row, 'realGaveBackAfterHalfRCount', 'gaveBackAfterHalfRCount'), 4),
     gaveBackAfterOneRCount: round(getCountMetric(row, 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRCount'), 4),
-    gaveBackAfterHalfRPct: round(getPctMetric(row, 'realGaveBackAfterHalfRPct', 'realGaveBackAfterHalfRCount', 'gaveBackAfterHalfRPct'), 4),
-    gaveBackAfterOneRPct: round(getPctMetric(row, 'realGaveBackAfterOneRPct', 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRPct'), 4),
+    gaveBackAfterHalfRPct: round(getPctMetric(row, 'realGaveBackAfterHalfRPct', 'realGaveBackAfterHalfRCount', 'gaveBackAfterHalfRPct', 'gaveBackAfterHalfRCount'), 4),
+    gaveBackAfterOneRPct: round(getPctMetric(row, 'realGaveBackAfterOneRPct', 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRPct', 'gaveBackAfterOneRCount'), 4),
 
     nearTpThenLossCount: round(getCountMetric(row, 'realNearTpThenLossCount', 'nearTpThenLossCount'), 4),
-    nearTpThenLossPct: round(getPctMetric(row, 'realNearTpThenLossPct', 'realNearTpThenLossCount', 'nearTpThenLossPct'), 4),
+    nearTpThenLossPct: round(getPctMetric(row, 'realNearTpThenLossPct', 'realNearTpThenLossCount', 'nearTpThenLossPct', 'nearTpThenLossCount'), 4),
 
     totalCostR: round(totalCostR, 4),
     avgCostR: round(getAvgCostR(row), 4),
@@ -1200,6 +1243,9 @@ function manualRowFromId(id, index = 0) {
 
     ...modePayload(),
 
+    active: true,
+    macroActive: false,
+
     seen: 0,
     observations: 0,
     completed: 0,
@@ -1209,6 +1255,7 @@ function manualRowFromId(id, index = 0) {
     winrate: 0,
     totalR: 0,
     realTotalR: 0,
+    shadowTotalR: 0,
     avgR: 0,
     profitFactor: 0,
     directSLPct: 0,
@@ -1265,6 +1312,7 @@ function buildRowsFromActiveRotation(activeRotation) {
           const raw = buildRawMicroRow({
             ...row,
             ...modePayload(),
+            active: true,
             selectedTier: row.selectedTier || row.rotationEligibilityTier || activeRotation.selectedTier || 'RAW'
           }, getMicroFamilyId(row, `active_${index}`), index);
 
@@ -1302,13 +1350,17 @@ function normalizeMicroRow(
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId(row);
 
-  const active = microFamilyId
-    ? activeSet.has(microFamilyId)
-    : false;
+  const active = Boolean(row.active) || (
+    microFamilyId
+      ? activeSet.has(microFamilyId)
+      : false
+  );
 
-  const macroActive = macroFamilyId
-    ? activeMacroSet.has(macroFamilyId)
-    : false;
+  const macroActive = Boolean(row.macroActive) || (
+    macroFamilyId
+      ? activeMacroSet.has(macroFamilyId)
+      : false
+  );
 
   const winrate = getSampleAdjustedWinrate(row);
   const tier = tierFor(row, winrate);
@@ -1390,26 +1442,26 @@ function normalizeMicroRow(
     profitFactor: round(getProfitFactor(row), 4),
 
     directSLCount: round(getCountMetric(row, 'realDirectSLCount', 'directSLCount'), 4),
-    directSLPct: round(getPctMetric(row, 'realDirectSLPct', 'realDirectSLCount', 'directSLPct'), 4),
+    directSLPct: round(getPctMetric(row, 'realDirectSLPct', 'realDirectSLCount', 'directSLPct', 'directSLCount'), 4),
 
     nearTpCount: round(getCountMetric(row, 'realNearTpCount', 'nearTpCount'), 4),
-    nearTpPct: round(getPctMetric(row, 'realNearTpPct', 'realNearTpCount', 'nearTpPct'), 4),
+    nearTpPct: round(getPctMetric(row, 'realNearTpPct', 'realNearTpCount', 'nearTpPct', 'nearTpCount'), 4),
 
     reachedHalfRCount: round(getCountMetric(row, 'realReachedHalfRCount', 'reachedHalfRCount'), 4),
     reachedOneRCount: round(getCountMetric(row, 'realReachedOneRCount', 'reachedOneRCount'), 4),
-    reachedHalfRPct: round(getPctMetric(row, 'realReachedHalfRPct', 'realReachedHalfRCount', 'reachedHalfRPct'), 4),
-    reachedOneRPct: round(getPctMetric(row, 'realReachedOneRPct', 'realReachedOneRCount', 'reachedOneRPct'), 4),
+    reachedHalfRPct: round(getPctMetric(row, 'realReachedHalfRPct', 'realReachedHalfRCount', 'reachedHalfRPct', 'reachedHalfRCount'), 4),
+    reachedOneRPct: round(getPctMetric(row, 'realReachedOneRPct', 'realReachedOneRCount', 'reachedOneRPct', 'reachedOneRCount'), 4),
 
     beWouldExitCount: round(getCountMetric(row, 'realBeWouldExitCount', 'beWouldExitCount'), 4),
-    beWouldExitPct: round(getPctMetric(row, 'realBeWouldExitPct', 'realBeWouldExitCount', 'beWouldExitPct'), 4),
+    beWouldExitPct: round(getPctMetric(row, 'realBeWouldExitPct', 'realBeWouldExitCount', 'beWouldExitPct', 'beWouldExitCount'), 4),
 
     gaveBackAfterHalfRCount: round(getCountMetric(row, 'realGaveBackAfterHalfRCount', 'gaveBackAfterHalfRCount'), 4),
     gaveBackAfterOneRCount: round(getCountMetric(row, 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRCount'), 4),
-    gaveBackAfterHalfRPct: round(getPctMetric(row, 'realGaveBackAfterHalfRPct', 'realGaveBackAfterHalfRCount', 'gaveBackAfterHalfRPct'), 4),
-    gaveBackAfterOneRPct: round(getPctMetric(row, 'realGaveBackAfterOneRPct', 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRPct'), 4),
+    gaveBackAfterHalfRPct: round(getPctMetric(row, 'realGaveBackAfterHalfRPct', 'realGaveBackAfterHalfRCount', 'gaveBackAfterHalfRPct', 'gaveBackAfterHalfRCount'), 4),
+    gaveBackAfterOneRPct: round(getPctMetric(row, 'realGaveBackAfterOneRPct', 'realGaveBackAfterOneRCount', 'gaveBackAfterOneRPct', 'gaveBackAfterOneRCount'), 4),
 
     nearTpThenLossCount: round(getCountMetric(row, 'realNearTpThenLossCount', 'nearTpThenLossCount'), 4),
-    nearTpThenLossPct: round(getPctMetric(row, 'realNearTpThenLossPct', 'realNearTpThenLossCount', 'nearTpThenLossPct'), 4),
+    nearTpThenLossPct: round(getPctMetric(row, 'realNearTpThenLossPct', 'realNearTpThenLossCount', 'nearTpThenLossPct', 'nearTpThenLossCount'), 4),
 
     totalCostR: round(getTotalCostR(row), 4),
     avgCostR: round(getAvgCostR(row), 4),
@@ -2203,7 +2255,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-net-outcome-observation-first-v5');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-net-outcome-observation-first-v6');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
@@ -2223,7 +2275,7 @@ export default async function handler(req, res) {
     ).trim();
 
     const requestedMode = String(firstQueryValue(req.query?.mode, 'balanced') || 'balanced');
-    const mode = VALID_MODES.has(requestedMode) ? requestedMode : 'balanced';
+    const mode = normalizeMode(requestedMode);
 
     const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
     const requestedLimitNumber = Number(requestedLimitRaw) || DEFAULT_LIMIT;
