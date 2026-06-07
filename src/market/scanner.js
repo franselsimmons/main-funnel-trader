@@ -33,7 +33,6 @@ const TARGET_SCANNER_SIDE = 'bear';
 const TARGET_DASHBOARD_SIDE = 'bear';
 
 const OPPOSITE_TRADE_SIDE = 'LONG';
-const OPPOSITE_SCANNER_SIDE = 'bull';
 
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
@@ -257,14 +256,25 @@ function normalizeScannerTicker(rawTicker = {}) {
 function normalizeTradeSide(value) {
   const raw = String(value || '').trim().toUpperCase();
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return 'SHORT';
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return 'LONG';
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
+  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return OPPOSITE_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
 
+function cleanSideText(value = '') {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY', 'SHORT');
+}
+
 function inferTradeSideFromText(value) {
-  const text = String(value || '').toUpperCase();
+  const text = cleanSideText(value);
 
   if (!text) return 'UNKNOWN';
 
@@ -278,6 +288,8 @@ function inferTradeSideFromText(value) {
     text.includes('DIRECTION=BEAR') ||
     text.includes('SIDE=SELL') ||
     text.includes('DIRECTION=SELL') ||
+    text.includes('POSITION_SIDE=SHORT') ||
+    text.includes('POSITIONSIDE=SHORT') ||
     text.includes('SHORT_') ||
     text.includes('_SHORT') ||
     text.includes('BEAR_') ||
@@ -296,6 +308,8 @@ function inferTradeSideFromText(value) {
     text.includes('DIRECTION=BULL') ||
     text.includes('SIDE=BUY') ||
     text.includes('DIRECTION=BUY') ||
+    text.includes('POSITION_SIDE=LONG') ||
+    text.includes('POSITIONSIDE=LONG') ||
     text.includes('LONG_') ||
     text.includes('_LONG') ||
     text.includes('BULL_') ||
@@ -361,7 +375,7 @@ function inferRowTradeSide(row = {}) {
     ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
     ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
-    .map((value) => String(value || '').toUpperCase())
+    .map((value) => cleanSideText(value))
     .filter(Boolean)
     .join('|');
 
