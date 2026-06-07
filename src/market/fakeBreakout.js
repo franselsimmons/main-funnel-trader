@@ -4,7 +4,6 @@ import {
   getRecentRange,
   calcVolumeExpansion,
   candleBodyPct,
-  upperWickPct,
   lowerWickPct
 } from './indicators.js';
 import {
@@ -13,36 +12,125 @@ import {
 } from '../utils.js';
 
 const DEFAULT_LOOKBACK = 24;
+
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_SCANNER_SIDE = 'bear';
+const TARGET_DASHBOARD_SIDE = 'bear';
+
 const RETEST_TOLERANCE_PCT = 0.004;
 const BREAKOUT_BUFFER_PCT = 0.0015;
 const WICK_REJECT_THRESHOLD = 0.45;
 const WEAK_BODY_THRESHOLD = 0.35;
 const EXHAUSTION_VOLUME_EXPANSION = 1.4;
 
-function normalizeSide(side) {
-  const tradeSide = sideToTradeSide(side);
+const SHORT_TOKENS = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
+]);
 
-  if (tradeSide === 'LONG') return 'bull';
-  if (tradeSide === 'SHORT') return 'bear';
+const LONG_TOKENS = new Set([
+  'LONG',
+  'BULL',
+  'BULLISH',
+  'BUY',
+  'UP',
+  'UPSIDE',
+  'GREEN'
+]);
+
+function upper(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function normalizeSide(side) {
+  const raw = upper(side);
+
+  if (!raw) return 'unknown';
+
+  const direct = sideToTradeSide(raw);
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_SCANNER_SIDE;
+  if (direct === 'LONG') return 'long_disabled';
+
+  if (SHORT_TOKENS.has(raw)) return TARGET_SCANNER_SIDE;
+  if (LONG_TOKENS.has(raw)) return 'long_disabled';
+
+  if (
+    raw.includes('MICRO_SHORT_') ||
+    raw.includes('TRADE_SIDE=SHORT') ||
+    raw.includes('TRADESIDE=SHORT') ||
+    raw.includes('SIDE=SHORT') ||
+    raw.includes('SIDE=BEAR') ||
+    raw.includes('DIRECTION=SHORT') ||
+    raw.includes('DIRECTION=BEAR') ||
+    raw.includes('SHORT_') ||
+    raw.includes('_SHORT') ||
+    raw.includes('BEAR_') ||
+    raw.includes('_BEAR')
+  ) {
+    return TARGET_SCANNER_SIDE;
+  }
+
+  if (
+    raw.includes('MICRO_LONG_') ||
+    raw.includes('TRADE_SIDE=LONG') ||
+    raw.includes('TRADESIDE=LONG') ||
+    raw.includes('SIDE=LONG') ||
+    raw.includes('SIDE=BULL') ||
+    raw.includes('DIRECTION=LONG') ||
+    raw.includes('DIRECTION=BULL') ||
+    raw.includes('LONG_') ||
+    raw.includes('_LONG') ||
+    raw.includes('BULL_') ||
+    raw.includes('_BULL')
+  ) {
+    return 'long_disabled';
+  }
 
   return 'unknown';
 }
 
 function normalizeBtcState(btcState) {
-  return String(btcState || 'NEUTRAL').toUpperCase();
+  return upper(btcState || 'NEUTRAL');
 }
 
-function emptyResult(reason = 'INSUFFICIENT_DATA') {
+function baseResult(reason = null) {
   return {
     fakeBreakout: false,
     fakeBreakoutRisk: false,
     fakeBreakoutReason: null,
+
     breakoutType: 'UNKNOWN',
+
     pullbackConfirmed: false,
     sweepConfirmed: false,
     retestConfirmed: false,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    targetScannerSide: TARGET_SCANNER_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
     reason
   };
+}
+
+function emptyResult(reason = 'INSUFFICIENT_DATA') {
+  return baseResult(reason);
 }
 
 function pctDistance(a, b) {
@@ -54,107 +142,12 @@ function pctDistance(a, b) {
   return Math.abs(x - y) / Math.max(x, y);
 }
 
-function isBtcAgainst(side, btcState) {
-  if (side === 'bull') {
-    return ['BEARISH', 'STRONG_BEAR'].includes(btcState);
-  }
-
-  if (side === 'bear') {
-    return ['BULLISH', 'STRONG_BULL'].includes(btcState);
-  }
-
-  return false;
+function isBtcAgainstBear(btcState) {
+  return ['BULLISH', 'STRONG_BULL'].includes(btcState);
 }
 
-function isBtcWith(side, btcState) {
-  if (side === 'bull') {
-    return ['BULLISH', 'STRONG_BULL'].includes(btcState);
-  }
-
-  if (side === 'bear') {
-    return ['BEARISH', 'STRONG_BEAR'].includes(btcState);
-  }
-
-  return false;
-}
-
-function analyzeBullBreakout({
-  last,
-  recentHigh,
-  recentLow,
-  volumeExpansion,
-  btcState
-}) {
-  const close = safeNumber(last.close, 0);
-  const high = safeNumber(last.high, 0);
-  const low = safeNumber(last.low, 0);
-
-  const upperWick = upperWickPct(last);
-  const body = candleBodyPct(last);
-
-  const sweptHigh = high > recentHigh && close < recentHigh;
-  const closedAboveRange = close > recentHigh * (1 + BREAKOUT_BUFFER_PCT);
-
-  const btcAgainst = isBtcAgainst('bull', btcState);
-  const btcWith = isBtcWith('bull', btcState);
-
-  const wickReject = upperWick >= WICK_REJECT_THRESHOLD;
-  const weakBody = body <= WEAK_BODY_THRESHOLD;
-  const volumeExhaustion = volumeExpansion >= EXHAUSTION_VOLUME_EXPANSION;
-
-  const fake =
-    sweptHigh &&
-    wickReject &&
-    (
-      volumeExhaustion ||
-      btcAgainst ||
-      weakBody
-    );
-
-  const retestConfirmed =
-    pctDistance(close, recentHigh) <= RETEST_TOLERANCE_PCT ||
-    pctDistance(low, recentHigh) <= RETEST_TOLERANCE_PCT;
-
-  const pullbackConfirmed =
-    close < recentHigh &&
-    close > recentLow;
-
-  const validBreakout =
-    closedAboveRange &&
-    !wickReject &&
-    (
-      btcWith ||
-      volumeExpansion >= 1.15
-    );
-
-  return {
-    fakeBreakout: fake,
-    fakeBreakoutRisk: !fake && (sweptHigh || (closedAboveRange && !btcWith)),
-    fakeBreakoutReason: fake ? 'HIGH_SWEEP_CLOSE_BACK_IN_RANGE' : null,
-    breakoutType: fake ? 'FAKE_BREAKOUT' : validBreakout ? 'VALID_BREAKOUT' : 'NONE',
-    pullbackConfirmed,
-    sweepConfirmed: sweptHigh,
-    retestConfirmed,
-    details: {
-      recentHigh,
-      recentLow,
-      close,
-      high,
-      low,
-      upperWick,
-      body,
-      volumeExpansion,
-      btcState,
-      btcAgainst,
-      btcWith,
-      sweptHigh,
-      closedAboveRange,
-      wickReject,
-      weakBody,
-      volumeExhaustion,
-      validBreakout
-    }
-  };
+function isBtcWithBear(btcState) {
+  return ['BEARISH', 'STRONG_BEAR'].includes(btcState);
 }
 
 function analyzeBearBreakout({
@@ -174,8 +167,8 @@ function analyzeBearBreakout({
   const sweptLow = low < recentLow && close > recentLow;
   const closedBelowRange = close < recentLow * (1 - BREAKOUT_BUFFER_PCT);
 
-  const btcAgainst = isBtcAgainst('bear', btcState);
-  const btcWith = isBtcWith('bear', btcState);
+  const btcAgainst = isBtcAgainstBear(btcState);
+  const btcWith = isBtcWithBear(btcState);
 
   const wickReject = lowerWick >= WICK_REJECT_THRESHOLD;
   const weakBody = body <= WEAK_BODY_THRESHOLD;
@@ -207,25 +200,50 @@ function analyzeBearBreakout({
     );
 
   return {
+    ...baseResult(null),
+
     fakeBreakout: fake,
-    fakeBreakoutRisk: !fake && (sweptLow || (closedBelowRange && !btcWith)),
-    fakeBreakoutReason: fake ? 'LOW_SWEEP_CLOSE_BACK_IN_RANGE' : null,
-    breakoutType: fake ? 'FAKE_BREAKOUT' : validBreakout ? 'VALID_BREAKOUT' : 'NONE',
+    fakeBreakoutRisk: !fake && (
+      sweptLow ||
+      (
+        closedBelowRange &&
+        !btcWith
+      )
+    ),
+
+    fakeBreakoutReason: fake
+      ? 'LOW_SWEEP_CLOSE_BACK_IN_RANGE'
+      : null,
+
+    breakoutType: fake
+      ? 'FAKE_BREAKOUT'
+      : validBreakout
+        ? 'VALID_BREAKOUT'
+        : 'NONE',
+
     pullbackConfirmed,
     sweepConfirmed: sweptLow,
     retestConfirmed,
+
     details: {
+      side: TARGET_DASHBOARD_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+
       recentHigh,
       recentLow,
+
       close,
       high,
       low,
+
       lowerWick,
       body,
       volumeExpansion,
+
       btcState,
       btcAgainst,
       btcWith,
+
       sweptLow,
       closedBelowRange,
       wickReject,
@@ -257,8 +275,12 @@ export function detectFakeBreakout({
 
   const normalizedSide = normalizeSide(side);
 
-  if (normalizedSide === 'unknown') {
-    return emptyResult('UNKNOWN_SIDE');
+  if (normalizedSide === 'long_disabled') {
+    return emptyResult('LONG_DISABLED_SHORT_ONLY');
+  }
+
+  if (normalizedSide !== TARGET_SCANNER_SIDE) {
+    return emptyResult('UNKNOWN_OR_NON_BEAR_SIDE');
   }
 
   const last = rows.at(-1);
@@ -276,16 +298,6 @@ export function detectFakeBreakout({
 
   const normalizedBtcState = normalizeBtcState(btcState);
   const volumeExpansion = calcVolumeExpansion(rows, lb);
-
-  if (normalizedSide === 'bull') {
-    return analyzeBullBreakout({
-      last,
-      recentHigh,
-      recentLow,
-      volumeExpansion,
-      btcState: normalizedBtcState
-    });
-  }
 
   return analyzeBearBreakout({
     last,
