@@ -118,16 +118,6 @@ function tradeConfig() {
       20
     ),
 
-    maxOpenPositions: positiveInt(
-      CONFIG.trade?.maxOpenPositions,
-      30
-    ),
-
-    maxOpenSameSide: positiveInt(
-      CONFIG.trade?.maxOpenSameSide,
-      30
-    ),
-
     maxSpreadPct: cfgNumber(CONFIG.trade?.maxSpreadPct, 0.0015),
 
     candleTtlSec: positiveInt(
@@ -145,17 +135,17 @@ function tradeConfig() {
       120
     ),
 
-    requireScannerGateForLiveEntries: CONFIG.trade?.requireScannerGateForLiveEntries !== false,
+    requireScannerGateForDiscordAlerts: CONFIG.trade?.requireScannerGateForDiscordAlerts !== false,
 
-    blockDiscoveryOnlyLiveEntries: CONFIG.trade?.blockDiscoveryOnlyLiveEntries !== false,
+    blockDiscoveryOnlyDiscordAlerts: CONFIG.trade?.blockDiscoveryOnlyDiscordAlerts !== false,
 
-    allowFakeBreakoutLiveEntries: cfgBoolean(
-      CONFIG.trade?.allowFakeBreakoutLiveEntries,
+    allowFakeBreakoutDiscordAlerts: cfgBoolean(
+      CONFIG.trade?.allowFakeBreakoutDiscordAlerts,
       false
     ),
 
-    allowLowConfidenceLiveEntries: cfgBoolean(
-      CONFIG.trade?.allowLowConfidenceLiveEntries,
+    allowLowConfidenceDiscordAlerts: cfgBoolean(
+      CONFIG.trade?.allowLowConfidenceDiscordAlerts,
       false
     ),
 
@@ -164,14 +154,14 @@ function tradeConfig() {
       false
     ),
 
-    allowSyntheticRiskLiveEntries: cfgBoolean(
-      CONFIG.trade?.allowSyntheticRiskLiveEntries,
+    allowSyntheticRiskDiscordAlerts: cfgBoolean(
+      CONFIG.trade?.allowSyntheticRiskDiscordAlerts,
       false
     ),
 
-    minLiveScannerScore: Math.max(
+    minDiscordScannerScore: Math.max(
       0,
-      cfgNumber(CONFIG.trade?.minLiveScannerScore, 0)
+      cfgNumber(CONFIG.trade?.minDiscordScannerScore, 0)
     ),
 
     minRiskPct: cfgNumber(CONFIG.trade?.minRiskPct, 0.004),
@@ -455,6 +445,7 @@ function waitAction(candidate, reason, extra = {}) {
     isMirrorMicroFamily: Boolean(candidate?.isMirrorMicroFamily),
     observationMirror: Boolean(candidate?.observationMirror),
     liveEligible: false,
+    virtualTracked: false,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -630,7 +621,7 @@ function buildSelectedAlertContext(activeRotation) {
       row,
       rowByMicroId,
       rowByAnyMicroId,
-      includeCoarseAliases
+      includeCoarseAliases: includeCoarseAliases
     });
   }
 
@@ -808,7 +799,7 @@ function hasValidRiskShape(row = {}) {
   return false;
 }
 
-function validateLiveEntryGates(row = {}) {
+function validateDiscordAlertGates(row = {}) {
   const cfg = tradeConfig();
 
   const tradeSide = inferRowTradeSide(row);
@@ -821,10 +812,10 @@ function validateLiveEntryGates(row = {}) {
     };
   }
 
-  if (row.syntheticRisk && !cfg.allowSyntheticRiskLiveEntries) {
+  if (row.syntheticRisk && !cfg.allowSyntheticRiskDiscordAlerts) {
     return {
       ok: false,
-      reason: 'SYNTHETIC_RISK_NOT_LIVE',
+      reason: 'SYNTHETIC_RISK_NOT_DISCORD_ALERT',
       syntheticRisk: true,
       syntheticRiskReason: row.syntheticRiskReason || null
     };
@@ -860,7 +851,7 @@ function validateLiveEntryGates(row = {}) {
     };
   }
 
-  if (cfg.requireScannerGateForLiveEntries && !scannerGatePassed(row)) {
+  if (cfg.requireScannerGateForDiscordAlerts && !scannerGatePassed(row)) {
     return {
       ok: false,
       reason: 'SCANNER_GATE_NOT_PASSED',
@@ -868,30 +859,30 @@ function validateLiveEntryGates(row = {}) {
     };
   }
 
-  if (cfg.blockDiscoveryOnlyLiveEntries && isDiscoveryOnly(row)) {
+  if (cfg.blockDiscoveryOnlyDiscordAlerts && isDiscoveryOnly(row)) {
     return {
       ok: false,
-      reason: 'SCANNER_DISCOVERY_ONLY_NOT_LIVE',
+      reason: 'SCANNER_DISCOVERY_ONLY_NOT_DISCORD_ALERT',
       tradeDiscoveryOnly: true
     };
   }
 
-  if (!cfg.allowFakeBreakoutLiveEntries && row.fakeBreakout) {
+  if (!cfg.allowFakeBreakoutDiscordAlerts && row.fakeBreakout) {
     return {
       ok: false,
-      reason: 'FAKE_BREAKOUT_NOT_LIVE',
+      reason: 'FAKE_BREAKOUT_NOT_DISCORD_ALERT',
       fakeBreakout: true,
       fakeBreakoutReason: row.fakeBreakoutReason || null
     };
   }
 
   if (
-    !cfg.allowLowConfidenceLiveEntries &&
+    !cfg.allowLowConfidenceDiscordAlerts &&
     String(row.sideConfidence || '').toUpperCase() === 'LOW'
   ) {
     return {
       ok: false,
-      reason: 'LOW_SIDE_CONFIDENCE_NOT_LIVE',
+      reason: 'LOW_SIDE_CONFIDENCE_NOT_DISCORD_ALERT',
       sideConfidence: row.sideConfidence
     };
   }
@@ -899,27 +890,18 @@ function validateLiveEntryGates(row = {}) {
   if (spreadPct > cfg.maxSpreadPct) {
     return {
       ok: false,
-      reason: 'SPREAD_TOO_WIDE',
+      reason: 'SPREAD_TOO_WIDE_FOR_DISCORD_ALERT',
       spreadPct,
       maxSpreadPct: cfg.maxSpreadPct
     };
   }
 
-  if (row.liveSpreadGatePassed === false) {
+  if (cfg.minDiscordScannerScore > 0 && score < cfg.minDiscordScannerScore) {
     return {
       ok: false,
-      reason: 'SPREAD_GATE_FAILED',
-      spreadPct,
-      maxSpreadPct: cfg.maxSpreadPct
-    };
-  }
-
-  if (cfg.minLiveScannerScore > 0 && score < cfg.minLiveScannerScore) {
-    return {
-      ok: false,
-      reason: 'SCANNER_SCORE_TOO_LOW_FOR_LIVE',
+      reason: 'SCANNER_SCORE_TOO_LOW_FOR_DISCORD_ALERT',
       scannerScore: score,
-      minLiveScannerScore: cfg.minLiveScannerScore
+      minDiscordScannerScore: cfg.minDiscordScannerScore
     };
   }
 
@@ -1295,48 +1277,6 @@ async function getLatestSnapshot() {
   });
 }
 
-function validateExposure(openPositions, side) {
-  const cfg = tradeConfig();
-
-  const rows = Array.isArray(openPositions) ? openPositions : [];
-  const tradeSide = normalizeTradeSide(side);
-
-  if (tradeSide !== TARGET_TRADE_SIDE) {
-    return {
-      ok: false,
-      reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM',
-      side: tradeSide
-    };
-  }
-
-  if (rows.length >= cfg.maxOpenPositions) {
-    return {
-      ok: false,
-      reason: 'MAX_OPEN_POSITIONS',
-      count: rows.length,
-      cap: cfg.maxOpenPositions
-    };
-  }
-
-  const sameSide = rows.filter((position) => (
-    normalizeTradeSide(position.side || position.tradeSide) === TARGET_TRADE_SIDE
-  )).length;
-
-  if (sameSide >= cfg.maxOpenSameSide) {
-    return {
-      ok: false,
-      reason: 'MAX_OPEN_SAME_SIDE',
-      side: TARGET_TRADE_SIDE,
-      count: sameSide,
-      cap: cfg.maxOpenSameSide
-    };
-  }
-
-  return {
-    ok: true
-  };
-}
-
 function enrichMetricsWithScannerAndLiveGates({
   metrics,
   candidate,
@@ -1647,7 +1587,7 @@ function buildActualRiskWaitIfNeeded({
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE
     },
-    'SHORT_RISK_INVALID'
+    'SHORT_RISK_INVALID_OBSERVATION_ONLY'
   );
 }
 
@@ -1699,7 +1639,7 @@ async function processCandidate(candidate) {
 
     return {
       actions: [
-        waitAction(normalized, 'LIVE_DATA_FAILED', {
+        waitAction(normalized, 'LIVE_DATA_FAILED_OBSERVATION_WRITTEN', {
           error: data.error?.message || null
         })
       ],
@@ -1718,7 +1658,7 @@ async function processCandidate(candidate) {
 
     return {
       actions: [
-        waitAction(normalized, 'INSUFFICIENT_LIVE_CANDLES_15M', {
+        waitAction(normalized, 'INSUFFICIENT_LIVE_CANDLES_15M_OBSERVATION_WRITTEN', {
           candleCount: data.candles15m?.length || 0
         })
       ],
@@ -1804,7 +1744,7 @@ async function safeProcessCandidate(candidate) {
 
     return {
       actions: [
-        waitAction(normalized, 'CANDIDATE_PROCESS_ERROR', {
+        waitAction(normalized, 'CANDIDATE_PROCESS_ERROR_OBSERVATION_ATTEMPTED', {
           error: error?.message || String(error)
         })
       ],
@@ -1818,13 +1758,35 @@ async function safeProcessCandidate(candidate) {
   }
 }
 
+function safeDiagnosticRiskCaps({
+  openPositions,
+  row,
+  riskFraction
+}) {
+  try {
+    return checkRiskCaps({
+      openPositions,
+      side: TARGET_TRADE_SIDE,
+      btcRelation: row.btcRelation,
+      riskFraction
+    });
+  } catch (error) {
+    return {
+      ok: true,
+      diagnosticOnly: true,
+      reason: 'RISK_CAPS_DIAGNOSTIC_FAILED',
+      error: error?.message || String(error)
+    };
+  }
+}
+
 function buildEntryAction({
   row,
   alertContext,
   selectedWeeklyStats,
   riskFraction,
   riskCaps,
-  liveGate,
+  discordGate,
   discordAlertEligible
 }) {
   const microFamilyId = rowMicroId(row);
@@ -1847,7 +1809,7 @@ function buildEntryAction({
     direction: TARGET_TRADE_SIDE,
 
     action: 'ENTRY',
-    reason: 'SHORT_ENTRY_RISK_VALID',
+    reason: 'SHORT_VIRTUAL_ENTRY_RISK_VALID',
 
     selectedRotationId: alertContext.rotationId,
     activeRotationId: alertContext.rotationId,
@@ -1866,12 +1828,16 @@ function buildEntryAction({
 
     riskFraction,
     riskCaps,
-    liveGate,
+
+    discordGate,
+    discordGatePassed: Boolean(discordGate?.ok),
 
     btcRelation: row.btcRelation,
 
-    liveEligible: true,
-    shadowOnly: false,
+    liveEligible: Boolean(discordGate?.ok),
+    virtualTracked: true,
+    virtualOnly: true,
+    shadowOnly: true,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -1911,6 +1877,27 @@ async function maybeSendDiscordEntryAlert(entry = {}) {
       error: error?.message || String(error)
     };
   }
+}
+
+function queueDiscordEntryAlert(entry = {}) {
+  if (!entry.discordAlertEligible) {
+    return {
+      sent: false,
+      skipped: true,
+      queued: false,
+      reason: 'MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT'
+    };
+  }
+
+  void maybeSendDiscordEntryAlert(entry).catch(() => null);
+
+  return {
+    sent: false,
+    skipped: false,
+    queued: true,
+    fireAndForget: true,
+    reason: 'DISCORD_ALERT_QUEUED_FIRE_AND_FORGET'
+  };
 }
 
 async function saveRunMeta(result) {
@@ -2032,7 +2019,7 @@ export async function runTradeSystem(options = {}) {
     });
   }
 
-  const activeRotation = await getActiveRotation();
+  const activeRotation = await getActiveRotation().catch(() => null);
   const alertContext = buildSelectedAlertContext(activeRotation);
 
   const candidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
@@ -2092,6 +2079,7 @@ export async function runTradeSystem(options = {}) {
   const analyzedMirrorRows = analyzedRows.filter(isMirrorAnalysisRow).length;
   const analyzedRiskValidRows = analyzedRows.filter(hasValidRiskShape).length;
   const analyzedSyntheticRiskRows = analyzedRows.filter((row) => row.syntheticRisk).length;
+  const analyzedObservationOnlyRows = analyzedRows.filter((row) => row.observationOnly || row.analysisInputOnly || row.learningOnly).length;
 
   const openPositions = await getOpenPositions();
   const actions = [...earlyActions];
@@ -2099,15 +2087,20 @@ export async function runTradeSystem(options = {}) {
   let entryRows = 0;
   let waitRows = earlyActions.length;
 
+  let virtualCreatedRows = 0;
+  let virtualSkippedDuplicateRows = 0;
+  let virtualSkippedInvalidRiskRows = 0;
+  let virtualFailedRows = 0;
+
   let discordAlertEligibleRows = 0;
-  let discordAlertsSent = 0;
+  let discordAlertsQueued = 0;
   let discordAlertsSkippedNoSelectedMicro = 0;
-  let discordAlertsFailed = 0;
+  let discordAlertsSkippedGate = 0;
 
   let selectedMicroMatchRows = 0;
   let unselectedMicroEntryRows = 0;
 
-  const shadowCreatedRows = 0;
+  let shadowCreatedRows = 0;
   const shadowSkippedRows = 0;
   const shadowFailedRows = 0;
 
@@ -2126,6 +2119,7 @@ export async function runTradeSystem(options = {}) {
         selectedRotationId: alertContext.rotationId,
         activeRotationId: alertContext.rotationId,
         liveEligible: false,
+        virtualTracked: false,
         shortOnly: true,
         longDisabled: true,
         longOnly: false,
@@ -2136,6 +2130,7 @@ export async function runTradeSystem(options = {}) {
     }
 
     if (!hasValidRiskShape(row)) {
+      virtualSkippedInvalidRiskRows += 1;
       waitRows += 1;
 
       actions.push({
@@ -2143,37 +2138,13 @@ export async function runTradeSystem(options = {}) {
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
-        reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
+        reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID_OBSERVATION_ONLY',
         selectedRotationId: alertContext.rotationId,
         activeRotationId: alertContext.rotationId,
         activeMacroFamilyId: parentMacroFamilyId(row) || null,
         liveEligible: false,
-        shadowOnly: false,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false
-      });
-
-      continue;
-    }
-
-    const liveGate = validateLiveEntryGates(row);
-
-    if (!liveGate.ok) {
-      waitRows += 1;
-
-      actions.push({
-        ...row,
-        microFamilyId,
-        trueMicroFamilyId: microFamilyId,
-        action: 'WAIT',
-        reason: liveGate.reason,
-        selectedRotationId: alertContext.rotationId,
-        activeRotationId: alertContext.rotationId,
-        activeMacroFamilyId: parentMacroFamilyId(row) || null,
-        liveGate,
-        liveEligible: false,
+        virtualTracked: false,
+        observationOnly: true,
         shadowOnly: false,
         shortOnly: true,
         longDisabled: true,
@@ -2187,6 +2158,7 @@ export async function runTradeSystem(options = {}) {
     const alreadyOpen = await getOpenPosition(row.symbol);
 
     if (alreadyOpen) {
+      virtualSkippedDuplicateRows += 1;
       waitRows += 1;
 
       actions.push({
@@ -2194,35 +2166,11 @@ export async function runTradeSystem(options = {}) {
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
-        reason: 'SYMBOL_ALREADY_OPEN',
+        reason: 'SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION',
         selectedRotationId: alertContext.rotationId,
         activeRotationId: alertContext.rotationId,
         liveEligible: false,
-        shadowOnly: false,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false
-      });
-
-      continue;
-    }
-
-    const exposure = validateExposure(openPositions, TARGET_TRADE_SIDE);
-
-    if (!exposure.ok) {
-      waitRows += 1;
-
-      actions.push({
-        ...row,
-        microFamilyId,
-        trueMicroFamilyId: microFamilyId,
-        action: 'WAIT',
-        reason: exposure.reason,
-        selectedRotationId: alertContext.rotationId,
-        activeRotationId: alertContext.rotationId,
-        exposure,
-        liveEligible: false,
+        virtualTracked: false,
         shadowOnly: false,
         shortOnly: true,
         longDisabled: true,
@@ -2245,44 +2193,31 @@ export async function runTradeSystem(options = {}) {
       ? riskFractionForEntry({ weeklyStats: sizingStats })
       : sizing.baseRiskPct;
 
-    const riskCaps = checkRiskCaps({
+    const riskCaps = safeDiagnosticRiskCaps({
       openPositions,
-      side: TARGET_TRADE_SIDE,
-      btcRelation: row.btcRelation,
+      row,
       riskFraction
     });
 
-    if (!riskCaps.ok) {
-      waitRows += 1;
+    const selectedMicroMatch = rowMatchesSelectedAlertMicro(alertContext, row);
+    const discordGate = validateDiscordAlertGates(row);
 
-      actions.push({
-        ...row,
-        microFamilyId,
-        trueMicroFamilyId: microFamilyId,
-        action: 'WAIT',
-        reason: riskCaps.reason,
-        selectedRotationId: alertContext.rotationId,
-        activeRotationId: alertContext.rotationId,
-        riskCaps,
-        liveEligible: false,
-        shadowOnly: false,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false
-      });
+    const discordAlertEligible =
+      selectedMicroMatch &&
+      discordGate.ok;
 
-      continue;
+    if (selectedMicroMatch) {
+      selectedMicroMatchRows += 1;
+    } else {
+      unselectedMicroEntryRows += 1;
     }
-
-    const discordAlertEligible = rowMatchesSelectedAlertMicro(alertContext, row);
 
     if (discordAlertEligible) {
       discordAlertEligibleRows += 1;
-      selectedMicroMatchRows += 1;
-    } else {
+    } else if (!selectedMicroMatch) {
       discordAlertsSkippedNoSelectedMicro += 1;
-      unselectedMicroEntryRows += 1;
+    } else {
+      discordAlertsSkippedGate += 1;
     }
 
     const entry = buildEntryAction({
@@ -2291,27 +2226,53 @@ export async function runTradeSystem(options = {}) {
       selectedWeeklyStats,
       riskFraction,
       riskCaps,
-      liveGate,
+      discordGate,
       discordAlertEligible
     });
 
-    const position = buildOpenPositionFromEntry(entry);
+    try {
+      const position = buildOpenPositionFromEntry(entry);
 
-    await saveOpenPosition(position);
+      await saveOpenPosition(position);
 
-    openPositions.push(position);
-    entryRows += 1;
+      openPositions.push(position);
+      entryRows += 1;
+      virtualCreatedRows += 1;
+      shadowCreatedRows += 1;
 
-    const discordResult = await maybeSendDiscordEntryAlert(entry);
+      const discordResult = queueDiscordEntryAlert(entry);
 
-    if (discordResult.sent) discordAlertsSent += 1;
-    if (discordResult.failed) discordAlertsFailed += 1;
+      if (discordResult.queued) {
+        discordAlertsQueued += 1;
+      }
 
-    actions.push({
-      ...entry,
-      discordAlertResult: discordResult,
-      discordAlertSent: Boolean(discordResult.sent)
-    });
+      actions.push({
+        ...entry,
+        discordAlertResult: discordResult,
+        discordAlertQueued: Boolean(discordResult.queued),
+        discordAlertSent: false
+      });
+    } catch (error) {
+      virtualFailedRows += 1;
+      waitRows += 1;
+
+      actions.push({
+        ...row,
+        microFamilyId,
+        trueMicroFamilyId: microFamilyId,
+        action: 'WAIT',
+        reason: 'VIRTUAL_POSITION_SAVE_FAILED',
+        error: error?.message || String(error),
+        selectedRotationId: alertContext.rotationId,
+        activeRotationId: alertContext.rotationId,
+        liveEligible: false,
+        virtualTracked: false,
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false
+      });
+    }
   }
 
   await setJson(
@@ -2344,6 +2305,8 @@ export async function runTradeSystem(options = {}) {
 
       liveRows: liveRows.length,
       analyzeInputRows: liveRows.length,
+      observationRowsSubmitted: liveRows.length,
+
       actualLiveRows,
       mirrorRows,
       observationOnlyRows,
@@ -2357,21 +2320,28 @@ export async function runTradeSystem(options = {}) {
       analyzedMirrorRows,
       analyzedRiskValidRows,
       analyzedSyntheticRiskRows,
+      analyzedObservationOnlyRows,
 
       analyzeError,
+
+      virtualCreatedRows,
+      virtualSkippedDuplicateRows,
+      virtualSkippedInvalidRiskRows,
+      virtualFailedRows,
 
       shadowCreatedRows,
       shadowSkippedRows,
       shadowFailedRows,
-      shadowDisabled: true,
+      shadowDisabled: false,
+      virtualLearningMode: true,
 
       entryRows,
       waitRows,
 
       discordAlertEligibleRows,
-      discordAlertsSent,
+      discordAlertsQueued,
       discordAlertsSkippedNoSelectedMicro,
-      discordAlertsFailed,
+      discordAlertsSkippedGate,
 
       selectedMicroMatchRows,
       unselectedMicroEntryRows,
@@ -2431,6 +2401,8 @@ export async function runTradeSystem(options = {}) {
 
     liveRows: liveRows.length,
     analyzeInputRows: liveRows.length,
+    observationRowsSubmitted: liveRows.length,
+
     actualLiveRows,
     mirrorRows,
     observationOnlyRows,
@@ -2444,21 +2416,28 @@ export async function runTradeSystem(options = {}) {
     analyzedMirrorRows,
     analyzedRiskValidRows,
     analyzedSyntheticRiskRows,
+    analyzedObservationOnlyRows,
 
     analyzeError,
+
+    virtualCreatedRows,
+    virtualSkippedDuplicateRows,
+    virtualSkippedInvalidRiskRows,
+    virtualFailedRows,
 
     shadowCreatedRows,
     shadowSkippedRows,
     shadowFailedRows,
-    shadowDisabled: true,
+    shadowDisabled: false,
+    virtualLearningMode: true,
 
     entryRows,
     waitRows,
 
     discordAlertEligibleRows,
-    discordAlertsSent,
+    discordAlertsQueued,
     discordAlertsSkippedNoSelectedMicro,
-    discordAlertsFailed,
+    discordAlertsSkippedGate,
 
     selectedMicroMatchRows,
     unselectedMicroEntryRows,
