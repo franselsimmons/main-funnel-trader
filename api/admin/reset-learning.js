@@ -9,12 +9,16 @@ import {
 } from '../../src/utils.js';
 import {
   getDurableRedis,
-  pushJsonLog
+  pushJsonLog,
+  delPattern
 } from '../../src/redis.js';
 import { sendResetReport } from '../../src/discord/discord.js';
 
 const CONFIRM_TEXT = 'RESET_LEARNING';
 const LOCK_TTL_SEC = 180;
+
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
 
 const LOCK_KEYS = {
   resetLearning: 'ADMIN:RESET_LEARNING:LOCK',
@@ -23,13 +27,50 @@ const LOCK_KEYS = {
   activate: KEYS.analyze?.activateLock || 'ANALYZE:ROTATION_ACTIVATE_LOCK'
 };
 
+const DELETE_SCAN_COUNT = 10_000;
+
+function now() {
+  return Date.now();
+}
+
+function modeFlags() {
+  return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    virtualOnly: true,
+    virtualLearning: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    observationFirst: true,
+    netOutcomesOnly: true,
+
+    noRealOrders: true,
+    manualSelectionOnly: true,
+    autoRotationActivationDisabled: true,
+    discordOnlyForSelectedMicroFamilies: true
+  };
+}
+
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'POST');
 
   return res.status(405).json({
     ok: false,
     error: 'METHOD_NOT_ALLOWED',
-    allowed: ['POST']
+    allowed: ['POST'],
+    ...modeFlags()
   });
 }
 
@@ -64,14 +105,30 @@ async function readBody(req) {
   return parseJson(text);
 }
 
-function isConfirmed(body) {
+function isConfirmed(body = {}) {
   return (
     body.confirm === CONFIRM_TEXT ||
     body.confirmed === CONFIRM_TEXT
   );
 }
 
+function isTrue(value) {
+  return (
+    value === true ||
+    value === 'true' ||
+    value === 'TRUE' ||
+    value === 1 ||
+    value === '1' ||
+    value === 'yes' ||
+    value === 'YES' ||
+    value === 'on' ||
+    value === 'ON'
+  );
+}
+
 async function acquireLock(redis, key, token) {
+  if (!key) return true;
+
   const acquired = await redis.set(key, token, {
     nx: true,
     ex: LOCK_TTL_SEC
@@ -82,6 +139,8 @@ async function acquireLock(redis, key, token) {
 
 async function releaseLock(redis, key, token) {
   try {
+    if (!key) return false;
+
     const current = await redis.get(key);
 
     if (current !== token) return false;
@@ -94,7 +153,13 @@ async function releaseLock(redis, key, token) {
   }
 }
 
-async function acquireOneLock({ redis, key, token, reason, acquired }) {
+async function acquireOneLock({
+  redis,
+  key,
+  token,
+  reason,
+  acquired
+}) {
   const ok = await acquireLock(redis, key, token);
 
   if (!ok) {
@@ -174,9 +239,16 @@ async function delKey(redis, key) {
   return redis.del(key).catch(() => 0);
 }
 
+async function delPatternSafe(redis, pattern, count = DELETE_SCAN_COUNT) {
+  if (!pattern) return 0;
+
+  return delPattern(redis, pattern, count).catch(() => 0);
+}
+
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [])
+      .flatMap((value) => Array.isArray(value) ? value : [value])
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -206,7 +278,16 @@ function getWeekStorageKeys(weekKey) {
   return [
     base,
     `${base}:INDEX`,
+    `${base}:TOP`,
     KEYS.analyze.weekMeta(weekKey)
+  ].filter(Boolean);
+}
+
+function getWeekRowPatterns(weekKey) {
+  const base = KEYS.analyze.weekMicros(weekKey);
+
+  return [
+    `${base}:ROW:*`
   ].filter(Boolean);
 }
 
@@ -224,38 +305,77 @@ async function deleteExactKeys(redis, keys = []) {
   return deleted;
 }
 
+async function deletePatterns(redis, patterns = []) {
+  const safePatterns = uniqueStrings(patterns);
+
+  if (!safePatterns.length) return 0;
+
+  let deleted = 0;
+
+  for (const pattern of safePatterns) {
+    deleted += await delPatternSafe(redis, pattern);
+  }
+
+  return deleted;
+}
+
 async function runLearningDeleteSteps(redis, body = {}) {
+  const allWeeks = isTrue(body.allWeeks ?? body.full ?? true);
   const weekKeys = getWeekKeyCandidates(body);
+
   const weekMainKeys = weekKeys.flatMap(getWeekStorageKeys);
+  const weekRowPatterns = weekKeys.flatMap(getWeekRowPatterns);
 
   const deleted = {
     weekKeys,
+    allWeeks,
 
-    // Fast reset:
-    // - delete visible week base/index/meta keys
-    // - sharded ROW keys are intentionally not scanned/deleted here
-    // - because once INDEX is gone, getWeekMicros() cannot read orphan rows
-    // - orphan rows expire through TTL from analyzeEngine
-    weekMainKeys: await deleteExactKeys(redis, weekMainKeys),
+    exactWeekStorageKeys: await deleteExactKeys(redis, weekMainKeys),
+    shardedWeekRows: await deletePatterns(redis, weekRowPatterns),
 
-    // Active rotation blijft staan, zodat TradeSystem niet direct zonder gate draait.
-    // Next rotation moet weg, want die is gebaseerd op learning-data die nu verwijderd is.
-    nextRotation: await delKey(
+    observationDedupe: await delPatternSafe(
       redis,
-      KEYS.analyze?.nextRotation
+      'ANALYZE:OBS:LAST:*'
     ),
 
-    rotationValidFrom: await delKey(
+    shadowAnalyzeData: await delPatternSafe(
       redis,
-      KEYS.analyze?.rotationValidFrom
+      'ANALYZE:SHADOW:*'
+    ),
+
+    legacyMicroData: await delPatternSafe(
+      redis,
+      'ANALYZE:MICRO:*'
     )
   };
+
+  if (allWeeks) {
+    deleted.allWeekAnalyzeData = await delPatternSafe(
+      redis,
+      'ANALYZE:WEEK:*'
+    );
+  }
+
+  deleted.nextRotation = await delKey(
+    redis,
+    KEYS.analyze?.nextRotation
+  );
+
+  deleted.rotationValidFrom = await delKey(
+    redis,
+    KEYS.analyze?.rotationValidFrom
+  );
 
   return deleted;
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Admin-Reset-Learning-Mode', 'short-only-virtual-learning');
+  res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
+  res.setHeader('X-Long-Disabled', 'true');
+  res.setHeader('X-Virtual-Only', 'true');
+  res.setHeader('X-Manual-Selection-Preserved', 'true');
 
   const token = randomUUID();
   let redis = null;
@@ -273,7 +393,8 @@ export default async function handler(req, res) {
         ok: false,
         blocked: true,
         reason: 'CONFIRMATION_REQUIRED',
-        required: CONFIRM_TEXT
+        required: CONFIRM_TEXT,
+        ...modeFlags()
       });
     }
 
@@ -290,7 +411,8 @@ export default async function handler(req, res) {
         ok: false,
         blocked: true,
         reason: lockResult.reason,
-        released
+        released,
+        ...modeFlags()
       });
     }
 
@@ -298,21 +420,34 @@ export default async function handler(req, res) {
 
     const report = {
       ok: true,
-      type: 'RESET_LEARNING_FAST',
+      type: 'RESET_LEARNING_SHORT_ONLY_VIRTUAL',
+
+      ...modeFlags(),
 
       deleted,
 
       preserved: {
         activeRotation: true,
-        openPositions: true,
+        manualSelection: true,
+        openVirtualPositions: true,
         scannerSnapshots: true,
-        tradeMemory: true,
+        tradeRunMeta: true,
         resetLogs: true,
-        discordLogs: true,
-        orphanWeekRowsExpireByTtl: true
+        discordLogs: true
       },
 
-      resetAt: Date.now()
+      removed: {
+        weekMicros: true,
+        weekMeta: true,
+        weekTopSnapshots: true,
+        shardedWeekRows: true,
+        observationDedupe: true,
+        shadowAnalyzeData: true,
+        nextRotation: true,
+        rotationValidFrom: true
+      },
+
+      resetAt: now()
     };
 
     await pushJsonLog(
@@ -330,6 +465,8 @@ export default async function handler(req, res) {
 
     return res.status(status).json({
       ok: false,
+      ...modeFlags(),
+
       error: error?.message || String(error),
       stack: process.env.NODE_ENV === 'production'
         ? undefined
