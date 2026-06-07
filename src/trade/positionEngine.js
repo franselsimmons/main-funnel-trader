@@ -1,5 +1,3 @@
-// ================= FILE: src/trade/positionEngine.js =================
-
 import { KEYS } from '../keys.js';
 import { CONFIG } from '../config.js';
 import {
@@ -69,6 +67,37 @@ function manageConfig() {
   };
 }
 
+function costConfig() {
+  return {
+    takerFeePct: safeNumber(
+      CONFIG.cost?.takerFeePct ??
+      CONFIG.cost?.feePct ??
+      0.0006,
+      0.0006
+    ),
+
+    slippagePct: safeNumber(
+      CONFIG.cost?.slippagePct ??
+      CONFIG.cost?.marketSlippagePct ??
+      0.0002,
+      0.0002
+    ),
+
+    marketImpactPct: safeNumber(
+      CONFIG.cost?.marketImpactPct ??
+      CONFIG.cost?.impactPct ??
+      0.0001,
+      0.0001
+    ),
+
+    fallbackSpreadPct: safeNumber(
+      CONFIG.cost?.fallbackSpreadPct ??
+      0.0008,
+      0.0008
+    )
+  };
+}
+
 function schemaConfig() {
   const macroSchema = String(
     CONFIG.analyze?.macroSchema ||
@@ -95,6 +124,10 @@ function schemaConfig() {
 
 function round4(value) {
   return Number(safeNumber(value, 0).toFixed(4));
+}
+
+function round6(value) {
+  return Number(safeNumber(value, 0).toFixed(6));
 }
 
 function roundPrice(value) {
@@ -687,6 +720,145 @@ function buildVirtualFlags(row = {}) {
   };
 }
 
+function calcGrossRFromPosition({
+  position,
+  exitPrice
+} = {}) {
+  const entry = safeNumber(position.entry, 0);
+  const initialSl = safeNumber(position.initialSl || position.sl, 0);
+  const exit = safeNumber(exitPrice, 0);
+
+  if (entry <= 0 || initialSl <= 0 || exit <= 0) return 0;
+
+  const riskDistance = Math.abs(entry - initialSl);
+
+  if (riskDistance <= 0) return 0;
+
+  return (entry - exit) / riskDistance;
+}
+
+function calcRoundTripCostBreakdownR({
+  position,
+  exitPrice
+} = {}) {
+  const cfg = costConfig();
+
+  const entry = safeNumber(position.entry, 0);
+  const exit = safeNumber(exitPrice, 0);
+  const initialSl = safeNumber(position.initialSl || position.sl, 0);
+  const spreadPct = safeNumber(
+    position.spreadPct ??
+    position.liveSpreadPct ??
+    position.orderbookSpreadPct,
+    cfg.fallbackSpreadPct
+  );
+
+  if (entry <= 0 || exit <= 0 || initialSl <= 0) {
+    return {
+      costR: 0,
+      feeR: 0,
+      slippageR: 0,
+      marketImpactR: 0,
+      spreadCostR: 0
+    };
+  }
+
+  const riskDistance = Math.abs(entry - initialSl);
+
+  if (riskDistance <= 0) {
+    return {
+      costR: 0,
+      feeR: 0,
+      slippageR: 0,
+      marketImpactR: 0,
+      spreadCostR: 0
+    };
+  }
+
+  const notionalSum = entry + exit;
+
+  const feePrice = notionalSum * cfg.takerFeePct;
+  const slippagePrice = notionalSum * cfg.slippagePct;
+  const marketImpactPrice = notionalSum * cfg.marketImpactPct;
+  const spreadCostPrice = notionalSum * Math.max(0, spreadPct) * 0.5;
+
+  const feeR = feePrice / riskDistance;
+  const slippageR = slippagePrice / riskDistance;
+  const marketImpactR = marketImpactPrice / riskDistance;
+  const spreadCostR = spreadCostPrice / riskDistance;
+
+  const costR = feeR + slippageR + marketImpactR + spreadCostR;
+
+  return {
+    costR: round6(costR),
+    feeR: round6(feeR),
+    slippageR: round6(slippageR),
+    marketImpactR: round6(marketImpactR),
+    spreadCostR: round6(spreadCostR)
+  };
+}
+
+function applyNetCostModelToOutcome({
+  outcome,
+  position,
+  exitPrice
+} = {}) {
+  if (!outcome || typeof outcome !== 'object') return outcome;
+
+  if (outcome.netCostModelApplied === true) {
+    return outcome;
+  }
+
+  const grossR = safeNumber(
+    outcome.grossR ??
+    outcome.rawR ??
+    outcome.realizedGrossR ??
+    outcome.realizedR ??
+    outcome.r,
+    calcGrossRFromPosition({
+      position,
+      exitPrice
+    })
+  );
+
+  const cost = calcRoundTripCostBreakdownR({
+    position,
+    exitPrice
+  });
+
+  const netR = grossR - cost.costR;
+
+  return {
+    ...outcome,
+
+    grossR: round6(grossR),
+    rawR: round6(grossR),
+    realizedGrossR: round6(grossR),
+
+    costR: cost.costR,
+    avgCostR: cost.costR,
+    feeR: cost.feeR,
+    slippageR: cost.slippageR,
+    marketImpactR: cost.marketImpactR,
+    spreadCostR: cost.spreadCostR,
+
+    netR: round6(netR),
+    exitR: round6(netR),
+    realizedNetR: round6(netR),
+    realizedR: round6(netR),
+    r: round6(netR),
+
+    win: netR > 0,
+    loss: netR < 0,
+    flat: netR === 0,
+    isWin: netR > 0,
+
+    costModelApplied: true,
+    netCostModelApplied: true,
+    costModel: 'TAKER_FEE_PLUS_SLIPPAGE_SPREAD_IMPACT_R_V1'
+  };
+}
+
 export async function getOpenPositions() {
   const redis = getDurableRedis();
   const keys = await getKeys(redis, KEYS.trade.openPattern, 1000);
@@ -980,25 +1152,32 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
   });
 }
 
-function maybeSendExitAlert(position, outcome) {
+async function maybeSendExitAlert(position, outcome) {
   if (!position.discordAlertEligible && !position.selectedMicroFamilyAlert) {
     return {
       sent: false,
       skipped: true,
-      queued: false,
       reason: 'POSITION_NOT_SELECTED_FOR_DISCORD_EXIT_ALERT'
     };
   }
 
-  sendExitAlert(outcome).catch(() => null);
+  try {
+    await sendExitAlert(outcome);
 
-  return {
-    sent: false,
-    skipped: false,
-    queued: true,
-    fireAndForget: true,
-    reason: 'DISCORD_EXIT_ALERT_QUEUED_FIRE_AND_FORGET'
-  };
+    return {
+      sent: true,
+      skipped: false,
+      reason: 'DISCORD_EXIT_ALERT_SENT'
+    };
+  } catch (error) {
+    return {
+      sent: false,
+      skipped: false,
+      failed: true,
+      reason: 'DISCORD_EXIT_ALERT_FAILED',
+      error: error?.message || String(error)
+    };
+  }
 }
 
 async function monitorOnePosition({
@@ -1055,7 +1234,13 @@ async function monitorOnePosition({
     source: OUTCOME_SOURCE
   });
 
-  const outcome = enrichOutcomeIdentity(baseOutcome, position);
+  const netOutcome = applyNetCostModelToOutcome({
+    outcome: baseOutcome,
+    position,
+    exitPrice: price
+  });
+
+  const outcome = enrichOutcomeIdentity(netOutcome, position);
 
   const analyzeOutcome = clonePlainObject(outcome);
   const discordOutcome = clonePlainObject(outcome);
@@ -1064,7 +1249,7 @@ async function monitorOnePosition({
     source: OUTCOME_SOURCE
   });
 
-  const discordResult = maybeSendExitAlert(position, discordOutcome);
+  const discordResult = await maybeSendExitAlert(position, discordOutcome);
 
   await deleteOpenPosition(position.symbol || position.contractSymbol);
 
@@ -1074,8 +1259,7 @@ async function monitorOnePosition({
     outcome: {
       ...discordOutcome,
       discordExitAlertResult: discordResult,
-      discordExitAlertQueued: Boolean(discordResult.queued),
-      discordExitAlertSent: false
+      discordExitAlertSent: Boolean(discordResult.sent)
     }
   };
 }
