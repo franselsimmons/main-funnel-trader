@@ -12,10 +12,44 @@ import { sendResetReport } from '../../src/discord/discord.js';
 const CONFIRM_TEXT = 'RESET_ROTATION';
 const LOCK_TTL_SEC = 180;
 
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+
 const LOCK_KEYS = {
   resetRotation: 'ADMIN:RESET_ROTATION:LOCK',
   trade: KEYS.trade?.lock || 'TRADE:LOCK'
 };
+
+function now() {
+  return Date.now();
+}
+
+function modeFlags() {
+  return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    virtualOnly: true,
+    virtualLearning: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    noRealOrders: true,
+    manualSelectionOnly: true,
+    autoRotationActivationDisabled: true,
+    discordOnlyForSelectedMicroFamilies: true
+  };
+}
 
 function methodNotAllowed(res) {
   res.setHeader('Allow', 'POST');
@@ -23,15 +57,18 @@ function methodNotAllowed(res) {
   return res.status(405).json({
     ok: false,
     error: 'METHOD_NOT_ALLOWED',
-    allowed: ['POST']
+    allowed: ['POST'],
+    ...modeFlags()
   });
 }
 
 function parseJson(text) {
-  if (!text) return {};
+  const clean = String(text || '').trim();
+
+  if (!clean) return {};
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(clean);
   } catch {
     const error = new Error('INVALID_JSON_BODY');
     error.statusCode = 400;
@@ -68,6 +105,8 @@ function isConfirmed(body = {}) {
 }
 
 async function acquireLock(redis, key, token) {
+  if (!key) return true;
+
   const acquired = await redis.set(key, token, {
     nx: true,
     ex: LOCK_TTL_SEC
@@ -78,11 +117,11 @@ async function acquireLock(redis, key, token) {
 
 async function releaseLock(redis, key, token) {
   try {
+    if (!key) return false;
+
     const current = await redis.get(key);
 
-    if (current !== token) {
-      return false;
-    }
+    if (current !== token) return false;
 
     await redis.del(key);
 
@@ -92,40 +131,56 @@ async function releaseLock(redis, key, token) {
   }
 }
 
+async function acquireOneLock({
+  redis,
+  key,
+  token,
+  reason,
+  acquired
+}) {
+  const ok = await acquireLock(redis, key, token);
+
+  if (!ok) {
+    return {
+      ok: false,
+      reason,
+      acquired
+    };
+  }
+
+  acquired.push(key);
+
+  return {
+    ok: true,
+    acquired
+  };
+}
+
 async function acquireResetRotationLocks(redis, token) {
   const acquired = [];
 
-  const resetAcquired = await acquireLock(
-    redis,
-    LOCK_KEYS.resetRotation,
-    token
-  );
+  const steps = [
+    {
+      key: LOCK_KEYS.resetRotation,
+      reason: 'RESET_ROTATION_ALREADY_RUNNING'
+    },
+    {
+      key: LOCK_KEYS.trade,
+      reason: 'TRADE_RUN_ACTIVE'
+    }
+  ];
 
-  if (!resetAcquired) {
-    return {
-      ok: false,
-      reason: 'RESET_ROTATION_ALREADY_RUNNING',
+  for (const step of steps) {
+    const result = await acquireOneLock({
+      redis,
+      key: step.key,
+      token,
+      reason: step.reason,
       acquired
-    };
+    });
+
+    if (!result.ok) return result;
   }
-
-  acquired.push(LOCK_KEYS.resetRotation);
-
-  const tradeAcquired = await acquireLock(
-    redis,
-    LOCK_KEYS.trade,
-    token
-  );
-
-  if (!tradeAcquired) {
-    return {
-      ok: false,
-      reason: 'TRADE_RUN_ACTIVE',
-      acquired
-    };
-  }
-
-  acquired.push(LOCK_KEYS.trade);
 
   return {
     ok: true,
@@ -151,7 +206,7 @@ async function releaseLocks(redis, keys, token) {
 async function delKey(redis, key) {
   if (!key) return 0;
 
-  return redis.del(key);
+  return redis.del(key).catch(() => 0);
 }
 
 async function deleteRotationKeys(redis) {
@@ -177,6 +232,11 @@ async function deleteRotationKeys(redis) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Admin-Reset-Rotation-Mode', 'short-only-manual-selection-reset');
+  res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
+  res.setHeader('X-Long-Disabled', 'true');
+  res.setHeader('X-Virtual-Only', 'true');
+  res.setHeader('X-Auto-Rotation-Disabled', 'true');
 
   const token = randomUUID();
   let redis = null;
@@ -194,7 +254,8 @@ export default async function handler(req, res) {
         ok: false,
         blocked: true,
         reason: 'CONFIRMATION_REQUIRED',
-        required: CONFIRM_TEXT
+        required: CONFIRM_TEXT,
+        ...modeFlags()
       });
     }
 
@@ -211,7 +272,8 @@ export default async function handler(req, res) {
         ok: false,
         blocked: true,
         reason: lockResult.reason,
-        released
+        released,
+        ...modeFlags()
       });
     }
 
@@ -219,23 +281,34 @@ export default async function handler(req, res) {
 
     const report = {
       ok: true,
-      type: 'RESET_ROTATION',
+      type: 'RESET_ROTATION_SHORT_ONLY_MANUAL_SELECTION',
+
+      ...modeFlags(),
 
       deleted,
+
+      effect: {
+        discordEntryAlertsDisabledUntilManualSelection: true,
+        activeManualSelectionCleared: true,
+        nextRotationCleared: true,
+        rotationValidFromCleared: true,
+        autoRotationNotActivated: true
+      },
 
       preserved: {
         learning: true,
         weeklyStats: true,
+        microFamilies: true,
         observations: true,
         outcomes: true,
-        openPositions: true,
+        openVirtualPositions: true,
         scannerSnapshots: true,
         tradeMemory: true,
         resetLogs: true,
         discordLogs: true
       },
 
-      resetAt: Date.now()
+      resetAt: now()
     };
 
     await pushJsonLog(
@@ -243,7 +316,7 @@ export default async function handler(req, res) {
       KEYS.reset?.logList || 'RESET:LOGS',
       report,
       100
-    );
+    ).catch(() => null);
 
     await sendResetReport(report).catch(() => null);
 
@@ -253,6 +326,8 @@ export default async function handler(req, res) {
 
     return res.status(status).json({
       ok: false,
+      ...modeFlags(),
+
       error: error?.message || String(error),
       stack: process.env.NODE_ENV === 'production'
         ? undefined
