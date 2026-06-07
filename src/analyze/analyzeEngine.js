@@ -38,7 +38,7 @@ const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const OBSERVATION_SOURCE = 'VIRTUAL';
-const OUTCOME_SOURCE = 'SHADOW';
+const OUTCOME_SOURCE = 'VIRTUAL';
 
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
@@ -53,11 +53,11 @@ function now() {
 function normalizeSource(source) {
   const raw = String(source || OUTCOME_SOURCE).trim().toUpperCase();
 
-  if (raw === 'VIRTUAL') return OUTCOME_SOURCE;
-  if (raw === 'SHADOW') return OUTCOME_SOURCE;
+  if (raw === 'VIRTUAL') return 'VIRTUAL';
+  if (raw === 'SHADOW') return 'SHADOW';
   if (raw === 'REAL') return 'REAL';
 
-  return raw || OUTCOME_SOURCE;
+  return OUTCOME_SOURCE;
 }
 
 function obsDedupeTtlSec() {
@@ -78,8 +78,21 @@ function bool(value, fallback = false) {
   return fallback;
 }
 
+function cleanSideText(value = '') {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
 function sideTextToTradeSide(value) {
-  const raw = String(value || '').trim().toUpperCase();
+  const raw = cleanSideText(value);
 
   if (!raw) return 'UNKNOWN';
 
@@ -108,6 +121,8 @@ function sideTextToTradeSide(value) {
     'SIDE_SHORT',
     'TRADE_SIDE_SHORT',
     'TRADESIDE_SHORT',
+    'POSITION_SIDE_SHORT',
+    'POSITIONSIDE_SHORT',
     'DIRECTION_SHORT',
     'SIDE_BEAR',
     'TRADE_SIDE_BEAR',
@@ -126,6 +141,8 @@ function sideTextToTradeSide(value) {
     'SIDE_LONG',
     'TRADE_SIDE_LONG',
     'TRADESIDE_LONG',
+    'POSITION_SIDE_LONG',
+    'POSITIONSIDE_LONG',
     'DIRECTION_LONG',
     'SIDE_BULL',
     'TRADE_SIDE_BULL',
@@ -143,8 +160,8 @@ function sideTextToTradeSide(value) {
     normalized.includes(`_${pattern}_`)
   ));
 
-  if (hit(shortPatterns)) return TARGET_TRADE_SIDE;
   if (hit(longPatterns)) return OPPOSITE_TRADE_SIDE;
+  if (hit(shortPatterns)) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
@@ -199,11 +216,21 @@ function sideProbeValues(row = {}, classified = {}) {
 }
 
 function inferTradeSide(row = {}, classified = {}) {
+  let hasShort = false;
+  let hasLong = false;
+
   for (const value of sideProbeValues(row, classified)) {
     const side = sideTextToTradeSide(value);
 
-    if (side === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
-    if (side === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+    if (side === OPPOSITE_TRADE_SIDE) hasLong = true;
+    if (side === TARGET_TRADE_SIDE) hasShort = true;
+  }
+
+  if (hasLong) return OPPOSITE_TRADE_SIDE;
+  if (hasShort) return TARGET_TRADE_SIDE;
+
+  if (row.shortOnly === true || row.longDisabled === true) {
+    return TARGET_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
@@ -213,8 +240,8 @@ function isShortOnlyRow(row = {}, classified = {}) {
   return inferTradeSide(row, classified) === TARGET_TRADE_SIDE;
 }
 
-function isLongSide() {
-  return false;
+function isLongSide(side) {
+  return sideTextToTradeSide(side) === OPPOSITE_TRADE_SIDE;
 }
 
 function normalizeClassificationInput(row = {}, forcedSide = null) {
@@ -627,9 +654,9 @@ function compactOutcome(outcome = {}) {
     gaveBackAfterOneR: Boolean(outcome.gaveBackAfterOneR),
     nearTpThenLoss: Boolean(outcome.nearTpThenLoss),
 
-    virtualOnly: Boolean(outcome.virtualOnly),
-    virtualTracked: Boolean(outcome.virtualTracked),
-    shadowOnly: Boolean(outcome.shadowOnly || src === OUTCOME_SOURCE),
+    virtualOnly: outcome.virtualOnly !== false,
+    virtualTracked: outcome.virtualTracked !== false,
+    shadowOnly: outcome.shadowOnly !== false,
 
     costModelApplied: Boolean(outcome.costModelApplied),
     netCostModelApplied: Boolean(outcome.netCostModelApplied),
@@ -730,28 +757,6 @@ function numericBucket(value, {
   const bucket = Math.round(clipped / step) * step;
 
   return `${label}=${bucket}`;
-}
-
-function ratioBucket(value, label, stepPct = 5, maxPct = 100) {
-  return numericBucket(value, {
-    label,
-    scale: 100,
-    step: stepPct,
-    min: -maxPct,
-    max: maxPct,
-    fallback: 'NA'
-  });
-}
-
-function bpsBucket(value, label, step = 2, max = 80) {
-  return numericBucket(value, {
-    label,
-    scale: 1,
-    step,
-    min: 0,
-    max,
-    fallback: 'NA'
-  });
 }
 
 function coarseNumberTier(value, {
@@ -2519,7 +2524,7 @@ export async function analyzeCandidatesBatch(
       const firstObservation = await redis.set(obsKey, '1', {
         nx: true,
         ex: obsDedupeTtlSec()
-      });
+      }).catch(() => null);
 
       const micro = getOrCreateMicro(
         micros,
@@ -2527,38 +2532,40 @@ export async function analyzeCandidatesBatch(
         TARGET_DASHBOARD_SIDE
       );
 
-      if (firstObservation) {
-        updateObservation(micro, {
-          ...batch.metrics,
-          ...classified,
+      updateObservation(micro, {
+        ...batch.metrics,
+        ...classified,
 
-          side: TARGET_DASHBOARD_SIDE,
-          tradeSide: TARGET_TRADE_SIDE,
-          positionSide: TARGET_TRADE_SIDE,
-          direction: TARGET_TRADE_SIDE,
+        side: TARGET_DASHBOARD_SIDE,
+        tradeSide: TARGET_TRADE_SIDE,
+        positionSide: TARGET_TRADE_SIDE,
+        direction: TARGET_TRADE_SIDE,
 
-          targetTradeSide: TARGET_TRADE_SIDE,
-          dashboardSide: TARGET_DASHBOARD_SIDE,
+        targetTradeSide: TARGET_TRADE_SIDE,
+        dashboardSide: TARGET_DASHBOARD_SIDE,
 
-          shortOnly: true,
-          longDisabled: true,
-          longOnly: false,
-          shortDisabled: false,
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false,
 
-          weekKey,
-          strategyVersion: CONFIG.strategyVersion,
+        weekKey,
+        strategyVersion: CONFIG.strategyVersion,
 
-          source: OBSERVATION_SOURCE,
-          analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
+        source: OBSERVATION_SOURCE,
+        analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
 
-          virtualOnly: true,
-          virtualTracked: true,
+        virtualOnly: true,
+        virtualTracked: true,
+        shadowOnly: true,
 
-          createdAt: batch.metrics.createdAt || now()
-        });
+        observationDuplicate: firstObservation === null,
+        observationDedupeKey: obsKey,
 
-        actuallyTouchedIds.add(classified.microFamilyId);
-      }
+        createdAt: batch.metrics.createdAt || now()
+      });
+
+      actuallyTouchedIds.add(classified.microFamilyId);
 
       if (item.returnToCaller) {
         analyzed.push({
@@ -2581,13 +2588,15 @@ export async function analyzeCandidatesBatch(
           source: OBSERVATION_SOURCE,
           analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
 
-          observationRecorded: Boolean(firstObservation),
+          observationRecorded: true,
+          observationDuplicate: firstObservation === null,
 
           mirrorMicroFamiliesCreated: 0,
           mirrorMicroFamilyIds: [],
 
           virtualOnly: true,
           virtualTracked: true,
+          shadowOnly: true,
 
           weekKey,
           strategyVersion: CONFIG.strategyVersion
@@ -2607,6 +2616,226 @@ export async function analyzeCandidatesBatch(
   }
 
   return analyzed;
+}
+
+function hasLockedOutcomeIdentity(outcome = {}) {
+  return Boolean(
+    outcome.microFamilyId ||
+    outcome.trueMicroFamilyId
+  );
+}
+
+function buildLockedOutcomeRow(outcome = {}) {
+  const microFamilyId = String(
+    outcome.microFamilyId ||
+    outcome.trueMicroFamilyId ||
+    ''
+  ).trim();
+
+  if (!microFamilyId) return null;
+
+  const trueMicroFamilyId = String(
+    outcome.trueMicroFamilyId ||
+    outcome.microFamilyId ||
+    microFamilyId
+  ).trim();
+
+  const parentMacroFamilyId = String(
+    outcome.parentMacroFamilyId ||
+    outcome.macroFamilyId ||
+    outcome.parentMicroFamilyId ||
+    outcome.familyMacroId ||
+    outcome.familyId ||
+    microFamilyId
+  ).trim();
+
+  const familyId = String(
+    outcome.familyId ||
+    outcome.family ||
+    'SHORT_VIRTUAL_OUTCOME'
+  ).trim();
+
+  const definitionParts = mergeDefinitionParts(
+    outcome.definitionParts || [],
+    [
+      `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
+      `LOCKED_MICRO=${microFamilyId}`,
+      `LOCKED_TRUE_MICRO=${trueMicroFamilyId}`,
+      `LOCKED_MACRO=${parentMacroFamilyId}`,
+      'OUTCOME_IDENTITY=POSITION_LOCKED'
+    ]
+  );
+
+  const parentDefinitionParts = mergeDefinitionParts(
+    outcome.parentDefinitionParts || [],
+    outcome.macroDefinitionParts || [],
+    [
+      `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
+      `MACRO=${parentMacroFamilyId}`
+    ]
+  );
+
+  return {
+    ...outcome,
+
+    familyId,
+
+    microFamilyId,
+    trueMicroFamilyId,
+
+    macroFamilyId: outcome.macroFamilyId || parentMacroFamilyId,
+    parentMacroFamilyId,
+    parentMicroFamilyId: outcome.parentMicroFamilyId || parentMacroFamilyId,
+
+    definitionParts,
+    definition: definitionParts.join(' | '),
+
+    parentDefinitionParts,
+    parentDefinition: parentDefinitionParts.join(' | '),
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    outcomeIdentityLocked: true,
+    outcomeIdentitySource: 'POSITION_MICRO_IDENTITY'
+  };
+}
+
+function ensureNetOutcome(outcome = {}) {
+  const existingNetR = safeNumber(
+    outcome.netR ??
+    outcome.exitR ??
+    outcome.realizedNetR ??
+    outcome.realizedR ??
+    outcome.r,
+    null
+  );
+
+  const existingGrossR = safeNumber(
+    outcome.grossR ??
+    outcome.rawR ??
+    outcome.realizedGrossR,
+    null
+  );
+
+  const existingCostR = safeNumber(
+    outcome.costR ??
+    outcome.avgCostR ??
+    outcome.totalCostR,
+    null
+  );
+
+  const entry = safeNumber(outcome.entry, 0);
+  const exit = safeNumber(outcome.exit ?? outcome.exitPrice, 0);
+  const initialSl = safeNumber(outcome.initialSl || outcome.sl, 0);
+
+  const riskPct =
+    safeNumber(outcome.riskPct, 0) ||
+    calcRiskPct({
+      entry,
+      sl: initialSl
+    });
+
+  const grossMovePct = safeNumber(
+    outcome.grossMovePct,
+    entry > 0 && exit > 0
+      ? calcGrossMovePct({
+        side: TARGET_TRADE_SIDE,
+        entry,
+        exit
+      })
+      : null
+  );
+
+  if (
+    Number.isFinite(grossMovePct) &&
+    riskPct > 0
+  ) {
+    const cost = applyCosts({
+      grossMovePct,
+      riskPct,
+      entrySpreadPct: safeNumber(outcome.entrySpreadPct ?? outcome.spreadPct, 0),
+      exitSpreadPct: safeNumber(outcome.exitSpreadPct ?? outcome.spreadPct, 0)
+    });
+
+    return {
+      ...outcome,
+
+      grossMovePct,
+      riskPct,
+
+      grossR: safeNumber(cost.grossR, 0),
+      rawR: safeNumber(cost.grossR, 0),
+      realizedGrossR: safeNumber(cost.grossR, 0),
+      grossPnlPct: safeNumber(cost.grossPnlPct, 0),
+
+      netR: safeNumber(cost.netR, 0),
+      exitR: safeNumber(cost.netR, 0),
+      realizedNetR: safeNumber(cost.netR, 0),
+      realizedR: safeNumber(cost.netR, 0),
+      r: safeNumber(cost.netR, 0),
+      pnlPct: safeNumber(cost.netPnlPct, 0),
+      netPnlPct: safeNumber(cost.netPnlPct, 0),
+
+      costR: safeNumber(cost.costR, 0),
+      avgCostR: safeNumber(cost.costR, 0),
+      costPct: safeNumber(cost.costPct, 0),
+      feePct: safeNumber(cost.feePct, 0),
+      slippagePct: safeNumber(cost.slippagePct, 0),
+
+      win: safeNumber(cost.netR, 0) > 0,
+      loss: safeNumber(cost.netR, 0) < 0,
+      flat: safeNumber(cost.netR, 0) === 0,
+      isWin: safeNumber(cost.netR, 0) > 0,
+
+      costModelApplied: true,
+      netCostModelApplied: true,
+      costModel: outcome.costModel || 'APPLY_COSTS_NET_R_V1'
+    };
+  }
+
+  const fallbackNetR = safeNumber(existingNetR, 0);
+  const fallbackGrossR = safeNumber(existingGrossR, fallbackNetR);
+  const fallbackCostR = safeNumber(
+    existingCostR,
+    Math.max(0, fallbackGrossR - fallbackNetR)
+  );
+
+  return {
+    ...outcome,
+
+    netR: fallbackNetR,
+    exitR: fallbackNetR,
+    realizedNetR: fallbackNetR,
+    realizedR: fallbackNetR,
+    r: fallbackNetR,
+
+    grossR: fallbackGrossR,
+    rawR: fallbackGrossR,
+    realizedGrossR: fallbackGrossR,
+
+    costR: fallbackCostR,
+    avgCostR: fallbackCostR,
+
+    win: fallbackNetR > 0,
+    loss: fallbackNetR < 0,
+    flat: fallbackNetR === 0,
+    isWin: fallbackNetR > 0,
+
+    costModelApplied: Boolean(outcome.costModelApplied),
+    netCostModelApplied: Boolean(outcome.netCostModelApplied),
+    costModel: outcome.costModel || 'PRECOMPUTED_NET_R'
+  };
 }
 
 export async function recordOutcome(
@@ -2631,20 +2860,37 @@ export async function recordOutcome(
 
   const src = normalizeSource(source);
 
-  const row = enrichWithMicroFamily({
+  const netOutcome = ensureNetOutcome({
     ...outcome,
     source: src,
     weekKey,
     strategyVersion: CONFIG.strategyVersion,
 
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
     virtualOnly: outcome.virtualOnly !== false,
     virtualTracked: outcome.virtualTracked !== false,
-    shadowOnly: true
+    shadowOnly: outcome.shadowOnly !== false
   });
+
+  const row = hasLockedOutcomeIdentity(netOutcome)
+    ? buildLockedOutcomeRow(netOutcome)
+    : enrichWithMicroFamily(netOutcome);
 
   if (!row) {
     return {
-      ...outcome,
+      ...netOutcome,
       source: src,
       weekKey,
       skipped: true,
@@ -2780,9 +3026,9 @@ function copyMicroClassificationFields(position = {}) {
     executionFingerprintParts: position.executionFingerprintParts || [],
     executionFingerprintSchema: position.executionFingerprintSchema || null,
 
-    macroFamilyId: position.macroFamilyId,
-    parentMacroFamilyId: position.parentMacroFamilyId,
-    parentMicroFamilyId: position.parentMicroFamilyId,
+    macroFamilyId: position.macroFamilyId || position.parentMacroFamilyId,
+    parentMacroFamilyId: position.parentMacroFamilyId || position.macroFamilyId,
+    parentMicroFamilyId: position.parentMicroFamilyId || position.parentMacroFamilyId || position.macroFamilyId,
 
     definitionParts: position.definitionParts || [],
     definition: position.definition || null,
@@ -2937,7 +3183,7 @@ export function buildOutcomeFromPosition({
 
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: src === OUTCOME_SOURCE,
+    shadowOnly: true,
 
     ...copyMicroClassificationFields(position),
 
@@ -2950,6 +3196,8 @@ export function buildOutcomeFromPosition({
     riskPct,
 
     exitReason,
+
+    grossMovePct,
 
     grossR: cost.grossR,
     rawR: cost.grossR,
