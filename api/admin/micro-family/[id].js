@@ -341,12 +341,39 @@ function inferTradeSide(input = {}) {
   if (macroFamilyId.includes('LONG')) return 'LONG';
 
   if (input.shortOnly === true || input.longDisabled === true) return 'SHORT';
+  if (input.longOnly === true || input.shortDisabled === true) return 'LONG';
 
   return 'UNKNOWN';
 }
 
+function isExplicitLong(input = {}) {
+  if (!input) return false;
+
+  const side = inferTradeSide(input);
+  if (side === 'LONG') return true;
+
+  if (typeof input === 'string') {
+    const clean = cleanSideHaystack(input);
+
+    return (
+      clean.includes('MICRO_LONG_') ||
+      clean.startsWith('LONG_') ||
+      clean.includes('TRADE_SIDE=LONG') ||
+      clean.includes('TRADESIDE=LONG') ||
+      clean.includes('SIDE=LONG') ||
+      clean.includes('SIDE=BULL') ||
+      clean.includes('DIRECTION=LONG') ||
+      clean.includes('DIRECTION=BULL') ||
+      clean.includes('SIDE=BUY') ||
+      clean.includes('DIRECTION=BUY')
+    );
+  }
+
+  return input.longOnly === true || input.shortDisabled === true;
+}
+
 function isTargetSide(row = {}) {
-  return inferTradeSide(row) === TARGET_TRADE_SIDE;
+  return !isExplicitLong(row);
 }
 
 function getFamilyId(row = {}) {
@@ -385,8 +412,7 @@ function extractActiveIds(activeRotation) {
       : [])
   ];
 
-  return uniqueStrings(ids)
-    .filter((id) => inferTradeSide(id) === TARGET_TRADE_SIDE);
+  return uniqueStrings(ids).filter((id) => !isExplicitLong(id));
 }
 
 function extractActiveMacroIds(activeRotation) {
@@ -402,11 +428,7 @@ function extractActiveMacroIds(activeRotation) {
     ...shortRows.map((row) => getMacroFamilyId(row))
   ];
 
-  return uniqueStrings(ids)
-    .filter((id) => (
-      inferTradeSide(id) === TARGET_TRADE_SIDE ||
-      cleanSideHaystack(id).includes('SHORT')
-    ));
+  return uniqueStrings(ids).filter((id) => !isExplicitLong(id));
 }
 
 function getLearningOutcomeCounts(row = {}) {
@@ -500,27 +522,47 @@ function getLearningAvgCostR(row = {}) {
   return 0;
 }
 
+function getPositiveR(row = {}, aggregateKey, realKey = null, shadowKey = null) {
+  if (hasValue(row[aggregateKey])) return Math.max(0, num(row[aggregateKey], 0));
+
+  return Math.max(
+    0,
+    num(realKey ? row[realKey] : 0, 0) +
+      num(shadowKey ? row[shadowKey] : 0, 0)
+  );
+}
+
+function getAbsLossR(row = {}, aggregateKey, realKey = null, shadowKey = null) {
+  if (hasValue(row[aggregateKey])) return Math.abs(num(row[aggregateKey], 0));
+
+  return Math.abs(
+    num(realKey ? row[realKey] : 0, 0) +
+      num(shadowKey ? row[shadowKey] : 0, 0)
+  );
+}
+
 function getLearningProfitFactor(row = {}) {
+  if (hasValue(row.netProfitFactor)) return num(row.netProfitFactor, 0);
   if (hasValue(row.profitFactor)) return num(row.profitFactor, 0);
 
-  const grossWinR = Math.max(
-    num(row.grossWinR, 0),
-    num(row.realGrossWinR, 0) + num(row.shadowGrossWinR, 0),
+  const netWinR = Math.max(
+    getPositiveR(row, 'netWinR', 'realNetWinR', 'shadowNetWinR'),
+    getPositiveR(row, 'totalWinR', 'realTotalWinR', 'shadowTotalWinR'),
+    getPositiveR(row, 'grossWinR', 'realGrossWinR', 'shadowGrossWinR'),
     0
   );
 
-  const grossLossR = Math.abs(
-    Math.min(
-      num(row.grossLossR, 0),
-      num(row.realGrossLossR, 0) + num(row.shadowGrossLossR, 0),
-      0
-    )
+  const netLossR = Math.max(
+    getAbsLossR(row, 'netLossR', 'realNetLossR', 'shadowNetLossR'),
+    getAbsLossR(row, 'totalLossR', 'realTotalLossR', 'shadowTotalLossR'),
+    getAbsLossR(row, 'grossLossR', 'realGrossLossR', 'shadowGrossLossR'),
+    0
   );
 
-  if (grossWinR <= 0 && grossLossR <= 0) return 0;
-  if (grossLossR <= 0) return grossWinR > 0 ? 999 : 0;
+  if (netWinR <= 0 && netLossR <= 0) return 0;
+  if (netLossR <= 0) return netWinR > 0 ? 999 : 0;
 
-  return grossWinR / grossLossR;
+  return netWinR / netLossR;
 }
 
 function getLearningCountMetric(row = {}, aggregateCountKey, realCountKey = null, shadowCountKey = null) {
@@ -795,13 +837,17 @@ function normalizeMicroRow(
   const definitionParts = getDefinitionParts(row);
   const macroDefinitionParts = getMacroDefinitionParts(row);
 
-  const active = microFamilyId
-    ? activeSet.has(microFamilyId)
-    : false;
+  const active = Boolean(row.active) || (
+    microFamilyId
+      ? activeSet.has(microFamilyId)
+      : false
+  );
 
-  const macroActive = macroFamilyId
-    ? activeMacroSet.has(macroFamilyId)
-    : false;
+  const macroActive = Boolean(row.macroActive) || (
+    macroFamilyId
+      ? activeMacroSet.has(macroFamilyId)
+      : false
+  );
 
   const fairWinrate = num(
     row.fairWinrate ??
@@ -1462,7 +1508,10 @@ function buildActiveShortRows(activeRotation, activeSet, activeMacroSet) {
     .filter(isTargetSide)
     .map((row, index) => normalizeMicroRow(
       row.microFamilyId || row.trueMicroFamilyId || row.id || row.key || `active_${index}`,
-      row,
+      {
+        ...row,
+        active: true
+      },
       {
         activeSet,
         activeMacroSet
@@ -1483,18 +1532,7 @@ function findNormalizedRow(rows = [], id) {
 }
 
 function idLooksLong(id = '') {
-  const clean = cleanSideHaystack(id);
-
-  return (
-    inferTradeSide(clean) === 'LONG' ||
-    clean.includes('MICRO_LONG_') ||
-    clean.includes('TRADE_SIDE=LONG') ||
-    clean.includes('TRADESIDE=LONG') ||
-    clean.includes('SIDE=LONG') ||
-    clean.includes('SIDE=BULL') ||
-    clean.includes('DIRECTION=LONG') ||
-    clean.includes('DIRECTION=BULL')
-  );
+  return isExplicitLong(id);
 }
 
 function baseModePayload() {
@@ -1507,6 +1545,8 @@ function baseModePayload() {
     longOnly: false,
     shortDisabled: false,
 
+    legacyUnknownRowsTreatedAsShort: true,
+
     learningOutcomesOnly: true,
     virtualOutcomesIncluded: true,
     outcomesSourceMode: 'ALL_LEARNING_OUTCOMES'
@@ -1515,7 +1555,7 @@ function baseModePayload() {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Family-Mode', 'short-only-learning-outcome-detail-v3');
+  res.setHeader('X-Admin-Micro-Family-Mode', 'short-only-learning-outcome-detail-v4');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Learning-Outcomes-Only', 'true');
