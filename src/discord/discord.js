@@ -31,6 +31,14 @@ const LONG_TOKENS = new Set([
   'BUY'
 ]);
 
+const REAL_SOURCES = new Set([
+  '',
+  'REAL',
+  'LIVE',
+  'TRADE',
+  'ENTRY'
+]);
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -40,7 +48,10 @@ function discordConfig() {
     enabled: CONFIG.discord?.enabled !== false,
     webhookUrl: CONFIG.discord?.webhookUrl || '',
     timeoutMs: Math.max(500, safeNumber(CONFIG.discord?.timeoutMs, 2500)),
-    logLimit: Math.max(1, Math.floor(safeNumber(CONFIG.discord?.logLimit, 250)))
+    logLimit: Math.max(1, Math.floor(safeNumber(CONFIG.discord?.logLimit, 250))),
+
+    sendRotationReports: CONFIG.discord?.sendRotationReports === true,
+    sendResetReports: CONFIG.discord?.sendResetReports !== false
   };
 }
 
@@ -79,6 +90,16 @@ function fmtPct(value) {
   return `${(n * 100).toFixed(2)}%`;
 }
 
+function fmtPctSmart(value) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  const ratio = Math.abs(n) > 1 ? n / 100 : n;
+
+  return `${(ratio * 100).toFixed(1)}%`;
+}
+
 function fmtR(value) {
   const n = Number(value);
 
@@ -87,10 +108,30 @@ function fmtR(value) {
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}R`;
 }
 
+function fmtNumber(value, decimals = 2) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return 'NA';
+
+  return n.toFixed(decimals);
+}
+
+function fmtInt(value) {
+  const n = Math.floor(Number(value));
+
+  if (!Number.isFinite(n)) return '0';
+
+  return String(n);
+}
+
 function upper(value, fallback = '') {
   const text = String(value ?? '').trim();
 
   return text ? text.toUpperCase() : fallback;
+}
+
+function normalizeSource(value) {
+  return upper(value || 'REAL', 'REAL');
 }
 
 function normalizeSideToken(value) {
@@ -118,7 +159,8 @@ function definitionParts(payload = {}) {
     ...(Array.isArray(payload.definitionParts) ? payload.definitionParts : []),
     ...(Array.isArray(payload.microDefinitionParts) ? payload.microDefinitionParts : []),
     ...(Array.isArray(payload.macroDefinitionParts) ? payload.macroDefinitionParts : []),
-    ...(Array.isArray(payload.parentDefinitionParts) ? payload.parentDefinitionParts : [])
+    ...(Array.isArray(payload.parentDefinitionParts) ? payload.parentDefinitionParts : []),
+    ...(Array.isArray(payload.executionFingerprintParts) ? payload.executionFingerprintParts : [])
   ]
     .map((value) => upper(value))
     .filter(Boolean);
@@ -134,6 +176,10 @@ function idHaystack(payload = {}) {
     payload.trueMicroFamilyId,
     payload.id,
     payload.key,
+
+    payload.coarseMicroFamilyId,
+    payload.baseMicroFamilyId,
+    payload.legacyMicroFamilyId,
 
     payload.macroFamilyId,
     payload.parentMacroFamilyId,
@@ -304,6 +350,145 @@ function extractResultR(outcome = {}) {
   );
 }
 
+function microFamilyId(payload = {}) {
+  return payload.microFamilyId || payload.trueMicroFamilyId || null;
+}
+
+function macroFamilyId(payload = {}) {
+  return (
+    payload.activeMacroFamilyId ||
+    payload.parentMacroFamilyId ||
+    payload.parentMicroFamilyId ||
+    payload.macroFamilyId ||
+    null
+  );
+}
+
+function weeklyStats(payload = {}) {
+  return payload.weeklyStats || payload.microStats || payload.stats || {};
+}
+
+function statValue(payload = {}, key, fallbackKey = null) {
+  const stats = weeklyStats(payload);
+
+  return (
+    stats?.[key] ??
+    (fallbackKey ? stats?.[fallbackKey] : undefined) ??
+    payload?.[key] ??
+    (fallbackKey ? payload?.[fallbackKey] : undefined) ??
+    null
+  );
+}
+
+function completedSample(payload = {}) {
+  return (
+    statValue(payload, 'completed') ??
+    statValue(payload, 'winrateSample') ??
+    statValue(payload, 'realCompleted') ??
+    statValue(payload, 'shadowCompleted') ??
+    0
+  );
+}
+
+function bestWinrate(payload = {}) {
+  return (
+    statValue(payload, 'fairWinrate') ??
+    statValue(payload, 'sampleAdjustedWinrate') ??
+    statValue(payload, 'bayesianWinrate') ??
+    statValue(payload, 'wilsonLowerBound') ??
+    statValue(payload, 'winrate') ??
+    0
+  );
+}
+
+function fingerprint(payload = {}) {
+  return (
+    payload.executionFingerprintHash ||
+    payload.fingerprintHash ||
+    payload.microFingerprintHash ||
+    'NA'
+  );
+}
+
+function isShadowPayload(payload = {}) {
+  const source = normalizeSource(payload.source);
+
+  return Boolean(
+    source === 'SHADOW' ||
+    payload.shadowOnly === true ||
+    payload.observationMirror === true ||
+    payload.analysisMirror === true ||
+    payload.mirrorAnalysisOnly === true ||
+    payload.isMirrorMicroFamily === true
+  );
+}
+
+function isAnalysisOnlyPayload(payload = {}) {
+  return Boolean(
+    payload.observationOnly === true ||
+    payload.analysisInputOnly === true ||
+    payload.learningOnly === true ||
+    payload.analyzeOnly === true ||
+    payload.discoveryOnly === true ||
+    payload.tradeDiscoveryOnly === true
+  );
+}
+
+function isRealSource(payload = {}) {
+  const source = normalizeSource(payload.source);
+
+  return REAL_SOURCES.has(source);
+}
+
+function hasLiveMicroRotationMatch(entry = {}) {
+  const microId = microFamilyId(entry);
+
+  if (!microId) return false;
+  if (!entry.activeRotationId) return false;
+
+  if (entry.liveEligible !== true) return false;
+
+  const matchType = upper(entry.rotationMatchType || 'TRUE_MICRO_EXACT');
+
+  return (
+    matchType === 'TRUE_MICRO_EXACT' ||
+    matchType.includes('TRUE_MICRO') ||
+    matchType.includes('MICRO_EXACT')
+  );
+}
+
+function shouldSendEntryAlert(entry = {}) {
+  if (!isShortPayload(entry)) return false;
+  if (isShadowPayload(entry)) return false;
+  if (isAnalysisOnlyPayload(entry)) return false;
+  if (!isRealSource(entry)) return false;
+
+  if (entry.action && upper(entry.action) !== 'ENTRY') return false;
+
+  if (!hasLiveMicroRotationMatch(entry)) return false;
+
+  if (safeNumber(entry.entry, 0) <= 0) return false;
+  if (safeNumber(entry.sl, 0) <= 0) return false;
+  if (safeNumber(entry.tp, 0) <= 0) return false;
+
+  return true;
+}
+
+function shouldSendExitAlert(outcome = {}) {
+  if (!isShortPayload(outcome)) return false;
+  if (isShadowPayload(outcome)) return false;
+
+  const source = normalizeSource(outcome.source);
+
+  if (source !== 'REAL' && source !== 'LIVE' && source !== 'TRADE') {
+    return false;
+  }
+
+  if (!microFamilyId(outcome)) return false;
+
+  return true;
+}
+
 function compactPayload(payload = {}) {
   const tradeSide = inferTradeSide(payload);
 
@@ -321,23 +506,35 @@ function compactPayload(payload = {}) {
     reason: payload.reason || null,
     exitReason: payload.exitReason || null,
 
-    microFamilyId: payload.microFamilyId || payload.trueMicroFamilyId || null,
-    familyId: payload.familyId || null,
+    source: payload.source || null,
 
-    macroFamilyId:
-      payload.activeMacroFamilyId ||
-      payload.parentMacroFamilyId ||
-      payload.parentMicroFamilyId ||
-      payload.macroFamilyId ||
-      null,
+    liveEligible: Boolean(payload.liveEligible),
+    shadowOnly: Boolean(payload.shadowOnly),
+    observationOnly: Boolean(payload.observationOnly),
+    analysisInputOnly: Boolean(payload.analysisInputOnly),
+    learningOnly: Boolean(payload.learningOnly),
+
+    rotationMatchType: payload.rotationMatchType || null,
+
+    microFamilyId: microFamilyId(payload),
+    familyId: payload.familyId || null,
+    macroFamilyId: macroFamilyId(payload),
 
     activeRotationId: payload.activeRotationId || null,
+
+    executionFingerprintHash: payload.executionFingerprintHash || null,
 
     entry: payload.entry ?? null,
     exit: extractExitPrice(payload),
     sl: payload.sl ?? null,
     tp: payload.tp ?? null,
     rr: payload.rr ?? null,
+
+    winrate: bestWinrate(payload),
+    completed: completedSample(payload),
+    avgR: statValue(payload, 'avgR'),
+    totalR: statValue(payload, 'totalR'),
+    profitFactor: statValue(payload, 'profitFactor'),
 
     exitR: payload.exitR ?? null,
     netR: payload.netR ?? null,
@@ -416,11 +613,11 @@ async function logDiscord(type, payload, result) {
   }
 }
 
-async function skipNonShortDiscord(type, payload = {}) {
+async function skipDiscord(type, payload = {}, reason = 'DISCORD_SKIPPED') {
   const result = {
     ok: true,
     skipped: true,
-    reason: 'DISCORD_SHORT_ONLY_SKIPPED_NON_SHORT',
+    reason,
     detectedTradeSide: inferTradeSide(payload),
     shortOnly: true,
     longDisabled: true
@@ -431,33 +628,81 @@ async function skipNonShortDiscord(type, payload = {}) {
   return result;
 }
 
+function entryReasonText(entry = {}) {
+  const statsSample = completedSample(entry);
+  const wr = bestWinrate(entry);
+  const avgR = statValue(entry, 'avgR');
+  const totalR = statValue(entry, 'totalR');
+
+  return [
+    'ACTIVE_TRUE_MICRO_MATCH',
+    `WR=${fmtPctSmart(wr)}`,
+    `SAMPLE=${fmtNumber(statsSample, 2)}`,
+    `AVG_R=${fmtR(avgR)}`,
+    `TOTAL_R=${fmtR(totalR)}`
+  ].join(' | ');
+}
+
 export async function sendEntryAlert(entry = {}) {
-  if (!isShortPayload(entry)) {
-    return skipNonShortDiscord('ENTRY_SKIPPED', entry);
+  if (!shouldSendEntryAlert(entry)) {
+    return skipDiscord(
+      'ENTRY_SKIPPED',
+      entry,
+      isShortPayload(entry)
+        ? 'ENTRY_NOT_ACTIVE_REAL_TRUE_MICRO_MATCH'
+        : 'DISCORD_SHORT_ONLY_SKIPPED_NON_SHORT'
+    );
   }
 
   const symbol = normalizeBaseSymbol(entry.symbol || entry.contractSymbol);
   const side = normalizeSideLabel(entry);
 
+  const stats = weeklyStats(entry);
+  const sample = completedSample(entry);
+  const wr = bestWinrate(entry);
+  const avgR = statValue(entry, 'avgR');
+  const totalR = statValue(entry, 'totalR');
+  const profitFactor = statValue(entry, 'profitFactor');
+  const directSLPct = statValue(entry, 'directSLPct');
+  const sampleReliability = statValue(entry, 'sampleReliability');
+
   const content = {
     username: 'Micro-Family Trader',
     embeds: [
       {
-        title: `${symbol || 'UNKNOWN'} ${side} ENTRY`,
+        title: `${symbol || 'UNKNOWN'} ${side} SNIPER ENTRY`,
         color: discordColorForSide(entry),
+        description: truncate(entryReasonText(entry), 300),
         fields: [
           field('Entry', fmtPrice(entry.entry), true),
           field('TP', fmtPrice(entry.tp), true),
           field('SL', fmtPrice(entry.sl), true),
           field('RR', fmtR(entry.rr), true),
-          field('Micro', entry.microFamilyId || 'NA', false),
+          field('Risk', fmtPct(entry.riskPct), true),
+          field('Spread', fmtPct(entry.spreadPct ?? entry.liveSpreadPct), true),
+
+          field('Micro', microFamilyId(entry) || 'NA', false),
+          field('Macro', macroFamilyId(entry) || 'NA', false),
+          field('Fingerprint', fingerprint(entry), true),
+          field('Rotation', entry.activeRotationId || 'NA', true),
+
+          field('Winrate', fmtPctSmart(wr), true),
+          field('Sample', fmtNumber(sample, 2), true),
+          field('Reliability', fmtPctSmart(sampleReliability), true),
+          field('Avg R', fmtR(avgR), true),
+          field('Total R', fmtR(totalR), true),
+          field('Profit factor', fmtNumber(profitFactor, 2), true),
+          field('Direct SL', fmtPctSmart(directSLPct), true),
+
           field(
-            'Macro',
-            entry.activeMacroFamilyId ||
-              entry.parentMacroFamilyId ||
-              entry.parentMicroFamilyId ||
-              entry.macroFamilyId ||
-              'NA',
+            'Confluence',
+            [
+              `RSI=${entry.rsiZone || stats.rsiZone || 'NA'}`,
+              `FLOW=${entry.flow || stats.flow || 'NA'}`,
+              `OB=${entry.obRelation || stats.obRelation || 'NA'}`,
+              `BTC=${entry.btcRelation || stats.btcRelation || 'NA'}`,
+              `REGIME=${entry.regime || stats.regime || 'NA'}`
+            ].join(' | '),
             false
           )
         ],
@@ -473,8 +718,14 @@ export async function sendEntryAlert(entry = {}) {
 }
 
 export async function sendExitAlert(outcome = {}) {
-  if (!isShortPayload(outcome)) {
-    return skipNonShortDiscord('EXIT_SKIPPED', outcome);
+  if (!shouldSendExitAlert(outcome)) {
+    return skipDiscord(
+      'EXIT_SKIPPED',
+      outcome,
+      isShortPayload(outcome)
+        ? 'EXIT_NOT_REAL_TRADE_OUTCOME'
+        : 'DISCORD_SHORT_ONLY_SKIPPED_NON_SHORT'
+    );
   }
 
   const symbol = normalizeBaseSymbol(outcome.symbol || outcome.contractSymbol);
@@ -494,7 +745,11 @@ export async function sendExitAlert(outcome = {}) {
           field('Reason', outcome.exitReason || 'EXIT', true),
           field('Cost', fmtR(outcome.costR), true),
           field('PnL', fmtPct(outcome.pnlPct ?? outcome.netPnlPct), true),
-          field('Micro', outcome.microFamilyId || 'NA', false)
+          field('MFE', fmtR(outcome.mfeR), true),
+          field('MAE', fmtR(outcome.maeR), true),
+          field('Micro', microFamilyId(outcome) || 'NA', false),
+          field('Macro', macroFamilyId(outcome) || 'NA', false),
+          field('Fingerprint', fingerprint(outcome), true)
         ],
         timestamp: nowIso()
       }
@@ -518,12 +773,43 @@ function bestShortId(rotation = {}) {
   );
 }
 
+function shouldSendRotationReport(rotation = {}, label = '') {
+  const cfg = discordConfig();
+
+  if (!cfg.sendRotationReports) return false;
+
+  const normalizedLabel = upper(label);
+
+  if (normalizedLabel.includes('NEXT_ROTATION_READY')) return false;
+  if (rotation.autoRotation === true && rotation.liveSelectable !== true) return false;
+  if (rotation.empty === true) return false;
+
+  return Boolean(
+    rotation.manualOnly === true ||
+    rotation.adminSelected === true ||
+    rotation.liveSelectable === true
+  );
+}
+
 export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEKLY_ROTATION') {
   const rotation =
     rotationInput.rotation ||
     rotationInput.activeRotation ||
     rotationInput.nextRotation ||
     rotationInput;
+
+  if (!shouldSendRotationReport(rotation, label)) {
+    return skipDiscord(
+      'WEEKLY_ROTATION_SKIPPED',
+      {
+        ...rotation,
+        bestLong: null,
+        shortOnly: true,
+        longDisabled: true
+      },
+      'ROTATION_REPORT_DISABLED_OR_NOT_MANUAL_LIVE_SELECTABLE'
+    );
+  }
 
   const microCount =
     rotation.microFamilyIds?.length ||
@@ -547,14 +833,16 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
     username: 'Micro-Family Trader',
     embeds: [
       {
-        title: `${label} SHORT ONLY`,
-        color: rotation.empty ? 0xf59e0b : 0x7c3aed,
+        title: `${label} SHORT MANUAL MICRO SET`,
+        color: 0x7c3aed,
         fields: [
           field('Micro count', String(microCount), true),
           field('Macro count', String(macroCount), true),
           field('Mode', rotation.mode || 'NA', true),
           field('Week', week, true),
           field('Best SHORT', bestShortId(rotation), false),
+          field('Manual only', String(Boolean(rotation.manualOnly)), true),
+          field('Live selectable', String(Boolean(rotation.liveSelectable)), true),
           field('Long disabled', 'true', true)
         ],
         timestamp: nowIso()
@@ -574,6 +862,12 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
 }
 
 export async function sendResetReport(report = {}) {
+  const cfg = discordConfig();
+
+  if (!cfg.sendResetReports) {
+    return skipDiscord('RESET_SKIPPED', report, 'RESET_REPORTS_DISABLED');
+  }
+
   const deletedCount = Object.keys(report.deleted || {}).length;
 
   const content = {
