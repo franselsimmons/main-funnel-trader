@@ -17,7 +17,9 @@ const TARGET_DASHBOARD_SIDE = 'bear';
 
 const LOCK_KEYS = {
   resetRotation: 'ADMIN:RESET_ROTATION:LOCK',
-  trade: KEYS.trade?.lock || 'TRADE:LOCK'
+  trade: KEYS.trade?.lock || 'TRADE:LOCK',
+  freeze: KEYS.analyze?.freezeLock || 'ANALYZE:WEEKLY_FREEZE_LOCK',
+  activate: KEYS.analyze?.activateLock || 'ANALYZE:ROTATION_ACTIVATE_LOCK'
 };
 
 function now() {
@@ -43,9 +45,17 @@ function modeFlags() {
     virtualLearning: true,
     virtualTracked: true,
     shadowOnly: true,
+    virtualOutcomesIncluded: true,
+    shadowOutcomesIncluded: true,
+    learningOutcomesOnly: true,
+    outcomesSourceMode: 'ALL_LEARNING_OUTCOMES',
 
     noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+
     manualSelectionOnly: true,
+    manualSelectionResetEndpoint: true,
     autoRotationActivationDisabled: true,
     discordOnlyForSelectedMicroFamilies: true
   };
@@ -97,15 +107,14 @@ async function readBody(req) {
 
 function isConfirmed(body = {}) {
   return (
-    body.confirm === true ||
-    body.confirmed === true ||
     body.confirm === CONFIRM_TEXT ||
-    body.confirmed === CONFIRM_TEXT
+    body.confirmed === CONFIRM_TEXT ||
+    body.confirmation === CONFIRM_TEXT
   );
 }
 
 async function acquireLock(redis, key, token) {
-  if (!key) return true;
+  if (!redis || !key || !token) return true;
 
   const acquired = await redis.set(key, token, {
     nx: true,
@@ -117,7 +126,7 @@ async function acquireLock(redis, key, token) {
 
 async function releaseLock(redis, key, token) {
   try {
-    if (!key) return false;
+    if (!redis || !key || !token) return false;
 
     const current = await redis.get(key);
 
@@ -138,6 +147,13 @@ async function acquireOneLock({
   reason,
   acquired
 }) {
+  if (!key) {
+    return {
+      ok: true,
+      acquired
+    };
+  }
+
   const ok = await acquireLock(redis, key, token);
 
   if (!ok) {
@@ -167,6 +183,14 @@ async function acquireResetRotationLocks(redis, token) {
     {
       key: LOCK_KEYS.trade,
       reason: 'TRADE_RUN_ACTIVE'
+    },
+    {
+      key: LOCK_KEYS.freeze,
+      reason: 'WEEKLY_FREEZE_ACTIVE'
+    },
+    {
+      key: LOCK_KEYS.activate,
+      reason: 'ROTATION_ACTIVATE_ACTIVE'
     }
   ];
 
@@ -204,7 +228,7 @@ async function releaseLocks(redis, keys, token) {
 }
 
 async function delKey(redis, key) {
-  if (!key) return 0;
+  if (!redis || !key) return 0;
 
   return redis.del(key).catch(() => 0);
 }
@@ -232,11 +256,13 @@ async function deleteRotationKeys(redis) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Reset-Rotation-Mode', 'short-only-manual-selection-reset');
+  res.setHeader('X-Admin-Reset-Rotation-Mode', 'short-only-manual-selection-reset-v2');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Virtual-Only', 'true');
   res.setHeader('X-Auto-Rotation-Disabled', 'true');
+  res.setHeader('X-Manual-Selection-Reset', 'true');
+  res.setHeader('X-Real-Orders-Disabled', 'true');
 
   const token = randomUUID();
   let redis = null;
@@ -255,6 +281,7 @@ export default async function handler(req, res) {
         blocked: true,
         reason: 'CONFIRMATION_REQUIRED',
         required: CONFIRM_TEXT,
+        acceptedFields: ['confirm', 'confirmed', 'confirmation'],
         ...modeFlags()
       });
     }
@@ -285,6 +312,10 @@ export default async function handler(req, res) {
 
       ...modeFlags(),
 
+      exchangeTouched: false,
+      bitgetOrdersTouched: false,
+      realOrdersTouched: false,
+
       deleted,
 
       effect: {
@@ -292,7 +323,8 @@ export default async function handler(req, res) {
         activeManualSelectionCleared: true,
         nextRotationCleared: true,
         rotationValidFromCleared: true,
-        autoRotationNotActivated: true
+        autoRotationNotActivated: true,
+        systemWillContinueLearning: true
       },
 
       preserved: {
@@ -301,11 +333,31 @@ export default async function handler(req, res) {
         microFamilies: true,
         observations: true,
         outcomes: true,
+        outcomeDedupe: true,
         openVirtualPositions: true,
         scannerSnapshots: true,
+        scannerLatest: true,
         tradeMemory: true,
+        tradeRunMeta: true,
         resetLogs: true,
-        discordLogs: true
+        discordLogs: true,
+        environmentVariables: true,
+        deploymentConfig: true
+      },
+
+      removed: {
+        activeRotation: true,
+        manualSelection: true,
+        nextRotation: true,
+        rotationValidFrom: true,
+        learning: false,
+        microFamilies: false,
+        observations: false,
+        outcomes: false,
+        openVirtualPositions: false,
+        scannerSnapshots: false,
+        tradeMemory: false,
+        discordLogs: false
       },
 
       resetAt: now()
