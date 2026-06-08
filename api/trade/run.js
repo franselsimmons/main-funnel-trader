@@ -39,6 +39,7 @@ function baseFlags() {
     virtualOnly: true,
     virtualTracked: true,
     source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
 
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
@@ -54,8 +55,16 @@ function baseFlags() {
     learningOnly: true,
     microFamilyLearning: true,
 
+    observationFirst: true,
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsHiddenFromLearning: true,
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    exactTrueMicroFamilyRequired: true,
+    symbolExcludedFromFamilyId: true,
+
     discordOnlyForSelectedMicroFamilies: true,
-    discordOnlyForManualSelection: true
+    discordOnlyForManualSelection: true,
+    discordOnlyForExactTrueMicroMatch: true
   };
 }
 
@@ -197,6 +206,147 @@ function cleanSideText(value = '') {
     .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
+function isScannerFingerprintId(id = '') {
+  const value = upper(id);
+
+  return (
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('__SCANNER__') ||
+    value.includes('SCANNER_GATE_PASS') ||
+    value.includes('SCANNER_GATE_FAIL')
+  );
+}
+
+function normalizeSymbolToken(value = '') {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/USDT|USDC|USD|PERP|SWAP|FUTURES|SPOT/g, '')
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function symbolTokensFromRow(row = {}) {
+  return [
+    row.symbol,
+    row.baseSymbol,
+    row.contractSymbol
+  ]
+    .map(normalizeSymbolToken)
+    .filter(Boolean)
+    .filter((token) => token.length >= 2);
+}
+
+function stripSymbolTokensFromFamilyId(id = '', row = {}) {
+  const raw = String(id || '').trim();
+
+  if (!raw) return raw;
+
+  const tokens = symbolTokensFromRow(row);
+  if (!tokens.length) return raw;
+
+  let next = raw;
+
+  for (const token of tokens) {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    next = next
+      .replace(new RegExp(`(^|[_|:=\\-])${escaped}([_|:=\\-]|$)`, 'gi'), '$1ASSET$2')
+      .replace(new RegExp(`(^|[_|:=\\-])${escaped}USDT([_|:=\\-]|$)`, 'gi'), '$1ASSET$2')
+      .replace(new RegExp(`(^|[_|:=\\-])${escaped}USDC([_|:=\\-]|$)`, 'gi'), '$1ASSET$2');
+  }
+
+  return next
+    .replace(/_{2,}/g, '_')
+    .replace(/\|{2,}/g, '|')
+    .replace(/^[_|:=\-\s]+|[_|:=\-\s]+$/g, '') || raw;
+}
+
+function cleanLearningFamilyId(id = '', row = {}) {
+  const raw = String(id || '').trim();
+
+  if (!raw) return '';
+  if (isScannerFingerprintId(raw)) return '';
+
+  return stripSymbolTokensFromFamilyId(raw, row);
+}
+
+function scannerMicroFamilyIdFrom(row = {}) {
+  return (
+    row.scannerMicroFamilyId ||
+    (isScannerFingerprintId(row.microFamilyId) ? row.microFamilyId : null) ||
+    (isScannerFingerprintId(row.trueMicroFamilyId) ? row.trueMicroFamilyId : null) ||
+    (isScannerFingerprintId(row.id) ? row.id : null) ||
+    (isScannerFingerprintId(row.key) ? row.key : null) ||
+    null
+  );
+}
+
+function scannerFamilyIdFrom(row = {}) {
+  return (
+    row.scannerFamilyId ||
+    (isScannerFingerprintId(row.familyId) ? row.familyId : null) ||
+    (isScannerFingerprintId(row.baseFamilyId) ? row.baseFamilyId : null) ||
+    null
+  );
+}
+
+function scannerMetadataFrom(row = {}) {
+  const scannerMicroFamilyId = scannerMicroFamilyIdFrom(row);
+  const scannerFamilyId = scannerFamilyIdFrom(row);
+
+  return {
+    scannerMicroFamilyId: scannerMicroFamilyId || null,
+    scannerFamilyId: scannerFamilyId || null,
+    scannerDefinition: row.scannerDefinition || (
+      scannerMicroFamilyId
+        ? row.definition || row.microDefinition || null
+        : null
+    ),
+    scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
+      ? row.scannerDefinitionParts
+      : scannerMicroFamilyId && Array.isArray(row.definitionParts)
+        ? row.definitionParts
+        : [],
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintOnlyMetadata: Boolean(scannerMicroFamilyId),
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    symbolExcludedFromFamilyId: true
+  };
+}
+
+function normalizeLearningIdentity(row = {}) {
+  const microFamilyId = cleanLearningFamilyId(
+    row.trueMicroFamilyId ||
+    row.microFamilyId ||
+    row.analyzeMicroFamilyId ||
+    '',
+    row
+  );
+
+  const coarseMicroFamilyId = cleanLearningFamilyId(
+    row.coarseMicroFamilyId ||
+    row.baseMicroFamilyId ||
+    row.legacyMicroFamilyId ||
+    microFamilyId ||
+    '',
+    row
+  );
+
+  return {
+    microFamilyId: microFamilyId || null,
+    trueMicroFamilyId: microFamilyId || null,
+    coarseMicroFamilyId: coarseMicroFamilyId || microFamilyId || null,
+    baseMicroFamilyId: row.baseMicroFamilyId && !isScannerFingerprintId(row.baseMicroFamilyId)
+      ? cleanLearningFamilyId(row.baseMicroFamilyId, row)
+      : coarseMicroFamilyId || microFamilyId || null,
+    legacyMicroFamilyId: row.legacyMicroFamilyId && !isScannerFingerprintId(row.legacyMicroFamilyId)
+      ? cleanLearningFamilyId(row.legacyMicroFamilyId, row)
+      : coarseMicroFamilyId || microFamilyId || null
+  };
+}
+
 function normalizeTradeSide(value) {
   const raw = cleanSideText(value);
 
@@ -322,21 +472,25 @@ function inferActionTradeSide(row = {}) {
 
   if (!row || typeof row !== 'object') return 'UNKNOWN';
 
-  const direct = normalizeTradeSide(
-    row.tradeSide ||
-    row.positionSide ||
-    row.direction ||
-    row.signalSide ||
-    row.scannerSide ||
-    row.actualScannerSide ||
-    row.analysisSide ||
-    row.entrySide ||
-    row.side ||
-    row.bias ||
+  const directSources = [
+    row.tradeSide,
+    row.positionSide,
+    row.direction,
+    row.signalSide,
+    row.scannerSide,
+    row.actualScannerSide,
+    row.analysisSide,
+    row.entrySide,
+    row.side,
+    row.bias,
     row.marketBias
-  );
+  ];
 
-  if (direct !== 'UNKNOWN') return direct;
+  for (const value of directSources) {
+    const direct = normalizeTradeSide(value);
+
+    if (direct !== 'UNKNOWN') return direct;
+  }
 
   const reasonSide = inferTradeSideFromText(
     row.scannerReason ||
@@ -361,6 +515,10 @@ function inferActionTradeSide(row = {}) {
     row.realMicroFamilyId,
     row.executionMicroFamilyId,
     row.coarseMicroFamilyId,
+    row.baseMicroFamilyId,
+    row.legacyMicroFamilyId,
+    row.scannerMicroFamilyId,
+    row.scannerFamilyId,
     row.id,
     row.key,
 
@@ -405,9 +563,16 @@ function isLongAction(row = {}) {
 
 function forceShortVirtualRow(row = {}) {
   const inferredTradeSide = inferActionTradeSide(row);
+  const identity = normalizeLearningIdentity(row);
+  const scannerMetadata = scannerMetadataFrom(row);
+
+  const hasLearningMicroId = Boolean(identity.trueMicroFamilyId);
 
   return {
     ...row,
+
+    ...identity,
+    ...scannerMetadata,
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -442,6 +607,9 @@ function forceShortVirtualRow(row = {}) {
     noRealOrders: true,
 
     microFamilyLearning: true,
+    hasAnalyzeMicroFamilyId: hasLearningMicroId,
+    scannerFingerprintCanOpenPosition: false,
+    scannerFingerprintCanBeLearningFamily: false,
 
     inferredTradeSide: inferredTradeSide === 'UNKNOWN'
       ? TARGET_TRADE_SIDE
@@ -454,6 +622,7 @@ function forceShortVirtualRow(row = {}) {
 function countActionsByType(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
+
     acc[key] = (acc[key] || 0) + 1;
 
     return acc;
@@ -525,6 +694,9 @@ function sanitizeIds(ids = []) {
       .flatMap((value) => Array.isArray(value) ? value : [value])
       .map((value) => String(value || '').trim())
       .filter(Boolean)
+      .filter((id) => !isScannerFingerprintId(id))
+      .map((id) => cleanLearningFamilyId(id, {}))
+      .filter(Boolean)
       .filter((id) => inferTradeSideFromText(id) !== OPPOSITE_TRADE_SIDE)
   )];
 }
@@ -537,6 +709,22 @@ function selectRawExitRows(payload = {}) {
   if (Array.isArray(payload.outcomes)) return payload.outcomes;
 
   return [];
+}
+
+function selectRawEntryRows(payload = {}, actions = []) {
+  if (Array.isArray(payload.entryRows)) return payload.entryRows;
+  if (Array.isArray(payload.entries)) return payload.entries;
+  if (Array.isArray(payload.virtualCreatedRows)) return payload.virtualCreatedRows;
+  if (Array.isArray(payload.shadowCreatedRows)) return payload.shadowCreatedRows;
+
+  return actions.filter((row) => row?.action === 'VIRTUAL_ENTRY' || row?.action === 'ENTRY');
+}
+
+function selectRawWaitRows(payload = {}, actions = []) {
+  if (Array.isArray(payload.waitRows)) return payload.waitRows;
+  if (Array.isArray(payload.waits)) return payload.waits;
+
+  return actions.filter((row) => row?.action === 'WAIT');
 }
 
 function buildExitAction(exit = {}) {
@@ -590,11 +778,28 @@ function sanitizeRunPayload(payload) {
   const virtualExits = sanitizeExitRows(rawExitRows);
   const shadowExits = virtualExits;
 
+  const entryRowsList = sanitizeArray(selectRawEntryRows(payload, actions));
+  const waitRowsList = sanitizeArray(selectRawWaitRows(payload, actions));
+
   const ignoredLongActions = rawActions.filter(isLongAction).length;
   const ignoredUnknownSideActions = rawActions.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
 
   const ignoredLongExitRows = rawExitRows.filter(isLongAction).length;
   const ignoredUnknownSideExitRows = rawExitRows.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
+
+  const scannerFingerprintActions = rawActions.filter((row) => (
+    isScannerFingerprintId(row?.microFamilyId) ||
+    isScannerFingerprintId(row?.trueMicroFamilyId) ||
+    isScannerFingerprintId(row?.id) ||
+    isScannerFingerprintId(row?.key)
+  )).length;
+
+  const scannerFingerprintExitRows = rawExitRows.filter((row) => (
+    isScannerFingerprintId(row?.microFamilyId) ||
+    isScannerFingerprintId(row?.trueMicroFamilyId) ||
+    isScannerFingerprintId(row?.id) ||
+    isScannerFingerprintId(row?.key)
+  )).length;
 
   const activeMicroFamilyIds = sanitizeIds(
     payload.activeMicroFamilyIds ||
@@ -617,22 +822,28 @@ function sanitizeRunPayload(payload) {
   );
 
   const entryRows = safeNumber(
-    payload.entryRows ??
-    actions.filter((row) => row.action === 'VIRTUAL_ENTRY' || row.action === 'ENTRY').length,
-    0
+    Array.isArray(payload.entryRows)
+      ? entryRowsList.length
+      : payload.entryRows ??
+        entryRowsList.length,
+    entryRowsList.length
   );
 
   const waitRows = safeNumber(
-    payload.waitRows ??
-    actions.filter((row) => row.action === 'WAIT').length,
-    0
+    Array.isArray(payload.waitRows)
+      ? waitRowsList.length
+      : payload.waitRows ??
+        waitRowsList.length,
+    waitRowsList.length
   );
 
   const virtualCreatedRows = safeNumber(
-    payload.virtualCreatedRows ??
-    payload.shadowCreatedRows ??
-    entryRows,
-    0
+    Array.isArray(payload.virtualCreatedRows)
+      ? sanitizeArray(payload.virtualCreatedRows).length
+      : payload.virtualCreatedRows ??
+        payload.shadowCreatedRows ??
+        entryRows,
+    entryRows
   );
 
   return {
@@ -643,14 +854,18 @@ function sanitizeRunPayload(payload) {
     actions,
     virtualActions: actions,
 
+    entryRows,
+    waitRows,
+    virtualCreatedRows,
+
+    entryRowsList,
+    waitRowsList,
+    virtualCreatedRowsList: entryRowsList,
+
     actionCounts,
 
     actionsCount: actions.length,
     virtualActionsCount: actions.length,
-
-    entryRows,
-    waitRows,
-    virtualCreatedRows,
 
     virtualSkippedRows: safeNumber(payload.virtualSkippedRows ?? payload.shadowSkippedRows, 0),
     virtualFailedRows: safeNumber(payload.virtualFailedRows ?? payload.shadowFailedRows, 0),
@@ -684,6 +899,10 @@ function sanitizeRunPayload(payload) {
 
     longActionsBlockedOrIgnored: ignoredLongActions,
     longExitsBlockedOrIgnored: ignoredLongExitRows,
+
+    scannerFingerprintActions,
+    scannerFingerprintExitRows,
+    scannerFingerprintsUsedAsLearningFamily: 0,
 
     activeMicroFamilyIds,
     activeMacroFamilyIds,
@@ -839,7 +1058,11 @@ function responseCounts(lockResult) {
     ignoredUnknownSideExitRows: safeNumber(payload.ignoredUnknownSideExitRows, 0),
 
     longActionsBlockedOrIgnored: safeNumber(payload.longActionsBlockedOrIgnored, 0),
-    longExitsBlockedOrIgnored: safeNumber(payload.longExitsBlockedOrIgnored, 0)
+    longExitsBlockedOrIgnored: safeNumber(payload.longExitsBlockedOrIgnored, 0),
+
+    scannerFingerprintActions: safeNumber(payload.scannerFingerprintActions, 0),
+    scannerFingerprintExitRows: safeNumber(payload.scannerFingerprintExitRows, 0),
+    scannerFingerprintsUsedAsLearningFamily: 0
   };
 }
 
@@ -891,6 +1114,7 @@ function buildRunOptions(req, body = {}) {
     virtualOnly: true,
     virtualTracked: true,
     source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
 
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
@@ -901,13 +1125,21 @@ function buildRunOptions(req, body = {}) {
     learningOnly: true,
     microFamilyLearning: true,
 
+    observationFirst: true,
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsHiddenFromLearning: true,
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    exactTrueMicroFamilyRequired: true,
+    symbolExcludedFromFamilyId: true,
+
     allowLearningWithoutActiveRotation: true,
     ignoreMaxOpenPositionsForLearning: true,
     ignoreRiskCapsForLearning: true,
     oneOpenPositionPerSymbol: true,
 
     discordOnlyForSelectedMicroFamilies: true,
-    discordOnlyForManualSelection: true
+    discordOnlyForManualSelection: true,
+    discordOnlyForExactTrueMicroMatch: true
   };
 }
 
@@ -920,6 +1152,9 @@ export default async function handler(req, res) {
   res.setHeader('X-Virtual-Only', 'true');
   res.setHeader('X-Exchange-Orders-Disabled', 'true');
   res.setHeader('X-No-Real-Orders', 'true');
+  res.setHeader('X-Scanner-Fingerprint-Role', 'METADATA_ONLY');
+  res.setHeader('X-Learning-Identity-Source', 'ANALYZE_MICRO_FAMILY');
+  res.setHeader('X-Exact-True-Micro-Match', 'true');
 
   const startedAt = now();
 
@@ -970,6 +1205,18 @@ export default async function handler(req, res) {
       entryRows: safeNumber(payload?.entryRows, 0),
       waitRows: safeNumber(payload?.waitRows, 0),
       virtualCreatedRows: safeNumber(payload?.virtualCreatedRows, 0),
+
+      entryRowsList: Array.isArray(payload?.entryRowsList)
+        ? payload.entryRowsList
+        : [],
+
+      waitRowsList: Array.isArray(payload?.waitRowsList)
+        ? payload.waitRowsList
+        : [],
+
+      virtualCreatedRowsList: Array.isArray(payload?.virtualCreatedRowsList)
+        ? payload.virtualCreatedRowsList
+        : [],
 
       virtualExitRows: safeNumber(payload?.virtualExitRows, 0),
       shadowExitRows: safeNumber(payload?.shadowExitRows, 0),
@@ -1026,6 +1273,12 @@ export default async function handler(req, res) {
           : null,
         payload?.ignoredUnknownSideExitRows > 0
           ? `UNKNOWN_SIDE_EXIT_ROWS_FORCED_SHORT:${payload.ignoredUnknownSideExitRows}`
+          : null,
+        payload?.scannerFingerprintActions > 0
+          ? `SCANNER_FINGERPRINT_ACTIONS_METADATA_ONLY:${payload.scannerFingerprintActions}`
+          : null,
+        payload?.scannerFingerprintExitRows > 0
+          ? `SCANNER_FINGERPRINT_EXITS_METADATA_ONLY:${payload.scannerFingerprintExitRows}`
           : null
       ].filter(Boolean),
 
