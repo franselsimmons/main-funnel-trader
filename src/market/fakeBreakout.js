@@ -16,6 +16,7 @@ const DEFAULT_LOOKBACK = 24;
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_SCANNER_SIDE = 'bear';
 const TARGET_DASHBOARD_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const RETEST_TOLERANCE_PCT = 0.004;
 const BREAKOUT_BUFFER_PCT = 0.0015;
@@ -28,6 +29,7 @@ const SHORT_TOKENS = new Set([
   'BEAR',
   'BEARISH',
   'SELL',
+  'ASK',
   'DOWN',
   'DOWNSIDE',
   'RED'
@@ -38,6 +40,7 @@ const LONG_TOKENS = new Set([
   'BULL',
   'BULLISH',
   'BUY',
+  'BID',
   'UP',
   'UPSIDE',
   'GREEN'
@@ -47,50 +50,97 @@ function upper(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
+function textHasShortSignal(value = '') {
+  const raw = cleanSideText(value);
+
+  if (!raw) return false;
+  if (SHORT_TOKENS.has(raw)) return true;
+
+  return (
+    raw.includes('MICRO_SHORT_') ||
+    raw.includes('TRADE_SIDE=SHORT') ||
+    raw.includes('TRADESIDE=SHORT') ||
+    raw.includes('POSITION_SIDE=SHORT') ||
+    raw.includes('POSITIONSIDE=SHORT') ||
+    raw.includes('SIDE=SHORT') ||
+    raw.includes('SIDE=BEAR') ||
+    raw.includes('DIRECTION=SHORT') ||
+    raw.includes('DIRECTION=BEAR') ||
+    raw.includes('SIDE=SELL') ||
+    raw.includes('DIRECTION=SELL') ||
+    raw.startsWith('SHORT_') ||
+    raw.includes('_SHORT_') ||
+    raw.endsWith('_SHORT') ||
+    raw.startsWith('BEAR_') ||
+    raw.includes('_BEAR_') ||
+    raw.endsWith('_BEAR') ||
+    raw.startsWith('SELL_') ||
+    raw.includes('_SELL_') ||
+    raw.endsWith('_SELL')
+  );
+}
+
+function textHasLongSignal(value = '') {
+  const raw = cleanSideText(value);
+
+  if (!raw) return false;
+  if (LONG_TOKENS.has(raw)) return true;
+
+  return (
+    raw.includes('MICRO_LONG_') ||
+    raw.includes('TRADE_SIDE=LONG') ||
+    raw.includes('TRADESIDE=LONG') ||
+    raw.includes('POSITION_SIDE=LONG') ||
+    raw.includes('POSITIONSIDE=LONG') ||
+    raw.includes('SIDE=LONG') ||
+    raw.includes('SIDE=BULL') ||
+    raw.includes('DIRECTION=LONG') ||
+    raw.includes('DIRECTION=BULL') ||
+    raw.includes('SIDE=BUY') ||
+    raw.includes('DIRECTION=BUY') ||
+    raw.startsWith('LONG_') ||
+    raw.includes('_LONG_') ||
+    raw.endsWith('_LONG') ||
+    raw.startsWith('BULL_') ||
+    raw.includes('_BULL_') ||
+    raw.endsWith('_BULL') ||
+    raw.startsWith('BUY_') ||
+    raw.includes('_BUY_') ||
+    raw.endsWith('_BUY')
+  );
+}
+
 function normalizeSide(side) {
-  const raw = upper(side);
+  const raw = cleanSideText(side);
 
   if (!raw) return 'unknown';
 
   const direct = sideToTradeSide(raw);
 
   if (direct === TARGET_TRADE_SIDE) return TARGET_SCANNER_SIDE;
-  if (direct === 'LONG') return 'long_disabled';
+  if (direct === OPPOSITE_TRADE_SIDE) return 'long_disabled';
 
-  if (SHORT_TOKENS.has(raw)) return TARGET_SCANNER_SIDE;
-  if (LONG_TOKENS.has(raw)) return 'long_disabled';
+  const shortHit = textHasShortSignal(raw);
+  const longHit = textHasLongSignal(raw);
 
-  if (
-    raw.includes('MICRO_SHORT_') ||
-    raw.includes('TRADE_SIDE=SHORT') ||
-    raw.includes('TRADESIDE=SHORT') ||
-    raw.includes('SIDE=SHORT') ||
-    raw.includes('SIDE=BEAR') ||
-    raw.includes('DIRECTION=SHORT') ||
-    raw.includes('DIRECTION=BEAR') ||
-    raw.includes('SHORT_') ||
-    raw.includes('_SHORT') ||
-    raw.includes('BEAR_') ||
-    raw.includes('_BEAR')
-  ) {
-    return TARGET_SCANNER_SIDE;
-  }
+  if (longHit && !shortHit) return 'long_disabled';
+  if (shortHit && !longHit) return TARGET_SCANNER_SIDE;
 
-  if (
-    raw.includes('MICRO_LONG_') ||
-    raw.includes('TRADE_SIDE=LONG') ||
-    raw.includes('TRADESIDE=LONG') ||
-    raw.includes('SIDE=LONG') ||
-    raw.includes('SIDE=BULL') ||
-    raw.includes('DIRECTION=LONG') ||
-    raw.includes('DIRECTION=BULL') ||
-    raw.includes('LONG_') ||
-    raw.includes('_LONG') ||
-    raw.includes('BULL_') ||
-    raw.includes('_BULL')
-  ) {
-    return 'long_disabled';
-  }
+  if (shortHit) return TARGET_SCANNER_SIDE;
+  if (longHit) return 'long_disabled';
+
+  if (raw === TARGET_DASHBOARD_SIDE.toUpperCase()) return TARGET_SCANNER_SIDE;
 
   return 'unknown';
 }
@@ -106,10 +156,17 @@ function baseResult(reason = null) {
     fakeBreakoutReason: null,
 
     breakoutType: 'UNKNOWN',
+    breakoutValid: false,
+    shortContinuation: false,
+    avoidShort: false,
 
     pullbackConfirmed: false,
     sweepConfirmed: false,
     retestConfirmed: false,
+
+    rangeHigh: null,
+    rangeLow: null,
+    volumeExpansion: 0,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     targetScannerSide: TARGET_SCANNER_SIDE,
@@ -119,6 +176,14 @@ function baseResult(reason = null) {
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
+
+    scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
+    directionalSide: TARGET_DASHBOARD_SIDE,
+    inferredDirectionalSide: TARGET_DASHBOARD_SIDE,
+    marketSide: TARGET_DASHBOARD_SIDE,
 
     shortOnly: true,
     longDisabled: true,
@@ -148,6 +213,28 @@ function isBtcAgainstBear(btcState) {
 
 function isBtcWithBear(btcState) {
   return ['BEARISH', 'STRONG_BEAR'].includes(btcState);
+}
+
+function normalizeCandle(candle = {}) {
+  return {
+    ...candle,
+    open: safeNumber(candle.open, 0),
+    high: safeNumber(candle.high, 0),
+    low: safeNumber(candle.low, 0),
+    close: safeNumber(candle.close, 0),
+    volume: safeNumber(candle.volume ?? candle.baseVolume ?? candle.vol, 0),
+    ts: safeNumber(candle.ts ?? candle.time ?? candle.timestamp, 0)
+  };
+}
+
+function validCandle(candle = {}) {
+  return (
+    safeNumber(candle.open, 0) > 0 &&
+    safeNumber(candle.high, 0) > 0 &&
+    safeNumber(candle.low, 0) > 0 &&
+    safeNumber(candle.close, 0) > 0 &&
+    safeNumber(candle.high, 0) >= safeNumber(candle.low, 0)
+  );
 }
 
 function analyzeBearBreakout({
@@ -199,17 +286,19 @@ function analyzeBearBreakout({
       volumeExpansion >= 1.15
     );
 
+  const fakeBreakoutRisk = !fake && (
+    sweptLow ||
+    (
+      closedBelowRange &&
+      !btcWith
+    )
+  );
+
   return {
     ...baseResult(null),
 
     fakeBreakout: fake,
-    fakeBreakoutRisk: !fake && (
-      sweptLow ||
-      (
-        closedBelowRange &&
-        !btcWith
-      )
-    ),
+    fakeBreakoutRisk,
 
     fakeBreakoutReason: fake
       ? 'LOW_SWEEP_CLOSE_BACK_IN_RANGE'
@@ -221,13 +310,32 @@ function analyzeBearBreakout({
         ? 'VALID_BREAKOUT'
         : 'NONE',
 
+    breakoutValid: validBreakout,
+    shortContinuation: validBreakout,
+    avoidShort: fake || fakeBreakoutRisk,
+
     pullbackConfirmed,
     sweepConfirmed: sweptLow,
     retestConfirmed,
 
+    rangeHigh: recentHigh,
+    rangeLow: recentLow,
+    volumeExpansion,
+
     details: {
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
+      positionSide: TARGET_TRADE_SIDE,
+      direction: TARGET_TRADE_SIDE,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      targetScannerSide: TARGET_SCANNER_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
+      shortOnly: true,
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false,
 
       recentHigh,
       recentLow,
@@ -249,7 +357,8 @@ function analyzeBearBreakout({
       wickReject,
       weakBody,
       volumeExhaustion,
-      validBreakout
+      validBreakout,
+      fakeBreakoutRisk
     }
   };
 }
@@ -261,7 +370,10 @@ export function detectFakeBreakout({
   lookback = DEFAULT_LOOKBACK
 } = {}) {
   const rows = Array.isArray(candles15m)
-    ? candles15m.filter(Boolean)
+    ? candles15m
+      .filter(Boolean)
+      .map(normalizeCandle)
+      .filter(validCandle)
     : [];
 
   const lb = Math.max(
