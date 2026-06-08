@@ -662,8 +662,8 @@
       microMode: "balanced",
       microSearch: "",
       apiTimeoutMs: 22000,
-      microLimit: 80,
-      bestLimit: 50
+      microLimit: 120,
+      bestLimit: 100
     };
 
     const endpoints = {
@@ -722,6 +722,7 @@
         .replaceAll("LONG_ENABLED_FALSE", "")
         .replaceAll("LONG_ONLY_FALSE", "")
         .replaceAll("SHORT_DISABLED_FALSE", "")
+        .replaceAll("SHORT_ONLY_MODE", "SHORT")
         .replaceAll("SHORT_ONLY", "SHORT")
         .replaceAll("SHORT-ONLY", "SHORT");
     }
@@ -809,13 +810,27 @@
       );
     }
 
+    function isScannerMicroFamilyId(id = "") {
+      const value = upper(id);
+
+      return (
+        value.startsWith("MICRO_SHORT_SCANNER__") ||
+        value.includes("MICRO_SHORT_SCANNER__") ||
+        value.startsWith("SHORT_SCANNER_") ||
+        value.includes("__SCANNER__") ||
+        value.includes("SCANNER_GATE_PASS") ||
+        value.includes("SCANNER_GATE_FAIL")
+      );
+    }
+
     function inferSide(input = {}) {
       if (typeof input === "string") {
         const direct = normalizeSide(input);
         if (direct !== "UNKNOWN") return direct;
 
-        const shortSignal = hasShortSignal(input);
-        const longSignal = hasLongSignal(input);
+        const text = cleanSideText(input);
+        const shortSignal = hasShortSignal(text);
+        const longSignal = hasLongSignal(text);
 
         if (longSignal && !shortSignal) return OPPOSITE_SIDE;
         if (shortSignal) return ONLY_SIDE;
@@ -843,7 +858,6 @@
 
       for (const field of directFields) {
         const direct = normalizeSide(field);
-
         if (direct !== "UNKNOWN") return direct;
       }
 
@@ -854,9 +868,11 @@
 
         input.microFamilyId,
         input.trueMicroFamilyId,
+        input.coarseMicroFamilyId,
         input.liveMicroFamilyId,
         input.realMicroFamilyId,
         input.executionMicroFamilyId,
+        input.analyzeMicroFamilyId,
         input.id,
         input.key,
 
@@ -906,25 +922,47 @@
       return "UNKNOWN";
     }
 
-    function isShortRow(row = {}) {
-      return inferSide(row) === ONLY_SIDE;
+    function microId(row = {}) {
+      return String(
+        row.trueMicroFamilyId ||
+        row.microFamilyId ||
+        row.analyzeMicroFamilyId ||
+        row.liveMicroFamilyId ||
+        row.realMicroFamilyId ||
+        row.executionMicroFamilyId ||
+        row.id ||
+        row.key ||
+        ""
+      ).trim();
     }
 
-    function isLongRow(row = {}) {
-      return inferSide(row) === OPPOSITE_SIDE;
+    function coarseMicroId(row = {}) {
+      return String(
+        row.coarseMicroFamilyId ||
+        row.baseMicroFamilyId ||
+        row.legacyMicroFamilyId ||
+        row.trueMicroFamilyId ||
+        row.microFamilyId ||
+        row.id ||
+        row.key ||
+        ""
+      ).trim();
     }
 
-    function isScannerMicroFamilyId(id = "") {
-      const value = upper(id);
+    function macroId(row = {}) {
+      return String(
+        row.macroFamilyId ||
+        row.parentMacroFamilyId ||
+        row.parentMicroFamilyId ||
+        row.parentFamilyId ||
+        row.macroId ||
+        row.familyId ||
+        ""
+      ).trim();
+    }
 
-      return (
-        value.startsWith("MICRO_SHORT_SCANNER__") ||
-        value.includes("MICRO_SHORT_SCANNER__") ||
-        value.startsWith("SHORT_SCANNER_") ||
-        value.includes("__SCANNER__") ||
-        value.includes("SCANNER_GATE_PASS") ||
-        value.includes("SCANNER_GATE_FAIL")
-      );
+    function familyId(row = {}) {
+      return String(row.familyId || row.family || row.baseFamilyId || "").trim();
     }
 
     function isAnalyzeMicroFamilyId(id = "") {
@@ -932,7 +970,31 @@
 
       if (!value) return false;
       if (isScannerMicroFamilyId(value)) return false;
-      if (inferSide(value) === OPPOSITE_SIDE) return false;
+
+      const side = inferSide(value);
+
+      if (side === OPPOSITE_SIDE) return false;
+
+      return (
+        side === ONLY_SIDE ||
+        upper(value).includes("MICRO_SHORT_") ||
+        upper(value).startsWith("SHORT_")
+      );
+    }
+
+    function isRealAnalyzeMicroRow(row = {}) {
+      const id = microId(row);
+      const coarseId = coarseMicroId(row);
+
+      if (!id) return false;
+      if (!isAnalyzeMicroFamilyId(id)) return false;
+      if (isScannerMicroFamilyId(id)) return false;
+      if (isScannerMicroFamilyId(coarseId)) return false;
+      if (row.legacyScannerFamilyFallback === true) return false;
+
+      const side = inferSide(row);
+
+      if (side === OPPOSITE_SIDE) return false;
 
       return true;
     }
@@ -960,39 +1022,30 @@
 
     function num(value, fallback = 0) {
       const n = Number(value);
-
       return Number.isFinite(n) ? n : fallback;
     }
 
     function fmt(value, decimals = 3) {
       const n = Number(value);
-
       if (!Number.isFinite(n)) return "-";
-
       return n.toFixed(decimals);
     }
 
     function fmtInt(value) {
       const n = Number(value);
-
       if (!Number.isFinite(n)) return "0";
-
       return Math.round(n).toLocaleString();
     }
 
     function fmtPct(value) {
       const n = Number(value);
-
       if (!Number.isFinite(n)) return "-";
-
       return `${(n * 100).toFixed(1)}%`;
     }
 
     function fmtRawPct(value) {
       const n = Number(value);
-
       if (!Number.isFinite(n)) return "-";
-
       return `${n.toFixed(2)}%`;
     }
 
@@ -1058,35 +1111,29 @@
       return symbol || "COIN";
     }
 
-    function microId(row = {}) {
-      return row.trueMicroFamilyId || row.microFamilyId || row.liveMicroFamilyId || row.realMicroFamilyId || row.executionMicroFamilyId || row.id || row.key || "";
-    }
-
-    function macroId(row = {}) {
-      return row.macroFamilyId || row.parentMacroFamilyId || row.parentMicroFamilyId || row.parentFamilyId || row.macroId || row.familyId || "";
-    }
-
-    function familyId(row = {}) {
-      return row.familyId || row.family || row.baseFamilyId || "";
-    }
-
     function completed(row = {}) {
       const outcome = Number(row.outcomeSample);
       if (Number.isFinite(outcome)) return outcome;
 
-      const wins = num(row.wins ?? row.virtualWins ?? row.shadowWins, 0);
-      const losses = num(row.losses ?? row.virtualLosses ?? row.shadowLosses, 0);
-      const flats = num(row.flats ?? row.virtualFlats ?? row.shadowFlats, 0);
+      const explicit = Number(row.completed);
+      if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+      const virtualCompleted = num(row.virtualCompleted, 0);
+      const shadowCompleted = num(row.shadowCompleted, 0);
+      if (virtualCompleted + shadowCompleted > 0) return virtualCompleted + shadowCompleted;
+
+      const wins = num(row.wins, 0);
+      const losses = num(row.losses, 0);
+      const flats = num(row.flats, 0);
       const sum = wins + losses + flats;
 
-      if (sum > 0) return sum;
-
-      return num(row.completed ?? row.virtualCompleted ?? row.shadowCompleted, 0);
+      return sum > 0 ? sum : 0;
     }
 
     function observationSample(row = {}) {
       return Math.max(
         num(row.observationSample, 0),
+        num(row.winrateSample, 0),
         num(row.seen, 0),
         num(row.observations, 0),
         completed(row),
@@ -1096,11 +1143,9 @@
 
     function learningStatus(row = {}) {
       const done = completed(row);
-      const obs = observationSample(row);
 
       if (done >= MIN_COMPLETED_ACTIVE_LEARNING) return "ACTIVE_LEARNING";
       if (done > 0) return "EARLY_OUTCOMES";
-      if (obs >= 0) return "OBSERVING";
 
       return "OBSERVING";
     }
@@ -1190,6 +1235,11 @@
       };
     }
 
+    function noCacheUrl(url) {
+      const join = String(url).includes("?") ? "&" : "?";
+      return `${url}${join}_ts=${Date.now()}`;
+    }
+
     async function api(url, options = {}) {
       const timeout = timeoutSignal(options.timeoutMs || state.apiTimeoutMs);
 
@@ -1203,7 +1253,7 @@
       }
 
       try {
-        const response = await fetch(url, {
+        const response = await fetch(noCacheUrl(url), {
           cache: "no-store",
           ...options,
           headers,
@@ -1296,26 +1346,20 @@
       `;
     }
 
-    function shortRows(rows = []) {
-      return (Array.isArray(rows) ? rows : [])
-        .filter(Boolean)
-        .filter((row) => !isLongRow(row))
-        .filter(isShortRow);
-    }
-
-    function analyzeMicroRows(rows = []) {
-      return shortRows(rows)
-        .filter((row) => isAnalyzeMicroFamilyId(microId(row)));
-    }
-
-    function extractRows(data, keys = []) {
+    function extractObjectArrays(data, keys = []) {
       const rows = [];
 
       for (const key of keys) {
-        if (Array.isArray(data?.[key])) rows.push(...data[key]);
+        const value = data?.[key];
+
+        if (Array.isArray(value)) {
+          rows.push(...value);
+        } else if (value && typeof value === "object") {
+          rows.push(...Object.values(value));
+        }
       }
 
-      return analyzeMicroRows(rows);
+      return rows;
     }
 
     function extractDeepMicroRows(data) {
@@ -1324,27 +1368,28 @@
       const seenIds = new Set();
 
       function add(row) {
+        if (!row || typeof row !== "object") return;
+
         const id = microId(row);
 
         if (!id || seenIds.has(id)) return;
-        if (!isAnalyzeMicroFamilyId(id)) return;
-        if (!isShortRow(row)) return;
+        if (!isRealAnalyzeMicroRow(row)) return;
 
         seenIds.add(id);
         output.push(row);
       }
 
       function walk(value, depth = 0) {
-        if (!value || typeof value !== "object" || depth > 5) return;
+        if (!value || typeof value !== "object" || depth > 6) return;
         if (seenObjects.has(value)) return;
 
         seenObjects.add(value);
 
         if (Array.isArray(value)) {
-          value.forEach((row) => {
-            if (row && typeof row === "object" && microId(row)) add(row);
-            else walk(row, depth + 1);
-          });
+          for (const item of value) {
+            if (item && typeof item === "object" && microId(item)) add(item);
+            walk(item, depth + 1);
+          }
           return;
         }
 
@@ -1362,6 +1407,9 @@
           "data",
           "result",
           "payload",
+          "response",
+          "activeRotation",
+          "active",
           "balanced",
           "winrate",
           "totalR",
@@ -1375,15 +1423,76 @@
 
       walk(data, 0);
 
-      return analyzeMicroRows(output);
+      return output;
+    }
+
+    function extractMicroRowsFromApiPayload(data = {}) {
+      const preferred = extractObjectArrays(data, [
+        "best25MicroFamilies",
+        "topMicroFamilies",
+        "bestMicroFamilies"
+      ]);
+
+      const direct = extractObjectArrays(data, [
+        "shortRows",
+        "rows",
+        "microFamilies",
+        "micros",
+        "items"
+      ]);
+
+      const nestedPreferred = [
+        ...extractObjectArrays(data.result || {}, ["best25MicroFamilies", "topMicroFamilies", "bestMicroFamilies"]),
+        ...extractObjectArrays(data.payload || {}, ["best25MicroFamilies", "topMicroFamilies", "bestMicroFamilies"])
+      ];
+
+      const deep = extractDeepMicroRows(data);
+
+      const source = preferred.length
+        ? preferred
+        : nestedPreferred.length
+          ? nestedPreferred
+          : direct.length
+            ? direct
+            : deep;
+
+      const byId = new Map();
+
+      for (const row of source) {
+        if (!row || typeof row !== "object") continue;
+        if (!isRealAnalyzeMicroRow(row)) continue;
+
+        const id = microId(row);
+        if (!id || byId.has(id)) continue;
+
+        byId.set(id, row);
+      }
+
+      if (byId.size === 0) {
+        for (const row of deep) {
+          const id = microId(row);
+          if (!id || byId.has(id)) continue;
+
+          byId.set(id, row);
+        }
+      }
+
+      return [...byId.values()];
     }
 
     function fairWinrate(row = {}) {
-      return num(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.sampleWilsonLowerBound ?? row.wilsonLowerBound ?? row.bayesianWinrate, 0);
+      return num(
+        row.fairWinrate ??
+        row.sampleAdjustedWinrate ??
+        row.sampleWilsonLowerBound ??
+        row.wilsonLowerBound ??
+        row.bayesianWinrate,
+        0
+      );
     }
 
     function balancedScore(row = {}) {
-      return num(row.dashboardBalancedScore ?? row.balancedScore, 0);
+      return num(row.learningQualityRank ?? row.dashboardBalancedScore ?? row.balancedScore, 0);
     }
 
     function netTotalR(row = {}) {
@@ -1392,6 +1501,10 @@
 
     function netAvgR(row = {}) {
       return num(row.avgR ?? row.avgNetR ?? row.netAvgR, 0);
+    }
+
+    function sampleReliability(row = {}) {
+      return num(row.sampleReliability, 0);
     }
 
     function compareNumberDesc(a, b) {
@@ -1406,14 +1519,15 @@
       return String(microId(a) || "").localeCompare(String(microId(b) || ""));
     }
 
-    function compareByFairScore(a, b) {
+    function compareBestDataFirst(a, b) {
       return (
         compareNumberDesc(balancedScore(a), balancedScore(b)) ||
+        compareNumberDesc(netTotalR(a), netTotalR(b)) ||
+        compareNumberDesc(netAvgR(a), netAvgR(b)) ||
+        compareNumberDesc(sampleReliability(a), sampleReliability(b)) ||
         compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
         compareNumberDesc(observationSample(a), observationSample(b)) ||
         compareNumberDesc(completed(a), completed(b)) ||
-        compareNumberDesc(netTotalR(a), netTotalR(b)) ||
-        compareNumberDesc(netAvgR(a), netAvgR(b)) ||
         compareMicroIds(a, b)
       );
     }
@@ -1422,32 +1536,28 @@
       if (mode === "observed") {
         return (
           compareNumberDesc(observationSample(a), observationSample(b)) ||
-          compareByFairScore(a, b)
+          compareBestDataFirst(a, b)
         );
       }
 
       if (mode === "directSL") {
         return (
           compareNumberAsc(a.directSLPct, b.directSLPct) ||
-          compareByFairScore(a, b)
+          compareBestDataFirst(a, b)
         );
       }
 
       if (mode === "totalR") {
         return (
-          compareNumberDesc(balancedScore(a), balancedScore(b)) ||
-          compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
           compareNumberDesc(netTotalR(a), netTotalR(b)) ||
-          compareMicroIds(a, b)
+          compareBestDataFirst(a, b)
         );
       }
 
       if (mode === "avgR") {
         return (
-          compareNumberDesc(balancedScore(a), balancedScore(b)) ||
-          compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
           compareNumberDesc(netAvgR(a), netAvgR(b)) ||
-          compareMicroIds(a, b)
+          compareBestDataFirst(a, b)
         );
       }
 
@@ -1457,23 +1567,36 @@
           compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
           compareNumberDesc(a.sampleBayesianWinrate ?? a.bayesianWinrate, b.sampleBayesianWinrate ?? b.bayesianWinrate) ||
           compareNumberDesc(completed(a), completed(b)) ||
-          compareByFairScore(a, b)
+          compareBestDataFirst(a, b)
         );
       }
 
-      return compareByFairScore(a, b);
+      return compareBestDataFirst(a, b);
     }
 
     function normalizeMicroRowForUi(row = {}) {
       const id = microId(row);
+      const coarseId = coarseMicroId(row) || id;
       const done = completed(row);
       const obs = observationSample(row);
       const status = learningStatus(row);
+      const rowTier = tier(row);
 
       return {
         ...row,
         microFamilyId: id,
         trueMicroFamilyId: id,
+        coarseMicroFamilyId: coarseId,
+        side: DASHBOARD_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        tradeSide: ONLY_SIDE,
+        targetTradeSide: ONLY_SIDE,
+        positionSide: ONLY_SIDE,
+        direction: ONLY_SIDE,
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false,
         completed: done,
         outcomeSample: done,
         observationSample: obs,
@@ -1483,12 +1606,30 @@
         tooEarlyReason: done < MIN_COMPLETED_ACTIVE_LEARNING
           ? `completed ${done}/${MIN_COMPLETED_ACTIVE_LEARNING}`
           : null,
-        tier: tier(row),
-        selectedTier: tier(row),
-        rotationEligibilityTier: tier(row),
+        tier: rowTier,
+        selectedTier: rowTier,
+        rotationEligibilityTier: rowTier,
         dashboardBalancedScore: balancedScore(row),
-        fairWinrate: fairWinrate(row)
+        balancedScore: num(row.balancedScore ?? row.dashboardBalancedScore ?? row.learningQualityRank, 0),
+        fairWinrate: fairWinrate(row),
+        scannerFingerprintRole: row.scannerFingerprintRole || "METADATA_ONLY",
+        scannerFingerprintOnlyMetadata: false,
+        legacyScannerFamilyFallback: false,
+        scannerFingerprintLegacy: false,
+        learningIdentitySource: row.learningIdentitySource || "ANALYZE_MICRO_FAMILY",
+        symbolExcludedFromFamilyId: row.symbolExcludedFromFamilyId !== false
       };
+    }
+
+    function rankMicroRows(rows = [], mode = state.microMode) {
+      return rows
+        .filter(isRealAnalyzeMicroRow)
+        .map(normalizeMicroRowForUi)
+        .sort((a, b) => compareMicroRows(a, b, mode))
+        .map((row, index) => ({
+          ...row,
+          rank: index + 1
+        }));
     }
 
     function microApiUrl() {
@@ -1529,8 +1670,12 @@
       return uniqueStrings([
         state.rotation?.activeMicroFamilyIds || [],
         state.rotation?.activeRotation?.activeMicroFamilyIds || [],
+        state.rotation?.activeRotation?.microFamilyIds || [],
         state.rotation?.active?.activeMicroFamilyIds || [],
+        state.rotation?.active?.microFamilyIds || [],
         state.micros?.activeMicroFamilyIds || [],
+        state.micros?.activeRotation?.activeMicroFamilyIds || [],
+        state.micros?.activeRotation?.microFamilyIds || [],
         state.overview?.activeMicroFamilyIds || [],
         state.trade?.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
@@ -1540,11 +1685,21 @@
       return uniqueStrings([
         state.rotation?.activeMacroFamilyIds || [],
         state.rotation?.activeRotation?.activeMacroFamilyIds || [],
+        state.rotation?.activeRotation?.macroFamilyIds || [],
         state.rotation?.active?.activeMacroFamilyIds || [],
+        state.rotation?.active?.macroFamilyIds || [],
         state.micros?.activeMacroFamilyIds || [],
+        state.micros?.activeRotation?.activeMacroFamilyIds || [],
+        state.micros?.activeRotation?.macroFamilyIds || [],
         state.overview?.activeMacroFamilyIds || [],
         state.trade?.activeMacroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
+    }
+
+    function shortRows(rows = []) {
+      return (Array.isArray(rows) ? rows : [])
+        .filter(Boolean)
+        .filter((row) => inferSide(row) !== OPPOSITE_SIDE);
     }
 
     function coinCard(row = {}) {
@@ -1567,7 +1722,7 @@
 
           <div class="coin-foot">
             <span class="pill short">SHORT</span>
-            <span class="pill purple">${escapeHtml(row.source || "VIRTUAL")}</span>
+            <span class="pill purple">${escapeHtml(row.source || "SCANNER")}</span>
             <span class="pill info">Score ${escapeHtml(fmt(score, 1))}</span>
           </div>
 
@@ -1707,28 +1862,91 @@
       URL.revokeObjectURL(url);
     }
 
+    async function fetchMicros() {
+      const data = await api(microApiUrl(), {
+        timeoutMs: 22000
+      });
+
+      const rawRows = extractMicroRowsFromApiPayload(data);
+      const rows = rankMicroRows(rawRows, state.microMode);
+
+      return {
+        ...data,
+        rows,
+        rawExtractedRows: rawRows.length,
+        activeMicroFamilyIds: uniqueStrings([
+          data.activeMicroFamilyIds || [],
+          data.selectedMicroFamilyIds || [],
+          data.activeRotation?.activeMicroFamilyIds || [],
+          data.activeRotation?.microFamilyIds || [],
+          data.activeRotation?.trueMicroFamilyIds || []
+        ]).filter(idAllowedInShortOnly),
+        activeMacroFamilyIds: uniqueStrings([
+          data.activeMacroFamilyIds || [],
+          data.selectedMacroFamilyIds || [],
+          data.activeRotation?.activeMacroFamilyIds || [],
+          data.activeRotation?.macroFamilyIds || []
+        ]).filter(idAllowedInShortOnly)
+      };
+    }
+
+    function currentMicroRows() {
+      const rows = state.micros?.rows || [];
+      const search = state.microSearch.trim().toLowerCase();
+
+      const filtered = search
+        ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search))
+        : rows;
+
+      return rankMicroRows(filtered, state.microMode);
+    }
+
+    async function ensureMicrosLoaded() {
+      if (state.micros?.rows?.length) return state.micros;
+
+      try {
+        state.micros = await fetchMicros();
+      } catch {
+        state.micros = state.micros || { rows: [] };
+      }
+
+      return state.micros;
+    }
+
     async function renderOverview() {
       showLoading("overview");
 
-      const data = await api(endpoints.overview);
+      const [data, microData] = await Promise.all([
+        api(endpoints.overview).catch((error) => ({
+          ok: false,
+          error: friendlyApiMessage(error)
+        })),
+        ensureMicrosLoaded()
+      ]);
+
       state.overview = data;
 
+      const microRows = microData?.rows || [];
       const activeCount = uniqueStrings([
         data.activeMicroFamilyIds || [],
         data.activeRotation?.activeMicroFamilyIds || [],
-        data.activeRotation?.microFamilyIds || []
+        data.activeRotation?.microFamilyIds || [],
+        microData?.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly).length;
+
+      const observing = microRows.filter((row) => learningStatus(row) === "OBSERVING").length;
+      const completedCount = microRows.filter((row) => completed(row) > 0).length;
 
       $("overview").innerHTML = `
         <div class="grid">
-          ${metricCard("Current week", data.weekKey || data.currentWeekKey || "-")}
-          ${metricCard("Previous week", data.previousWeekKey || "-")}
+          ${metricCard("Current week", data.weekKey || data.currentWeekKey || microData?.weekKey || "-")}
+          ${metricCard("Previous week", data.previousWeekKey || microData?.previousWeekKey || "-")}
           ${metricCard("Discord selected micros", fmtInt(activeCount))}
           ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
           ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
-          ${metricCard("Current micro families", fmtInt(data.currentWeekMicroFamilies))}
-          ${metricCard("Observing families", fmtInt(data.observingMicroFamilies))}
-          ${metricCard("Completed families", fmtInt(data.completedMicroFamilies))}
+          ${metricCard("Current micro families", fmtInt(microRows.length || data.currentWeekMicroFamilies))}
+          ${metricCard("Observing families", fmtInt(observing || data.observingMicroFamilies))}
+          ${metricCard("Completed families", fmtInt(completedCount || data.completedMicroFamilies))}
         </div>
 
         <div class="grid-3">
@@ -1741,18 +1959,28 @@
               <span class="pill dark">MANUAL DISCORD</span>
             </div>
             <div class="metric-extra">
-              Scanner zoekt alleen dalende candidates. TradeSystem opent alleen virtual SHORT posities.
+              Scanner fingerprint is metadata-only. Dashboard telt alleen echte Analyze micro-family IDs.
             </div>
           </div>
 
           <div class="card">
-            <h3>Active manual selection</h3>
-            ${jsonBlock(data.activeRotation || null)}
+            <h3>MicroFamilies backend check</h3>
+            ${jsonBlock({
+              rows: microRows.length,
+              best25Count: microData?.best25Count ?? null,
+              totalAvailable: microData?.totalAvailable ?? null,
+              primaryWeekRows: microData?.primaryWeekRows ?? null,
+              source: microData?.source ?? null,
+              rankingPolicy: microData?.rankingPolicy ?? null
+            })}
           </div>
 
           <div class="card">
             <h3>Warnings</h3>
-            ${jsonBlock(data.warnings || [])}
+            ${jsonBlock([
+              ...(Array.isArray(data.warnings) ? data.warnings : []),
+              ...(Array.isArray(microData?.warnings) ? microData.warnings : [])
+            ])}
           </div>
         </div>
 
@@ -1958,7 +2186,7 @@
 
         const counts = data.counts || {};
         setMessage(
-          `TradeSystem klaar.\nEntries=${counts.entries || 0}, waits=${counts.waits || 0}, virtualExits=${counts.virtualExits || 0}.`,
+          `TradeSystem klaar.\nEntries=${counts.entries || data.entryRows || 0}, waits=${counts.waits || data.waitRows || 0}, virtualExits=${counts.virtualExits || data.virtualExitRows || 0}.`,
           "ok"
         );
 
@@ -1966,61 +2194,6 @@
       } catch (error) {
         setMessage(friendlyApiMessage(error), "warn");
       }
-    }
-
-    async function fetchMicros() {
-      const data = await api(microApiUrl(), {
-        timeoutMs: 22000
-      });
-
-      const best = extractRows(data, ["best25MicroFamilies", "topMicroFamilies", "bestMicroFamilies"]);
-      const direct = extractRows(data, ["shortRows", "rows", "microFamilies", "micros", "items"]);
-      const deep = extractDeepMicroRows(data);
-
-      const sourceRows = best.length ? best : direct.length ? direct : deep;
-
-      const rows = analyzeMicroRows(sourceRows)
-        .map(normalizeMicroRowForUi)
-        .sort((a, b) => compareMicroRows(a, b, state.microMode))
-        .map((row, index) => ({
-          ...row,
-          rank: index + 1
-        }));
-
-      return {
-        ...data,
-        rows,
-        bestRows: best,
-        directRows: direct,
-        deepRows: deep,
-        activeMicroFamilyIds: uniqueStrings([
-          data.activeMicroFamilyIds || [],
-          data.activeRotation?.activeMicroFamilyIds || [],
-          data.activeRotation?.microFamilyIds || []
-        ]).filter(idAllowedInShortOnly),
-        activeMacroFamilyIds: uniqueStrings([
-          data.activeMacroFamilyIds || [],
-          data.activeRotation?.activeMacroFamilyIds || [],
-          data.activeRotation?.macroFamilyIds || []
-        ]).filter(idAllowedInShortOnly)
-      };
-    }
-
-    function currentMicroRows() {
-      const rows = state.micros?.rows || [];
-      const search = state.microSearch.trim().toLowerCase();
-
-      const filtered = search
-        ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search))
-        : rows;
-
-      return analyzeMicroRows(filtered)
-        .map(normalizeMicroRowForUi)
-        .sort((a, b) => compareMicroRows(a, b, state.microMode))
-        .map((row, index) => ({
-          ...row,
-          rank: index + 1
-        }));
     }
 
     function manualCard(row) {
@@ -2070,7 +2243,7 @@
           </div>
 
           <div class="metric-extra">
-            Ranking gebruikt balanced/fair score als default. Kale winrate is zichtbaar, maar niet de default sortering.
+            Ranking gebruikt beste data eerst: balanced score, netR, avgR, sample reliability en fair winrate.
             Discord wordt alleen actief voor deze exacte true micro. Virtual learning blijft alle risk-valide SHORT candidates volgen.
           </div>
 
@@ -2122,7 +2295,8 @@
         <div class="card">
           <h3>MicroFamilies ranking policy</h3>
           <div class="toolbar">
-            <span class="pill dark">default sort: balanced/fair</span>
+            <span class="pill dark">best data first</span>
+            <span class="pill dark">default sort: balanced/fair/netR</span>
             <span class="pill observation">OBSERVING = completed 0</span>
             <span class="pill soft">EARLY_OUTCOMES = completed 1-19 · te vroeg</span>
             <span class="pill active">ACTIVE_LEARNING = completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}</span>
@@ -2143,30 +2317,34 @@
         ${manualCard(top)}
 
         <div class="grid">
-          ${metricCard("Analyze SHORT rows", fmtInt(rows.length))}
+          ${metricCard("Analyze SHORT rows", fmtInt(rows.length), `API totalAvailable=${fmtInt(state.micros?.totalAvailable || rows.length)}`)}
           ${metricCard("OBSERVING", fmtInt(observingRows.length), "completed = 0")}
           ${metricCard("EARLY_OUTCOMES", fmtInt(earlyRows.length), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1} · te vroeg`)}
           ${metricCard("ACTIVE_LEARNING", fmtInt(activeRows.length), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
           ${metricCard("Te vroeg", fmtInt(tooEarlyRows.length), `completed < ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
           ${metricCard("Discord active micros", fmtInt(activeMicroIds().length))}
-          ${metricCard("Mode", state.microMode, "default balanced")}
+          ${metricCard("Mode", state.microMode, "default best data first")}
           ${metricCard("Outcomes", "NET R", "virtual/shadow closed outcomes")}
         </div>
 
         ${microTable(rows.slice(0, state.bestLimit))}
 
-        ${rows.length === 0 ? `
-          <div class="card">
-            <h3>Micro API debug</h3>
-            ${jsonBlock({
-              error: state.micros?.error || null,
-              keys: state.micros ? Object.keys(state.micros).slice(0, 50) : [],
-              bestRows: state.micros?.bestRows?.length || 0,
-              directRows: state.micros?.directRows?.length || 0,
-              deepRows: state.micros?.deepRows?.length || 0
-            })}
-          </div>
-        ` : ""}
+        <div class="card">
+          <h3>Micro API status</h3>
+          ${jsonBlock({
+            ok: state.micros?.ok,
+            rowsRendered: rows.length,
+            rawExtractedRows: state.micros?.rawExtractedRows || 0,
+            best25Count: state.micros?.best25Count ?? null,
+            totalAvailable: state.micros?.totalAvailable ?? null,
+            weekRows: state.micros?.weekRows ?? null,
+            primaryWeekRows: state.micros?.primaryWeekRows ?? null,
+            rawScannerFingerprintRowsHidden: state.micros?.rawScannerFingerprintRowsHidden ?? null,
+            rankingPolicy: state.micros?.rankingPolicy ?? null,
+            warnings: state.micros?.warnings || [],
+            error: state.micros?.error || null
+          })}
+        </div>
       `;
 
       $("microMode")?.addEventListener("change", (event) => {
@@ -2174,9 +2352,16 @@
         renderMicros();
       });
 
-      $("microSearch")?.addEventListener("input", (event) => {
+      $("microSearch")?.addEventListener("change", (event) => {
         state.microSearch = event.target.value;
         renderMicros();
+      });
+
+      $("microSearch")?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          state.microSearch = event.target.value;
+          renderMicros();
+        }
       });
 
       $("copyVisibleIdsBtn")?.addEventListener("click", () => {
@@ -2209,6 +2394,7 @@
       const activeIds = uniqueStrings([
         active.activeMicroFamilyIds || [],
         active.microFamilyIds || [],
+        active.trueMicroFamilyIds || [],
         data.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
 
@@ -2218,7 +2404,7 @@
         data.activeMacroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
 
-      const rows = analyzeMicroRows(data.activeRows || active.microFamilies || [])
+      const rows = rankMicroRows(data.activeRows || active.microFamilies || [])
         .concat(
           activeIds.map((id, index) => ({
             rank: index + 1,
@@ -2344,7 +2530,8 @@
           manualOnly: true,
           adminSelected: true,
           autoRotation: false,
-          discordOnlyForSelectedMicroFamilies: true
+          discordOnlyForSelectedMicroFamilies: true,
+          discordOnlyForExactTrueMicroMatch: true
         })
       });
 
@@ -2352,6 +2539,7 @@
       const activeIds = uniqueStrings([
         active.activeMicroFamilyIds || [],
         active.microFamilyIds || [],
+        active.trueMicroFamilyIds || [],
         data.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
 
