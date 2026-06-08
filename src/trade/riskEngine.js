@@ -1006,12 +1006,13 @@ export function isValidRiskGeometry(risk, side = TARGET_TRADE_SIDE) {
   if (riskPct <= 0) return false;
   if (riskPct > cfg.maxRiskPct * 1.05) return false;
 
-  const spreadPct = safeNumber(risk.spreadPct, 0);
-
-  if (spreadPct > cfg.maxSpreadPct) return false;
+    // Spread is GEEN gate meer: elke geldige short-geometry wordt virtueel gevolgd.
+  // De spread wordt als KOSTEN verrekend in het cost-model (netto R), niet vooraf geblokkeerd.
+  // Zo krijgt elke binnenkomende short-coin een TP/SL en leert elke micro-family.
 
   return true;
 }
+
 
 export function buildRiskGeometry({
   candidate,
