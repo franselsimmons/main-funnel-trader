@@ -6,7 +6,6 @@ import { CONFIG } from '../config.js';
 import { KEYS } from '../keys.js';
 import { getDurableRedis, getJson, setJson } from '../redis.js';
 import {
-  getIsoWeekKey,
   safeNumber,
   sideToTradeSide
 } from '../utils.js';
@@ -38,6 +37,10 @@ const DEFAULT_FULL_READ_SOFT_TIMEOUT_MS = 2_400;
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
+
+// Vaste leer-sleutel: micro-families resetten NIET meer per week.
+// Observaties + outcomes tellen oneindig door tot een handmatige factory-reset.
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const OBSERVATION_SOURCE = 'VIRTUAL';
 const OUTCOME_SOURCE = 'VIRTUAL';
@@ -2678,7 +2681,7 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
   };
 }
 
-export async function getWeekMicros(weekKey = getIsoWeekKey()) {
+export async function getWeekMicros(weekKey = PERSISTENT_LEARNING_KEY) {
   const redis = getDurableRedis();
   const cfg = getWeekStorageConfig();
 
@@ -2727,7 +2730,7 @@ export async function getWeekMicros(weekKey = getIsoWeekKey()) {
   return normalized;
 }
 
-export async function getWeekTopMicros(weekKey = getIsoWeekKey(), {
+export async function getWeekTopMicros(weekKey = PERSISTENT_LEARNING_KEY, {
   limit = 25
 } = {}) {
   const redis = getDurableRedis();
@@ -2931,7 +2934,7 @@ function buildAnalyzeVariants(metrics = {}) {
 
 export async function analyzeCandidatesBatch(
   metricsRows = [],
-  { weekKey = getIsoWeekKey() } = {}
+  { weekKey = PERSISTENT_LEARNING_KEY } = {}
 ) {
   const rows = Array.isArray(metricsRows)
     ? metricsRows.filter(Boolean).filter((row) => isShortOnlyRow(row))
@@ -3393,7 +3396,7 @@ export async function recordOutcome(
   outcome = {},
   {
     source = outcome.source || OUTCOME_SOURCE,
-    weekKey = getIsoWeekKey(outcome.closedAt || outcome.completedAt || now())
+    weekKey = PERSISTENT_LEARNING_KEY
   } = {}
 ) {
   if (!isShortOnlyRow(outcome)) {
