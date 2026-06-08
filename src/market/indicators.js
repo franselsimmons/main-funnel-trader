@@ -5,6 +5,140 @@ import {
   sideToTradeSide
 } from '../utils.js';
 
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
+
+const SHORT_TOKENS = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL',
+  'ASK',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
+]);
+
+const LONG_TOKENS = new Set([
+  'LONG',
+  'BULL',
+  'BULLISH',
+  'BUY',
+  'BID',
+  'UP',
+  'UPSIDE',
+  'GREEN'
+]);
+
+function upper(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
+function hasShortSignal(value = '') {
+  const raw = cleanSideText(value);
+
+  if (!raw) return false;
+  if (SHORT_TOKENS.has(raw)) return true;
+
+  return (
+    raw.includes('MICRO_SHORT_') ||
+    raw.includes('TRADE_SIDE=SHORT') ||
+    raw.includes('TRADESIDE=SHORT') ||
+    raw.includes('POSITION_SIDE=SHORT') ||
+    raw.includes('POSITIONSIDE=SHORT') ||
+    raw.includes('SIDE=SHORT') ||
+    raw.includes('SIDE=BEAR') ||
+    raw.includes('DIRECTION=SHORT') ||
+    raw.includes('DIRECTION=BEAR') ||
+    raw.includes('SIDE=SELL') ||
+    raw.includes('DIRECTION=SELL') ||
+    raw.startsWith('SHORT_') ||
+    raw.includes('_SHORT_') ||
+    raw.endsWith('_SHORT') ||
+    raw.startsWith('BEAR_') ||
+    raw.includes('_BEAR_') ||
+    raw.endsWith('_BEAR') ||
+    raw.startsWith('SELL_') ||
+    raw.includes('_SELL_') ||
+    raw.endsWith('_SELL')
+  );
+}
+
+function hasLongSignal(value = '') {
+  const raw = cleanSideText(value);
+
+  if (!raw) return false;
+  if (LONG_TOKENS.has(raw)) return true;
+
+  return (
+    raw.includes('MICRO_LONG_') ||
+    raw.includes('TRADE_SIDE=LONG') ||
+    raw.includes('TRADESIDE=LONG') ||
+    raw.includes('POSITION_SIDE=LONG') ||
+    raw.includes('POSITIONSIDE=LONG') ||
+    raw.includes('SIDE=LONG') ||
+    raw.includes('SIDE=BULL') ||
+    raw.includes('DIRECTION=LONG') ||
+    raw.includes('DIRECTION=BULL') ||
+    raw.includes('SIDE=BUY') ||
+    raw.includes('DIRECTION=BUY') ||
+    raw.startsWith('LONG_') ||
+    raw.includes('_LONG_') ||
+    raw.endsWith('_LONG') ||
+    raw.startsWith('BULL_') ||
+    raw.includes('_BULL_') ||
+    raw.endsWith('_BULL') ||
+    raw.startsWith('BUY_') ||
+    raw.includes('_BUY_') ||
+    raw.endsWith('_BUY')
+  );
+}
+
+function normalizeTradeSide(value) {
+  const raw = cleanSideText(value);
+
+  if (!raw) return 'UNKNOWN';
+
+  const direct = sideToTradeSide(raw);
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+
+  const shortHit = hasShortSignal(raw);
+  const longHit = hasLongSignal(raw);
+
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+
+  if (shortHit) return TARGET_TRADE_SIDE;
+  if (longHit) return OPPOSITE_TRADE_SIDE;
+
+  if (raw === TARGET_DASHBOARD_SIDE.toUpperCase()) return TARGET_TRADE_SIDE;
+
+  return 'UNKNOWN';
+}
+
+function clamp01(value) {
+  const n = safeNumber(value, 0);
+
+  if (n <= 0) return 0;
+  if (n >= 1) return 1;
+
+  return n;
+}
+
 function normalizeCandleTs(value) {
   const ts = safeNumber(value, 0);
 
@@ -12,6 +146,39 @@ function normalizeCandleTs(value) {
 
   // Bitget geeft meestal milliseconds terug. Als het seconds zijn: omzetten.
   return ts < 10_000_000_000 ? ts * 1000 : ts;
+}
+
+function normalizeCandle(row = {}) {
+  if (!row || typeof row !== 'object') return null;
+
+  const ts = normalizeCandleTs(row.ts ?? row.time ?? row.timestamp ?? row[0]);
+  const open = safeNumber(row.open ?? row[1], NaN);
+  const high = safeNumber(row.high ?? row[2], NaN);
+  const low = safeNumber(row.low ?? row[3], NaN);
+  const close = safeNumber(row.close ?? row[4], NaN);
+  const volume = safeNumber(row.volume ?? row.baseVolume ?? row.vol ?? row[5], 0);
+  const quoteVolume = safeNumber(row.quoteVolume ?? row.quoteVol ?? row.turnover ?? row[6] ?? row[7], 0);
+
+  if (![open, high, low, close].every(Number.isFinite)) return null;
+  if (open <= 0 || high <= 0 || low <= 0 || close <= 0) return null;
+  if (high < low) return null;
+
+  return {
+    ...row,
+    ts,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    quoteVolume
+  };
+}
+
+function normalizeCandles(candles) {
+  return (Array.isArray(candles) ? candles : [])
+    .map(normalizeCandle)
+    .filter(Boolean);
 }
 
 export function parseBitgetCandle(row) {
@@ -41,56 +208,54 @@ export function parseBitgetCandle(row) {
 }
 
 export function candleBodyPct(candle) {
-  const high = safeNumber(candle?.high, 0);
-  const low = safeNumber(candle?.low, 0);
-  const open = safeNumber(candle?.open, 0);
-  const close = safeNumber(candle?.close, 0);
+  const row = normalizeCandle(candle);
 
-  const range = high - low;
+  if (!row) return 0;
+
+  const range = row.high - row.low;
 
   if (range <= 0) return 0;
 
-  return Math.abs(close - open) / range;
+  return clamp01(Math.abs(row.close - row.open) / range);
 }
 
 export function upperWickPct(candle) {
-  const high = safeNumber(candle?.high, 0);
-  const low = safeNumber(candle?.low, 0);
-  const open = safeNumber(candle?.open, 0);
-  const close = safeNumber(candle?.close, 0);
+  const row = normalizeCandle(candle);
 
-  const range = high - low;
+  if (!row) return 0;
+
+  const range = row.high - row.low;
 
   if (range <= 0) return 0;
 
-  return (high - Math.max(open, close)) / range;
+  return clamp01((row.high - Math.max(row.open, row.close)) / range);
 }
 
 export function lowerWickPct(candle) {
-  const high = safeNumber(candle?.high, 0);
-  const low = safeNumber(candle?.low, 0);
-  const open = safeNumber(candle?.open, 0);
-  const close = safeNumber(candle?.close, 0);
+  const row = normalizeCandle(candle);
 
-  const range = high - low;
+  if (!row) return 0;
+
+  const range = row.high - row.low;
 
   if (range <= 0) return 0;
 
-  return (Math.min(open, close) - low) / range;
+  return clamp01((Math.min(row.open, row.close) - row.low) / range);
 }
 
 export function candleDirection(candle) {
-  const open = safeNumber(candle?.open, 0);
-  const close = safeNumber(candle?.close, 0);
+  const row = normalizeCandle(candle);
 
-  if (close > open) return 'BULL';
-  if (close < open) return 'BEAR';
+  if (!row) return 'NA';
+
+  if (row.close > row.open) return 'BULL';
+  if (row.close < row.open) return 'BEAR';
 
   return 'DOJI';
 }
 
 export function calculateRsi(candles, period = 14) {
-  const rows = Array.isArray(candles) ? candles : [];
+  const rows = normalizeCandles(candles);
 
   const closes = rows
     .map((candle) => safeNumber(candle?.close, NaN))
@@ -135,7 +300,7 @@ export function calculateRsi(candles, period = 14) {
 
 export function calculateAtrPct(candles, period = 14) {
   const p = Math.max(2, Math.floor(Number(period) || 14));
-  const rows = Array.isArray(candles) ? candles.slice(-(p + 1)) : [];
+  const rows = normalizeCandles(candles).slice(-(p + 1));
 
   if (rows.length < p + 1) return 0;
 
@@ -180,7 +345,7 @@ export function getRsiZone(rsi) {
 }
 
 export function getRsiSlope(candles, lookbackCandles = 3) {
-  const rows = Array.isArray(candles) ? candles : [];
+  const rows = normalizeCandles(candles);
   const lookback = Math.max(1, Math.floor(Number(lookbackCandles) || 3));
 
   const rsiNow = calculateRsi(rows, 14);
@@ -193,7 +358,7 @@ export function getRsiSlope(candles, lookbackCandles = 3) {
 
 export function getRecentRange(candles, lookback = 24) {
   const lb = Math.max(1, Math.floor(Number(lookback) || 24));
-  const rows = (Array.isArray(candles) ? candles : []).slice(-lb);
+  const rows = normalizeCandles(candles).slice(-lb);
 
   if (!rows.length) {
     return {
@@ -235,7 +400,7 @@ export function getRecentRange(candles, lookback = 24) {
 
 export function calcMovePct(candles, lookback = 8) {
   const lb = Math.max(2, Math.floor(Number(lookback) || 8));
-  const rows = Array.isArray(candles) ? candles.slice(-lb) : [];
+  const rows = normalizeCandles(candles).slice(-lb);
 
   if (rows.length < 2) return 0;
 
@@ -249,7 +414,7 @@ export function calcMovePct(candles, lookback = 8) {
 
 export function calcVolumeExpansion(candles, lookback = 20) {
   const lb = Math.max(5, Math.floor(Number(lookback) || 20));
-  const rows = Array.isArray(candles) ? candles.slice(-(lb + 1)) : [];
+  const rows = normalizeCandles(candles).slice(-(lb + 1));
 
   if (rows.length < 6) return 1;
 
@@ -270,39 +435,68 @@ export function calcVolumeExpansion(candles, lookback = 20) {
   return avg > 0 ? Number((last / avg).toFixed(3)) : 1;
 }
 
+function inferShortSideFromMomentum({
+  change1h,
+  change24h,
+  candles15m
+} = {}) {
+  const ch1 = safeNumber(change1h, 0);
+  const ch24 = safeNumber(change24h, 0);
+  const shortMovePct = calcMovePct(candles15m, 8);
+
+  if (ch1 > 0 || shortMovePct > 0 || ch24 > 0) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
+  if (ch1 < 0 || shortMovePct < 0 || ch24 < 0) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
 export function classifyFlow({
   side,
   change1h,
   change24h,
   candles15m
 } = {}) {
-  const tradeSide = sideToTradeSide(side);
+  const explicitSide = normalizeTradeSide(side);
 
-  if (tradeSide === 'UNKNOWN') return 'NEUTRAL';
+  if (explicitSide === OPPOSITE_TRADE_SIDE) {
+    return 'LONG_DISABLED_SHORT_ONLY';
+  }
+
+  const inferredSide = explicitSide === TARGET_TRADE_SIDE
+    ? TARGET_TRADE_SIDE
+    : inferShortSideFromMomentum({
+      change1h,
+      change24h,
+      candles15m
+    });
+
+  if (inferredSide === OPPOSITE_TRADE_SIDE) {
+    return 'LONG_DISABLED_SHORT_ONLY';
+  }
+
+  if (inferredSide !== TARGET_TRADE_SIDE) {
+    return 'NEUTRAL';
+  }
 
   const ch1 = safeNumber(change1h, 0);
   const ch24 = safeNumber(change24h, 0);
   const shortMovePct = calcMovePct(candles15m, 8);
   const volumeExpansion = calcVolumeExpansion(candles15m, 20);
 
-  const wantsLong = tradeSide === 'LONG';
-  const wantsShort = tradeSide === 'SHORT';
-
-  const directional = wantsLong
-    ? ch1 > 0 && shortMovePct > 0
-    : ch1 < 0 && shortMovePct < 0;
-
-  const strong = wantsLong
-    ? ch1 > 0.8 || ch24 > 3 || shortMovePct > 1.2
-    : ch1 < -0.8 || ch24 < -3 || shortMovePct < -1.2;
-
+  const directional = ch1 < 0 && shortMovePct < 0;
+  const strong = ch1 < -0.8 || ch24 < -3 || shortMovePct < -1.2;
   const volumeBacked = volumeExpansion >= 1.25;
 
   if (directional && strong && volumeBacked) return 'TREND';
   if (directional && strong) return 'IMPULSE';
   if (directional) return 'BUILDING';
 
-  return wantsShort || wantsLong ? 'NEUTRAL' : 'NEUTRAL';
+  return 'NEUTRAL';
 }
 
 export function classifyVolatilityRegime(candles, atrPct = null) {
@@ -318,7 +512,7 @@ export function classifyVolatilityRegime(candles, atrPct = null) {
 }
 
 export function calcCandleStructure(candles) {
-  const rows = Array.isArray(candles) ? candles : [];
+  const rows = normalizeCandles(candles);
   const last = rows.at(-1);
 
   if (!last) {
