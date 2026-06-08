@@ -12,7 +12,11 @@ const DEFAULT_AVG_R_SAMPLE_EXPONENT = 1.35;
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
-const VALID_TRADE_SIDES = new Set([TARGET_TRADE_SIDE]);
+const OPPOSITE_TRADE_SIDE = 'LONG';
+
+const SOURCE_VIRTUAL = 'VIRTUAL';
+const SOURCE_REAL = 'REAL';
+const SOURCE_SHADOW = 'SHADOW';
 
 function now() {
   return Date.now();
@@ -83,64 +87,145 @@ function makeCounters() {
   };
 }
 
+function cleanSideText(value = '') {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
+function normalizedSignalText(value = '') {
+  return cleanSideText(value)
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function hasSignalPattern(value = '', patterns = []) {
+  const text = normalizedSignalText(value);
+
+  if (!text) return false;
+
+  return patterns.some((pattern) => (
+    text === pattern ||
+    text.startsWith(`${pattern}_`) ||
+    text.endsWith(`_${pattern}`) ||
+    text.includes(`_${pattern}_`)
+  ));
+}
+
+function hasShortSignal(value = '') {
+  return hasSignalPattern(value, [
+    'SHORT',
+    'BEAR',
+    'BEARISH',
+    'SELL',
+    'SIDE_SHORT',
+    'TRADE_SIDE_SHORT',
+    'TRADESIDE_SHORT',
+    'POSITION_SIDE_SHORT',
+    'POSITIONSIDE_SHORT',
+    'DIRECTION_SHORT',
+    'SIDE_BEAR',
+    'TRADE_SIDE_BEAR',
+    'DIRECTION_BEAR',
+    'SIDE_SELL',
+    'DIRECTION_SELL',
+    'MICRO_SHORT',
+    'FAMILY_SHORT'
+  ]);
+}
+
+function hasLongSignal(value = '') {
+  return hasSignalPattern(value, [
+    'LONG',
+    'BULL',
+    'BULLISH',
+    'BUY',
+    'SIDE_LONG',
+    'TRADE_SIDE_LONG',
+    'TRADESIDE_LONG',
+    'POSITION_SIDE_LONG',
+    'POSITIONSIDE_LONG',
+    'DIRECTION_LONG',
+    'SIDE_BULL',
+    'TRADE_SIDE_BULL',
+    'DIRECTION_BULL',
+    'SIDE_BUY',
+    'DIRECTION_BUY',
+    'MICRO_LONG',
+    'FAMILY_LONG'
+  ]);
+}
+
 function normalizeTradeSide(value) {
-  const raw = String(value || '').trim().toUpperCase();
+  const raw = cleanSideText(value);
 
   if (!raw) return 'UNKNOWN';
 
   const direct = sideToTradeSide(raw);
 
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
 
-  if (['SHORT', 'BEAR', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'DOWN', 'DOWNSIDE'].includes(raw)) {
+    return TARGET_TRADE_SIDE;
+  }
 
-  const normalized = raw.replace(/[^A-Z0-9]+/g, '_');
+  if (['LONG', 'BULL', 'BULLISH', 'BUY', 'UP', 'UPSIDE'].includes(raw)) {
+    return OPPOSITE_TRADE_SIDE;
+  }
 
-  const shortHit =
-    normalized === 'SHORT' ||
-    normalized === 'BEAR' ||
-    normalized === 'SELL' ||
-    normalized === 'SIDE_SHORT' ||
-    normalized === 'TRADE_SIDE_SHORT' ||
-    normalized === 'TRADESIDE_SHORT' ||
-    normalized === 'DIRECTION_SHORT' ||
-    normalized === 'SIDE_BEAR' ||
-    normalized === 'TRADE_SIDE_BEAR' ||
-    normalized === 'DIRECTION_BEAR' ||
-    normalized === 'SIDE_SELL' ||
-    normalized === 'DIRECTION_SELL' ||
-    normalized.startsWith('SHORT_') ||
-    normalized.startsWith('BEAR_') ||
-    normalized.startsWith('SELL_') ||
-    normalized.endsWith('_SHORT') ||
-    normalized.endsWith('_BEAR') ||
-    normalized.endsWith('_SELL') ||
-    normalized.includes('_SHORT_') ||
-    normalized.includes('_BEAR_') ||
-    normalized.includes('_SELL_') ||
-    normalized.includes('MICRO_SHORT') ||
-    normalized.includes('FAMILY_SHORT') ||
-    normalized.includes('TRADESIDE_SHORT') ||
-    normalized.includes('TRADE_SIDE_SHORT') ||
-    normalized.includes('SIDE_SHORT');
+  const shortHit = hasShortSignal(raw);
+  const longHit = hasLongSignal(raw);
 
-  if (shortHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+
+  if (shortHit && longHit) {
+    if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
+    if (raw.includes('TRADE_SIDE=LONG') || raw.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+    if (raw.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (raw.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
 
-function inferTradeSide(row = {}) {
-  if (typeof row === 'string') return normalizeTradeSide(row);
-
+function directSide(row = {}) {
   const values = [
     row.tradeSide,
-    row.side,
     row.positionSide,
     row.direction,
     row.signalSide,
     row.intentSide,
     row.entrySide,
+    row.scannerSide,
+    row.actualScannerSide,
+    row.analysisSide,
+    row.side
+  ];
 
+  for (const value of values) {
+    const side = normalizeTradeSide(value);
+
+    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) {
+      return side;
+    }
+  }
+
+  return 'UNKNOWN';
+}
+
+function definitionSide(row = {}) {
+  const values = [
     row.familyId,
     row.family,
     row.baseFamilyId,
@@ -164,13 +249,57 @@ function inferTradeSide(row = {}) {
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ];
+
+  let shortHit = false;
+  let longHit = false;
 
   for (const value of values) {
     const side = normalizeTradeSide(value);
 
-    if (side === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+    if (side === TARGET_TRADE_SIDE) shortHit = true;
+    if (side === OPPOSITE_TRADE_SIDE) longHit = true;
+  }
+
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+
+  if (shortHit && longHit) {
+    const text = values
+      .map((value) => cleanSideText(value))
+      .filter(Boolean)
+      .join('|');
+
+    if (text.includes('TRADE_SIDE=SHORT') || text.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
+    if (text.includes('TRADE_SIDE=LONG') || text.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+    if (text.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (text.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSide(row = {}) {
+  if (typeof row === 'string') return normalizeTradeSide(row);
+
+  if (!row || typeof row !== 'object') return 'UNKNOWN';
+
+  const direct = directSide(row);
+
+  if (direct === TARGET_TRADE_SIDE || direct === OPPOSITE_TRADE_SIDE) {
+    return direct;
+  }
+
+  const fromDefinition = definitionSide(row);
+
+  if (fromDefinition === TARGET_TRADE_SIDE || fromDefinition === OPPOSITE_TRADE_SIDE) {
+    return fromDefinition;
+  }
+
+  if (row.shortOnly === true || row.longDisabled === true) {
+    return TARGET_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
@@ -188,6 +317,22 @@ function dashboardSideFromTradeSide(side, fallback = 'unknown') {
   return String(fallback || 'unknown').toLowerCase();
 }
 
+function normalizeSource(source = SOURCE_VIRTUAL) {
+  const src = String(source || SOURCE_VIRTUAL).trim().toUpperCase();
+
+  if (src === SOURCE_REAL) return SOURCE_REAL;
+  if (src === SOURCE_SHADOW) return SOURCE_SHADOW;
+  if (src === SOURCE_VIRTUAL) return SOURCE_VIRTUAL;
+
+  return SOURCE_VIRTUAL;
+}
+
+function sourceWeight(source) {
+  return normalizeSource(source) === SOURCE_SHADOW
+    ? shadowWeight()
+    : 1;
+}
+
 function applySideIdentity(stats = {}, row = {}) {
   const tradeSide = inferTradeSide({
     ...stats,
@@ -196,6 +341,8 @@ function applySideIdentity(stats = {}, row = {}) {
 
   stats.shortOnly = true;
   stats.longDisabled = true;
+  stats.longOnly = false;
+  stats.shortDisabled = false;
 
   if (tradeSide !== TARGET_TRADE_SIDE) {
     stats.tradeSide = null;
@@ -205,14 +352,22 @@ function applySideIdentity(stats = {}, row = {}) {
 
   stats.tradeSide = TARGET_TRADE_SIDE;
   stats.side = TARGET_DASHBOARD_SIDE;
+  stats.positionSide = TARGET_TRADE_SIDE;
+  stats.direction = TARGET_TRADE_SIDE;
+  stats.targetTradeSide = TARGET_TRADE_SIDE;
+  stats.dashboardSide = TARGET_DASHBOARD_SIDE;
 
   return stats;
 }
 
 function hasSourceBuckets(stats = {}) {
   return (
+    safeNumber(stats.virtualCompleted, 0) > 0 ||
     safeNumber(stats.realCompleted, 0) > 0 ||
     safeNumber(stats.shadowCompleted, 0) > 0 ||
+    safeNumber(stats.virtualWins, 0) > 0 ||
+    safeNumber(stats.virtualLosses, 0) > 0 ||
+    safeNumber(stats.virtualFlats, 0) > 0 ||
     safeNumber(stats.realWins, 0) > 0 ||
     safeNumber(stats.realLosses, 0) > 0 ||
     safeNumber(stats.realFlats, 0) > 0 ||
@@ -223,10 +378,15 @@ function hasSourceBuckets(stats = {}) {
 }
 
 function actualOutcomeCounts(stats = {}) {
+  const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
   const realCompleted = safeNumber(stats.realCompleted, 0);
   const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
 
   if (hasSourceBuckets(stats)) {
+    const virtualWins = safeNumber(stats.virtualWins, 0);
+    const virtualLosses = safeNumber(stats.virtualLosses, 0);
+    const virtualFlats = safeNumber(stats.virtualFlats, 0);
+
     const realWins = safeNumber(stats.realWins, 0);
     const realLosses = safeNumber(stats.realLosses, 0);
     const realFlats = safeNumber(stats.realFlats, 0);
@@ -235,8 +395,11 @@ function actualOutcomeCounts(stats = {}) {
     const shadowLosses = safeNumber(stats.shadowLosses, 0);
     const shadowFlats = safeNumber(stats.shadowFlats, 0);
 
-    const completed = realCompleted + shadowCompleted;
+    const completed = virtualCompleted + realCompleted + shadowCompleted;
     const bucketCompleted =
+      virtualWins +
+      virtualLosses +
+      virtualFlats +
       realWins +
       realLosses +
       realFlats +
@@ -247,9 +410,9 @@ function actualOutcomeCounts(stats = {}) {
     const inferredFlats = Math.max(0, completed - bucketCompleted);
 
     return {
-      wins: realWins + shadowWins,
-      losses: realLosses + shadowLosses,
-      flats: realFlats + shadowFlats + inferredFlats,
+      wins: virtualWins + realWins + shadowWins,
+      losses: virtualLosses + realLosses + shadowLosses,
+      flats: virtualFlats + realFlats + shadowFlats + inferredFlats,
       completed: Math.max(completed, bucketCompleted)
     };
   }
@@ -289,9 +452,14 @@ function actualOutcomeCounts(stats = {}) {
 }
 
 function weightedCompletedCount(stats = {}) {
+  const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
   const realCompleted = safeNumber(stats.realCompleted, 0);
   const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
-  const sourceCompleted = realCompleted + shadowCompleted * shadowWeight();
+
+  const sourceCompleted =
+    virtualCompleted +
+    realCompleted +
+    shadowCompleted * shadowWeight();
 
   if (sourceCompleted > 0) return sourceCompleted;
 
@@ -302,14 +470,17 @@ function weightedSourceCounts(stats = {}) {
   const w = shadowWeight();
 
   const wins =
+    safeNumber(stats.virtualWins, 0) +
     safeNumber(stats.realWins, 0) +
     safeNumber(stats.shadowWins, 0) * w;
 
   const losses =
+    safeNumber(stats.virtualLosses, 0) +
     safeNumber(stats.realLosses, 0) +
     safeNumber(stats.shadowLosses, 0) * w;
 
   const flats =
+    safeNumber(stats.virtualFlats, 0) +
     safeNumber(stats.realFlats, 0) +
     safeNumber(stats.shadowFlats, 0) * w;
 
@@ -326,22 +497,27 @@ function weightedSourceTotals(stats = {}) {
 
   return {
     totalR:
+      safeNumber(stats.virtualTotalR, 0) +
       safeNumber(stats.realTotalR, 0) +
       safeNumber(stats.shadowTotalR, 0) * w,
 
     totalPnlPct:
+      safeNumber(stats.virtualTotalPnlPct, 0) +
       safeNumber(stats.realTotalPnlPct, 0) +
       safeNumber(stats.shadowTotalPnlPct, 0) * w,
 
     totalCostR:
+      safeNumber(stats.virtualTotalCostR, 0) +
       safeNumber(stats.realTotalCostR, 0) +
       safeNumber(stats.shadowTotalCostR, 0) * w,
 
     grossWinR:
+      safeNumber(stats.virtualGrossWinR, 0) +
       safeNumber(stats.realGrossWinR, 0) +
       safeNumber(stats.shadowGrossWinR, 0) * w,
 
     grossLossR:
+      safeNumber(stats.virtualGrossLossR, 0) +
       safeNumber(stats.realGrossLossR, 0) +
       safeNumber(stats.shadowGrossLossR, 0) * w
   };
@@ -354,11 +530,11 @@ function aggregateRecentOutcomes(stats = {}) {
 
   return outcomes.reduce(
     (acc, row) => {
-      const src = String(row.source || 'REAL').toUpperCase();
-      const weight = src === 'SHADOW' ? shadowWeight() : 1;
+      const src = normalizeSource(row.source);
+      const weight = sourceWeight(src);
 
-      const exitR = safeNumber(row.exitR ?? row.netR, 0);
-      const pnlPct = safeNumber(row.pnlPct ?? row.netPnlPct, 0);
+      const exitR = safeNumber(row.netR ?? row.exitR, 0);
+      const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
       const costR = safeNumber(row.costR, 0);
 
       const win = exitR > 0;
@@ -450,6 +626,20 @@ function sampleAdjustedAvgR(avgR, reliability) {
   return cappedAvgR * samplePenalty;
 }
 
+function learningStatus(stats = {}) {
+  const completed = safeNumber(stats.completed, 0);
+  const seen = Math.max(
+    safeNumber(stats.seen, 0),
+    safeNumber(stats.observations, 0)
+  );
+
+  if (completed <= 0 && seen > 0) return 'OBSERVING';
+  if (completed <= 0) return 'EMPTY';
+  if (completed < 20) return 'LEARNING';
+
+  return 'READY';
+}
+
 export function createMicroStats({
   microFamilyId,
   familyId,
@@ -475,13 +665,23 @@ export function createMicroStats({
 
   return {
     microFamilyId,
+    trueMicroFamilyId: microFamilyId,
     familyId,
 
     side: isShort ? TARGET_DASHBOARD_SIDE : 'unknown',
     tradeSide: isShort ? TARGET_TRADE_SIDE : null,
+    positionSide: isShort ? TARGET_TRADE_SIDE : null,
+    direction: isShort ? TARGET_TRADE_SIDE : null,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
 
     shortOnly: true,
     longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    source: SOURCE_VIRTUAL,
 
     definitionParts,
     definition: definitionParts.join(' | '),
@@ -489,6 +689,7 @@ export function createMicroStats({
     seen: 0,
     observations: 0,
 
+    virtualCompleted: 0,
     realCompleted: 0,
     shadowCompleted: 0,
     completed: 0,
@@ -497,6 +698,10 @@ export function createMicroStats({
     wins: 0,
     losses: 0,
     flats: 0,
+
+    virtualWins: 0,
+    virtualLosses: 0,
+    virtualFlats: 0,
 
     realWins: 0,
     realLosses: 0,
@@ -507,20 +712,25 @@ export function createMicroStats({
     shadowFlats: 0,
 
     totalR: 0,
+    virtualTotalR: 0,
     realTotalR: 0,
     shadowTotalR: 0,
 
     totalPnlPct: 0,
+    virtualTotalPnlPct: 0,
     realTotalPnlPct: 0,
     shadowTotalPnlPct: 0,
 
     totalCostR: 0,
+    virtualTotalCostR: 0,
     realTotalCostR: 0,
     shadowTotalCostR: 0,
 
     grossWinR: 0,
     grossLossR: 0,
 
+    virtualGrossWinR: 0,
+    virtualGrossLossR: 0,
     realGrossWinR: 0,
     realGrossLossR: 0,
     shadowGrossWinR: 0,
@@ -572,6 +782,10 @@ export function createMicroStats({
     gaveBackAfterOneRPct: 0,
     nearTpThenLossPct: 0,
 
+    learningStatus: 'EMPTY',
+    status: 'EMPTY',
+    awaitingOutcomes: true,
+
     counters: makeCounters(),
 
     examples: [],
@@ -604,6 +818,9 @@ function ensureStatsShape(stats = {}) {
 
   stats.shortOnly = true;
   stats.longDisabled = true;
+  stats.longOnly = false;
+  stats.shortDisabled = false;
+  stats.source ||= SOURCE_VIRTUAL;
 
   applySideIdentity(stats);
 
@@ -611,6 +828,7 @@ function ensureStatsShape(stats = {}) {
     'seen',
     'observations',
 
+    'virtualCompleted',
     'realCompleted',
     'shadowCompleted',
     'completed',
@@ -619,6 +837,10 @@ function ensureStatsShape(stats = {}) {
     'wins',
     'losses',
     'flats',
+
+    'virtualWins',
+    'virtualLosses',
+    'virtualFlats',
 
     'realWins',
     'realLosses',
@@ -629,20 +851,25 @@ function ensureStatsShape(stats = {}) {
     'shadowFlats',
 
     'totalR',
+    'virtualTotalR',
     'realTotalR',
     'shadowTotalR',
 
     'totalPnlPct',
+    'virtualTotalPnlPct',
     'realTotalPnlPct',
     'shadowTotalPnlPct',
 
     'totalCostR',
+    'virtualTotalCostR',
     'realTotalCostR',
     'shadowTotalCostR',
 
     'grossWinR',
     'grossLossR',
 
+    'virtualGrossWinR',
+    'virtualGrossLossR',
     'realGrossWinR',
     'realGrossLossR',
     'shadowGrossWinR',
@@ -728,6 +955,7 @@ export function updateObservation(stats, row = {}) {
       symbol: row.symbol || null,
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
+      source: row.source || SOURCE_VIRTUAL,
 
       rsiZone: row.rsiZone || null,
       flow: row.flow || null,
@@ -742,12 +970,16 @@ export function updateObservation(stats, row = {}) {
     });
   }
 
+  stats.learningStatus = learningStatus(stats);
+  stats.status = stats.learningStatus;
+  stats.awaitingOutcomes = safeNumber(stats.completed, 0) <= 0 && safeNumber(stats.seen, 0) > 0;
+
   stats.updatedAt = now();
 
   return stats;
 }
 
-export function updateOutcome(stats, row = {}, source = 'REAL') {
+export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   ensureStatsShape(stats);
 
   if (!isShortRow({ ...stats, ...row })) {
@@ -756,19 +988,18 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
 
   applySideIdentity(stats, row);
 
-  const src = String(source || row.source || 'REAL').toUpperCase();
-  const isShadow = src === 'SHADOW';
-  const weight = isShadow ? shadowWeight() : 1;
+  const src = normalizeSource(source || row.source || SOURCE_VIRTUAL);
+  const weight = sourceWeight(src);
 
-  const exitR = safeNumber(row.exitR ?? row.netR, 0);
-  const pnlPct = safeNumber(row.pnlPct ?? row.netPnlPct, 0);
+  const exitR = safeNumber(row.netR ?? row.exitR, 0);
+  const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
   const costR = safeNumber(row.costR, 0);
 
   const win = exitR > 0;
   const loss = exitR < 0;
   const flat = !win && !loss;
 
-  if (isShadow) {
+  if (src === SOURCE_SHADOW) {
     stats.shadowCompleted += 1;
     stats.shadowTotalR += exitR;
     stats.shadowTotalPnlPct += pnlPct;
@@ -785,7 +1016,7 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
     }
 
     if (flat) stats.shadowFlats += 1;
-  } else {
+  } else if (src === SOURCE_REAL) {
     stats.realCompleted += 1;
     stats.realTotalR += exitR;
     stats.realTotalPnlPct += pnlPct;
@@ -802,6 +1033,23 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
     }
 
     if (flat) stats.realFlats += 1;
+  } else {
+    stats.virtualCompleted += 1;
+    stats.virtualTotalR += exitR;
+    stats.virtualTotalPnlPct += pnlPct;
+    stats.virtualTotalCostR += costR;
+
+    if (win) {
+      stats.virtualWins += 1;
+      stats.virtualGrossWinR += exitR;
+    }
+
+    if (loss) {
+      stats.virtualLosses += 1;
+      stats.virtualGrossLossR += Math.abs(exitR);
+    }
+
+    if (flat) stats.virtualFlats += 1;
   }
 
   stats.completed = weightedCompletedCount(stats);
@@ -846,6 +1094,8 @@ export function updateOutcome(stats, row = {}, source = 'REAL') {
 
     costR,
     costPct: safeNumber(row.costPct, 0),
+    feePct: safeNumber(row.feePct, 0),
+    slippagePct: safeNumber(row.slippagePct, 0),
 
     mfeR: safeNumber(row.mfeR, 0),
     maeR: safeNumber(row.maeR, 0),
@@ -1142,6 +1392,10 @@ export function refreshStats(stats) {
   Object.assign(stats, {
     shortOnly: true,
     longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    source: stats.source || SOURCE_VIRTUAL,
 
     completed: round4(weightedCompleted),
     winrateSample: round4(winrateSample),
@@ -1154,11 +1408,20 @@ export function refreshStats(stats) {
     totalPnlPct: round4(totalPnlPct),
     totalCostR: round4(totalCostR),
 
+    virtualTotalR: round4(stats.virtualTotalR),
+    realTotalR: round4(stats.realTotalR),
+    shadowTotalR: round4(stats.shadowTotalR),
+
+    virtualTotalPnlPct: round4(stats.virtualTotalPnlPct),
     realTotalPnlPct: round4(stats.realTotalPnlPct),
     shadowTotalPnlPct: round4(stats.shadowTotalPnlPct),
+
+    virtualTotalCostR: round4(stats.virtualTotalCostR),
     realTotalCostR: round4(stats.realTotalCostR),
     shadowTotalCostR: round4(stats.shadowTotalCostR),
 
+    virtualGrossWinR: round4(stats.virtualGrossWinR),
+    virtualGrossLossR: round4(stats.virtualGrossLossR),
     realGrossWinR: round4(stats.realGrossWinR),
     realGrossLossR: round4(stats.realGrossLossR),
     shadowGrossWinR: round4(stats.shadowGrossWinR),
@@ -1207,6 +1470,10 @@ export function refreshStats(stats) {
   });
 
   applySideIdentity(stats);
+
+  stats.learningStatus = learningStatus(stats);
+  stats.status = stats.learningStatus;
+  stats.awaitingOutcomes = safeNumber(stats.completed, 0) <= 0 && safeNumber(stats.seen, 0) > 0;
 
   return stats;
 }
@@ -1319,6 +1586,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
     if (mode === 'observed') {
       return (
         safeNumber(b.seen, 0) - safeNumber(a.seen, 0) ||
+        safeNumber(b.observations, 0) - safeNumber(a.observations, 0) ||
         safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
         compareBalanced(a, b)
       );
@@ -1329,3 +1597,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
   return sorted.map((row, index) => normalizeDashboardMicro(row, index + 1));
 }
+
+export {
+  dashboardSideFromTradeSide
+};
