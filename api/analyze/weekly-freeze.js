@@ -4,18 +4,18 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import {
   getDurableRedis,
-  getJson,
-  setJson
+  getJson
 } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
 import {
   getIsoWeekKey,
-  getNextIsoWeekKey
+  getNextIsoWeekKey,
+  sideToTradeSide
 } from '../../src/utils.js';
-import { freezeWeeklyRotation } from '../../src/analyze/rotationEngine.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const DEFAULT_LOCK_TTL_SEC = 600;
 
@@ -54,14 +54,33 @@ function flags() {
     longOnly: false,
     shortDisabled: false,
 
-    nextRotationOnly: true,
+    weeklyFreezeDisabled: true,
+    weeklyFreezeBuildDisabled: true,
+    nextRotationBuildDisabled: true,
+
+    nextRotationOnly: false,
     activeRotationPreserved: true,
+    activeRotationWriteBlocked: true,
+    nextRotationWriteBlocked: true,
+    rotationValidFromWriteBlocked: true,
+
     autoActivationDisabled: true,
+    autoRotationDisabled: true,
     activateNextRotationDisabled: true,
     manualSelectionRemainsLeading: true,
+    manualSelectionOnly: true,
 
     noRealOrders: true,
-    virtualLearningOnly: true
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+
+    virtualLearningOnly: true,
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    discordOnlyForManualSelection: true,
+    discordOnlyForSelectedMicroFamilies: true
   };
 }
 
@@ -141,8 +160,8 @@ function getRotationMode(req, body = {}) {
       req,
       body,
       'mode',
-      CONFIG.rotation?.mode || 'balanced'
-    ) || 'balanced'
+      CONFIG.rotation?.mode || 'manual'
+    ) || 'manual'
   ).trim();
 }
 
@@ -177,6 +196,8 @@ function cleanSideText(value = '') {
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORT_ONLY', 'SHORT');
 }
 
@@ -184,13 +205,25 @@ function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [values])
       .flatMap((value) => Array.isArray(value) ? value : [value])
+      .flatMap((value) => {
+        if (value && typeof value === 'object') {
+          return [
+            value.microFamilyId,
+            value.trueMicroFamilyId,
+            value.id,
+            value.key
+          ];
+        }
+
+        return String(value || '').split(/[\s,;\n\r]+/g);
+      })
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
 }
 
 function hasLongSignal(value = '') {
-  const text = cleanSideText(value);
+  const text = ` ${cleanSideText(value)} `;
 
   return (
     text.includes('MICRO_LONG_') ||
@@ -204,23 +237,29 @@ function hasLongSignal(value = '') {
     text.includes('DIRECTION=LONG') ||
     text.includes('DIRECTION=BULL') ||
     text.includes('DIRECTION=BUY') ||
-    text.startsWith('LONG_') ||
+    text.includes(' LONG_') ||
+    text.includes('_LONG ') ||
     text.includes('_LONG_') ||
-    text.endsWith('_LONG') ||
-    text.startsWith('BULL_') ||
-    text.includes('_BULL_') ||
-    text.endsWith('_BULL') ||
     text.includes('|LONG|') ||
-    text.includes('|BULL|') ||
-    text.includes('|BUY|') ||
+    text.includes(':LONG') ||
     text.includes('=LONG') ||
+    text.includes(' BULL ') ||
+    text.includes('_BULL') ||
+    text.includes('BULL_') ||
+    text.includes('|BULL|') ||
+    text.includes(':BULL') ||
     text.includes('=BULL') ||
+    text.includes(' BUY ') ||
+    text.includes('_BUY') ||
+    text.includes('BUY_') ||
+    text.includes('|BUY|') ||
+    text.includes(':BUY') ||
     text.includes('=BUY')
   );
 }
 
 function hasShortSignal(value = '') {
-  const text = cleanSideText(value);
+  const text = ` ${cleanSideText(value)} `;
 
   return (
     text.includes('MICRO_SHORT_') ||
@@ -234,19 +273,46 @@ function hasShortSignal(value = '') {
     text.includes('DIRECTION=SHORT') ||
     text.includes('DIRECTION=BEAR') ||
     text.includes('DIRECTION=SELL') ||
-    text.startsWith('SHORT_') ||
+    text.includes(' SHORT_') ||
+    text.includes('_SHORT ') ||
     text.includes('_SHORT_') ||
-    text.endsWith('_SHORT') ||
-    text.startsWith('BEAR_') ||
-    text.includes('_BEAR_') ||
-    text.endsWith('_BEAR') ||
     text.includes('|SHORT|') ||
-    text.includes('|BEAR|') ||
-    text.includes('|SELL|') ||
+    text.includes(':SHORT') ||
     text.includes('=SHORT') ||
+    text.includes(' BEAR ') ||
+    text.includes('_BEAR') ||
+    text.includes('BEAR_') ||
+    text.includes('|BEAR|') ||
+    text.includes(':BEAR') ||
     text.includes('=BEAR') ||
+    text.includes(' SELL ') ||
+    text.includes('_SELL') ||
+    text.includes('SELL_') ||
+    text.includes('|SELL|') ||
+    text.includes(':SELL') ||
     text.includes('=SELL')
   );
+}
+
+function normalizeDirectSide(value) {
+  const text = cleanSideText(value);
+
+  if (!text) return 'UNKNOWN';
+
+  const converted = sideToTradeSide(text);
+
+  if (converted === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (converted === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'DOWN', 'DOWNSIDE'].includes(text)) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  if (['LONG', 'BULL', 'BULLISH', 'BUY', 'UP', 'UPSIDE'].includes(text)) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
 }
 
 function inferTradeSideFromText(value = '') {
@@ -254,15 +320,21 @@ function inferTradeSideFromText(value = '') {
 
   if (!text) return 'UNKNOWN';
 
+  const direct = normalizeDirectSide(text);
+
+  if (direct === TARGET_TRADE_SIDE || direct === OPPOSITE_TRADE_SIDE) {
+    return direct;
+  }
+
   const shortSignal = hasShortSignal(text);
   const longSignal = hasLongSignal(text);
 
   if (shortSignal && !longSignal) return TARGET_TRADE_SIDE;
-  if (longSignal && !shortSignal) return 'LONG';
+  if (longSignal && !shortSignal) return OPPOSITE_TRADE_SIDE;
 
   if (shortSignal && longSignal) {
     if (text.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
-    if (text.includes('MICRO_LONG_')) return 'LONG';
+    if (text.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
@@ -271,19 +343,25 @@ function inferTradeSideFromText(value = '') {
 function inferRowTradeSide(row = {}) {
   if (typeof row === 'string') return inferTradeSideFromText(row);
 
-  const direct = cleanSideText(
-    row.tradeSide ||
-    row.positionSide ||
-    row.direction ||
-    row.signalSide ||
-    row.scannerSide ||
-    row.analysisSide ||
-    row.side ||
-    ''
-  );
+  const directSources = [
+    row.tradeSide,
+    row.positionSide,
+    row.direction,
+    row.signalSide,
+    row.scannerSide,
+    row.analysisSide,
+    row.side,
+    row.bias,
+    row.marketBias
+  ];
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(direct)) return TARGET_TRADE_SIDE;
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(direct)) return 'LONG';
+  for (const source of directSources) {
+    const side = normalizeDirectSide(source);
+
+    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) {
+      return side;
+    }
+  }
 
   const haystack = [
     row.familyId,
@@ -320,17 +398,27 @@ function inferRowTradeSide(row = {}) {
 
   if (textSide !== 'UNKNOWN') return textSide;
 
-  if (row.shortOnly === true || row.longDisabled === true) return TARGET_TRADE_SIDE;
+  if (row.longOnly === true || row.shortDisabled === true) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
+  if (row.shortOnly === true || row.longDisabled === true) {
+    return TARGET_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
 
 function isShortRow(row = {}) {
-  return inferRowTradeSide(row) === TARGET_TRADE_SIDE;
+  return inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
 }
 
 function isLongRow(row = {}) {
-  return inferRowTradeSide(row) === 'LONG';
+  return inferRowTradeSide(row) === OPPOSITE_TRADE_SIDE;
+}
+
+function isAllowedShortId(id = '') {
+  return inferTradeSideFromText(id) !== OPPOSITE_TRADE_SIDE;
 }
 
 function getMicroFamilyId(row = {}, fallback = null) {
@@ -357,7 +445,8 @@ function getMacroFamilyId(row = {}) {
 }
 
 function forceShortRow(row = {}, index = 0) {
-  const microFamilyId = getMicroFamilyId(row);
+  const rawInferredTradeSide = inferRowTradeSide(row);
+  const microFamilyId = getMicroFamilyId(row, row.microFamilyId || row.id || row.key);
   const macroFamilyId = getMacroFamilyId(row);
 
   return {
@@ -374,8 +463,54 @@ function forceShortRow(row = {}, index = 0) {
     parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
-    ...flags()
+    ...flags(),
+
+    rawInferredTradeSide,
+    inferredTradeSide: rawInferredTradeSide === 'UNKNOWN'
+      ? TARGET_TRADE_SIDE
+      : rawInferredTradeSide,
+    inferredFromShortOnlyMode: rawInferredTradeSide === 'UNKNOWN',
+
+    bestLong: null
   };
+}
+
+function buildManualRow(id, index = 0) {
+  return forceShortRow({
+    microFamilyId: id,
+    trueMicroFamilyId: id,
+
+    familyId: null,
+    macroFamilyId: null,
+    parentMacroFamilyId: null,
+    parentMicroFamilyId: null,
+
+    source: 'STORED_ID_ONLY',
+
+    selectedTier: 'MANUAL',
+    rotationEligibilityTier: 'MANUAL',
+
+    seen: 0,
+    observations: 0,
+    completed: 0,
+    realCompleted: 0,
+    shadowCompleted: 0,
+
+    wins: 0,
+    losses: 0,
+    flats: 0,
+
+    totalR: 0,
+    avgR: 0,
+    totalCostR: 0,
+    avgCostR: 0,
+
+    definitionParts: [
+      `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
+      'STORED_ID_ONLY=true'
+    ],
+    definition: `TRADE_SIDE=${TARGET_TRADE_SIDE} | STORED_ID_ONLY=true`
+  }, index);
 }
 
 function shortIdsFromRows(rows = []) {
@@ -384,7 +519,7 @@ function shortIdsFromRows(rows = []) {
       .filter(isShortRow)
       .map((row) => getMicroFamilyId(row))
       .filter(Boolean)
-  );
+  ).filter(isAllowedShortId);
 }
 
 function shortMacroIdsFromRows(rows = []) {
@@ -393,11 +528,11 @@ function shortMacroIdsFromRows(rows = []) {
       .filter(isShortRow)
       .map((row) => getMacroFamilyId(row))
       .filter(Boolean)
-  );
+  ).filter(isAllowedShortId);
 }
 
 function filterShortIds(ids = []) {
-  return uniqueStrings(ids).filter((id) => inferTradeSideFromText(id) === TARGET_TRADE_SIDE);
+  return uniqueStrings(ids).filter(isAllowedShortId);
 }
 
 function extractRotationFromPayload(payload = {}) {
@@ -412,6 +547,65 @@ function extractRotationFromPayload(payload = {}) {
   );
 }
 
+function explicitMicroIds(rotation = {}) {
+  return filterShortIds([
+    rotation.microFamilyIds,
+    rotation.activeMicroFamilyIds,
+    rotation.trueMicroFamilyIds,
+    rotation.ids,
+    rotation.selectedMicroFamilyId
+  ]);
+}
+
+function explicitMacroIds(rotation = {}) {
+  return filterShortIds([
+    rotation.macroFamilyIds,
+    rotation.activeMacroFamilyIds,
+    rotation.macroIds,
+    rotation.selectedMacroFamilyId
+  ]);
+}
+
+function buildIndexes(rows = []) {
+  const microFamilyIds = shortIdsFromRows(rows);
+  const macroFamilyIds = shortMacroIdsFromRows(rows);
+
+  const microToMacroFamilyId = {};
+  const macroToMicroFamilyIds = {};
+
+  for (const row of rows) {
+    const microId = String(row.microFamilyId || row.trueMicroFamilyId || row.id || '').trim();
+    const macroId = String(getMacroFamilyId(row) || '').trim();
+
+    if (!microId || !macroId) continue;
+    if (!isAllowedShortId(microId) || !isAllowedShortId(macroId)) continue;
+
+    microToMacroFamilyId[microId] = macroId;
+
+    if (!macroToMicroFamilyIds[macroId]) {
+      macroToMicroFamilyIds[macroId] = [];
+    }
+
+    macroToMicroFamilyIds[macroId].push(microId);
+  }
+
+  for (const macroId of Object.keys(macroToMicroFamilyIds)) {
+    macroToMicroFamilyIds[macroId] = uniqueStrings(macroToMicroFamilyIds[macroId]);
+  }
+
+  return {
+    microFamilyIds,
+    activeMicroFamilyIds: microFamilyIds,
+    trueMicroFamilyIds: microFamilyIds,
+
+    macroFamilyIds,
+    activeMacroFamilyIds: macroFamilyIds,
+
+    microToMacroFamilyId,
+    macroToMicroFamilyIds
+  };
+}
+
 function normalizeShortRotation(rotation = {}, fallback = {}) {
   if (!rotation || typeof rotation !== 'object') {
     return null;
@@ -421,35 +615,42 @@ function normalizeShortRotation(rotation = {}, fallback = {}) {
     ? rotation.microFamilies
     : [];
 
-  const microFamilies = rawRows
-    .filter((row) => !isLongRow(row))
+  const rowsById = new Map();
+
+  for (const row of rawRows) {
+    if (isLongRow(row)) continue;
+
+    const normalized = forceShortRow(row, rowsById.size);
+
+    if (!normalized.microFamilyId) continue;
+
+    rowsById.set(normalized.microFamilyId, normalized);
+  }
+
+  const storedMicroIds = explicitMicroIds(rotation);
+
+  for (const id of storedMicroIds) {
+    if (rowsById.has(id)) continue;
+
+    rowsById.set(id, buildManualRow(id, rowsById.size));
+  }
+
+  const microFamilies = [...rowsById.values()]
     .filter(isShortRow)
-    .map((row, index) => forceShortRow(row, index))
-    .filter((row) => row.microFamilyId);
+    .map((row, index) => forceShortRow({
+      ...row,
+      rank: index + 1
+    }, index));
 
-  const rowMicroIds = shortIdsFromRows(microFamilies);
-  const rowMacroIds = shortMacroIdsFromRows(microFamilies);
+  const rowIndexes = buildIndexes(microFamilies);
 
-  const explicitMicroIds = filterShortIds([
-    ...(Array.isArray(rotation.microFamilyIds) ? rotation.microFamilyIds : []),
-    ...(Array.isArray(rotation.activeMicroFamilyIds) ? rotation.activeMicroFamilyIds : []),
-    ...(Array.isArray(rotation.trueMicroFamilyIds) ? rotation.trueMicroFamilyIds : []),
-    ...(Array.isArray(rotation.ids) ? rotation.ids : [])
-  ]);
+  const microFamilyIds = rowIndexes.microFamilyIds.length
+    ? rowIndexes.microFamilyIds
+    : storedMicroIds;
 
-  const explicitMacroIds = filterShortIds([
-    ...(Array.isArray(rotation.macroFamilyIds) ? rotation.macroFamilyIds : []),
-    ...(Array.isArray(rotation.activeMacroFamilyIds) ? rotation.activeMacroFamilyIds : []),
-    ...(Array.isArray(rotation.macroIds) ? rotation.macroIds : [])
-  ]);
-
-  const microFamilyIds = rowMicroIds.length
-    ? rowMicroIds
-    : explicitMicroIds;
-
-  const macroFamilyIds = rowMacroIds.length
-    ? rowMacroIds
-    : explicitMacroIds;
+  const macroFamilyIds = rowIndexes.macroFamilyIds.length
+    ? rowIndexes.macroFamilyIds
+    : explicitMacroIds(rotation);
 
   const empty = microFamilyIds.length === 0 && microFamilies.length === 0;
 
@@ -457,13 +658,17 @@ function normalizeShortRotation(rotation = {}, fallback = {}) {
     ...fallback,
     ...rotation,
 
-    source: rotation.source || fallback.source || 'WEEKLY_FREEZE_NEXT_ROTATION_SHORT_ONLY',
+    source: rotation.source || fallback.source || 'STORED_ROTATION_READ_ONLY',
 
     ...flags(),
 
     trueMicroOnly: true,
     autoRotation: false,
+    manualOnly: rotation.manualOnly !== false,
+    adminSelected: Boolean(rotation.adminSelected || rotation.manualOnly),
+
     activeRotationWriteBlocked: true,
+    nextRotationWriteBlocked: true,
 
     bestLong: null,
     bestShort: microFamilies[0] || null,
@@ -472,7 +677,7 @@ function normalizeShortRotation(rotation = {}, fallback = {}) {
 
     empty,
     emptyReason: empty
-      ? rotation.emptyReason || 'NO_SHORT_MICRO_FAMILIES_FOR_NEXT_ROTATION'
+      ? rotation.emptyReason || 'NO_SHORT_MICRO_FAMILIES_AVAILABLE'
       : null,
 
     microFamilies,
@@ -483,6 +688,13 @@ function normalizeShortRotation(rotation = {}, fallback = {}) {
 
     macroFamilyIds,
     activeMacroFamilyIds: macroFamilyIds,
+
+    microToMacroFamilyId: rowIndexes.microToMacroFamilyId,
+    macroToMicroFamilyIds: rowIndexes.macroToMicroFamilyIds,
+
+    selectedMicroFamilyId: microFamilies[0]?.microFamilyId || rotation.selectedMicroFamilyId || null,
+    selectedMacroFamilyId: microFamilies[0]?.macroFamilyId || rotation.selectedMacroFamilyId || null,
+    selectedRow: microFamilies[0] || rotation.selectedRow || null,
 
     count: microFamilyIds.length || microFamilies.length,
     activeCount: microFamilyIds.length || microFamilies.length,
@@ -505,8 +717,8 @@ function sanitizePayload(payload = {}) {
 
     ...flags(),
 
-    rotation: sanitizedRotation || payload.rotation || null,
-    nextRotation: sanitizedRotation || payload.nextRotation || null,
+    rotation: sanitizedRotation || null,
+    nextRotation: sanitizedRotation || null,
 
     activeRotation: undefined,
     active: undefined,
@@ -519,94 +731,6 @@ function sanitizePayload(payload = {}) {
 
     selectedMicroFamilies: sanitizedRotation?.microFamilyIds?.length || 0,
     selectedMacroFamilies: sanitizedRotation?.macroFamilyIds?.length || 0
-  };
-}
-
-function stableStringify(value) {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-async function restoreActiveRotation(redis, activeBefore) {
-  const key = activeRotationKey();
-  const activeAfter = await getJson(redis, key, null).catch(() => null);
-
-  const changed = stableStringify(activeBefore) !== stableStringify(activeAfter);
-
-  if (activeBefore === null || activeBefore === undefined) {
-    await redis.del(key).catch(() => null);
-
-    return {
-      activeRotationRestored: changed,
-      activeRotationExistedBefore: false,
-      activeRotationRemovedBecauseFreezeCreatedIt: activeAfter !== null && activeAfter !== undefined
-    };
-  }
-
-  await setJson(redis, key, activeBefore).catch(() => null);
-
-  return {
-    activeRotationRestored: changed,
-    activeRotationExistedBefore: true,
-    activeRotationRemovedBecauseFreezeCreatedIt: false
-  };
-}
-
-async function persistSanitizedNextRotation({
-  redis,
-  payload,
-  weekKey,
-  activeWeekKey,
-  mode
-}) {
-  const nextRaw =
-    extractRotationFromPayload(payload) ||
-    await getJson(redis, nextRotationKey(), null).catch(() => null);
-
-  const nextRotation = normalizeShortRotation(nextRaw, {
-    sourceWeekKey: weekKey,
-    activeWeekKey,
-    mode
-  });
-
-  if (!nextRotation) {
-    return {
-      nextRotation: null,
-      nextRotationPersisted: false
-    };
-  }
-
-  await setJson(redis, nextRotationKey(), nextRotation);
-
-  await setJson(redis, rotationValidFromKey(), {
-    validFrom: activeWeekKey,
-    ts: now(),
-
-    source: 'WEEKLY_FREEZE_NEXT_ONLY_ACTIVE_NOT_TOUCHED',
-
-    sourceWeekKey: weekKey,
-    activeWeekKey,
-    mode,
-
-    rotationId: nextRotation.rotationId || null,
-
-    ...flags(),
-
-    selectedMicroFamilies: nextRotation.microFamilyIds.length,
-    selectedMacroFamilies: nextRotation.macroFamilyIds.length,
-
-    bestShort: nextRotation.bestShort?.microFamilyId || null,
-    bestLong: null,
-
-    missingSides: nextRotation.missingSides || []
-  });
-
-  return {
-    nextRotation,
-    nextRotationPersisted: true
   };
 }
 
@@ -653,6 +777,32 @@ function errorStatus(error) {
   return 500;
 }
 
+async function readRotationState(redis) {
+  const [activeRotationRaw, nextRotationRaw, validFrom] = await Promise.all([
+    getJson(redis, activeRotationKey(), null).catch(() => null),
+    getJson(redis, nextRotationKey(), null).catch(() => null),
+    getJson(redis, rotationValidFromKey(), null).catch(() => null)
+  ]);
+
+  return {
+    activeRotationRaw,
+    nextRotationRaw,
+    validFrom,
+
+    activeRotation: activeRotationRaw
+      ? normalizeShortRotation(activeRotationRaw, {
+        source: activeRotationRaw.source || 'ACTIVE_ROTATION_READ_ONLY'
+      })
+      : null,
+
+    nextRotation: nextRotationRaw
+      ? normalizeShortRotation(nextRotationRaw, {
+        source: nextRotationRaw.source || 'NEXT_ROTATION_READ_ONLY'
+      })
+      : null
+  };
+}
+
 async function runFreeze({
   req,
   body,
@@ -662,53 +812,12 @@ async function runFreeze({
   const activeWeekKey = getActiveWeekKey(req, body);
   const mode = getRotationMode(req, body);
 
-  const activeBefore = await getJson(redis, activeRotationKey(), null).catch(() => null);
+  const state = await readRotationState(redis);
 
-  let rawPayload = null;
-  let activeProtection = null;
-
-  try {
-    rawPayload = await freezeWeeklyRotation({
-      weekKey,
-      activeWeekKey,
-      mode,
-
-      targetTradeSide: TARGET_TRADE_SIDE,
-      tradeSide: TARGET_TRADE_SIDE,
-      side: TARGET_DASHBOARD_SIDE,
-      positionSide: TARGET_TRADE_SIDE,
-      direction: TARGET_TRADE_SIDE,
-
-      shortOnly: true,
-      longDisabled: true,
-      disableLong: true,
-
-      nextRotationOnly: true,
-      preserveActiveRotation: true,
-      doNotActivate: true,
-      activateNextRotation: false,
-      autoActivate: false
-    });
-  } finally {
-    activeProtection = await restoreActiveRotation(redis, activeBefore);
-  }
-
-  const sanitizedPayload = sanitizePayload(rawPayload);
-
-  const {
-    nextRotation,
-    nextRotationPersisted
-  } = await persistSanitizedNextRotation({
-    redis,
-    payload: sanitizedPayload,
-    weekKey,
-    activeWeekKey,
-    mode
-  });
-
-  return {
-    ok: rawPayload?.ok !== false,
-    type: 'WEEKLY_FREEZE_NEXT_ROTATION_ONLY',
+  const payload = sanitizePayload({
+    ok: true,
+    skipped: true,
+    reason: 'WEEKLY_FREEZE_DISABLED_MANUAL_SELECTION_ONLY_NO_WRITES',
 
     ...flags(),
 
@@ -716,23 +825,58 @@ async function runFreeze({
     activeWeekKey,
     mode,
 
-    rotationId: nextRotation?.rotationId || sanitizedPayload?.rotationId || null,
+    activeRotation: state.activeRotation,
+    nextRotation: state.nextRotation,
+    validFrom: state.validFrom,
 
-    selectedMicroFamilies: nextRotation?.microFamilyIds?.length || 0,
-    selectedMacroFamilies: nextRotation?.macroFamilyIds?.length || 0,
+    writes: {
+      activeRotation: false,
+      nextRotation: false,
+      rotationValidFrom: false
+    }
+  });
 
-    empty: Boolean(nextRotation?.empty),
-    emptyReason: nextRotation?.emptyReason || responseReason(sanitizedPayload),
+  return {
+    ok: true,
+    skipped: true,
+    type: 'WEEKLY_FREEZE_DISABLED_MANUAL_SELECTION_ONLY',
 
-    microFamilyIds: nextRotation?.microFamilyIds || [],
-    macroFamilyIds: nextRotation?.macroFamilyIds || [],
+    ...flags(),
 
-    nextRotation,
-    nextRotationPersisted,
+    weekKey,
+    activeWeekKey,
+    mode,
 
-    activeProtection,
+    rotationId: state.nextRotation?.rotationId || null,
 
-    result: sanitizedPayload
+    selectedMicroFamilies: state.nextRotation?.microFamilyIds?.length || 0,
+    selectedMacroFamilies: state.nextRotation?.macroFamilyIds?.length || 0,
+
+    empty: Boolean(state.nextRotation?.empty),
+    emptyReason: state.nextRotation?.emptyReason || responseReason(payload),
+
+    microFamilyIds: state.nextRotation?.microFamilyIds || [],
+    macroFamilyIds: state.nextRotation?.macroFamilyIds || [],
+
+    activeRotation: state.activeRotation,
+    nextRotation: state.nextRotation,
+    validFrom: state.validFrom,
+
+    nextRotationPersisted: false,
+
+    activeProtection: {
+      activeRotationPreserved: true,
+      activeRotationWriteAttempted: false,
+      activeRotationRestored: false
+    },
+
+    writes: {
+      activeRotation: false,
+      nextRotation: false,
+      rotationValidFrom: false
+    },
+
+    result: payload
   };
 }
 
@@ -740,19 +884,7 @@ async function handleGet(req, res) {
   const startedAt = now();
   const redis = getDurableRedis();
 
-  const [activeRotationRaw, nextRotationRaw, validFrom] = await Promise.all([
-    getJson(redis, activeRotationKey(), null).catch(() => null),
-    getJson(redis, nextRotationKey(), null).catch(() => null),
-    getJson(redis, rotationValidFromKey(), null).catch(() => null)
-  ]);
-
-  const activeRotation = activeRotationRaw
-    ? normalizeShortRotation(activeRotationRaw)
-    : null;
-
-  const nextRotation = nextRotationRaw
-    ? normalizeShortRotation(nextRotationRaw)
-    : null;
+  const state = await readRotationState(redis);
 
   return res.status(200).json({
     ok: true,
@@ -767,15 +899,21 @@ async function handleGet(req, res) {
     currentWeekKey: getIsoWeekKey(),
     nextWeekKey: getNextIsoWeekKey(),
 
-    activeRotation,
-    nextRotation,
-    validFrom,
+    activeRotation: state.activeRotation,
+    nextRotation: state.nextRotation,
+    validFrom: state.validFrom,
 
-    activeRotationId: activeRotation?.rotationId || null,
-    nextRotationId: nextRotation?.rotationId || null,
+    activeRotationId: state.activeRotation?.rotationId || null,
+    nextRotationId: state.nextRotation?.rotationId || null,
 
-    activeMicroFamilyIds: activeRotation?.microFamilyIds || [],
-    nextMicroFamilyIds: nextRotation?.microFamilyIds || [],
+    activeMicroFamilyIds: state.activeRotation?.microFamilyIds || [],
+    nextMicroFamilyIds: state.nextRotation?.microFamilyIds || [],
+
+    writes: {
+      activeRotation: false,
+      nextRotation: false,
+      rotationValidFrom: false
+    },
 
     durationMs: now() - startedAt,
     serverTs: Date.now()
@@ -803,10 +941,12 @@ async function handlePost(req, res) {
 
   return res.status(ok ? 200 : 500).json({
     ok,
-    skipped: Boolean(lockResult?.skipped || payload?.skipped),
+    skipped: true,
 
-    source: 'API_WEEKLY_FREEZE_NEXT_ROTATION_ONLY',
-    type: payload?.type || 'WEEKLY_FREEZE_NEXT_ROTATION_ONLY',
+    source: 'API_WEEKLY_FREEZE_DISABLED_NO_WRITES',
+    type: payload?.type || 'WEEKLY_FREEZE_DISABLED_MANUAL_SELECTION_ONLY',
+
+    reason: payload?.reason || 'WEEKLY_FREEZE_DISABLED_MANUAL_SELECTION_ONLY_NO_WRITES',
 
     ...flags(),
 
@@ -825,10 +965,23 @@ async function handlePost(req, res) {
     microFamilyIds: payload?.microFamilyIds || [],
     macroFamilyIds: payload?.macroFamilyIds || [],
 
+    activeRotation: payload?.activeRotation || null,
     nextRotation: payload?.nextRotation || null,
-    nextRotationPersisted: Boolean(payload?.nextRotationPersisted),
+    validFrom: payload?.validFrom || null,
 
-    activeProtection: payload?.activeProtection || null,
+    nextRotationPersisted: false,
+
+    activeProtection: payload?.activeProtection || {
+      activeRotationPreserved: true,
+      activeRotationWriteAttempted: false,
+      activeRotationRestored: false
+    },
+
+    writes: {
+      activeRotation: false,
+      nextRotation: false,
+      rotationValidFrom: false
+    },
 
     result: payload?.result || payload,
 
@@ -847,9 +1000,10 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.setHeader('X-Rotation-Target-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
-  res.setHeader('X-Next-Rotation-Only', 'true');
+  res.setHeader('X-Weekly-Freeze-Disabled', 'true');
   res.setHeader('X-Active-Rotation-Preserved', 'true');
   res.setHeader('X-Auto-Activation-Disabled', 'true');
+  res.setHeader('X-No-Writes', 'true');
 
   try {
     if (req.method === 'GET') {
