@@ -610,6 +610,68 @@ function waitAction(candidate, reason, extra = {}) {
   };
 }
 
+function buildVirtualExitAction(outcome = {}) {
+  return {
+    action: 'VIRTUAL_EXIT',
+    reason: outcome.exitReason || outcome.reason || 'VIRTUAL_POSITION_CLOSED',
+
+    source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: false,
+
+    symbol: outcome.symbol || null,
+    contractSymbol: outcome.contractSymbol || null,
+
+    microFamilyId: outcome.microFamilyId || null,
+    trueMicroFamilyId: outcome.trueMicroFamilyId || outcome.microFamilyId || null,
+    macroFamilyId: outcome.macroFamilyId || outcome.parentMacroFamilyId || null,
+    parentMacroFamilyId: outcome.parentMacroFamilyId || outcome.macroFamilyId || null,
+
+    exitReason: outcome.exitReason || null,
+    exitPrice: outcome.exitPrice ?? null,
+    grossR: outcome.grossR ?? outcome.realizedGrossR ?? null,
+    netR: outcome.netR ?? outcome.realizedR ?? outcome.r ?? null,
+    realizedR: outcome.realizedR ?? outcome.netR ?? outcome.r ?? null,
+    costR: outcome.costR ?? null,
+
+    discordExitAlertSent: Boolean(outcome.discordExitAlertSent),
+
+    realTrade: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
+  };
+}
+
+function buildVirtualExitActions(exits = []) {
+  return (Array.isArray(exits) ? exits : [])
+    .filter(Boolean)
+    .map(buildVirtualExitAction);
+}
+
+function buildRunActionCounts(actions = [], virtualExits = []) {
+  return actionCounts([
+    ...(Array.isArray(actions) ? actions : []),
+    ...buildVirtualExitActions(virtualExits)
+  ]);
+}
+
 function idHasSchema(id, schema) {
   const value = String(id || '').toUpperCase();
   const target = String(schema || '').toUpperCase();
@@ -869,8 +931,10 @@ function buildSelectedAlertContext(activeRotation) {
     microToMacroFamilyId,
     macroToMicroFamilyIds,
 
-    trueMicroOnly: activeRotation?.trueMicroOnly !== false,
+    trueMicroOnly: true,
+    exactTrueMicroOnly: true,
     allowCoarseMicroAliasLiveEntries: includeCoarseAliases,
+    allowCoarseMicroAliasForDiscord: false,
 
     empty: !selectedMicroFamilyIds.length,
 
@@ -884,38 +948,32 @@ function buildSelectedAlertContext(activeRotation) {
 
 function rowMatchesSelectedAlertMicro(alertContext, row = {}) {
   if (!alertContext || alertContext.empty) return false;
+  if (!isTrueMicroFamilyRow(row)) return false;
 
-  const aliases = rowMicroAliasIds(row, {
-    includeCoarse: alertContext.allowCoarseMicroAliasLiveEntries
-  });
+  const exactTrueMicroId = String(
+    row.trueMicroFamilyId ||
+    row.microFamilyId ||
+    ''
+  ).trim();
 
-  return aliases.some((id) => (
-    alertContext.selectedMicroSet.has(id) ||
-    alertContext.selectedMicroAliasSet.has(id)
-  ));
+  if (!exactTrueMicroId) return false;
+
+  return alertContext.selectedMicroSet.has(exactTrueMicroId);
 }
 
 function getSelectedWeeklyStats(alertContext, microFamilyId, row = {}) {
   if (!alertContext) return null;
 
-  const directId = String(microFamilyId || '').trim();
+  const exactId = String(
+    microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.microFamilyId ||
+    ''
+  ).trim();
 
-  if (directId) {
-    const direct = alertContext.rowByMicroId.get(directId) ||
-      alertContext.rowByAnyMicroId.get(directId);
+  if (!exactId) return null;
 
-    if (direct) return direct;
-  }
-
-  for (const aliasId of rowMicroAliasIds(row, {
-    includeCoarse: alertContext.allowCoarseMicroAliasLiveEntries
-  })) {
-    const stats = alertContext.rowByAnyMicroId.get(aliasId);
-
-    if (stats) return stats;
-  }
-
-  return null;
+  return alertContext.rowByMicroId.get(exactId) || null;
 }
 
 function hasValidRiskShape(row = {}) {
@@ -1195,6 +1253,19 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
       shortDisabled: false
     }));
 
+  const blockedNonShortCandidates = rows
+    .filter((candidate) => candidateTradeSide(candidate) !== TARGET_TRADE_SIDE)
+    .slice(0, 100)
+    .map((candidate) => waitAction(
+      normalizeCandidate(candidate),
+      'LONG_DISABLED_SHORT_ONLY_SYSTEM',
+      {
+        skippedBeforeAnalyze: true,
+        skippedBeforeLiveFetch: true,
+        detectedScannerSide: candidateTradeSide(candidate)
+      }
+    ));
+
   return {
     ...snapshot,
 
@@ -1202,6 +1273,9 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
     selectedSnapshotReason: meta.reason || null,
     selectedTargetCandidateCount: targetRows.length,
     selectedOppositeCandidateCount: countOppositeCandidates(snapshot),
+
+    blockedNonShortCandidates,
+    blockedNonShortCandidatesCount: rows.length - targetRows.length,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     targetScannerSide: TARGET_SCANNER_SIDE,
@@ -1675,6 +1749,7 @@ async function processCandidate(candidate) {
           },
           'LONG_DISABLED_SHORT_ONLY_SYSTEM',
           {
+            skippedBeforeAnalyze: true,
             skippedBeforeLiveFetch: true,
             detectedScannerSide: scannerSide
           }
@@ -1848,9 +1923,17 @@ function buildVirtualEntryAction({
     reason: 'SHORT_VIRTUAL_RISK_VALID',
 
     source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: false,
+
+    realTrade: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
 
     selectedRotationId: alertContext.rotationId,
     activeRotationId: alertContext.rotationId,
@@ -1858,7 +1941,7 @@ function buildVirtualEntryAction({
     selectedMicroFamilyAlert: Boolean(discordAlertEligible),
     discordAlertEligible: Boolean(discordAlertEligible),
     discordAlertReason: discordAlertEligible
-      ? 'SELECTED_SHORT_TRUE_MICRO_FAMILY_MATCH'
+      ? 'SELECTED_SHORT_TRUE_MICRO_FAMILY_EXACT_MATCH'
       : alertContext.empty
         ? 'NO_MANUAL_MICRO_FAMILY_SELECTED'
         : 'MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT',
@@ -1914,21 +1997,51 @@ async function saveRunMeta(result) {
 
   const completedAt = now();
 
+  const virtualExits = Array.isArray(result.virtualExits)
+    ? result.virtualExits
+    : Array.isArray(result.shadowExits)
+      ? result.shadowExits
+      : [];
+
+  const virtualExitActions = buildVirtualExitActions(virtualExits);
+
   const finalResult = {
     ok: true,
     ...result,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
 
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
 
+    virtualOnly: true,
+    virtualTracked: true,
+    noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+
+    virtualExits,
+    shadowExits: Array.isArray(result.shadowExits) ? result.shadowExits : virtualExits,
+    realExits: Array.isArray(result.realExits) ? result.realExits : [],
+
+    virtualExitRows: virtualExits.length,
+    shadowExitRows: virtualExits.length,
+    realExitRows: Array.isArray(result.realExits) ? result.realExits.length : 0,
+
+    virtualExitActions,
+
+    skipReason: result.skipReason || result.reason || null,
+
     completedAt,
     durationMs: completedAt - safeNumber(result.startedAt, completedAt),
-    actionCounts: result.actionCounts || actionCounts(result.actions || [])
+    actionCounts: result.actionCounts || buildRunActionCounts(result.actions || [], virtualExits)
   };
 
   await setJson(
@@ -1955,37 +2068,56 @@ export async function runTradeSystem(options = {}) {
   const priceFetcher = async (symbol) => fetchMidPrice(symbol);
 
   const realExits = [];
-  const shadowExits = await monitorOpenPositions({ priceFetcher });
+
+  const virtualExits = await monitorOpenPositions({ priceFetcher });
+  const shadowExits = virtualExits;
 
   if (monitorOnly) {
+    const actions = [];
     return saveRunMeta({
       runId,
       startedAt,
-      actions: [],
+      actions,
       realExits,
+      virtualExits,
       shadowExits,
+      entryRows: 0,
+      waitRows: 0,
+      virtualCreatedRows: 0,
       skippedNewEntries: true,
-      reason: 'MONITOR_ONLY'
+      reason: 'MONITOR_ONLY',
+      actionCounts: buildRunActionCounts(actions, virtualExits)
     });
   }
 
   const snapshot = await getLatestSnapshot();
 
   if (!snapshot?.snapshotId) {
+    const actions = [];
+
     return saveRunMeta({
       runId,
       startedAt,
-      actions: [],
+      actions,
       realExits,
+      virtualExits,
       shadowExits,
+      entryRows: 0,
+      waitRows: 0,
+      virtualCreatedRows: 0,
       skippedNewEntries: true,
-      reason: 'NO_SCANNER_SNAPSHOT'
+      reason: 'NO_SCANNER_SNAPSHOT',
+      actionCounts: buildRunActionCounts(actions, virtualExits)
     });
   }
 
   const snapshotAgeSec = (now() - safeNumber(snapshot.createdAt, 0)) / 1000;
 
   if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
+    const actions = Array.isArray(snapshot.blockedNonShortCandidates)
+      ? snapshot.blockedNonShortCandidates
+      : [];
+
     return saveRunMeta({
       runId,
       startedAt,
@@ -1995,11 +2127,17 @@ export async function runTradeSystem(options = {}) {
       selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
       selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
       selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
-      actions: [],
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
+      actions,
       realExits,
+      virtualExits,
       shadowExits,
+      entryRows: 0,
+      waitRows: actions.length,
+      virtualCreatedRows: 0,
       skippedNewEntries: true,
-      reason: 'SNAPSHOT_TOO_STALE'
+      reason: 'SNAPSHOT_TOO_STALE',
+      actionCounts: buildRunActionCounts(actions, virtualExits)
     });
   }
 
@@ -2012,6 +2150,10 @@ export async function runTradeSystem(options = {}) {
   const sameSnapshot = lastProcessed?.snapshotId === snapshot.snapshotId;
 
   if (sameSnapshot && !forceProcessSnapshot) {
+    const actions = Array.isArray(snapshot.blockedNonShortCandidates)
+      ? snapshot.blockedNonShortCandidates
+      : [];
+
     return saveRunMeta({
       runId,
       startedAt,
@@ -2020,16 +2162,26 @@ export async function runTradeSystem(options = {}) {
       selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
       selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
       selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
-      actions: [],
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
+      actions,
       realExits,
+      virtualExits,
       shadowExits,
+      entryRows: 0,
+      waitRows: actions.length,
+      virtualCreatedRows: 0,
       skippedNewEntries: true,
-      reason: 'SNAPSHOT_ALREADY_PROCESSED'
+      reason: 'SNAPSHOT_ALREADY_PROCESSED',
+      actionCounts: buildRunActionCounts(actions, virtualExits)
     });
   }
 
   const activeRotation = await getActiveRotation();
   const alertContext = buildSelectedAlertContext(activeRotation);
+
+  const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonShortCandidates)
+    ? snapshot.blockedNonShortCandidates
+    : [];
 
   const candidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
     .filter((candidate) => candidateTradeSide(candidate) === TARGET_TRADE_SIDE)
@@ -2056,7 +2208,7 @@ export async function runTradeSystem(options = {}) {
     }));
 
   const shortCandidateCount = candidates.length;
-  const nonShortCandidateCount = 0;
+  const nonShortCandidateCount = snapshot.blockedNonShortCandidatesCount || 0;
 
   const processed = await mapConcurrent(
     candidates,
@@ -2064,9 +2216,12 @@ export async function runTradeSystem(options = {}) {
     safeProcessCandidate
   );
 
-  const earlyActions = processed
-    .flatMap((row) => Array.isArray(row?.actions) ? row.actions : [])
-    .filter(Boolean);
+  const earlyActions = [
+    ...preAnalyzeBlockedActions,
+    ...processed
+      .flatMap((row) => Array.isArray(row?.actions) ? row.actions : [])
+      .filter(Boolean)
+  ];
 
   const liveRows = processed
     .flatMap((row) => Array.isArray(row?.metrics) ? row.metrics : [])
@@ -2101,6 +2256,8 @@ export async function runTradeSystem(options = {}) {
   const analyzedSyntheticRiskRows = analyzedRows.filter((row) => row.syntheticRisk).length;
 
   const openPositions = await getOpenPositions();
+  const openPositionCountBeforeEntries = openPositions.length;
+
   const actions = [...earlyActions];
 
   let entryRows = 0;
@@ -2268,6 +2425,8 @@ export async function runTradeSystem(options = {}) {
     }
   }
 
+  const counts = buildRunActionCounts(actions, virtualExits);
+
   await setJson(
     durableRedis,
     KEYS.trade.lastProcessedSnapshot,
@@ -2280,6 +2439,7 @@ export async function runTradeSystem(options = {}) {
       selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
       selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
       selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
 
       targetTradeSide: TARGET_TRADE_SIDE,
       dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -2288,6 +2448,12 @@ export async function runTradeSystem(options = {}) {
       longDisabled: true,
       longOnly: false,
       shortDisabled: false,
+
+      virtualOnly: true,
+      virtualTracked: true,
+      noRealOrders: true,
+      realOrdersDisabled: true,
+      bitgetOrdersDisabled: true,
 
       candidates: candidates.length,
       shortCandidateCount,
@@ -2326,6 +2492,14 @@ export async function runTradeSystem(options = {}) {
       shadowFailedRows: virtualFailedRows,
       shadowDisabled: false,
 
+      virtualExits,
+      shadowExits,
+      realExits,
+
+      virtualExitRows: virtualExits.length,
+      shadowExitRows: shadowExits.length,
+      realExitRows: realExits.length,
+
       discordAlertEligibleRows,
       discordAlertsQueued,
       discordAlertsSent: 0,
@@ -2334,7 +2508,11 @@ export async function runTradeSystem(options = {}) {
       selectedMicroMatchRows,
       unselectedMicroEntryRows,
 
+      openPositionCountBeforeEntries,
+      openPositionCountAfterEntries: openPositions.length,
+
       actions: actions.length,
+      actionCounts: counts,
 
       selectedRotationId: alertContext.rotationId,
       activeRotationId: alertContext.rotationId,
@@ -2352,7 +2530,9 @@ export async function runTradeSystem(options = {}) {
       activeMacroFamilyIds: alertContext.selectedMacroFamilyIds,
 
       trueMicroOnly: alertContext.trueMicroOnly,
+      exactTrueMicroOnly: true,
       allowCoarseMicroAliasLiveEntries: alertContext.allowCoarseMicroAliasLiveEntries,
+      allowCoarseMicroAliasForDiscord: false,
 
       selectionPurpose: 'DISCORD_ALERT_ONLY'
     }
@@ -2370,6 +2550,7 @@ export async function runTradeSystem(options = {}) {
     selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
     selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
     selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+    blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -2378,6 +2559,12 @@ export async function runTradeSystem(options = {}) {
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
 
     candidates: candidates.length,
     shortCandidateCount,
@@ -2416,6 +2603,14 @@ export async function runTradeSystem(options = {}) {
     shadowFailedRows: virtualFailedRows,
     shadowDisabled: false,
 
+    virtualExits,
+    shadowExits,
+    realExits,
+
+    virtualExitRows: virtualExits.length,
+    shadowExitRows: shadowExits.length,
+    realExitRows: realExits.length,
+
     discordAlertEligibleRows,
     discordAlertsQueued,
     discordAlertsSent: 0,
@@ -2424,11 +2619,11 @@ export async function runTradeSystem(options = {}) {
     selectedMicroMatchRows,
     unselectedMicroEntryRows,
 
-    actions,
-    actionCounts: actionCounts(actions),
+    openPositionCountBeforeEntries,
+    openPositionCountAfterEntries: openPositions.length,
 
-    realExits,
-    shadowExits,
+    actions,
+    actionCounts: counts,
 
     selectedRotationId: alertContext.rotationId,
     activeRotationId: alertContext.rotationId,
@@ -2446,7 +2641,9 @@ export async function runTradeSystem(options = {}) {
     activeMacroFamilyIds: alertContext.selectedMacroFamilyIds,
 
     trueMicroOnly: alertContext.trueMicroOnly,
+    exactTrueMicroOnly: true,
     allowCoarseMicroAliasLiveEntries: alertContext.allowCoarseMicroAliasLiveEntries,
+    allowCoarseMicroAliasForDiscord: false,
 
     selectionPurpose: 'DISCORD_ALERT_ONLY',
 
@@ -2455,7 +2652,8 @@ export async function runTradeSystem(options = {}) {
       scannerGateCandidatesCount: snapshot.scannerGateCandidatesCount || null,
       analyzeOnlyCandidatesCount: snapshot.analyzeOnlyCandidatesCount || null,
       filteredUniverse: snapshot.filteredUniverse || null,
-      rawCount: snapshot.rawCount || null
+      rawCount: snapshot.rawCount || null,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0
     },
 
     skippedNewEntries: false
