@@ -26,7 +26,7 @@ const WINRATE_BAYES_ALPHA = 1;
 const WINRATE_BAYES_BETA = 1;
 
 const SAMPLE_RELIABILITY_CAP = 50;
-const HARD_SAMPLE_MIN = 5;
+const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 300;
@@ -76,11 +76,13 @@ function modePayload() {
     shadowOutcomesIncluded: true,
     netOutcomesOnly: true,
     learningOutcomesOnly: true,
-    outcomesSourceMode: 'ALL_LEARNING_OUTCOMES',
+    outcomesSourceMode: 'VIRTUAL_AND_SHADOW_NET_OUTCOMES',
 
     manualSelectionOnly: true,
     autoRotationActivationDisabled: true,
-    discordOnlyForSelectedMicroFamilies: true
+    discordOnlyForSelectedMicroFamilies: true,
+
+    minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING
   };
 }
 
@@ -270,8 +272,8 @@ function getFamilyId(row = {}) {
 
 function getMicroFamilyId(row = {}, fallback = null) {
   return (
-    row.microFamilyId ||
     row.trueMicroFamilyId ||
+    row.microFamilyId ||
     row.id ||
     row.key ||
     fallback ||
@@ -288,6 +290,19 @@ function getMacroFamilyId(row = {}) {
     row.macroId ||
     row.familyId ||
     null
+  );
+}
+
+function isScannerFingerprintId(id = '') {
+  const value = upper(id);
+
+  return (
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('__SCANNER__') ||
+    value.includes('SCANNER_GATE_PASS') ||
+    value.includes('SCANNER_GATE_FAIL')
   );
 }
 
@@ -473,8 +488,8 @@ function inferTradeSide(input = {}) {
     input.macroId
   );
   const microFamilyId = cleanSideHaystack(
-    input.microFamilyId ||
     input.trueMicroFamilyId ||
+    input.microFamilyId ||
     input.id ||
     input.key
   );
@@ -516,6 +531,16 @@ function inferTradeSide(input = {}) {
 
 function isShortRow(row = {}) {
   return inferTradeSide(row) !== 'LONG';
+}
+
+function isAnalyzeMicroRow(row = {}) {
+  const id = getMicroFamilyId(row);
+
+  if (!id) return false;
+  if (isScannerFingerprintId(id)) return false;
+  if (inferTradeSide({ ...row, microFamilyId: id }) === 'LONG') return false;
+
+  return true;
 }
 
 function sourceEntriesFromMicros(micros = {}) {
@@ -590,6 +615,12 @@ function recentIsoWeekKeys(startWeekKey, count = DEFAULT_RECENT_WEEK_LOOKBACK) {
   return keys;
 }
 
+function virtualKeyFromReal(realKey = '') {
+  if (!realKey || !realKey.startsWith('real')) return null;
+
+  return `virtual${realKey.slice(4)}`;
+}
+
 function shadowKeyFromReal(realKey = '') {
   if (!realKey || !realKey.startsWith('real')) return null;
 
@@ -601,8 +632,11 @@ function getLearningCount(row = {}, aggregateKey, realKey = null, shadowKey = nu
     return num(row[aggregateKey], 0);
   }
 
-  return num(realKey ? row[realKey] : 0, 0) +
-    num(shadowKey ? row[shadowKey] : 0, 0);
+  const virtualKey = virtualKeyFromReal(realKey);
+  const resolvedShadowKey = shadowKey || shadowKeyFromReal(realKey);
+
+  return num(virtualKey ? row[virtualKey] : 0, 0) +
+    num(resolvedShadowKey ? row[resolvedShadowKey] : 0, 0);
 }
 
 function getOutcomeCounts(row = {}) {
@@ -613,7 +647,7 @@ function getOutcomeCounts(row = {}) {
   const explicitCompleted = Math.max(
     num(row.completed, 0),
     num(row.outcomeSample, 0),
-    num(row.realCompleted, 0) + num(row.shadowCompleted, 0),
+    num(row.virtualCompleted, 0) + num(row.shadowCompleted, 0),
     0
   );
 
@@ -651,7 +685,7 @@ function getTotalR(row = {}) {
   if (hasValue(row.totalNetR)) return num(row.totalNetR, 0);
   if (hasValue(row.totalR)) return num(row.totalR, 0);
 
-  return num(row.realTotalR, 0) + num(row.shadowTotalR, 0);
+  return num(row.virtualTotalR, 0) + num(row.shadowTotalR, 0);
 }
 
 function getAvgR(row = {}) {
@@ -673,7 +707,7 @@ function getTotalCostR(row = {}) {
 
   if (hasValue(row.totalCostR)) return num(row.totalCostR, 0);
 
-  const combined = num(row.realTotalCostR, 0) + num(row.shadowTotalCostR, 0);
+  const combined = num(row.virtualTotalCostR, 0) + num(row.shadowTotalCostR, 0);
 
   if (combined > 0) return combined;
   if (hasValue(row.avgCostR)) return num(row.avgCostR, 0) * completed;
@@ -696,10 +730,13 @@ function getPositiveR(row = {}, aggregateKey, realKey = null, shadowKey = null) 
     return Math.max(0, num(row[aggregateKey], 0));
   }
 
+  const virtualKey = virtualKeyFromReal(realKey);
+  const resolvedShadowKey = shadowKey || shadowKeyFromReal(realKey);
+
   return Math.max(
     0,
-    num(realKey ? row[realKey] : 0, 0) +
-      num(shadowKey ? row[shadowKey] : 0, 0)
+    num(virtualKey ? row[virtualKey] : 0, 0) +
+      num(resolvedShadowKey ? row[resolvedShadowKey] : 0, 0)
   );
 }
 
@@ -708,9 +745,12 @@ function getAbsLossR(row = {}, aggregateKey, realKey = null, shadowKey = null) {
     return Math.abs(num(row[aggregateKey], 0));
   }
 
+  const virtualKey = virtualKeyFromReal(realKey);
+  const resolvedShadowKey = shadowKey || shadowKeyFromReal(realKey);
+
   return Math.abs(
-    num(realKey ? row[realKey] : 0, 0) +
-      num(shadowKey ? row[shadowKey] : 0, 0)
+    num(virtualKey ? row[virtualKey] : 0, 0) +
+      num(resolvedShadowKey ? row[resolvedShadowKey] : 0, 0)
   );
 }
 
@@ -752,10 +792,6 @@ function getCountMetric(row = {}, realCountKey, aggregateCountKey) {
 function getPctMetric(row = {}, realPctKey, realCountKey, aggregatePctKey, aggregateCountKey = null) {
   if (hasValue(row[aggregatePctKey])) {
     return clamp(row[aggregatePctKey], 0, 1);
-  }
-
-  if (hasValue(row[realPctKey]) && num(row.shadowCompleted, 0) <= 0) {
-    return clamp(row[realPctKey], 0, 1);
   }
 
   const completed = getCompletedSample(row);
@@ -921,23 +957,29 @@ function getDashboardBalancedScore(row = {}, meta = null) {
 function learningStatusFor(row = {}, meta = null) {
   const winrateMeta = meta || getSampleAdjustedWinrate(row);
 
-  if (winrateMeta.outcomeSample >= HARD_SAMPLE_MIN) return 'ACTIVE_LEARNING';
+  if (winrateMeta.outcomeSample >= MIN_COMPLETED_ACTIVE_LEARNING) return 'ACTIVE_LEARNING';
   if (winrateMeta.outcomeSample > 0) return 'EARLY_OUTCOMES';
   if (winrateMeta.observationSample > 0) return 'OBSERVING';
 
-  return 'RAW';
+  return 'OBSERVING';
 }
 
 function tierFor(row = {}, meta = null) {
   const existing = row.tier || row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier;
 
   if (existing && ['HARD', 'SOFT', 'OBSERVATION', 'RAW'].includes(upper(existing))) {
-    return upper(existing);
+    const winrateMeta = meta || getSampleAdjustedWinrate(row);
+
+    if (winrateMeta.outcomeSample >= MIN_COMPLETED_ACTIVE_LEARNING) return 'HARD';
+    if (winrateMeta.outcomeSample > 0) return 'SOFT';
+    if (winrateMeta.observationSample > 0) return 'OBSERVATION';
+
+    return 'RAW';
   }
 
   const winrateMeta = meta || getSampleAdjustedWinrate(row);
 
-  if (winrateMeta.outcomeSample >= HARD_SAMPLE_MIN) return 'HARD';
+  if (winrateMeta.outcomeSample >= MIN_COMPLETED_ACTIVE_LEARNING) return 'HARD';
   if (winrateMeta.outcomeSample > 0) return 'SOFT';
   if (winrateMeta.observationSample > 0) return 'OBSERVATION';
 
@@ -946,6 +988,10 @@ function tierFor(row = {}, meta = null) {
 
 function buildRawMicroRow(row = {}, key = '', index = 0) {
   const microFamilyId = getMicroFamilyId(row, key);
+
+  if (!microFamilyId) return null;
+  if (isScannerFingerprintId(microFamilyId)) return null;
+
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId({
     ...row,
@@ -966,7 +1012,6 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
   });
 
   if (inferredTradeSide === 'LONG') return null;
-  if (!microFamilyId) return null;
 
   const completed = getCompletedSample(row);
   const totalR = getTotalR(row);
@@ -984,6 +1029,12 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
+    scannerMicroFamilyId: row.scannerMicroFamilyId || null,
+    scannerDefinition: row.scannerDefinition || null,
+    scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
+      ? row.scannerDefinitionParts
+      : [],
+
     ...modePayload(),
 
     inferredTradeSide,
@@ -1000,32 +1051,40 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     observations: num(row.observations ?? row.seen, 0),
 
     completed: round(completed, 4),
-    realCompleted: num(row.realCompleted, 0),
+
+    virtualCompleted: num(row.virtualCompleted, 0),
     shadowCompleted: num(row.shadowCompleted, 0),
+    realCompleted: 0,
 
     wins: round(counts.wins, 4),
     losses: round(counts.losses, 4),
     flats: round(counts.flats, 4),
 
-    realWins: num(row.realWins, 0),
-    realLosses: num(row.realLosses, 0),
-    realFlats: num(row.realFlats, 0),
+    virtualWins: num(row.virtualWins, 0),
+    virtualLosses: num(row.virtualLosses, 0),
+    virtualFlats: num(row.virtualFlats, 0),
 
     shadowWins: num(row.shadowWins, 0),
     shadowLosses: num(row.shadowLosses, 0),
     shadowFlats: num(row.shadowFlats, 0),
+
+    realWins: 0,
+    realLosses: 0,
+    realFlats: 0,
 
     winrate: round(row.winrate, 4),
     bayesianWinrate: round(row.bayesianWinrate, 4),
     wilsonLowerBound: round(row.wilsonLowerBound, 4),
 
     totalR: round(totalR, 4),
-    realTotalR: round(row.realTotalR, 4),
+
+    virtualTotalR: round(row.virtualTotalR, 4),
     shadowTotalR: round(row.shadowTotalR, 4),
+    realTotalR: 0,
 
     avgR: round(getAvgR(row), 4),
-    avgWinR: round(row.realAvgWinR ?? row.avgWinR, 4),
-    avgLossR: round(row.realAvgLossR ?? row.avgLossR, 4),
+    avgWinR: round(row.avgWinR, 4),
+    avgLossR: round(row.avgLossR, 4),
 
     profitFactor: round(getProfitFactor(row), 4),
 
@@ -1113,11 +1172,13 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
 
 function decorateMicroRow(row = {}) {
   if (!row?.microFamilyId) return null;
+  if (isScannerFingerprintId(row.microFamilyId)) return null;
 
   const winrate = getSampleAdjustedWinrate(row);
   const dashboardBalancedScore = getDashboardBalancedScore(row, winrate);
   const learningStatus = learningStatusFor(row, winrate);
   const tier = tierFor(row, winrate);
+  const tooEarly = winrate.outcomeSample < MIN_COMPLETED_ACTIVE_LEARNING;
 
   return {
     ...row,
@@ -1160,10 +1221,16 @@ function decorateMicroRow(row = {}) {
     avgCostR: round(getAvgCostR(row), 4),
 
     dashboardBalancedScore: round(row.dashboardBalancedScore ?? dashboardBalancedScore, 4),
+    balancedScore: round(row.balancedScore ?? dashboardBalancedScore, 4),
 
     awaitingOutcomes: Boolean(winrate.awaitingOutcomes),
     learningStatus,
     status: learningStatus,
+
+    tooEarly,
+    tooEarlyReason: tooEarly
+      ? `COMPLETED_BELOW_${MIN_COMPLETED_ACTIVE_LEARNING}`
+      : null,
 
     tier,
     selectedTier: row.selectedTier || row.rotationEligibilityTier || tier,
@@ -1174,10 +1241,15 @@ function decorateMicroRow(row = {}) {
 function buildRowsFromMicros(micros = {}) {
   return sourceEntriesFromMicros(micros)
     .map(([key, row], index) => {
+      const id = getMicroFamilyId(row, key);
+
+      if (!id || isScannerFingerprintId(id)) return null;
+
       const baseRow = {
         ...(row || {}),
         key,
-        microFamilyId: getMicroFamilyId(row, key),
+        microFamilyId: id,
+        trueMicroFamilyId: id,
         ...modePayload()
       };
 
@@ -1186,13 +1258,13 @@ function buildRowsFromMicros(micros = {}) {
       return raw ? decorateMicroRow(raw) : null;
     })
     .filter(Boolean)
-    .filter((row) => row.microFamilyId);
+    .filter(isAnalyzeMicroRow);
 }
 
 function rowKey(row = {}) {
   return String(
-    row.microFamilyId ||
     row.trueMicroFamilyId ||
+    row.microFamilyId ||
     row.id ||
     row.key ||
     ''
@@ -1204,14 +1276,14 @@ function mergeRows(primaryRows = [], fallbackRows = []) {
 
   for (const row of fallbackRows) {
     const key = rowKey(row);
-    if (!key || !isShortRow(row)) continue;
+    if (!key || !isAnalyzeMicroRow(row)) continue;
 
     byKey.set(key, row);
   }
 
   for (const row of primaryRows) {
     const key = rowKey(row);
-    if (!key || !isShortRow(row)) continue;
+    if (!key || !isAnalyzeMicroRow(row)) continue;
 
     const existing = byKey.get(key);
 
@@ -1229,11 +1301,12 @@ function mergeRows(primaryRows = [], fallbackRows = []) {
     );
   }
 
-  return [...byKey.values()];
+  return [...byKey.values()].filter(isAnalyzeMicroRow);
 }
 
 function manualRowFromId(id, index = 0) {
   if (!id || inferTradeSide(id) === 'LONG') return null;
+  if (isScannerFingerprintId(id)) return null;
 
   const raw = buildRawMicroRow({
     microFamilyId: id,
@@ -1249,12 +1322,12 @@ function manualRowFromId(id, index = 0) {
     seen: 0,
     observations: 0,
     completed: 0,
-    realCompleted: 0,
+    virtualCompleted: 0,
     shadowCompleted: 0,
     winrateSample: 0,
     winrate: 0,
     totalR: 0,
-    realTotalR: 0,
+    virtualTotalR: 0,
     shadowTotalR: 0,
     avgR: 0,
     profitFactor: 0,
@@ -1280,7 +1353,10 @@ function extractActiveIds(activeRotation) {
       : [])
   ];
 
-  return uniqueStrings(ids).filter((id) => inferTradeSide(id) !== 'LONG');
+  return uniqueStrings(ids).filter((id) => (
+    inferTradeSide(id) !== 'LONG' &&
+    !isScannerFingerprintId(id)
+  ));
 }
 
 function extractActiveMacroIds(activeRotation) {
@@ -1295,7 +1371,10 @@ function extractActiveMacroIds(activeRotation) {
       : [])
   ];
 
-  return uniqueStrings(ids).filter((id) => inferTradeSide(id) !== 'LONG');
+  return uniqueStrings(ids).filter((id) => (
+    inferTradeSide(id) !== 'LONG' &&
+    !isScannerFingerprintId(id)
+  ));
 }
 
 function buildRowsFromActiveRotation(activeRotation) {
@@ -1309,16 +1388,20 @@ function buildRowsFromActiveRotation(activeRotation) {
         .map((row, index) => {
           if (inferTradeSide(row) === 'LONG') return null;
 
+          const id = getMicroFamilyId(row, `active_${index}`);
+          if (!id || isScannerFingerprintId(id)) return null;
+
           const raw = buildRawMicroRow({
             ...row,
             ...modePayload(),
             active: true,
             selectedTier: row.selectedTier || row.rotationEligibilityTier || activeRotation.selectedTier || 'RAW'
-          }, getMicroFamilyId(row, `active_${index}`), index);
+          }, id, index);
 
           return raw ? decorateMicroRow(raw) : null;
         })
         .filter(Boolean)
+        .filter(isAnalyzeMicroRow)
     );
   }
 
@@ -1365,6 +1448,7 @@ function normalizeMicroRow(
   const winrate = getSampleAdjustedWinrate(row);
   const tier = tierFor(row, winrate);
   const learningStatus = learningStatusFor(row, winrate);
+  const tooEarly = winrate.outcomeSample < MIN_COMPLETED_ACTIVE_LEARNING;
 
   const base = {
     rank: index + 1,
@@ -1376,6 +1460,12 @@ function normalizeMicroRow(
 
     parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
+
+    scannerMicroFamilyId: row.scannerMicroFamilyId || null,
+    scannerDefinition: row.scannerDefinition || null,
+    scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
+      ? row.scannerDefinitionParts
+      : [],
 
     ...modePayload(),
 
@@ -1393,8 +1483,10 @@ function normalizeMicroRow(
     observations: num(row.observations, 0),
 
     completed: round(winrate.outcomeSample, 4),
-    realCompleted: num(row.realCompleted, 0),
+
+    virtualCompleted: num(row.virtualCompleted, 0),
     shadowCompleted: num(row.shadowCompleted, 0),
+    realCompleted: 0,
 
     outcomeSample: round(winrate.outcomeSample, 4),
     observationSample: round(winrate.observationSample, 4),
@@ -1402,6 +1494,11 @@ function normalizeMicroRow(
     awaitingOutcomes: Boolean(winrate.awaitingOutcomes),
     learningStatus,
     status: learningStatus,
+
+    tooEarly,
+    tooEarlyReason: tooEarly
+      ? `COMPLETED_BELOW_${MIN_COMPLETED_ACTIVE_LEARNING}`
+      : null,
 
     tier,
     selectedTier: row.selectedTier || row.rotationEligibilityTier || tier,
@@ -1411,13 +1508,17 @@ function normalizeMicroRow(
     losses: round(winrate.losses, 4),
     flats: round(winrate.flats, 4),
 
-    realWins: num(row.realWins, 0),
-    realLosses: num(row.realLosses, 0),
-    realFlats: num(row.realFlats, 0),
+    virtualWins: num(row.virtualWins, 0),
+    virtualLosses: num(row.virtualLosses, 0),
+    virtualFlats: num(row.virtualFlats, 0),
 
     shadowWins: num(row.shadowWins, 0),
     shadowLosses: num(row.shadowLosses, 0),
     shadowFlats: num(row.shadowFlats, 0),
+
+    realWins: 0,
+    realLosses: 0,
+    realFlats: 0,
 
     winrate: round(winrate.rawWinrate, 4),
     bayesianWinrate: round(winrate.bayesianWinrate, 4),
@@ -1432,12 +1533,13 @@ function normalizeMicroRow(
     sampleReliability: round(row.sampleReliability ?? winrate.reliability, 4),
 
     totalR: round(getTotalR(row), 4),
-    realTotalR: round(row.realTotalR, 4),
+    virtualTotalR: round(row.virtualTotalR, 4),
     shadowTotalR: round(row.shadowTotalR, 4),
+    realTotalR: 0,
 
     avgR: round(getAvgR(row), 4),
-    avgWinR: round(row.realAvgWinR ?? row.avgWinR, 4),
-    avgLossR: round(row.realAvgLossR ?? row.avgLossR, 4),
+    avgWinR: round(row.avgWinR, 4),
+    avgLossR: round(row.avgLossR, 4),
 
     profitFactor: round(getProfitFactor(row), 4),
 
@@ -1522,7 +1624,7 @@ function normalizeMicroRow(
 
 function compactBestRow(row) {
   if (!row) return null;
-  if (!isShortRow(row)) return null;
+  if (!isAnalyzeMicroRow(row)) return null;
 
   return {
     microFamilyId: getMicroFamilyId(row),
@@ -1545,6 +1647,9 @@ function compactBestRow(row) {
     awaitingOutcomes: Boolean(row.awaitingOutcomes),
     learningStatus: row.learningStatus || learningStatusFor(row),
     status: row.status || row.learningStatus || learningStatusFor(row),
+
+    tooEarly: num(row.outcomeSample ?? getCompletedSample(row), 0) < MIN_COMPLETED_ACTIVE_LEARNING,
+    minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING,
 
     tier: row.tier || tierFor(row),
     selectedTier: row.selectedTier || row.rotationEligibilityTier || row.tier || tierFor(row),
@@ -1688,7 +1793,7 @@ function rowMatchesSearch(row = {}, q = '') {
 
 function rowPassesFilters(row = {}, filters, activeSet, activeMacroSet) {
   if (!row?.microFamilyId) return false;
-  if (!isShortRow(row)) return false;
+  if (!isAnalyzeMicroRow(row)) return false;
 
   if (filters.side === 'LONG_DISABLED') return false;
   if (filters.side && filters.side !== TARGET_TRADE_SIDE) return false;
@@ -1753,11 +1858,11 @@ function compareIdAsc(a, b) {
 
 function compareRowsWinrate(a, b) {
   return (
+    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
+    compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
+    compareNumberDesc(a.sampleBayesianWinrate ?? a.bayesianWinrate, b.sampleBayesianWinrate ?? b.bayesianWinrate) ||
+    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
     compareNumberDesc(a.outcomeSample, b.outcomeSample) ||
-    compareNumberDesc(a.sampleAdjustedWinrate, b.sampleAdjustedWinrate) ||
-    compareNumberDesc(a.sampleWilsonLowerBound, b.sampleWilsonLowerBound) ||
-    compareNumberDesc(a.sampleBayesianWinrate, b.sampleBayesianWinrate) ||
-    compareNumberDesc(a.sampleRawWinrate, b.sampleRawWinrate) ||
     compareNumberDesc(getTotalR(a), getTotalR(b)) ||
     compareNumberDesc(getAvgR(a), getAvgR(b)) ||
     compareNumberDesc(a.observationSample, b.observationSample) ||
@@ -1768,28 +1873,36 @@ function compareRowsWinrate(a, b) {
 
 function compareRowsBalanced(a, b) {
   return (
-    compareNumberDesc(a.dashboardBalancedScore, b.dashboardBalancedScore) ||
+    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
+    compareNumberDesc(a.balancedScore, b.balancedScore) ||
     compareRowsWinrate(a, b)
   );
 }
 
 function compareRowsTotalR(a, b) {
   return (
+    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
+    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
     compareNumberDesc(getTotalR(a), getTotalR(b)) ||
-    compareRowsWinrate(a, b)
+    compareNumberDesc(getAvgR(a), getAvgR(b)) ||
+    compareIdAsc(a.microFamilyId, b.microFamilyId)
   );
 }
 
 function compareRowsAvgR(a, b) {
   return (
+    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
+    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
     compareNumberDesc(getAvgR(a), getAvgR(b)) ||
-    compareRowsWinrate(a, b)
+    compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+    compareIdAsc(a.microFamilyId, b.microFamilyId)
   );
 }
 
 function compareRowsDirectSL(a, b) {
   return (
     compareNumberAsc(a.directSLPct, b.directSLPct) ||
+    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
     compareNumberDesc(a.outcomeSample, b.outcomeSample) ||
     compareNumberDesc(a.observationSample, b.observationSample) ||
     compareRowsWinrate(a, b)
@@ -1801,8 +1914,8 @@ function compareRowsObserved(a, b) {
     compareNumberDesc(a.observationSample, b.observationSample) ||
     compareNumberDesc(a.seen, b.seen) ||
     compareNumberDesc(a.observations, b.observations) ||
+    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
     compareNumberDesc(a.outcomeSample, b.outcomeSample) ||
-    compareNumberDesc(a.dashboardBalancedScore, b.dashboardBalancedScore) ||
     compareIdAsc(a.microFamilyId, b.microFamilyId)
   );
 }
@@ -1819,7 +1932,7 @@ function compareRowsByMode(a, b, mode = 'balanced') {
 
 function sortRowsByMode(rows = [], mode = 'balanced') {
   return [...rows]
-    .filter(isShortRow)
+    .filter(isAnalyzeMicroRow)
     .sort((a, b) => compareRowsByMode(a, b, mode));
 }
 
@@ -1875,11 +1988,11 @@ function statusCounts(rows = []) {
 }
 
 function bestBy(rows = [], comparator) {
-  return [...rows].sort(comparator)[0] || null;
+  return [...rows].filter(isAnalyzeMicroRow).sort(comparator)[0] || null;
 }
 
 function buildSideSummary(rows = []) {
-  const shortRows = rows.filter(isShortRow);
+  const shortRows = rows.filter(isAnalyzeMicroRow);
 
   return {
     rows: shortRows.length,
@@ -1892,14 +2005,15 @@ function buildSideSummary(rows = []) {
 }
 
 function buildSummary(rows = [], activeSet = new Set()) {
-  const completedRows = rows.filter((row) => num(row.outcomeSample, 0) > 0);
-  const observationRows = rows.filter((row) => num(row.observationSample, 0) > 0);
-  const hardRows = rows.filter((row) => tierFor(row) === 'HARD');
-  const softRows = rows.filter((row) => tierFor(row) === 'SOFT');
-  const observingRows = rows.filter((row) => tierFor(row) === 'OBSERVATION');
-  const rawRows = rows.filter((row) => tierFor(row) === 'RAW');
+  const safeRows = rows.filter(isAnalyzeMicroRow);
 
-  const activeRows = rows.filter((row) => (
+  const completedRows = safeRows.filter((row) => num(row.outcomeSample, 0) > 0);
+  const observationRows = safeRows.filter((row) => num(row.observationSample, 0) > 0);
+  const activeLearningRows = safeRows.filter((row) => row.status === 'ACTIVE_LEARNING');
+  const earlyOutcomeRows = safeRows.filter((row) => row.status === 'EARLY_OUTCOMES');
+  const observingRows = safeRows.filter((row) => row.status === 'OBSERVING');
+
+  const activeRows = safeRows.filter((row) => (
     activeSet.has(row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)
   ));
 
@@ -1910,7 +2024,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
   let totalWinrateSample = 0;
   let totalCostR = 0;
 
-  for (const row of rows) {
+  for (const row of safeRows) {
     totalR += getTotalR(row);
     totalSeen += num(row.seen, 0);
     totalCompleted += num(row.outcomeSample, 0);
@@ -1920,7 +2034,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
   }
 
   return {
-    rows: rows.length,
+    rows: safeRows.length,
     activeRows: activeRows.length,
     activeIds: activeSet.size,
 
@@ -1933,27 +2047,31 @@ function buildSummary(rows = [], activeSet = new Set()) {
 
     completedMicroFamilies: completedRows.length,
     observationMicroFamilies: observationRows.length,
-    awaitingOutcomeMicroFamilies: rows.filter((row) => row.awaitingOutcomes).length,
+    awaitingOutcomeMicroFamilies: safeRows.filter((row) => row.awaitingOutcomes).length,
 
-    hardMicroFamilies: hardRows.length,
-    softMicroFamilies: softRows.length,
-    observationOnlyMicroFamilies: observingRows.length,
-    rawMicroFamilies: rawRows.length,
+    activeLearningMicroFamilies: activeLearningRows.length,
+    earlyOutcomeMicroFamilies: earlyOutcomeRows.length,
+    observingMicroFamilies: observingRows.length,
 
-    tierCounts: tierCounts(rows),
-    statusCounts: statusCounts(rows),
+    hardMicroFamilies: tierCounts(safeRows).HARD,
+    softMicroFamilies: tierCounts(safeRows).SOFT,
+    observationOnlyMicroFamilies: tierCounts(safeRows).OBSERVATION,
+    rawMicroFamilies: tierCounts(safeRows).RAW,
+
+    tierCounts: tierCounts(safeRows),
+    statusCounts: statusCounts(safeRows),
 
     totalR: round(totalR, 4),
     totalCostR: round(totalCostR, 4),
     avgR: totalCompleted > 0 ? round(totalR / totalCompleted, 4) : 0,
     avgCostR: totalCompleted > 0 ? round(totalCostR / totalCompleted, 4) : 0,
 
-    bestBalanced: compactBestRow(bestBy(rows, compareRowsBalanced)),
-    bestTotalR: compactBestRow(bestBy(rows, compareRowsTotalR)),
-    bestAvgR: compactBestRow(bestBy(rows, compareRowsAvgR)),
-    bestWinrate: compactBestRow(bestBy(rows, compareRowsWinrate)),
-    bestObserved: compactBestRow(bestBy(rows, compareRowsObserved)),
-    lowestDirectSL: compactBestRow(bestBy(rows, compareRowsDirectSL)),
+    bestBalanced: compactBestRow(bestBy(safeRows, compareRowsBalanced)),
+    bestTotalR: compactBestRow(bestBy(safeRows, compareRowsTotalR)),
+    bestAvgR: compactBestRow(bestBy(safeRows, compareRowsAvgR)),
+    bestWinrate: compactBestRow(bestBy(safeRows, compareRowsWinrate)),
+    bestObserved: compactBestRow(bestBy(safeRows, compareRowsObserved)),
+    lowestDirectSL: compactBestRow(bestBy(safeRows, compareRowsDirectSL)),
 
     long: {
       rows: 0,
@@ -1964,7 +2082,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
       lowestDirectSL: null
     },
 
-    short: buildSideSummary(rows)
+    short: buildSideSummary(safeRows)
   };
 }
 
@@ -2058,10 +2176,12 @@ function mergeMicrosByRecency(weekResults = []) {
 
       const id = getMicroFamilyId(row, key);
       if (!id) continue;
+      if (isScannerFingerprintId(id)) continue;
 
       if (inferTradeSide({
         ...row,
-        microFamilyId: id
+        microFamilyId: id,
+        trueMicroFamilyId: id
       }) === 'LONG') {
         continue;
       }
@@ -2183,7 +2303,7 @@ async function getRecentWeekMicrosMerged({
 
 function normalizeRows(rows = [], activeSet, activeMacroSet, compact) {
   return rows
-    .filter(isShortRow)
+    .filter(isAnalyzeMicroRow)
     .map((row, index) => normalizeMicroRow(row, index, {
       activeSet,
       activeMacroSet,
@@ -2199,7 +2319,7 @@ function selectBestMicroFamilyRows({
   const safeLimit = toSafeLimit(limit, DEFAULT_BEST_LIMIT, MAX_BEST_LIMIT);
 
   return sortRowsByMode(
-    rows.filter(isShortRow),
+    rows.filter(isAnalyzeMicroRow),
     mode
   )
     .slice(0, safeLimit)
@@ -2217,13 +2337,13 @@ function selectResponseRows({
   if (filters.side === 'LONG_DISABLED') return [];
 
   return rankedRows
-    .filter(isShortRow)
+    .filter(isAnalyzeMicroRow)
     .slice(0, limit);
 }
 
 function splitSideRows(rows = [], sideLimit = DEFAULT_SIDE_LIMIT) {
   const shortRows = rows
-    .filter(isShortRow)
+    .filter(isAnalyzeMicroRow)
     .slice(0, sideLimit);
 
   return {
@@ -2240,6 +2360,7 @@ function forcedShortFallbackRows(activeRotation, existingRows = []) {
   for (const id of extractActiveIds(activeRotation)) {
     if (existing.has(id)) continue;
     if (inferTradeSide(id) === 'LONG') continue;
+    if (isScannerFingerprintId(id)) continue;
 
     const manual = manualRowFromId(id, rows.length);
     if (!manual) continue;
@@ -2255,11 +2376,12 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-net-outcome-observation-first-v6');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-net-outcome-observation-first-v7');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
   res.setHeader('X-Virtual-Outcomes-Included', 'true');
+  res.setHeader('X-Shadow-Outcomes-Included', 'true');
   res.setHeader('X-Manual-Selection-Only', 'true');
 
   if (req.method !== 'GET') {
@@ -2436,7 +2558,21 @@ export default async function handler(req, res) {
       ...modePayload(),
 
       availableTiers: ['HARD', 'SOFT', 'OBSERVATION', 'RAW'],
-      availableStatuses: ['ACTIVE_LEARNING', 'EARLY_OUTCOMES', 'OBSERVING', 'RAW'],
+      availableStatuses: ['ACTIVE_LEARNING', 'EARLY_OUTCOMES', 'OBSERVING'],
+
+      statusRules: {
+        OBSERVING: 'completed == 0',
+        EARLY_OUTCOMES: `completed > 0 && completed < ${MIN_COMPLETED_ACTIVE_LEARNING}`,
+        ACTIVE_LEARNING: `completed >= ${MIN_COMPLETED_ACTIVE_LEARNING}`
+      },
+
+      rankingPolicy: {
+        defaultMode: 'balanced',
+        activeMode: mode,
+        defaultSort: 'dashboardBalancedScore/balancedScore/fairWinrate',
+        rawWinrateIsNeverDefault: true,
+        scannerFingerprintsExcludedFromRows: true
+      },
 
       weekKey: weekResult.weekKey || requestedWeekKey,
       requestedWeekKey,
@@ -2516,7 +2652,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnlyNetOutcomeObservationFirstBest25RecentWeeksMerge',
+        path: 'shortOnlyNetOutcomeObservationFirstBest25RecentWeeksMergeAnalyzeMicroOnly',
         best25Source: 'mergedRowsBeforeFilters'
       },
 
