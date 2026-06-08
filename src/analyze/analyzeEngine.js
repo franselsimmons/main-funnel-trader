@@ -1,3 +1,5 @@
+// ================= FILE: src/analyze/analyzeEngine.js =================
+
 import { gzipSync, gunzipSync } from 'zlib';
 import { createHash } from 'crypto';
 import { CONFIG } from '../config.js';
@@ -86,6 +88,8 @@ function cleanSideText(value = '') {
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT');
@@ -166,7 +170,7 @@ function sideTextToTradeSide(value) {
   return 'UNKNOWN';
 }
 
-function sideProbeValues(row = {}, classified = {}) {
+function directSideProbeValues(row = {}, classified = {}) {
   return [
     row.tradeSide,
     row.positionSide,
@@ -182,8 +186,12 @@ function sideProbeValues(row = {}, classified = {}) {
     classified.tradeSide,
     classified.positionSide,
     classified.direction,
-    classified.side,
+    classified.side
+  ];
+}
 
+function idSideProbeValues(row = {}, classified = {}) {
+  return [
     row.familyId,
     row.family,
     row.baseFamilyId,
@@ -196,38 +204,119 @@ function sideProbeValues(row = {}, classified = {}) {
     row.id,
     row.key,
 
+    classified.familyId,
+    classified.family,
+    classified.baseFamilyId,
+    classified.microFamilyId,
+    classified.trueMicroFamilyId,
+    classified.coarseMicroFamilyId,
+    classified.baseMicroFamilyId,
+    classified.legacyMicroFamilyId,
+
     row.macroFamilyId,
     row.parentMacroFamilyId,
     row.parentMicroFamilyId,
     row.parentFamilyId,
     row.macroId,
 
+    classified.macroFamilyId,
+    classified.parentMacroFamilyId,
+    classified.parentMicroFamilyId,
+    classified.parentFamilyId,
+    classified.macroId
+  ];
+}
+
+function definitionSideProbeValues(row = {}, classified = {}) {
+  return [
     row.definition,
     row.microDefinition,
     row.macroDefinition,
     row.parentDefinition,
 
+    classified.definition,
+    classified.microDefinition,
+    classified.macroDefinition,
+    classified.parentDefinition,
+
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
     ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
-    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : []),
+
+    ...(Array.isArray(classified.definitionParts) ? classified.definitionParts : []),
+    ...(Array.isArray(classified.microDefinitionParts) ? classified.microDefinitionParts : []),
+    ...(Array.isArray(classified.macroDefinitionParts) ? classified.macroDefinitionParts : []),
+    ...(Array.isArray(classified.parentDefinitionParts) ? classified.parentDefinitionParts : []),
+    ...(Array.isArray(classified.executionFingerprintParts) ? classified.executionFingerprintParts : [])
   ];
 }
 
-function inferTradeSide(row = {}, classified = {}) {
+function firstResolvedSide(values = []) {
+  for (const value of values) {
+    const side = sideTextToTradeSide(value);
+
+    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) {
+      return side;
+    }
+  }
+
+  return 'UNKNOWN';
+}
+
+function resolveMixedTextSide(values = [], row = {}) {
   let hasShort = false;
   let hasLong = false;
 
-  for (const value of sideProbeValues(row, classified)) {
+  for (const value of values) {
     const side = sideTextToTradeSide(value);
 
-    if (side === OPPOSITE_TRADE_SIDE) hasLong = true;
     if (side === TARGET_TRADE_SIDE) hasShort = true;
+    if (side === OPPOSITE_TRADE_SIDE) hasLong = true;
   }
 
-  if (hasLong) return OPPOSITE_TRADE_SIDE;
-  if (hasShort) return TARGET_TRADE_SIDE;
+  if (hasLong && !hasShort) return OPPOSITE_TRADE_SIDE;
+  if (hasShort && !hasLong) return TARGET_TRADE_SIDE;
+
+  if (hasShort && hasLong) {
+    const explicitIdSide = firstResolvedSide([
+      row.microFamilyId,
+      row.trueMicroFamilyId,
+      row.id,
+      row.key
+    ]);
+
+    if (explicitIdSide !== 'UNKNOWN') return explicitIdSide;
+
+    if (row.shortOnly === true || row.longDisabled === true) {
+      return TARGET_TRADE_SIDE;
+    }
+
+    return OPPOSITE_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
+}
+
+function inferTradeSide(row = {}, classified = {}) {
+  const direct = firstResolvedSide(directSideProbeValues(row, classified));
+
+  if (direct === TARGET_TRADE_SIDE || direct === OPPOSITE_TRADE_SIDE) {
+    return direct;
+  }
+
+  const idSide = resolveMixedTextSide(idSideProbeValues(row, classified), row);
+
+  if (idSide === TARGET_TRADE_SIDE || idSide === OPPOSITE_TRADE_SIDE) {
+    return idSide;
+  }
+
+  const definitionSide = resolveMixedTextSide(definitionSideProbeValues(row, classified), row);
+
+  if (definitionSide === TARGET_TRADE_SIDE || definitionSide === OPPOSITE_TRADE_SIDE) {
+    return definitionSide;
+  }
 
   if (row.shortOnly === true || row.longDisabled === true) {
     return TARGET_TRADE_SIDE;
@@ -263,7 +352,16 @@ function normalizeClassificationInput(row = {}, forcedSide = null) {
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
-    shortDisabled: false
+    shortDisabled: false,
+
+    source: row.source || OBSERVATION_SOURCE,
+    virtualOnly: row.virtualOnly !== false,
+    virtualTracked: row.virtualTracked !== false,
+    shadowOnly: row.shadowOnly !== false,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false
   };
 }
 
@@ -429,8 +527,12 @@ async function mapLimit(items = [], concurrency = 8, worker) {
 
 function uniqueStrings(values = []) {
   return [...new Set(
-    (Array.isArray(values) ? values : [])
+    (Array.isArray(values) ? values : [values])
       .flatMap((value) => Array.isArray(value) ? value : [value])
+      .flatMap((value) => {
+        if (Array.isArray(value)) return value;
+        return [value];
+      })
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -445,7 +547,7 @@ function hasUsableDefinitionParts(value) {
 }
 
 function idSide(row = {}) {
-  const values = [
+  return firstResolvedSide([
     row.microFamilyId,
     row.trueMicroFamilyId,
     row.coarseMicroFamilyId,
@@ -457,15 +559,7 @@ function idSide(row = {}) {
     row.macroFamilyId,
     row.parentMacroFamilyId,
     row.parentMicroFamilyId
-  ];
-
-  for (const value of values) {
-    const side = sideTextToTradeSide(value);
-
-    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) return side;
-  }
-
-  return 'UNKNOWN';
+  ]);
 }
 
 function isExecutionRefinedMicroId(value = '') {
@@ -738,25 +832,6 @@ function firstDefined(...values) {
 
 function boolBucket(value, label) {
   return `${label}=${value ? 'YES' : 'NO'}`;
-}
-
-function numericBucket(value, {
-  label,
-  scale = 1,
-  step = 1,
-  min = -Infinity,
-  max = Infinity,
-  fallback = 'NA'
-} = {}) {
-  const n = safeNumber(value, null);
-
-  if (!Number.isFinite(n)) return `${label}=${fallback}`;
-
-  const scaled = n * scale;
-  const clipped = Math.max(min, Math.min(max, scaled));
-  const bucket = Math.round(clipped / step) * step;
-
-  return `${label}=${bucket}`;
 }
 
 function coarseNumberTier(value, {
@@ -1114,6 +1189,15 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
+
+    source: row.source || OBSERVATION_SOURCE,
+    virtualOnly: row.virtualOnly !== false,
+    virtualTracked: row.virtualTracked !== false,
+    shadowOnly: row.shadowOnly !== false,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
 
     isMirrorMicroFamily: false,
     observationMirror: false,
@@ -2559,6 +2643,11 @@ export async function analyzeCandidatesBatch(
         virtualTracked: true,
         shadowOnly: true,
 
+        realTrade: false,
+        realOrder: false,
+        exchangeOrder: false,
+
+        observationRecorded: true,
         observationDuplicate: firstObservation === null,
         observationDedupeKey: obsKey,
 
@@ -2597,6 +2686,10 @@ export async function analyzeCandidatesBatch(
           virtualOnly: true,
           virtualTracked: true,
           shadowOnly: true,
+
+          realTrade: false,
+          realOrder: false,
+          exchangeOrder: false,
 
           weekKey,
           strategyVersion: CONFIG.strategyVersion
@@ -2705,6 +2798,15 @@ function buildLockedOutcomeRow(outcome = {}) {
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
+
+    source: outcome.source || OUTCOME_SOURCE,
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
 
     outcomeIdentityLocked: true,
     outcomeIdentitySource: 'POSITION_MICRO_IDENTITY'
@@ -2881,7 +2983,11 @@ export async function recordOutcome(
 
     virtualOnly: outcome.virtualOnly !== false,
     virtualTracked: outcome.virtualTracked !== false,
-    shadowOnly: outcome.shadowOnly !== false
+    shadowOnly: outcome.shadowOnly !== false,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false
   });
 
   const row = hasLockedOutcomeIdentity(netOutcome)
@@ -2939,6 +3045,10 @@ export async function recordOutcome(
     virtualOnly: true,
     virtualTracked: true,
     shadowOnly: true,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
 
     netR: safeNumber(row.netR ?? row.exitR, 0),
     exitR: safeNumber(row.exitR ?? row.netR, 0),
@@ -3184,6 +3294,10 @@ export function buildOutcomeFromPosition({
     virtualOnly: true,
     virtualTracked: true,
     shadowOnly: true,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
 
     ...copyMicroClassificationFields(position),
 
