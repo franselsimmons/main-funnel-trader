@@ -10,6 +10,8 @@ const DEFAULT_SAMPLE_CAP = 50;
 const DEFAULT_AVG_R_CAP = 5;
 const DEFAULT_AVG_R_SAMPLE_EXPONENT = 1.35;
 
+const MIN_COMPLETED_ACTIVE = 20;
+
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
@@ -165,6 +167,17 @@ function hasLongSignal(value = '') {
   ]);
 }
 
+function isScannerFamilyId(id = '') {
+  const value = String(id || '').toUpperCase();
+
+  return (
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('__SCANNER__')
+  );
+}
+
 function normalizeTradeSide(value) {
   const raw = cleanSideText(value);
 
@@ -232,6 +245,9 @@ function definitionSide(row = {}) {
 
     row.microFamilyId,
     row.trueMicroFamilyId,
+    row.coarseMicroFamilyId,
+    row.baseMicroFamilyId,
+    row.legacyMicroFamilyId,
     row.id,
     row.key,
 
@@ -309,6 +325,12 @@ function isShortRow(row = {}) {
   return inferTradeSide(row) === TARGET_TRADE_SIDE;
 }
 
+function isRealAnalyzeMicroRow(row = {}) {
+  const id = row.trueMicroFamilyId || row.microFamilyId || row.id || row.key || '';
+
+  return isShortRow(row) && !isScannerFamilyId(id);
+}
+
 function dashboardSideFromTradeSide(side, fallback = 'unknown') {
   const tradeSide = normalizeTradeSide(side);
 
@@ -363,23 +385,25 @@ function applySideIdentity(stats = {}, row = {}) {
 function hasSourceBuckets(stats = {}) {
   return (
     safeNumber(stats.virtualCompleted, 0) > 0 ||
-    safeNumber(stats.realCompleted, 0) > 0 ||
     safeNumber(stats.shadowCompleted, 0) > 0 ||
     safeNumber(stats.virtualWins, 0) > 0 ||
     safeNumber(stats.virtualLosses, 0) > 0 ||
     safeNumber(stats.virtualFlats, 0) > 0 ||
-    safeNumber(stats.realWins, 0) > 0 ||
-    safeNumber(stats.realLosses, 0) > 0 ||
-    safeNumber(stats.realFlats, 0) > 0 ||
     safeNumber(stats.shadowWins, 0) > 0 ||
     safeNumber(stats.shadowLosses, 0) > 0 ||
     safeNumber(stats.shadowFlats, 0) > 0
   );
 }
 
+function closedCompletedCount(stats = {}) {
+  return (
+    safeNumber(stats.virtualCompleted, 0) +
+    safeNumber(stats.shadowCompleted, 0)
+  );
+}
+
 function actualOutcomeCounts(stats = {}) {
   const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
-  const realCompleted = safeNumber(stats.realCompleted, 0);
   const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
 
   if (hasSourceBuckets(stats)) {
@@ -387,22 +411,15 @@ function actualOutcomeCounts(stats = {}) {
     const virtualLosses = safeNumber(stats.virtualLosses, 0);
     const virtualFlats = safeNumber(stats.virtualFlats, 0);
 
-    const realWins = safeNumber(stats.realWins, 0);
-    const realLosses = safeNumber(stats.realLosses, 0);
-    const realFlats = safeNumber(stats.realFlats, 0);
-
     const shadowWins = safeNumber(stats.shadowWins, 0);
     const shadowLosses = safeNumber(stats.shadowLosses, 0);
     const shadowFlats = safeNumber(stats.shadowFlats, 0);
 
-    const completed = virtualCompleted + realCompleted + shadowCompleted;
+    const completed = virtualCompleted + shadowCompleted;
     const bucketCompleted =
       virtualWins +
       virtualLosses +
       virtualFlats +
-      realWins +
-      realLosses +
-      realFlats +
       shadowWins +
       shadowLosses +
       shadowFlats;
@@ -410,28 +427,28 @@ function actualOutcomeCounts(stats = {}) {
     const inferredFlats = Math.max(0, completed - bucketCompleted);
 
     return {
-      wins: virtualWins + realWins + shadowWins,
-      losses: virtualLosses + realLosses + shadowLosses,
-      flats: virtualFlats + realFlats + shadowFlats + inferredFlats,
+      wins: virtualWins + shadowWins,
+      losses: virtualLosses + shadowLosses,
+      flats: virtualFlats + shadowFlats + inferredFlats,
       completed: Math.max(completed, bucketCompleted)
     };
   }
 
-  const weightedWins = safeNumber(stats.wins, 0);
-  const weightedLosses = safeNumber(stats.losses, 0);
-  const weightedFlats = safeNumber(stats.flats, 0);
-  const weightedCompleted = weightedWins + weightedLosses + weightedFlats;
+  const completedFallback = safeNumber(stats.completed, 0);
+  const winsFallback = safeNumber(stats.wins, 0);
+  const lossesFallback = safeNumber(stats.losses, 0);
+  const flatsFallback = safeNumber(stats.flats, 0);
+  const bucketCompleted = winsFallback + lossesFallback + flatsFallback;
 
-  if (weightedCompleted > 0) {
+  if (bucketCompleted > 0) {
     return {
-      wins: weightedWins,
-      losses: weightedLosses,
-      flats: weightedFlats,
-      completed: weightedCompleted
+      wins: winsFallback,
+      losses: lossesFallback,
+      flats: flatsFallback,
+      completed: Math.max(completedFallback, bucketCompleted)
     };
   }
 
-  const completedFallback = safeNumber(stats.completed, 0);
   const winrateFallback = clamp(safeNumber(stats.winrate, 0), 0, 1);
 
   if (completedFallback <= 0) {
@@ -453,12 +470,10 @@ function actualOutcomeCounts(stats = {}) {
 
 function weightedCompletedCount(stats = {}) {
   const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
-  const realCompleted = safeNumber(stats.realCompleted, 0);
   const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
 
   const sourceCompleted =
     virtualCompleted +
-    realCompleted +
     shadowCompleted * shadowWeight();
 
   if (sourceCompleted > 0) return sourceCompleted;
@@ -471,17 +486,14 @@ function weightedSourceCounts(stats = {}) {
 
   const wins =
     safeNumber(stats.virtualWins, 0) +
-    safeNumber(stats.realWins, 0) +
     safeNumber(stats.shadowWins, 0) * w;
 
   const losses =
     safeNumber(stats.virtualLosses, 0) +
-    safeNumber(stats.realLosses, 0) +
     safeNumber(stats.shadowLosses, 0) * w;
 
   const flats =
     safeNumber(stats.virtualFlats, 0) +
-    safeNumber(stats.realFlats, 0) +
     safeNumber(stats.shadowFlats, 0) * w;
 
   return {
@@ -498,27 +510,22 @@ function weightedSourceTotals(stats = {}) {
   return {
     totalR:
       safeNumber(stats.virtualTotalR, 0) +
-      safeNumber(stats.realTotalR, 0) +
       safeNumber(stats.shadowTotalR, 0) * w,
 
     totalPnlPct:
       safeNumber(stats.virtualTotalPnlPct, 0) +
-      safeNumber(stats.realTotalPnlPct, 0) +
       safeNumber(stats.shadowTotalPnlPct, 0) * w,
 
     totalCostR:
       safeNumber(stats.virtualTotalCostR, 0) +
-      safeNumber(stats.realTotalCostR, 0) +
       safeNumber(stats.shadowTotalCostR, 0) * w,
 
     grossWinR:
       safeNumber(stats.virtualGrossWinR, 0) +
-      safeNumber(stats.realGrossWinR, 0) +
       safeNumber(stats.shadowGrossWinR, 0) * w,
 
     grossLossR:
       safeNumber(stats.virtualGrossLossR, 0) +
-      safeNumber(stats.realGrossLossR, 0) +
       safeNumber(stats.shadowGrossLossR, 0) * w
   };
 }
@@ -531,11 +538,16 @@ function aggregateRecentOutcomes(stats = {}) {
   return outcomes.reduce(
     (acc, row) => {
       const src = normalizeSource(row.source);
+
+      if (src !== SOURCE_VIRTUAL && src !== SOURCE_SHADOW) {
+        return acc;
+      }
+
       const weight = sourceWeight(src);
 
-      const exitR = safeNumber(row.netR ?? row.exitR, 0);
+      const exitR = safeNumber(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0);
       const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
-      const costR = safeNumber(row.costR, 0);
+      const costR = safeNumber(row.costR ?? row.avgCostR, 0);
 
       const win = exitR > 0;
       const loss = exitR < 0;
@@ -628,16 +640,11 @@ function sampleAdjustedAvgR(avgR, reliability) {
 
 function learningStatus(stats = {}) {
   const completed = safeNumber(stats.completed, 0);
-  const seen = Math.max(
-    safeNumber(stats.seen, 0),
-    safeNumber(stats.observations, 0)
-  );
 
-  if (completed <= 0 && seen > 0) return 'OBSERVING';
-  if (completed <= 0) return 'EMPTY';
-  if (completed < 20) return 'LEARNING';
+  if (completed <= 0) return 'OBSERVING';
+  if (completed < MIN_COMPLETED_ACTIVE) return 'EARLY_OUTCOMES';
 
-  return 'READY';
+  return 'ACTIVE_LEARNING';
 }
 
 export function createMicroStats({
@@ -782,9 +789,11 @@ export function createMicroStats({
     gaveBackAfterOneRPct: 0,
     nearTpThenLossPct: 0,
 
-    learningStatus: 'EMPTY',
-    status: 'EMPTY',
+    learningStatus: 'OBSERVING',
+    status: 'OBSERVING',
     awaitingOutcomes: true,
+    tooEarly: true,
+    minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE,
 
     counters: makeCounters(),
 
@@ -821,6 +830,8 @@ function ensureStatsShape(stats = {}) {
   stats.longOnly = false;
   stats.shortDisabled = false;
   stats.source ||= SOURCE_VIRTUAL;
+
+  stats.minCompletedForActiveLearning = MIN_COMPLETED_ACTIVE;
 
   applySideIdentity(stats);
 
@@ -957,6 +968,9 @@ export function updateObservation(stats, row = {}) {
       tradeSide: TARGET_TRADE_SIDE,
       source: row.source || SOURCE_VIRTUAL,
 
+      scannerMicroFamilyId: row.scannerMicroFamilyId || null,
+      scannerFingerprintRole: row.scannerFingerprintRole || 'METADATA_ONLY',
+
       rsiZone: row.rsiZone || null,
       flow: row.flow || null,
       obRelation: row.obRelation || null,
@@ -973,6 +987,7 @@ export function updateObservation(stats, row = {}) {
   stats.learningStatus = learningStatus(stats);
   stats.status = stats.learningStatus;
   stats.awaitingOutcomes = safeNumber(stats.completed, 0) <= 0 && safeNumber(stats.seen, 0) > 0;
+  stats.tooEarly = safeNumber(stats.completed, 0) < MIN_COMPLETED_ACTIVE;
 
   stats.updatedAt = now();
 
@@ -989,11 +1004,24 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   applySideIdentity(stats, row);
 
   const src = normalizeSource(source || row.source || SOURCE_VIRTUAL);
+
+  if (src !== SOURCE_VIRTUAL && src !== SOURCE_SHADOW) {
+    return refreshStats(stats);
+  }
+
   const weight = sourceWeight(src);
 
-  const exitR = safeNumber(row.netR ?? row.exitR, 0);
+  const exitR = safeNumber(
+    row.netR ??
+    row.exitR ??
+    row.realizedNetR ??
+    row.realizedR ??
+    row.r,
+    0
+  );
+
   const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
-  const costR = safeNumber(row.costR, 0);
+  const costR = safeNumber(row.costR ?? row.avgCostR, 0);
 
   const win = exitR > 0;
   const loss = exitR < 0;
@@ -1016,23 +1044,6 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     }
 
     if (flat) stats.shadowFlats += 1;
-  } else if (src === SOURCE_REAL) {
-    stats.realCompleted += 1;
-    stats.realTotalR += exitR;
-    stats.realTotalPnlPct += pnlPct;
-    stats.realTotalCostR += costR;
-
-    if (win) {
-      stats.realWins += 1;
-      stats.realGrossWinR += exitR;
-    }
-
-    if (loss) {
-      stats.realLosses += 1;
-      stats.realGrossLossR += Math.abs(exitR);
-    }
-
-    if (flat) stats.realFlats += 1;
   } else {
     stats.virtualCompleted += 1;
     stats.virtualTotalR += exitR;
@@ -1052,7 +1063,7 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     if (flat) stats.virtualFlats += 1;
   }
 
-  stats.completed = weightedCompletedCount(stats);
+  stats.completed = closedCompletedCount(stats);
 
   stats.wins += win ? weight : 0;
   stats.losses += loss ? weight : 0;
@@ -1226,11 +1237,20 @@ export function refreshStats(stats) {
   const sourceTotals = weightedSourceTotals(stats);
   const recent = aggregateRecentOutcomes(stats);
 
-  const weightedCompleted = Math.max(
-    weightedCompletedCount(stats),
+  const actualCounts = actualOutcomeCounts(stats);
+
+  const closedCompleted = Math.max(
+    closedCompletedCount(stats),
     safeNumber(stats.completed, 0),
+    actualCounts.completed,
+    recent.actualCompleted
+  );
+
+  const weightedCompletedForR = Math.max(
+    weightedCompletedCount(stats),
     sourceCounts.completed,
-    recent.completed
+    recent.completed,
+    closedCompleted > 0 ? closedCompleted : 0
   );
 
   const weightedWins = Math.max(
@@ -1283,7 +1303,6 @@ export function refreshStats(stats) {
     totalR < 0 && weightedWins <= 0 ? Math.abs(totalR) : 0
   );
 
-  const actualCounts = actualOutcomeCounts(stats);
   const winrateSample = safeNumber(actualCounts.completed, 0);
   const winrateWins = safeNumber(actualCounts.wins, 0);
   const winrateFlats = safeNumber(actualCounts.flats, 0);
@@ -1302,12 +1321,12 @@ export function refreshStats(stats) {
 
   const reliability = sampleReliability(winrateSample);
 
-  const avgR = weightedCompleted > 0
-    ? totalR / weightedCompleted
+  const avgR = weightedCompletedForR > 0
+    ? totalR / weightedCompletedForR
     : 0;
 
-  const avgPnlPct = weightedCompleted > 0
-    ? totalPnlPct / weightedCompleted
+  const avgPnlPct = weightedCompletedForR > 0
+    ? totalPnlPct / weightedCompletedForR
     : 0;
 
   const avgWinR = weightedWins > 0
@@ -1323,40 +1342,40 @@ export function refreshStats(stats) {
     grossWinR > 0 ? 99 :
     0;
 
-  const directSLPct = weightedCompleted > 0
-    ? safeNumber(stats.directSLCount, 0) / weightedCompleted
+  const directSLPct = weightedCompletedForR > 0
+    ? safeNumber(stats.directSLCount, 0) / weightedCompletedForR
     : 0;
 
-  const nearTpPct = weightedCompleted > 0
-    ? safeNumber(stats.nearTpCount, 0) / weightedCompleted
+  const nearTpPct = weightedCompletedForR > 0
+    ? safeNumber(stats.nearTpCount, 0) / weightedCompletedForR
     : 0;
 
-  const reachedHalfRPct = weightedCompleted > 0
-    ? safeNumber(stats.reachedHalfRCount, 0) / weightedCompleted
+  const reachedHalfRPct = weightedCompletedForR > 0
+    ? safeNumber(stats.reachedHalfRCount, 0) / weightedCompletedForR
     : 0;
 
-  const reachedOneRPct = weightedCompleted > 0
-    ? safeNumber(stats.reachedOneRCount, 0) / weightedCompleted
+  const reachedOneRPct = weightedCompletedForR > 0
+    ? safeNumber(stats.reachedOneRCount, 0) / weightedCompletedForR
     : 0;
 
-  const beWouldExitPct = weightedCompleted > 0
-    ? safeNumber(stats.beWouldExitCount, 0) / weightedCompleted
+  const beWouldExitPct = weightedCompletedForR > 0
+    ? safeNumber(stats.beWouldExitCount, 0) / weightedCompletedForR
     : 0;
 
-  const gaveBackAfterHalfRPct = weightedCompleted > 0
-    ? safeNumber(stats.gaveBackAfterHalfRCount, 0) / weightedCompleted
+  const gaveBackAfterHalfRPct = weightedCompletedForR > 0
+    ? safeNumber(stats.gaveBackAfterHalfRCount, 0) / weightedCompletedForR
     : 0;
 
-  const gaveBackAfterOneRPct = weightedCompleted > 0
-    ? safeNumber(stats.gaveBackAfterOneRCount, 0) / weightedCompleted
+  const gaveBackAfterOneRPct = weightedCompletedForR > 0
+    ? safeNumber(stats.gaveBackAfterOneRCount, 0) / weightedCompletedForR
     : 0;
 
-  const nearTpThenLossPct = weightedCompleted > 0
-    ? safeNumber(stats.nearTpThenLossCount, 0) / weightedCompleted
+  const nearTpThenLossPct = weightedCompletedForR > 0
+    ? safeNumber(stats.nearTpThenLossCount, 0) / weightedCompletedForR
     : 0;
 
-  const avgCostR = weightedCompleted > 0
-    ? totalCostR / weightedCompleted
+  const avgCostR = weightedCompletedForR > 0
+    ? totalCostR / weightedCompletedForR
     : 0;
 
   const sampleAdjustedAvgRValue = sampleAdjustedAvgR(avgR, reliability);
@@ -1397,7 +1416,7 @@ export function refreshStats(stats) {
 
     source: stats.source || SOURCE_VIRTUAL,
 
-    completed: round4(weightedCompleted),
+    completed: round4(closedCompleted),
     winrateSample: round4(winrateSample),
 
     wins: round4(weightedWins),
@@ -1466,6 +1485,9 @@ export function refreshStats(stats) {
     balancedScore: round4(balancedScore),
     dashboardBalancedScore: round4(balancedScore),
 
+    tooEarly: closedCompleted < MIN_COMPLETED_ACTIVE,
+    minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE,
+
     updatedAt: now()
   });
 
@@ -1490,7 +1512,10 @@ export function normalizeDashboardMicro(row = {}, rank = null) {
     sampleAdjustedWinrate: stats.fairWinrate,
     sampleReliabilityOld: stats.sampleReliability,
 
-    dashboardBalancedScore: stats.balancedScore
+    dashboardBalancedScore: stats.balancedScore,
+
+    tooEarly: safeNumber(stats.completed, 0) < MIN_COMPLETED_ACTIVE,
+    minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE
   };
 
   applySideIdentity(normalized);
@@ -1506,7 +1531,7 @@ export function normalizeDashboardSummary(summary = {}) {
   const out = { ...summary };
 
   for (const key of ['bestBalanced', 'bestTotalR', 'bestWinrate', 'lowestDirectSL']) {
-    if (out[key] && typeof out[key] === 'object' && isShortRow(out[key])) {
+    if (out[key] && typeof out[key] === 'object' && isRealAnalyzeMicroRow(out[key])) {
       out[key] = normalizeDashboardMicro(out[key]);
     } else {
       out[key] = null;
@@ -1525,10 +1550,11 @@ function compareWinrate(a, b) {
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.wilsonLowerBound, 0) - safeNumber(a.wilsonLowerBound, 0) ||
     safeNumber(b.bayesianWinrate, 0) - safeNumber(a.bayesianWinrate, 0) ||
+    safeNumber(b.sampleReliability, 0) - safeNumber(a.sampleReliability, 0) ||
     safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
-    safeNumber(b.winrate, 0) - safeNumber(a.winrate, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    safeNumber(b.winrate, 0) - safeNumber(a.winrate, 0) ||
     sortById(a, b)
   );
 }
@@ -1537,8 +1563,9 @@ function compareAvgR(a, b) {
   return (
     safeNumber(b.avgRScore, 0) - safeNumber(a.avgRScore, 0) ||
     safeNumber(b.sampleAdjustedAvgR, 0) - safeNumber(a.sampleAdjustedAvgR, 0) ||
-    safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
+    safeNumber(b.sampleReliability, 0) - safeNumber(a.sampleReliability, 0) ||
+    safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
     sortById(a, b)
@@ -1547,48 +1574,61 @@ function compareAvgR(a, b) {
 
 function compareBalanced(a, b) {
   return (
+    safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
+      safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
     safeNumber(b.balancedScore, 0) - safeNumber(a.balancedScore, 0) ||
     compareWinrate(a, b)
   );
 }
 
 export function rankMicros(micros = {}, mode = 'balanced') {
+  const safeMode = mode === 'winrate'
+    ? 'balanced'
+    : String(mode || 'balanced');
+
   const rows = Object.values(micros || {})
     .filter(Boolean)
-    .filter(isShortRow)
+    .filter(isRealAnalyzeMicroRow)
     .map((row) => refreshStats(row))
-    .filter((row) => row.tradeSide === TARGET_TRADE_SIDE);
+    .filter((row) => row.tradeSide === TARGET_TRADE_SIDE)
+    .filter((row) => !isScannerFamilyId(row.microFamilyId))
+    .filter((row) => !isScannerFamilyId(row.trueMicroFamilyId));
 
   const sorted = [...rows].sort((a, b) => {
-    if (mode === 'winrate') {
-      return compareWinrate(a, b);
-    }
-
-    if (mode === 'totalR') {
+    if (safeMode === 'totalR') {
       return (
+        safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
+          safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
+        safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
         safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
-        compareWinrate(a, b)
+        safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+        sortById(a, b)
       );
     }
 
-    if (mode === 'avgR') {
+    if (safeMode === 'avgR') {
       return compareAvgR(a, b);
     }
 
-    if (mode === 'directSL') {
+    if (safeMode === 'directSL') {
       return (
         safeNumber(a.directSLPct, 0) - safeNumber(b.directSLPct, 0) ||
+        safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
+          safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
+        safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
         safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
-        compareBalanced(a, b)
+        sortById(a, b)
       );
     }
 
-    if (mode === 'observed') {
+    if (safeMode === 'observed') {
       return (
         safeNumber(b.seen, 0) - safeNumber(a.seen, 0) ||
         safeNumber(b.observations, 0) - safeNumber(a.observations, 0) ||
-        safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
-        compareBalanced(a, b)
+        safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
+          safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
+        safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
+        sortById(a, b)
       );
     }
 
