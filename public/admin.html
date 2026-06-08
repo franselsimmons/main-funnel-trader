@@ -21,7 +21,7 @@
       --amber: #d97706;
       --blue: #2563eb;
       --purple: #7c3aed;
-      --shadow-soft: 0 2px 10px rgba(15, 23, 42, 0.06);
+      --shadow: 0 2px 12px rgba(15, 23, 42, 0.07);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -29,11 +29,11 @@
 
     body {
       margin: 0;
+      color: var(--text);
       background:
         radial-gradient(circle at top left, rgba(220, 38, 38, 0.10), transparent 30%),
         radial-gradient(circle at top right, rgba(15, 23, 42, 0.12), transparent 32%),
         var(--bg);
-      color: var(--text);
     }
 
     button,
@@ -56,7 +56,7 @@
 
     button:hover:not(:disabled) {
       transform: translateY(-1px);
-      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.10);
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
     }
 
     button:disabled {
@@ -70,12 +70,7 @@
     button.warn { background: var(--amber); color: white; border-color: var(--amber); }
     button.danger { background: var(--red); color: white; border-color: var(--red); }
     button.short-action { background: var(--red); color: white; border-color: var(--red); }
-
-    button.small {
-      padding: 6px 9px;
-      border-radius: 9px;
-      font-size: 12px;
-    }
+    button.small { padding: 6px 9px; border-radius: 9px; font-size: 12px; }
 
     select,
     input,
@@ -88,14 +83,14 @@
       min-height: 42px;
     }
 
+    input[type="search"] { min-width: 340px; }
+
     textarea {
       width: 100%;
-      min-height: 92px;
+      min-height: 110px;
       resize: vertical;
       line-height: 1.45;
     }
-
-    input[type="search"] { min-width: 340px; }
 
     header {
       background: linear-gradient(135deg, #0f172a 0%, #111827 46%, #450a0a 100%);
@@ -213,7 +208,7 @@
       margin-bottom: 14px;
       border: 1px solid var(--border);
       background: white;
-      box-shadow: var(--shadow-soft);
+      box-shadow: var(--shadow);
       white-space: pre-wrap;
     }
 
@@ -242,19 +237,12 @@
       margin-bottom: 16px;
     }
 
-    .single-wide {
-      display: grid;
-      grid-template-columns: minmax(280px, 780px);
-      gap: 12px;
-      margin: 12px 0 14px;
-    }
-
     .card {
       background: rgba(255, 255, 255, 0.94);
       border: 1px solid var(--border);
       border-radius: 20px;
       padding: 16px;
-      box-shadow: var(--shadow-soft);
+      box-shadow: var(--shadow);
       margin-bottom: 14px;
     }
 
@@ -320,293 +308,6 @@
       margin: 12px 0 14px;
     }
 
-    .micro-connect-card {
-      position: relative;
-      overflow: hidden;
-      border-radius: 22px;
-      border: 1px solid var(--border);
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96));
-      box-shadow: var(--shadow-soft);
-      padding: 16px;
-    }
-
-    .micro-connect-card::before {
-      content: "";
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: 5px;
-      background: linear-gradient(90deg, #dc2626, #fb7185);
-    }
-
-    .micro-connect-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    .micro-connect-title { min-width: 0; }
-
-    .micro-connect-title h3 {
-      margin: 0 0 5px;
-      font-size: 16px;
-      letter-spacing: -0.02em;
-      color: var(--text);
-    }
-
-    .micro-connect-title p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .micro-connect-score {
-      text-align: right;
-      min-width: 88px;
-    }
-
-    .micro-connect-score strong {
-      display: block;
-      font-size: 24px;
-      line-height: 1;
-      letter-spacing: -0.04em;
-    }
-
-    .micro-connect-score span {
-      display: block;
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-    }
-
-    .micro-connect-id {
-      display: grid;
-      gap: 6px;
-      margin: 12px 0;
-    }
-
-    .micro-connect-id code {
-      display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 100%;
-    }
-
-    .micro-performance-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(110px, 1fr));
-      gap: 8px;
-      margin: 12px 0;
-    }
-
-    .micro-performance-stat {
-      border: 1px solid var(--border);
-      border-radius: 15px;
-      padding: 10px;
-      background: #ffffff;
-    }
-
-    .micro-performance-stat span {
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      margin-bottom: 4px;
-      font-weight: 700;
-    }
-
-    .micro-performance-stat strong {
-      display: block;
-      font-size: 15px;
-      letter-spacing: -0.02em;
-    }
-
-    .micro-connect-narrative {
-      border: 1px solid var(--border);
-      background: #f8fafc;
-      border-radius: 16px;
-      padding: 11px;
-      color: #334155;
-      font-size: 12px;
-      line-height: 1.5;
-      margin: 12px 0;
-    }
-
-    .micro-connect-actions {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin-top: 12px;
-    }
-
-    .micro-connect-route {
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.45;
-      margin-top: 8px;
-    }
-
-    .coin-card {
-      position: relative;
-      overflow: hidden;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-      border: 1px solid var(--border);
-      border-radius: 22px;
-      padding: 16px;
-      box-shadow: var(--shadow-soft);
-    }
-
-    .coin-card::before {
-      content: "";
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: 4px;
-      background: linear-gradient(90deg, #dc2626, #fb7185);
-    }
-
-    .coin-head {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 14px;
-    }
-
-    .coin-logo-wrap {
-      width: 42px;
-      height: 42px;
-      min-width: 42px;
-      border-radius: 999px;
-      overflow: hidden;
-      background: linear-gradient(135deg, #e2e8f0, #f8fafc);
-      border: 1px solid var(--border);
-      display: grid;
-      place-items: center;
-      position: relative;
-    }
-
-    .coin-logo-wrap.lg { width: 52px; height: 52px; min-width: 52px; }
-    .coin-logo-wrap.sm { width: 30px; height: 30px; min-width: 30px; }
-
-    .coin-logo-wrap img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-    }
-
-    .coin-logo-wrap.fallback::after {
-      content: attr(data-initial);
-      font-weight: 900;
-      font-size: 14px;
-      color: #334155;
-    }
-
-    .coin-main {
-      min-width: 0;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .coin-symbol {
-      font-weight: 850;
-      font-size: 16px;
-      letter-spacing: -0.02em;
-    }
-
-    .coin-name {
-      color: var(--muted);
-      font-size: 12px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 180px;
-    }
-
-    .coin-price {
-      margin-left: auto;
-      text-align: right;
-    }
-
-    .coin-price strong {
-      display: block;
-      font-size: 15px;
-    }
-
-    .coin-price span {
-      display: block;
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .coin-stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    .coin-stat {
-      background: #f8fafc;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 9px;
-    }
-
-    .coin-stat span {
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      margin-bottom: 3px;
-    }
-
-    .coin-stat strong { font-size: 13px; }
-
-    .coin-foot {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      margin-top: 12px;
-      overflow: hidden;
-    }
-
-    .coin-mini {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      min-width: 190px;
-    }
-
-    .coin-mini .coin-symbol { font-size: 14px; }
-    .coin-mini .coin-name { font-size: 11px; max-width: 140px; }
-
-    .id-stack {
-      display: grid;
-      gap: 4px;
-      min-width: 360px;
-    }
-
-    .id-stack code {
-      display: inline-block;
-      max-width: 520px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      vertical-align: middle;
-    }
-
-    .id-label {
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-
     .pill {
       display: inline-flex;
       align-items: center;
@@ -624,7 +325,6 @@
 
     .pill.active { background: #dcfce7; color: #166534; }
     .pill.short,
-    .pill.bear,
     .pill.danger { background: #fee2e2; color: #991b1b; }
     .pill.warn { background: #fef3c7; color: #92400e; }
     .pill.info { background: #dbeafe; color: #1d4ed8; }
@@ -656,14 +356,14 @@
       background: white;
       border: 1px solid var(--border);
       border-radius: 18px;
-      box-shadow: var(--shadow-soft);
+      box-shadow: var(--shadow);
       margin-bottom: 14px;
     }
 
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1320px;
+      min-width: 1280px;
       background: white;
     }
 
@@ -711,6 +411,147 @@
       line-height: 1.48;
     }
 
+    .empty {
+      padding: 22px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--border-strong);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.70);
+    }
+
+    .coin-card {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .coin-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      background: linear-gradient(90deg, #dc2626, #fb7185);
+    }
+
+    .coin-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .coin-symbol {
+      font-weight: 850;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .coin-name {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .coin-price {
+      text-align: right;
+    }
+
+    .coin-price strong {
+      display: block;
+      font-size: 16px;
+    }
+
+    .coin-price span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .coin-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .coin-stat {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 9px;
+    }
+
+    .coin-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+
+    .coin-stat strong { font-size: 13px; }
+
+    .coin-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      align-items: center;
+    }
+
+    .manual-card {
+      position: relative;
+      overflow: hidden;
+      border-radius: 22px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96));
+      box-shadow: var(--shadow);
+      padding: 16px;
+      max-width: 820px;
+    }
+
+    .manual-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 5px;
+      background: linear-gradient(90deg, #dc2626, #fb7185);
+    }
+
+    .manual-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .manual-stat {
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      padding: 10px;
+      background: #ffffff;
+    }
+
+    .manual-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+
+    .manual-stat strong {
+      display: block;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+
     .drawer {
       position: fixed;
       right: 0;
@@ -740,59 +581,22 @@
       word-break: break-word;
     }
 
-    .two-col {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-    }
-
-    .empty {
-      padding: 22px;
-      text-align: center;
-      color: var(--muted);
-      border: 1px dashed var(--border-strong);
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.70);
-    }
-
     @media (max-width: 1180px) {
       .grid,
       .coin-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
-
-      .grid-3,
-      .single-wide { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 720px) {
       header { padding: 18px 14px; }
-
       .header-inner { flex-direction: column; }
-
       main { padding: 14px; }
-
       .grid,
-      .coin-grid,
-      .two-col { grid-template-columns: 1fr; }
-
-      .tabs { gap: 7px; }
-
-      .tab {
-        flex: 1 1 auto;
-        padding: 9px 10px;
-      }
-
-      .brand-title strong { font-size: 20px; }
-
+      .coin-grid { grid-template-columns: 1fr; }
+      .tab { flex: 1 1 auto; padding: 9px 10px; }
       input[type="search"] { min-width: 100%; }
-
-      .coin-stats,
-      .micro-performance-grid { grid-template-columns: repeat(2, 1fr); }
-
-      .id-stack { min-width: 260px; }
-
-      .micro-connect-head { flex-direction: column; }
-
-      .micro-connect-score { text-align: left; }
+      .manual-grid,
+      .coin-stats { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -800,14 +604,12 @@
 <body>
   <header>
     <div class="header-inner">
-      <div>
-        <div class="brand-title">
-          <div class="brand-logo">MF</div>
-          <div>
-            <strong>Short-Only Micro-Family Learning Admin</strong>
-            <div class="brand-subtitle">
-              Scanner → TradeSystem → Analyze → Virtual PositionEngine → Net-R outcomes → Manual Discord selection
-            </div>
+      <div class="brand-title">
+        <div class="brand-logo">MF</div>
+        <div>
+          <strong>Short-Only Micro-Family Learning Admin</strong>
+          <div class="brand-subtitle">
+            Scanner → TradeSystem → Analyze → Virtual PositionEngine → Net-R outcomes → Manual Discord selection
           </div>
         </div>
       </div>
@@ -845,6 +647,7 @@
 
   <script>
     const ONLY_SIDE = "SHORT";
+    const OPPOSITE_SIDE = "LONG";
     const DASHBOARD_SIDE = "bear";
 
     const state = {
@@ -857,10 +660,9 @@
       discord: null,
       microMode: "balanced",
       microSearch: "",
-      microFetchLimit: 50,
-      microBestLimit: 50,
-      microSideLimit: 50,
-      apiTimeoutMs: 22000
+      apiTimeoutMs: 22000,
+      microLimit: 80,
+      bestLimit: 50
     };
 
     const endpoints = {
@@ -881,48 +683,6 @@
     const tabs = ["overview", "scanner", "trade", "micros", "rotation", "discord", "reset"];
     const validMicroModes = ["balanced", "winrate", "totalR", "avgR", "directSL", "observed"];
 
-    const COIN_NAMES = {
-      BTC: "Bitcoin",
-      ETH: "Ethereum",
-      SOL: "Solana",
-      XRP: "XRP",
-      BNB: "BNB",
-      DOGE: "Dogecoin",
-      ADA: "Cardano",
-      AVAX: "Avalanche",
-      LINK: "Chainlink",
-      DOT: "Polkadot",
-      TON: "Toncoin",
-      TRX: "TRON",
-      LTC: "Litecoin",
-      BCH: "Bitcoin Cash",
-      NEAR: "NEAR Protocol",
-      APT: "Aptos",
-      SUI: "Sui",
-      ARB: "Arbitrum",
-      OP: "Optimism",
-      INJ: "Injective",
-      ATOM: "Cosmos",
-      FIL: "Filecoin",
-      RUNE: "THORChain",
-      FET: "Fetch.ai",
-      RENDER: "Render",
-      RNDR: "Render",
-      PEPE: "Pepe",
-      SHIB: "Shiba Inu",
-      WIF: "dogwifhat",
-      BONK: "Bonk",
-      SEI: "Sei",
-      TIA: "Celestia",
-      JUP: "Jupiter",
-      PYTH: "Pyth Network",
-      UNI: "Uniswap",
-      AAVE: "Aave",
-      MKR: "Maker",
-      CRV: "Curve DAO",
-      LDO: "Lido DAO"
-    };
-
     const $ = (id) => document.getElementById(id);
 
     class ApiError extends Error {
@@ -932,7 +692,6 @@
         this.status = details.status || 0;
         this.url = details.url || "";
         this.data = details.data || null;
-        this.raw = details.raw || "";
         this.timeout = Boolean(details.timeout);
       }
     }
@@ -954,98 +713,204 @@
       return String(value || "").trim().toUpperCase();
     }
 
-    function cleanSideHaystack(value = "") {
+    function cleanSideText(value = "") {
       return upper(value)
         .replaceAll("LONG_DISABLED", "")
         .replaceAll("LONGDISABLED", "")
         .replaceAll("BLOCK_LONG", "")
         .replaceAll("LONG_ENABLED_FALSE", "")
+        .replaceAll("LONG_ONLY_FALSE", "")
+        .replaceAll("SHORT_DISABLED_FALSE", "")
         .replaceAll("SHORT_ONLY", "SHORT")
-        .replaceAll("SHORT-ONLY", "SHORT")
-        .replaceAll("SHORT_ONLY_MODE", "SHORT");
+        .replaceAll("SHORT-ONLY", "SHORT");
     }
 
-    function normalizeSide(side) {
-      const s = cleanSideHaystack(side);
+    function normalizeSide(value) {
+      const raw = cleanSideText(value);
 
-      if (["LONG", "BULL", "BULLISH", "BUY"].includes(s)) return "LONG";
-      if (["SHORT", "BEAR", "BEARISH", "SELL"].includes(s)) return "SHORT";
+      if (["SHORT", "BEAR", "BEARISH", "SELL", "DOWN", "DOWNSIDE"].includes(raw)) return ONLY_SIDE;
+      if (["LONG", "BULL", "BULLISH", "BUY", "UP", "UPSIDE"].includes(raw)) return OPPOSITE_SIDE;
 
-      return s || "NA";
+      return "UNKNOWN";
     }
 
-    function shortIdHit(text = "") {
-      const value = ` ${cleanSideHaystack(text)} `;
+    function hasShortSignal(value = "") {
+      const text = ` ${cleanSideText(value)} `;
 
       return (
-        value.includes("MICRO_SHORT_") ||
-        value.includes("TRADESIDE=SHORT") ||
-        value.includes("TRADE_SIDE=SHORT") ||
-        value.includes("SIDE=SHORT") ||
-        value.includes("SIDE=BEAR") ||
-        value.includes("DIRECTION=SHORT") ||
-        value.includes("DIRECTION=BEAR") ||
-        value.includes("POSITION_SIDE=SHORT") ||
-        value.includes("POSITIONSIDE=SHORT") ||
-        value.includes("SIDE=SELL") ||
-        value.includes("DIRECTION=SELL") ||
-        value.includes(" SHORT ") ||
-        value.includes(" SHORT_") ||
-        value.includes("_SHORT ") ||
-        value.includes("_SHORT_") ||
-        value.includes("|SHORT|") ||
-        value.includes(":SHORT") ||
-        value.includes("=SHORT") ||
-        value.includes(" BEAR ") ||
-        value.includes("_BEAR") ||
-        value.includes("BEAR_") ||
-        value.includes("|BEAR|") ||
-        value.includes(":BEAR") ||
-        value.includes("=BEAR") ||
-        value.includes(" SELL ") ||
-        value.includes("_SELL") ||
-        value.includes("SELL_") ||
-        value.includes("|SELL|") ||
-        value.includes(":SELL") ||
-        value.includes("=SELL")
+        text.includes("MICRO_SHORT_") ||
+        text.includes("TRADESIDE=SHORT") ||
+        text.includes("TRADE_SIDE=SHORT") ||
+        text.includes("POSITION_SIDE=SHORT") ||
+        text.includes("POSITIONSIDE=SHORT") ||
+        text.includes("SIDE=SHORT") ||
+        text.includes("SIDE=BEAR") ||
+        text.includes("SIDE=SELL") ||
+        text.includes("DIRECTION=SHORT") ||
+        text.includes("DIRECTION=BEAR") ||
+        text.includes("DIRECTION=SELL") ||
+        text.includes(" SHORT ") ||
+        text.includes(" SHORT_") ||
+        text.includes("_SHORT ") ||
+        text.includes("_SHORT_") ||
+        text.includes("|SHORT|") ||
+        text.includes(":SHORT") ||
+        text.includes("=SHORT") ||
+        text.includes(" BEAR ") ||
+        text.includes("_BEAR") ||
+        text.includes("BEAR_") ||
+        text.includes("|BEAR|") ||
+        text.includes(":BEAR") ||
+        text.includes("=BEAR") ||
+        text.includes(" SELL ") ||
+        text.includes("_SELL") ||
+        text.includes("SELL_") ||
+        text.includes("|SELL|") ||
+        text.includes(":SELL") ||
+        text.includes("=SELL")
       );
     }
 
-    function longIdHit(text = "") {
-      const value = ` ${cleanSideHaystack(text)} `;
+    function hasLongSignal(value = "") {
+      const text = ` ${cleanSideText(value)} `;
 
       return (
-        value.includes("MICRO_LONG_") ||
-        value.includes("TRADESIDE=LONG") ||
-        value.includes("TRADE_SIDE=LONG") ||
-        value.includes("SIDE=LONG") ||
-        value.includes("SIDE=BULL") ||
-        value.includes("DIRECTION=LONG") ||
-        value.includes("DIRECTION=BULL") ||
-        value.includes("POSITION_SIDE=LONG") ||
-        value.includes("POSITIONSIDE=LONG") ||
-        value.includes("SIDE=BUY") ||
-        value.includes("DIRECTION=BUY") ||
-        value.includes(" LONG ") ||
-        value.includes(" LONG_") ||
-        value.includes("_LONG ") ||
-        value.includes("_LONG_") ||
-        value.includes("|LONG|") ||
-        value.includes(":LONG") ||
-        value.includes("=LONG") ||
-        value.includes(" BULL ") ||
-        value.includes("_BULL") ||
-        value.includes("BULL_") ||
-        value.includes("|BULL|") ||
-        value.includes(":BULL") ||
-        value.includes("=BULL") ||
-        value.includes(" BUY ") ||
-        value.includes("_BUY") ||
-        value.includes("BUY_") ||
-        value.includes("|BUY|") ||
-        value.includes(":BUY") ||
-        value.includes("=BUY")
+        text.includes("MICRO_LONG_") ||
+        text.includes("TRADESIDE=LONG") ||
+        text.includes("TRADE_SIDE=LONG") ||
+        text.includes("POSITION_SIDE=LONG") ||
+        text.includes("POSITIONSIDE=LONG") ||
+        text.includes("SIDE=LONG") ||
+        text.includes("SIDE=BULL") ||
+        text.includes("SIDE=BUY") ||
+        text.includes("DIRECTION=LONG") ||
+        text.includes("DIRECTION=BULL") ||
+        text.includes("DIRECTION=BUY") ||
+        text.includes(" LONG ") ||
+        text.includes(" LONG_") ||
+        text.includes("_LONG ") ||
+        text.includes("_LONG_") ||
+        text.includes("|LONG|") ||
+        text.includes(":LONG") ||
+        text.includes("=LONG") ||
+        text.includes(" BULL ") ||
+        text.includes("_BULL") ||
+        text.includes("BULL_") ||
+        text.includes("|BULL|") ||
+        text.includes(":BULL") ||
+        text.includes("=BULL") ||
+        text.includes(" BUY ") ||
+        text.includes("_BUY") ||
+        text.includes("BUY_") ||
+        text.includes("|BUY|") ||
+        text.includes(":BUY") ||
+        text.includes("=BUY")
       );
+    }
+
+    function inferSide(input = {}) {
+      if (typeof input === "string") {
+        const direct = normalizeSide(input);
+        if (direct !== "UNKNOWN") return direct;
+
+        const shortSignal = hasShortSignal(input);
+        const longSignal = hasLongSignal(input);
+
+        if (longSignal && !shortSignal) return OPPOSITE_SIDE;
+        if (shortSignal) return ONLY_SIDE;
+
+        return "UNKNOWN";
+      }
+
+      if (!input || typeof input !== "object") return "UNKNOWN";
+
+      const directFields = [
+        input.tradeSide,
+        input.targetTradeSide,
+        input.positionSide,
+        input.direction,
+        input.scannerSide,
+        input.actualScannerSide,
+        input.analysisSide,
+        input.signalSide,
+        input.entrySide,
+        input.dashboardSide,
+        input.side,
+        input.bias,
+        input.marketBias
+      ];
+
+      for (const field of directFields) {
+        const direct = normalizeSide(field);
+
+        if (direct !== "UNKNOWN") return direct;
+      }
+
+      const haystack = [
+        input.familyId,
+        input.family,
+        input.baseFamilyId,
+
+        input.microFamilyId,
+        input.trueMicroFamilyId,
+        input.liveMicroFamilyId,
+        input.realMicroFamilyId,
+        input.executionMicroFamilyId,
+        input.id,
+        input.key,
+
+        input.macroFamilyId,
+        input.parentMacroFamilyId,
+        input.parentMicroFamilyId,
+        input.parentFamilyId,
+        input.macroId,
+
+        input.definition,
+        input.microDefinition,
+        input.macroDefinition,
+        input.parentDefinition,
+
+        input.scannerReason,
+        input.reason,
+        input.signalReason,
+        input.actionReason,
+        input.exitReason,
+        input.rejectionReason,
+
+        Array.isArray(input.definitionParts) ? input.definitionParts.join("|") : "",
+        Array.isArray(input.microDefinitionParts) ? input.microDefinitionParts.join("|") : "",
+        Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts.join("|") : "",
+        Array.isArray(input.parentDefinitionParts) ? input.parentDefinitionParts.join("|") : "",
+        Array.isArray(input.executionFingerprintParts) ? input.executionFingerprintParts.join("|") : ""
+      ].join(" | ");
+
+      const shortSignal = hasShortSignal(haystack);
+      const longSignal = hasLongSignal(haystack);
+
+      if (longSignal && !shortSignal) return OPPOSITE_SIDE;
+      if (shortSignal) return ONLY_SIDE;
+
+      if (input.longOnly === true || input.shortDisabled === true) return OPPOSITE_SIDE;
+
+      if (
+        input.shortOnly === true ||
+        input.longDisabled === true ||
+        input.targetTradeSide === ONLY_SIDE ||
+        input.tradeSide === ONLY_SIDE ||
+        input.dashboardSide === DASHBOARD_SIDE
+      ) {
+        return ONLY_SIDE;
+      }
+
+      return "UNKNOWN";
+    }
+
+    function isShortRow(row = {}) {
+      return inferSide(row) === ONLY_SIDE;
+    }
+
+    function isLongRow(row = {}) {
+      return inferSide(row) === OPPOSITE_SIDE;
     }
 
     function idAllowedInShortOnly(id = "") {
@@ -1053,221 +918,32 @@
 
       if (!value) return false;
 
-      const shortHit = shortIdHit(value);
-      const longHit = longIdHit(value);
+      const side = inferSide(value);
 
-      if (longHit && !shortHit) return false;
-
-      return true;
+      return side !== OPPOSITE_SIDE;
     }
 
-    function rowSide(row = {}) {
-      if (typeof row === "string") {
-        const direct = normalizeSide(row);
-
-        if (direct === "SHORT" || direct === "LONG") return direct;
-
-        const shortHit = shortIdHit(row);
-        const longHit = longIdHit(row);
-
-        if (longHit && !shortHit) return "LONG";
-        if (shortHit) return "SHORT";
-
-        return "NA";
-      }
-
-      const directFields = [
-        row.tradeSide,
-        row.targetTradeSide,
-        row.positionSide,
-        row.direction,
-        row.scannerSide,
-        row.actualScannerSide,
-        row.analysisSide,
-        row.signalSide,
-        row.entrySide,
-        row.dashboardSide,
-        row.side,
-        row.bias,
-        row.marketBias
-      ];
-
-      for (const value of directFields) {
-        const normalized = normalizeSide(value);
-
-        if (normalized === "SHORT") return "SHORT";
-        if (normalized === "LONG") return "LONG";
-      }
-
-      const probe = [
-        row.microFamilyId,
-        row.trueMicroFamilyId,
-        row.liveMicroFamilyId,
-        row.realMicroFamilyId,
-        row.executionMicroFamilyId,
-        row.id,
-        row.key,
-        row.coarseMicroFamilyId,
-        row.baseMicroFamilyId,
-        row.legacyMicroFamilyId,
-
-        row.macroFamilyId,
-        row.parentMacroFamilyId,
-        row.parentMicroFamilyId,
-        row.parentFamilyId,
-        row.macroId,
-
-        row.familyId,
-        row.family,
-        row.baseFamilyId,
-
-        row.definition,
-        row.microDefinition,
-        row.macroDefinition,
-        row.parentDefinition,
-        row.scannerReason,
-        row.reason,
-        row.signalReason,
-        row.actionReason,
-        row.exitReason,
-
-        Array.isArray(row.definitionParts) ? row.definitionParts.join("|") : "",
-        Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts.join("|") : "",
-        Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts.join("|") : "",
-        Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts.join("|") : "",
-        Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts.join("|") : ""
-      ].join(" | ");
-
-      const hasShort = shortIdHit(probe);
-      const hasLong = longIdHit(probe);
-
-      if (hasLong && !hasShort) return "LONG";
-      if (hasShort) return "SHORT";
-
-      if (
-        row.shortOnly === true ||
-        row.longDisabled === true ||
-        row.targetTradeSide === "SHORT" ||
-        row.dashboardSide === "bear"
-      ) {
-        return "SHORT";
-      }
-
-      return "NA";
+    function uniqueStrings(values = []) {
+      return [...new Set(
+        (Array.isArray(values) ? values : [values])
+          .flatMap((value) => Array.isArray(value) ? value : [value])
+          .flatMap((value) => String(value || "").split(/[\s,;\n\r]+/g))
+          .map((value) => value.trim())
+          .filter(Boolean)
+      )];
     }
 
-    function isShortRow(row = {}) {
-      return rowSide(row) === ONLY_SIDE;
+    function asArray(value) {
+      if (Array.isArray(value)) return value;
+      if (value && typeof value === "object") return Object.values(value);
+
+      return [];
     }
 
-    function sideClass(side) {
-      const s = normalizeSide(side);
+    function num(value, fallback = 0) {
+      const n = Number(value);
 
-      if (s === "SHORT") return "short";
-
-      return "neutral";
-    }
-
-    function rowSideClass(row = {}) {
-      return sideClass(rowSide(row));
-    }
-
-    function rowSideLabel(row = {}) {
-      return rowSide(row);
-    }
-
-    function baseSymbol(input) {
-      const raw = typeof input === "string"
-        ? input
-        : input?.symbol || input?.baseSymbol || input?.coin || input?.contractSymbol || "";
-
-      let symbol = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-      const suffixes = [
-        "USDTUMCBL",
-        "USDCUMCBL",
-        "USDTPERP",
-        "USDCPERP",
-        "USDT",
-        "USDC",
-        "BUSD",
-        "PERP",
-        "SWAP",
-        "USD"
-      ];
-
-      for (const suffix of suffixes) {
-        if (symbol.endsWith(suffix) && symbol.length > suffix.length) {
-          symbol = symbol.slice(0, -suffix.length);
-          break;
-        }
-      }
-
-      return symbol || "COIN";
-    }
-
-    function coinName(row) {
-      const symbol = baseSymbol(row);
-
-      return row?.name ||
-        row?.coinName ||
-        row?.fullName ||
-        row?.assetName ||
-        COIN_NAMES[symbol] ||
-        symbol;
-    }
-
-    function coinLogo(row) {
-      const direct =
-        row?.logo ||
-        row?.image ||
-        row?.icon ||
-        row?.iconUrl ||
-        row?.logoUrl ||
-        row?.coinLogo ||
-        row?.marketData?.image ||
-        row?.market?.image;
-
-      if (direct) return direct;
-
-      const symbol = baseSymbol(row).toLowerCase();
-
-      return `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${symbol}.png`;
-    }
-
-    function handleCoinLogoError(img) {
-      const parent = img?.parentElement;
-
-      if (!parent) return;
-
-      parent.classList.add("fallback");
-      img.remove();
-    }
-
-    window.handleCoinLogoError = handleCoinLogoError;
-
-    function coinAvatar(row, size = "") {
-      const symbol = baseSymbol(row);
-      const name = coinName(row);
-      const logo = coinLogo(row);
-      const initial = symbol.slice(0, 1) || "?";
-
-      return `
-        <div class="coin-mini">
-          <span class="coin-logo-wrap ${escapeAttr(size)}" data-initial="${escapeAttr(initial)}">
-            <img
-              src="${escapeAttr(logo)}"
-              alt="${escapeAttr(symbol)}"
-              loading="lazy"
-              onerror="handleCoinLogoError(this)"
-            />
-          </span>
-          <span class="coin-main">
-            <span class="coin-symbol">${escapeHtml(symbol)}</span>
-            <span class="coin-name">${escapeHtml(name)}</span>
-          </span>
-        </div>
-      `;
+      return Number.isFinite(n) ? n : fallback;
     }
 
     function fmt(value, decimals = 3) {
@@ -1286,7 +962,7 @@
       return Math.round(n).toLocaleString();
     }
 
-    function fmtPctRatio(value) {
+    function fmtPct(value) {
       const n = Number(value);
 
       if (!Number.isFinite(n)) return "-";
@@ -1294,7 +970,7 @@
       return `${(n * 100).toFixed(1)}%`;
     }
 
-    function fmtPctRaw(value) {
+    function fmtRawPct(value) {
       const n = Number(value);
 
       if (!Number.isFinite(n)) return "-";
@@ -1312,7 +988,7 @@
       return n.toLocaleString(undefined, { maximumFractionDigits: 8 });
     }
 
-    function fmtMoneyLike(value) {
+    function fmtMoney(value) {
       const n = Number(value);
 
       if (!Number.isFinite(n)) return "-";
@@ -1335,22 +1011,85 @@
     }
 
     function ageText(ts) {
-      if (!ts) return "-";
-
       const n = Number(ts);
 
-      if (!Number.isFinite(n)) return "-";
+      if (!Number.isFinite(n) || n <= 0) return "-";
 
-      const sec = Math.max(0, Math.floor((Date.now() - n) / 1000));
+      const seconds = Math.max(0, Math.floor((Date.now() - n) / 1000));
 
-      if (sec < 60) return `${sec}s geleden`;
-      if (sec < 3600) return `${Math.floor(sec / 60)}m geleden`;
+      if (seconds < 60) return `${seconds}s geleden`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m geleden`;
 
-      return `${Math.floor(sec / 3600)}u geleden`;
+      return `${Math.floor(seconds / 3600)}u geleden`;
     }
 
-    function boolText(value) {
-      return value ? "YES" : "NO";
+    function baseSymbol(row = {}) {
+      const raw = typeof row === "string"
+        ? row
+        : row.symbol || row.baseSymbol || row.coin || row.contractSymbol || row.instId || row.instrumentId || "";
+
+      let symbol = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+      for (const suffix of ["USDTUMCBL", "USDCUMCBL", "USDTPERP", "USDCPERP", "USDT", "USDC", "BUSD", "PERP", "SWAP", "USD"]) {
+        if (symbol.endsWith(suffix) && symbol.length > suffix.length) {
+          symbol = symbol.slice(0, -suffix.length);
+          break;
+        }
+      }
+
+      return symbol || "COIN";
+    }
+
+    function microId(row = {}) {
+      return row.microFamilyId || row.trueMicroFamilyId || row.liveMicroFamilyId || row.realMicroFamilyId || row.executionMicroFamilyId || row.id || row.key || "";
+    }
+
+    function macroId(row = {}) {
+      return row.macroFamilyId || row.parentMacroFamilyId || row.parentMicroFamilyId || row.parentFamilyId || row.macroId || row.familyId || "";
+    }
+
+    function familyId(row = {}) {
+      return row.familyId || row.family || row.baseFamilyId || "";
+    }
+
+    function completed(row = {}) {
+      const outcome = Number(row.outcomeSample);
+      if (Number.isFinite(outcome)) return outcome;
+
+      const wins = num(row.wins ?? row.realWins, 0);
+      const losses = num(row.losses ?? row.realLosses, 0);
+      const flats = num(row.flats ?? row.realFlats, 0);
+      const sum = wins + losses + flats;
+
+      if (sum > 0) return sum;
+
+      return num(row.completed ?? row.realCompleted, 0);
+    }
+
+    function observationSample(row = {}) {
+      return Math.max(
+        num(row.observationSample, 0),
+        num(row.seen, 0),
+        num(row.observations, 0),
+        completed(row),
+        0
+      );
+    }
+
+    function tier(row = {}) {
+      return String(row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || row.tier || "").toUpperCase();
+    }
+
+    function tierPill(value) {
+      const t = String(value || "NA").toUpperCase();
+
+      if (t === "HARD") return '<span class="pill active">HARD</span>';
+      if (t === "SOFT") return '<span class="pill soft">SOFT</span>';
+      if (t === "OBSERVATION") return '<span class="pill observation">OBSERVATION</span>';
+      if (t === "RAW") return '<span class="pill raw">RAW</span>';
+      if (t === "MANUAL") return '<span class="pill purple">MANUAL</span>';
+
+      return `<span class="pill">${escapeHtml(t)}</span>`;
     }
 
     function jsonBlock(data) {
@@ -1358,12 +1097,9 @@
     }
 
     function setMessage(message = "", type = "") {
-      if (!message) {
-        $("message").innerHTML = "";
-        return;
-      }
-
-      $("message").innerHTML = `<div class="message ${escapeAttr(type)}">${escapeHtml(message)}</div>`;
+      $("message").innerHTML = message
+        ? `<div class="message ${escapeAttr(type)}">${escapeHtml(message)}</div>`
+        : "";
     }
 
     function showLoading(tabId, label = "Laden...") {
@@ -1375,48 +1111,16 @@
       `;
     }
 
-    function getArrayRows(data, keys = []) {
-      if (Array.isArray(data)) return data;
-
-      for (const key of keys) {
-        if (Array.isArray(data?.[key])) return data[key];
-      }
-
-      if (Array.isArray(data?.rows)) return data.rows;
-      if (Array.isArray(data?.items)) return data.items;
-      if (Array.isArray(data?.data)) return data.data;
-
-      return [];
-    }
-
-    function errorReason(data, fallback = "REQUEST_FAILED") {
-      const raw = data?.error || data?.reason || data?.message || fallback;
-
-      if (typeof raw === "string") return raw;
-      if (raw && typeof raw === "object") return JSON.stringify(raw);
-
-      return String(raw || fallback);
-    }
-
     function friendlyApiMessage(error) {
+      if (error?.timeout) return "API-timeout: request is afgebroken door de admin UI.";
+
       const status = Number(error?.status || 0);
       const raw = String(error?.message || error || "");
 
-      if (error?.timeout) {
-        return "API-timeout: request is afgebroken door de admin UI.";
-      }
-
-      if (status === 504 || raw.includes("504") || raw.toLowerCase().includes("deployment")) {
-        return "Backend timeout op deze admin-route.";
-      }
-
-      if (status === 500) {
-        return "Backend error op deze admin-route. Check server logs voor stacktrace.";
-      }
-
-      if (status === 404) {
-        return "Admin endpoint niet gevonden of gevraagde SHORT family bestaat niet.";
-      }
+      if (status === 409 || raw.includes("LOCK")) return "Lock actief. Vorige run is nog bezig.";
+      if (status === 504 || raw.includes("504")) return "Backend timeout op deze admin-route.";
+      if (status === 500) return "Backend error op deze admin-route. Check server logs.";
+      if (status === 404) return "Endpoint of micro-family detail niet gevonden.";
 
       return raw || "Onbekende API fout.";
     }
@@ -1432,16 +1136,16 @@
     }
 
     async function api(url, options = {}) {
+      const timeout = timeoutSignal(options.timeoutMs || state.apiTimeoutMs);
+
       const headers = {
         accept: "application/json",
         ...(options.headers || {})
       };
 
-      if (options.body !== undefined && options.body !== null && !headers["content-type"]) {
+      if (options.body !== undefined && !headers["content-type"]) {
         headers["content-type"] = "application/json";
       }
-
-      const timeout = timeoutSignal(options.timeoutMs || state.apiTimeoutMs);
 
       try {
         const response = await fetch(url, {
@@ -1462,15 +1166,11 @@
         }
 
         if (!response.ok) {
-          throw new ApiError(
-            `${response.status} ${errorReason(data, response.statusText)}`,
-            {
-              status: response.status,
-              url,
-              data,
-              raw: rawText
-            }
-          );
+          throw new ApiError(`${response.status} ${data.error || data.reason || response.statusText}`, {
+            status: response.status,
+            url,
+            data
+          });
         }
 
         return data;
@@ -1494,20 +1194,36 @@
       }
     }
 
+    function metricCard(label, value, extra = "") {
+      return `
+        <div class="card metric-card">
+          <div class="metric-label">${escapeHtml(label)}</div>
+          <div>
+            <div class="metric-value">${escapeHtml(value)}</div>
+            ${extra ? `<div class="metric-extra">${escapeHtml(extra)}</div>` : ""}
+          </div>
+        </div>
+      `;
+    }
+
+    function scoreBar(value, max = 100) {
+      const width = Math.max(0, Math.min(100, (Number(value) / max) * 100 || 0));
+
+      return `<div class="score-bar"><span style="--w:${width.toFixed(1)}%"></span></div>`;
+    }
+
     function table(rows, cols, emptyText = "Geen data.") {
       if (!Array.isArray(rows) || rows.length === 0) {
         return `<div class="empty">${escapeHtml(emptyText)}</div>`;
       }
 
-      const head = cols
-        .map((column) => `<th>${escapeHtml(column.label)}</th>`)
-        .join("");
+      const head = cols.map((col) => `<th>${escapeHtml(col.label)}</th>`).join("");
 
       const body = rows.map((row, index) => {
-        const cells = cols.map((column) => {
-          const value = column.render
-            ? column.render(row, index)
-            : escapeHtml(row?.[column.key]);
+        const cells = cols.map((col) => {
+          const value = col.render
+            ? col.render(row, index)
+            : escapeHtml(row?.[col.key]);
 
           return `<td>${value}</td>`;
         }).join("");
@@ -1525,250 +1241,55 @@
       `;
     }
 
-    function metricCard(label, value, extra = "") {
-      return `
-        <div class="card metric-card">
-          <div class="metric-label">${escapeHtml(label)}</div>
-          <div>
-            <div class="metric-value">${escapeHtml(value)}</div>
-            ${extra ? `<div class="metric-extra">${escapeHtml(extra)}</div>` : ""}
-          </div>
-        </div>
-      `;
-    }
-
-    function scoreBar(value, max = 100) {
-      const n = Math.max(0, Math.min(100, (Number(value) / max) * 100 || 0));
-
-      return `<div class="score-bar"><span style="--w:${n.toFixed(1)}%"></span></div>`;
-    }
-
-    function uniqueStrings(values = []) {
-      return [...new Set(
-        (Array.isArray(values) ? values : [values])
-          .flatMap((value) => {
-            if (Array.isArray(value)) return value;
-
-            return String(value || "")
-              .split(/[\s,;\n\r]+/g)
-              .map((part) => part.trim());
-          })
-          .map((value) => String(value || "").trim())
-          .filter(Boolean)
-      )];
-    }
-
-    function microId(row = {}) {
-      return row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || "";
-    }
-
-    function macroId(row = {}) {
-      return (
-        row?.macroFamilyId ||
-        row?.parentMacroFamilyId ||
-        row?.parentMicroFamilyId ||
-        row?.parentFamilyId ||
-        row?.macroId ||
-        row?.legacyMicroFamilyId ||
-        row?.coarseMicroFamilyId ||
-        row?.familyMacroId ||
-        row?.familyId ||
-        ""
-      );
-    }
-
-    function familyId(row = {}) {
-      return row?.familyId || row?.family || row?.baseFamilyId || "";
-    }
-
-    function microCompleted(row = {}) {
-      const explicitOutcome = Number(row.outcomeSample);
-
-      if (Number.isFinite(explicitOutcome)) return explicitOutcome;
-
-      const real = Number(row.realCompleted || 0);
-      const shadow = Number(row.shadowCompleted || 0);
-      const explicit = real + shadow;
-
-      if (explicit > 0) return explicit;
-
-      const completed = Number(row.completed);
-
-      return Number.isFinite(completed) ? completed : 0;
-    }
-
-    function microObservationSample(row = {}) {
-      const values = [
-        row.observationSample,
-        row.seen,
-        row.observations,
-        row.winrateSample,
-        microCompleted(row)
-      ].map(Number).filter(Number.isFinite);
-
-      return values.length ? Math.max(...values, 0) : 0;
-    }
-
-    function looksLikeMicroRow(row = {}) {
-      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
-
-      const id = upper(
-        row.microFamilyId ||
-        row.trueMicroFamilyId ||
-        row.id ||
-        row.key ||
-        ""
-      );
-
-      const macro = upper(
-        row.parentMacroFamilyId ||
-        row.parentMicroFamilyId ||
-        row.macroFamilyId ||
-        row.parentFamilyId ||
-        ""
-      );
-
-      const family = upper(row.familyId || row.family || "");
-
-      if (id && (id.includes("MICRO_") || shortIdHit(id) || longIdHit(id))) return true;
-      if (macro && (macro.includes("MICRO_") || shortIdHit(macro) || longIdHit(macro))) return true;
-      if (family && (family.startsWith("SHORT_") || family.startsWith("LONG_"))) return true;
-
-      return (
-        row.definition !== undefined ||
-        row.definitionParts !== undefined ||
-        row.microDefinitionParts !== undefined ||
-        row.completed !== undefined ||
-        row.outcomeSample !== undefined ||
-        row.observationSample !== undefined ||
-        row.seen !== undefined ||
-        row.observations !== undefined ||
-        row.winrate !== undefined ||
-        row.fairWinrate !== undefined ||
-        row.balancedScore !== undefined ||
-        row.dashboardBalancedScore !== undefined
-      );
-    }
-
-    function rowsFromMicroContainer(value) {
-      if (!value) return [];
-
-      if (Array.isArray(value)) {
-        return value.filter(looksLikeMicroRow);
-      }
-
-      if (typeof value !== "object") return [];
-
-      if (looksLikeMicroRow(value)) {
-        return [value];
-      }
-
-      const rows = [];
-
-      for (const [key, row] of Object.entries(value)) {
-        if (!row || typeof row !== "object" || Array.isArray(row)) continue;
-
-        const normalized = {
-          ...row,
-          microFamilyId: row.microFamilyId || row.trueMicroFamilyId || key,
-          trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || key
-        };
-
-        if (looksLikeMicroRow(normalized)) rows.push(normalized);
-      }
-
-      return rows;
-    }
-
-    function pushUniqueRows(target, rows = []) {
-      const seen = new Set(target.map((row) => (
-        microId(row) ||
-        `${macroId(row)}:${familyId(row)}:${row.rank || ""}`
-      )));
-
-      for (const row of rows) {
-        const key = microId(row) || `${macroId(row)}:${familyId(row)}:${row.rank || target.length}`;
-
-        if (!key || seen.has(key)) continue;
-
-        seen.add(key);
-        target.push(row);
-      }
-
-      return target;
-    }
-
-    function sanitizeShortRows(rows = []) {
+    function shortRows(rows = []) {
       return (Array.isArray(rows) ? rows : [])
         .filter(Boolean)
-        .filter((row) => {
-          const id = microId(row);
-          if (id && longIdHit(id) && !shortIdHit(id)) return false;
-
-          return isShortRow(row);
-        });
+        .filter((row) => !isLongRow(row))
+        .filter(isShortRow);
     }
 
-    function extractMicroRowsByKeys(data = {}, keys = []) {
+    function extractRows(data, keys = []) {
       const rows = [];
-
-      if (!data || typeof data !== "object") return rows;
 
       for (const key of keys) {
-        pushUniqueRows(rows, rowsFromMicroContainer(data[key]));
+        if (Array.isArray(data?.[key])) rows.push(...data[key]);
       }
 
-      const nestedObjects = [
-        data.data,
-        data.result,
-        data.payload,
-        data.current,
-        data.currentWeek,
-        data.week,
-        data.dashboard,
-        data.summary,
-        data.rankings,
-        data.allRankings,
-        data.byMode,
-        data.modes
-      ];
-
-      for (const nested of nestedObjects) {
-        if (!nested || typeof nested !== "object") continue;
-
-        for (const key of keys) {
-          pushUniqueRows(rows, rowsFromMicroContainer(nested[key]));
-        }
-
-        pushUniqueRows(rows, rowsFromMicroContainer(nested[state.microMode]));
-        pushUniqueRows(rows, rowsFromMicroContainer(nested.balanced));
-        pushUniqueRows(rows, rowsFromMicroContainer(nested.rows));
-        pushUniqueRows(rows, rowsFromMicroContainer(nested.microFamilies));
-        pushUniqueRows(rows, rowsFromMicroContainer(nested.micros));
-      }
-
-      return rows;
+      return shortRows(rows);
     }
 
-    function extractMicroRowsDeep(data = {}, maxDepth = 5) {
-      const rows = [];
-      const visited = new Set();
+    function extractDeepMicroRows(data) {
+      const output = [];
+      const seenObjects = new Set();
+      const seenIds = new Set();
+
+      function add(row) {
+        const id = microId(row);
+
+        if (!id || seenIds.has(id)) return;
+        if (!isShortRow(row)) return;
+
+        seenIds.add(id);
+        output.push(row);
+      }
 
       function walk(value, depth = 0) {
-        if (!value || typeof value !== "object") return;
-        if (depth > maxDepth) return;
-        if (visited.has(value)) return;
+        if (!value || typeof value !== "object" || depth > 5) return;
+        if (seenObjects.has(value)) return;
 
-        visited.add(value);
+        seenObjects.add(value);
 
-        if (looksLikeMicroRow(value)) {
-          pushUniqueRows(rows, [value]);
+        if (Array.isArray(value)) {
+          value.forEach((row) => {
+            if (row && typeof row === "object" && microId(row)) add(row);
+            else walk(row, depth + 1);
+          });
           return;
         }
 
-        pushUniqueRows(rows, rowsFromMicroContainer(value));
+        if (microId(value)) add(value);
 
-        const preferredKeys = [
+        for (const key of [
           "best25MicroFamilies",
           "topMicroFamilies",
           "bestMicroFamilies",
@@ -1780,289 +1301,143 @@
           "data",
           "result",
           "payload",
-          "rankings",
-          "allRankings",
-          "byMode",
-          "modes",
           "balanced",
           "winrate",
           "totalR",
           "avgR",
           "directSL",
           "observed"
-        ];
-
-        for (const key of preferredKeys) {
-          if (value[key] !== undefined) walk(value[key], depth + 1);
+        ]) {
+          walk(value[key], depth + 1);
         }
       }
 
       walk(data, 0);
 
-      return rows;
+      return shortRows(output);
     }
 
-    function preferredMicroRowsFromPayload(data = {}) {
-      const bestRows = sanitizeShortRows(extractMicroRowsByKeys(data, [
-        "best25MicroFamilies",
-        "topMicroFamilies",
-        "bestMicroFamilies"
-      ]));
+    function microApiUrl() {
+      const params = new URLSearchParams();
 
-      if (bestRows.length > 0) return bestRows;
+      params.set("mode", validMicroModes.includes(state.microMode) ? state.microMode : "balanced");
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("limit", String(state.microLimit));
+      params.set("bestLimit", String(state.bestLimit));
+      params.set("sideLimit", String(state.bestLimit));
+      params.set("sideEnsureLimit", String(state.bestLimit));
+      params.set("includeActiveRotation", "1");
+      params.set("compact", "1");
 
-      const fallbackRows = sanitizeShortRows(extractMicroRowsByKeys(data, [
-        "shortRows",
-        "rows",
-        "microFamilies",
-        "micros",
-        "items",
-        "data"
-      ]));
+      if (state.microSearch.trim()) params.set("q", state.microSearch.trim());
 
-      if (fallbackRows.length > 0) return fallbackRows;
-
-      return sanitizeShortRows(extractMicroRowsDeep(data));
+      return `${endpoints.micros}?${params.toString()}`;
     }
 
-    function extractIdsFromRotation(rotation = {}) {
+    function rotationApiUrl() {
+      const params = new URLSearchParams();
+
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("includeAvailable", "1");
+      params.set("activeRowsLimit", "160");
+      params.set("availableLimit", "240");
+
+      return `${endpoints.rotation}?${params.toString()}`;
+    }
+
+    function activeMicroIds() {
       return uniqueStrings([
-        rotation?.microFamilyIds || [],
-        rotation?.activeMicroFamilyIds || [],
-        rotation?.trueMicroFamilyIds || [],
-        rotation?.ids || [],
-        (
-          Array.isArray(rotation?.microFamilies)
-            ? rotation.microFamilies.map((row) => microId(row))
-            : []
-        )
-      ]).filter(idAllowedInShortOnly);
-    }
-
-    function extractMacroIdsFromRotation(rotation = {}) {
-      return uniqueStrings([
-        rotation?.macroFamilyIds || [],
-        rotation?.activeMacroFamilyIds || [],
-        rotation?.macroIds || [],
-        (
-          Array.isArray(rotation?.microFamilies)
-            ? rotation.microFamilies.map((row) => macroId(row))
-            : []
-        )
-      ]).filter(idAllowedInShortOnly);
-    }
-
-    function activeIdsFromState() {
-      return uniqueStrings([
-        extractIdsFromRotation(state.rotation?.active || {}),
-        extractIdsFromRotation(state.rotation?.activeRotation || {}),
-        extractIdsFromRotation(state.micros?.activeRotation || {}),
-        extractIdsFromRotation(state.trade?.activeRotation || {}),
-        extractIdsFromRotation(state.overview?.activeRotation || {}),
         state.rotation?.activeMicroFamilyIds || [],
+        state.rotation?.activeRotation?.activeMicroFamilyIds || [],
+        state.rotation?.active?.activeMicroFamilyIds || [],
         state.micros?.activeMicroFamilyIds || [],
-        state.trade?.activeMicroFamilyIds || [],
-        state.overview?.activeMicroFamilyIds || []
+        state.overview?.activeMicroFamilyIds || [],
+        state.trade?.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
     }
 
-    function activeMacroIdsFromState() {
+    function activeMacroIds() {
       return uniqueStrings([
-        extractMacroIdsFromRotation(state.rotation?.active || {}),
-        extractMacroIdsFromRotation(state.rotation?.activeRotation || {}),
-        extractMacroIdsFromRotation(state.micros?.activeRotation || {}),
-        extractMacroIdsFromRotation(state.trade?.activeRotation || {}),
-        extractMacroIdsFromRotation(state.overview?.activeRotation || {}),
         state.rotation?.activeMacroFamilyIds || [],
+        state.rotation?.activeRotation?.activeMacroFamilyIds || [],
+        state.rotation?.active?.activeMacroFamilyIds || [],
         state.micros?.activeMacroFamilyIds || [],
-        state.trade?.activeMacroFamilyIds || [],
-        state.overview?.activeMacroFamilyIds || []
+        state.overview?.activeMacroFamilyIds || [],
+        state.trade?.activeMacroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
     }
 
-    function activeMicroSet() {
-      return new Set(activeIdsFromState());
-    }
-
-    function activeMacroSet() {
-      return new Set(activeMacroIdsFromState());
-    }
-
-    function idStack(row) {
-      const micro = microId(row);
-      const macro = macroId(row);
-      const family = familyId(row);
-
-      return `
-        <div class="id-stack">
-          <div>
-            <span class="id-label">True micro</span>
-            <button type="button" class="small" data-open-micro="${escapeAttr(micro)}">
-              <code>${escapeHtml(micro || "NO_MICRO_ID")}</code>
-            </button>
-          </div>
-          <div>
-            <span class="id-label">Macro</span>
-            <code>${escapeHtml(macro || "NO_MACRO_ID")}</code>
-          </div>
-          <div>
-            <span class="id-label">Family</span>
-            <code>${escapeHtml(family || "NO_FAMILY")}</code>
-          </div>
-        </div>
-      `;
-    }
-
-    function tierValue(row = {}) {
-      return String(
-        row.selectedTier ||
-        row.rotationEligibilityTier ||
-        row.eligibilityTier ||
-        row.selectionTier ||
-        row.tier ||
-        ""
-      ).toUpperCase();
-    }
-
-    function tierPill(value) {
-      const tier = String(value || "NA").toUpperCase();
-
-      if (tier === "HARD") return '<span class="pill active">HARD</span>';
-      if (tier === "SOFT") return '<span class="pill soft">SOFT</span>';
-      if (tier === "OBSERVATION") return '<span class="pill observation">OBSERVATION</span>';
-      if (tier === "RAW" || tier === "RAW_SIDE") return '<span class="pill raw">RAW</span>';
-      if (tier === "MANUAL") return '<span class="pill purple">MANUAL</span>';
-      if (tier.includes("FALLBACK")) return `<span class="pill raw">${escapeHtml(tier)}</span>`;
-
-      return `<span class="pill">${escapeHtml(tier || "NA")}</span>`;
-    }
-
-    function missingSidesArray(...sources) {
-      const values = sources
-        .flatMap((source) => {
-          if (!source) return [];
-          if (Array.isArray(source)) return source;
-          if (Array.isArray(source.missingSides)) return source.missingSides;
-          return [];
-        })
-        .map(normalizeSide)
-        .filter((side) => side === ONLY_SIDE);
-
-      return uniqueStrings(values);
-    }
-
-    function missingSidesHtml(sides = []) {
-      const rows = missingSidesArray(sides);
-
-      if (!rows.length) return '<span class="pill active">NONE</span>';
-
-      return rows
-        .map((side) => `<span class="pill warn">${escapeHtml(side)}</span>`)
-        .join(" ");
-    }
-
-    function rotationDiagnosticsHtml(data = {}, active = {}) {
-      const selectedTier = active.selectedTier || data.selectedTier || "-";
-      const hardCount = data.hardCount ?? active.hardCount ?? active.selectionHardCount ?? "-";
-      const softCount = data.softCount ?? active.softCount ?? active.selectionSoftCount ?? "-";
-      const observationCount = data.observationCount ?? active.observationCount ?? active.selectionObservationCount ?? "-";
-      const rawFallbackCount = data.rawFallbackCount ?? active.rawFallbackCount ?? "-";
-      const candidateCount = data.candidateCount ?? active.candidateCount ?? "-";
-      const tradableCount = data.tradableCount ?? active.tradableCount ?? "-";
-      const sideCount = data.sideCount ?? active.sideCount ?? "-";
-      const missing = missingSidesArray(data, active);
-
-      return `
-        <div class="card">
-          <h3>Rotation diagnostics</h3>
-          <div class="toolbar">
-            ${tierPill(selectedTier)}
-            ${missingSidesHtml(missing)}
-            <span class="pill danger">SHORT ONLY</span>
-            <span class="pill purple">MANUAL ONLY</span>
-            <span class="pill info">DISCORD ALERTS ONLY</span>
-          </div>
-
-          <div class="micro-performance-grid">
-            <div class="micro-performance-stat"><span>Side rows</span><strong>${escapeHtml(sideCount)}</strong></div>
-            <div class="micro-performance-stat"><span>Candidate rows</span><strong>${escapeHtml(candidateCount)}</strong></div>
-            <div class="micro-performance-stat"><span>Tradable rows</span><strong>${escapeHtml(tradableCount)}</strong></div>
-            <div class="micro-performance-stat"><span>Selected tier</span><strong>${escapeHtml(selectedTier)}</strong></div>
-            <div class="micro-performance-stat"><span>Hard count</span><strong>${escapeHtml(hardCount)}</strong></div>
-            <div class="micro-performance-stat"><span>Soft count</span><strong>${escapeHtml(softCount)}</strong></div>
-            <div class="micro-performance-stat"><span>Observation count</span><strong>${escapeHtml(observationCount)}</strong></div>
-            <div class="micro-performance-stat"><span>Raw fallback</span><strong>${escapeHtml(rawFallbackCount)}</strong></div>
-          </div>
-
-          <div class="micro-connect-narrative">
-            Active rotation is een handmatige Discord-alert selectie. Virtual learning blijft alle risk-valide SHORT candidates volgen.
-          </div>
-        </div>
-      `;
-    }
-
-    function coinCard(row) {
+    function coinCard(row = {}) {
       const symbol = baseSymbol(row);
-      const price = row.price ?? row.entry ?? row.currentPrice ?? row.markPrice;
       const score = row.scannerScore ?? row.moveScore ?? row.sniperScore ?? row.confluence ?? 0;
+      const price = row.price ?? row.currentPrice ?? row.markPrice ?? row.entry;
 
       return `
-        <article class="coin-card short">
+        <article class="coin-card">
           <div class="coin-head">
-            ${coinAvatar(row, "lg")}
+            <div>
+              <div class="coin-symbol">${escapeHtml(symbol)}</div>
+              <div class="coin-name">${escapeHtml(row.name || row.coinName || row.contractSymbol || `${symbol}USDT`)}</div>
+            </div>
             <div class="coin-price">
               <strong>$${escapeHtml(fmtPrice(price))}</strong>
-              <span>${escapeHtml(row.contractSymbol || symbol + "USDT")}</span>
+              <span>${escapeHtml(row.contractSymbol || `${symbol}USDT`)}</span>
             </div>
           </div>
 
           <div class="coin-foot">
             <span class="pill short">SHORT</span>
+            <span class="pill purple">${escapeHtml(row.source || "VIRTUAL")}</span>
             <span class="pill info">Score ${escapeHtml(fmt(score, 1))}</span>
           </div>
 
           ${scoreBar(score)}
 
           <div class="coin-stats">
-            <div class="coin-stat"><span>1h</span><strong>${escapeHtml(fmtPctRaw(row.change1h))}</strong></div>
-            <div class="coin-stat"><span>24h</span><strong>${escapeHtml(fmtPctRaw(row.change24h))}</strong></div>
-            <div class="coin-stat"><span>Volume</span><strong>${escapeHtml(fmtMoneyLike(row.volume24h))}</strong></div>
+            <div class="coin-stat"><span>1h</span><strong>${escapeHtml(fmtRawPct(row.change1h))}</strong></div>
+            <div class="coin-stat"><span>24h</span><strong>${escapeHtml(fmtRawPct(row.change24h))}</strong></div>
+            <div class="coin-stat"><span>Volume</span><strong>${escapeHtml(fmtMoney(row.volume24h || row.quoteVolume24h))}</strong></div>
             <div class="coin-stat"><span>BTC</span><strong>${escapeHtml(row.btcState || "-")}</strong></div>
             <div class="coin-stat"><span>Regime</span><strong>${escapeHtml(row.regime || "-")}</strong></div>
-            <div class="coin-stat"><span>FakeBO</span><strong>${row.fakeBreakout ? "Yes" : "No"}</strong></div>
-          </div>
-
-          <div class="coin-foot">
-            <span class="pill purple">${escapeHtml(row.scannerReason || "scanner")}</span>
+            <div class="coin-stat"><span>FakeBO</span><strong>${row.fakeBreakout ? "YES" : "NO"}</strong></div>
           </div>
         </article>
       `;
     }
 
-    function positionCard(row) {
-      const currentR = Number(row.currentR || 0);
-      const rPillClass = currentR >= 0 ? "active" : "danger";
+    function positionCard(row = {}) {
+      const symbol = baseSymbol(row);
+      const currentR = num(row.currentR, 0);
 
       return `
-        <article class="coin-card short">
+        <article class="coin-card">
           <div class="coin-head">
-            ${coinAvatar(row, "lg")}
+            <div>
+              <div class="coin-symbol">${escapeHtml(symbol)}</div>
+              <div class="coin-name">${escapeHtml(row.contractSymbol || `${symbol}USDT`)}</div>
+            </div>
             <div class="coin-price">
               <strong>${escapeHtml(fmt(currentR, 3))}R</strong>
-              <span>net/mark R</span>
+              <span>current R</span>
             </div>
           </div>
 
           <div class="coin-foot">
             <span class="pill short">SHORT</span>
-            <span class="pill ${rPillClass}">${escapeHtml(fmt(currentR, 2))}R</span>
             <span class="pill purple">VIRTUAL</span>
+            <span class="pill ${currentR >= 0 ? "active" : "danger"}">${escapeHtml(fmt(currentR, 2))}R</span>
           </div>
 
           <div class="coin-stats">
             <div class="coin-stat"><span>Entry</span><strong>${escapeHtml(fmtPrice(row.entry))}</strong></div>
-            <div class="coin-stat"><span>SL</span><strong>${escapeHtml(fmtPrice(row.sl))}</strong></div>
-            <div class="coin-stat"><span>TP</span><strong>${escapeHtml(fmtPrice(row.tp))}</strong></div>
+            <div class="coin-stat"><span>SL</span><strong>${escapeHtml(fmtPrice(row.sl || row.stopLoss))}</strong></div>
+            <div class="coin-stat"><span>TP</span><strong>${escapeHtml(fmtPrice(row.tp || row.takeProfit))}</strong></div>
             <div class="coin-stat"><span>RR</span><strong>${escapeHtml(fmt(row.rr, 2))}</strong></div>
             <div class="coin-stat"><span>MFE</span><strong>${escapeHtml(fmt(row.mfeR, 2))}R</strong></div>
             <div class="coin-stat"><span>MAE</span><strong>${escapeHtml(fmt(row.maeR, 2))}R</strong></div>
@@ -2075,11 +1450,59 @@
       `;
     }
 
-    async function copyText(text, label = "Gekopieerd.") {
+    function microTable(rows = []) {
+      const activeSet = new Set(activeMicroIds());
+      const activeMacroSet = new Set(activeMacroIds());
+
+      return table(rows, [
+        { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
+        { label: "Discord", render: (row) => {
+          const active = activeSet.has(microId(row)) || activeMacroSet.has(macroId(row)) || row.active === true;
+          return `<span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span>`;
+        }},
+        { label: "True micro", render: (row) => `<button class="small" type="button" data-open-micro="${escapeAttr(microId(row))}"><code>${escapeHtml(microId(row) || "NO_MICRO")}</code></button>` },
+        { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row) || "NO_MACRO")}</code>` },
+        { label: "Family", render: (row) => `<code>${escapeHtml(familyId(row) || "NO_FAMILY")}</code>` },
+        { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+        { label: "Tier", render: (row) => tierPill(tier(row)) },
+        { label: "Status", render: (row) => `<span class="pill ${completed(row) <= 0 && observationSample(row) > 0 ? "observation" : ""}">${escapeHtml(row.learningStatus || row.status || "RAW")}</span>` },
+        { label: "Seen", render: (row) => fmtInt(row.seen ?? row.observations) },
+        { label: "Obs", render: (row) => fmtInt(row.observations ?? row.seen) },
+        { label: "Obs sample", render: (row) => fmt(observationSample(row), 2) },
+        { label: "Completed", render: (row) => fmt(completed(row), 2) },
+        { label: "Winrate", render: (row) => fmtPct(row.winrate) },
+        { label: "Fair WR", render: (row) => fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
+        { label: "AvgR net", render: (row) => fmt(row.avgR, 3) },
+        { label: "TotalR net", render: (row) => fmt(row.totalR, 3) },
+        { label: "PF", render: (row) => fmt(row.profitFactor, 2) },
+        { label: "AvgCostR", render: (row) => fmt(row.avgCostR, 3) },
+        { label: "DirectSL", render: (row) => fmtPct(row.directSLPct) },
+        { label: "Balanced", render: (row) => `<strong>${escapeHtml(fmt(row.dashboardBalancedScore ?? row.balancedScore, 2))}</strong>` },
+        { label: "Actie", render: (row) => `
+          <button type="button" class="small short-action" data-activate-one="${escapeAttr(microId(row))}" ${microId(row) ? "" : "disabled"}>Select exact</button>
+          <button type="button" class="small" data-copy="${escapeAttr(microId(row))}" ${microId(row) ? "" : "disabled"}>Copy</button>
+        ` }
+      ], "Geen SHORT micro-families.");
+    }
+
+    function bindMicroEvents() {
+      document.querySelectorAll("[data-activate-one]").forEach((btn) => {
+        btn.addEventListener("click", () => activateSelectedMicroFamilies([btn.dataset.activateOne]));
+      });
+
+      document.querySelectorAll("[data-copy]").forEach((btn) => {
+        btn.addEventListener("click", () => copyText(btn.dataset.copy, "MicroFamilyId gekopieerd."));
+      });
+
+      document.querySelectorAll("[data-open-micro]").forEach((btn) => {
+        btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
+      });
+    }
+
+    async function copyText(text, message = "Gekopieerd.") {
       try {
         await navigator.clipboard.writeText(String(text || ""));
-        setMessage(label, "ok");
-        return;
+        setMessage(message, "ok");
       } catch {
         const area = document.createElement("textarea");
         area.value = String(text || "");
@@ -2087,7 +1510,7 @@
         area.select();
         document.execCommand("copy");
         area.remove();
-        setMessage(label, "ok");
+        setMessage(message, "ok");
       }
     }
 
@@ -2097,412 +1520,13 @@
       });
 
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
+      const link = document.createElement("a");
 
-      a.href = url;
-      a.download = filename;
-      a.click();
+      link.href = url;
+      link.download = filename;
+      link.click();
 
       URL.revokeObjectURL(url);
-    }
-
-    function microUrl(extra = {}) {
-      const params = new URLSearchParams();
-
-      params.set("mode", validMicroModes.includes(extra.mode || state.microMode) ? (extra.mode || state.microMode) : "balanced");
-      params.set("side", ONLY_SIDE);
-      params.set("tradeSide", ONLY_SIDE);
-      params.set("targetTradeSide", ONLY_SIDE);
-      params.set("dashboardSide", DASHBOARD_SIDE);
-      params.set("limit", String(extra.limit || state.microFetchLimit));
-      params.set("bestLimit", String(extra.bestLimit || state.microBestLimit));
-      params.set("sideLimit", String(extra.sideLimit || state.microSideLimit));
-      params.set("sideEnsureLimit", String(extra.sideLimit || state.microSideLimit));
-      params.set("includeActiveRotation", "1");
-      params.set("compact", "1");
-      params.set("fast", "1");
-
-      if (extra.q) params.set("q", extra.q);
-
-      return `${endpoints.micros}?${params.toString()}`;
-    }
-
-    function rotationUrl(extra = {}) {
-      const params = new URLSearchParams();
-
-      params.set("activeRowsLimit", String(extra.activeRowsLimit || 80));
-      params.set("nextRowsLimit", String(extra.nextRowsLimit || 0));
-      params.set("side", ONLY_SIDE);
-      params.set("tradeSide", ONLY_SIDE);
-      params.set("targetTradeSide", ONLY_SIDE);
-      params.set("dashboardSide", DASHBOARD_SIDE);
-      params.set("compact", "1");
-
-      return `${endpoints.rotation}?${params.toString()}`;
-    }
-
-    async function fetchMicroRows(mode = state.microMode) {
-      try {
-        const data = await api(microUrl({
-          mode,
-          limit: state.microFetchLimit,
-          bestLimit: state.microBestLimit,
-          sideLimit: state.microSideLimit
-        }), {
-          timeoutMs: 18000
-        });
-
-        const bestRows = sanitizeShortRows(extractMicroRowsByKeys(data, [
-          "best25MicroFamilies",
-          "topMicroFamilies",
-          "bestMicroFamilies"
-        ]));
-
-        const fallbackRows = sanitizeShortRows(extractMicroRowsByKeys(data, [
-          "shortRows",
-          "rows",
-          "microFamilies",
-          "micros",
-          "items",
-          "data"
-        ]));
-
-        const deepRows = sanitizeShortRows(extractMicroRowsDeep(data));
-
-        const rows = bestRows.length > 0
-          ? bestRows
-          : fallbackRows.length > 0
-            ? fallbackRows
-            : deepRows;
-
-        const activeRotation =
-          data.activeRotation ||
-          data.active ||
-          data.rotation?.active ||
-          data.result?.activeRotation ||
-          null;
-
-        return {
-          ok: true,
-          mode,
-          targetTradeSide: ONLY_SIDE,
-          dashboardSide: DASHBOARD_SIDE,
-          shortOnly: true,
-          longDisabled: true,
-
-          raw: data,
-
-          best25MicroFamilies: bestRows,
-          topMicroFamilies: bestRows,
-          bestMicroFamilies: bestRows,
-
-          shortRows: rows,
-          rows,
-
-          fallbackRows,
-          deepRows,
-
-          errors: [],
-          activeRotation,
-          activeMicroFamilyIds: uniqueStrings([
-            data.activeMicroFamilyIds || [],
-            extractIdsFromRotation(activeRotation || {})
-          ]).filter(idAllowedInShortOnly),
-          activeMacroFamilyIds: uniqueStrings([
-            data.activeMacroFamilyIds || [],
-            extractMacroIdsFromRotation(activeRotation || {})
-          ]).filter(idAllowedInShortOnly),
-          summary: data.summary || null,
-          perf: data.perf || null,
-          serverTs: Date.now()
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          mode,
-          targetTradeSide: ONLY_SIDE,
-          dashboardSide: DASHBOARD_SIDE,
-          shortOnly: true,
-          longDisabled: true,
-          raw: null,
-          best25MicroFamilies: [],
-          topMicroFamilies: [],
-          bestMicroFamilies: [],
-          shortRows: [],
-          rows: [],
-          fallbackRows: [],
-          deepRows: [],
-          errors: [friendlyApiMessage(error)],
-          activeRotation: null,
-          activeMicroFamilyIds: [],
-          activeMacroFamilyIds: [],
-          summary: null,
-          perf: null,
-          serverTs: Date.now()
-        };
-      }
-    }
-
-    function currentMicroRows() {
-      return sanitizeShortRows(preferredMicroRowsFromPayload(state.micros || {}));
-    }
-
-    function filterMicroRows(rows = []) {
-      const search = state.microSearch.trim().toLowerCase();
-      const sideRows = sanitizeShortRows(rows);
-
-      if (!search) return sideRows;
-
-      return sideRows.filter((row) => JSON.stringify(row).toLowerCase().includes(search));
-    }
-
-    function splitTopMicroRows(rows = []) {
-      const allShortRows = sanitizeShortRows(rows);
-      const shortRows = allShortRows.slice(0, state.microSideLimit);
-
-      return {
-        shortRows,
-        visibleRows: shortRows,
-        totalShortRows: allShortRows.length
-      };
-    }
-
-    function topMicroRow(rows = []) {
-      return sanitizeShortRows(rows)
-        .filter((row) => microId(row))[0] || null;
-    }
-
-    async function ensureMicroRows({ force = false } = {}) {
-      const rows = currentMicroRows();
-
-      if (!force && rows.length > 0) return rows;
-
-      const data = await fetchMicroRows(state.microMode);
-      state.micros = data;
-
-      return data.rows || [];
-    }
-
-    function currentVisibleMicroRows() {
-      const rows = filterMicroRows(currentMicroRows());
-
-      return splitTopMicroRows(rows).visibleRows;
-    }
-
-    function microWinrateText(row = {}) {
-      return fmtPctRatio(row.winrate);
-    }
-
-    function microFairWinrateText(row = {}) {
-      return fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound);
-    }
-
-    function microPnlText(row = {}) {
-      const r = Number(row.totalR);
-
-      if (!Number.isFinite(r)) return "-";
-
-      return `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`;
-    }
-
-    function microNarrative(row = {}) {
-      const completed = microCompleted(row);
-      const seen = microObservationSample(row);
-      const winrate = Number(row.winrate);
-      const totalR = Number(row.totalR);
-      const avgR = Number(row.avgR);
-      const directSL = Number(row.directSLPct);
-
-      if (completed <= 0 && seen > 0) {
-        return `Deze SHORT micro-family heeft observations maar nog geen gesloten virtual outcome. Completed/winrate/AvgR/TotalR blijven 0 tot PositionEngine exits netto terugschrijft. Seen=${seen}.`;
-      }
-
-      const sampleText = completed < 5
-        ? "lage sample, observation/early outcome"
-        : completed < 15
-          ? "bruikbare sample, nog niet zwaar bewezen"
-          : "sterkere sample met genoeg outcomes";
-
-      const winrateText = Number.isFinite(winrate)
-        ? `winrate ${(winrate * 100).toFixed(1)}%`
-        : "winrate onbekend";
-
-      const pnlText = Number.isFinite(totalR)
-        ? `netto ${totalR >= 0 ? "+" : ""}${totalR.toFixed(2)}R`
-        : "netto R onbekend";
-
-      const avgText = Number.isFinite(avgR)
-        ? `gemiddeld ${avgR.toFixed(2)}R`
-        : "avgR onbekend";
-
-      const slText = Number.isFinite(directSL)
-        ? `direct SL ${(directSL * 100).toFixed(1)}%`
-        : "direct SL onbekend";
-
-      return `SHORT execution fingerprint met ${sampleText}: ${winrateText}, ${pnlText}, ${avgText}, ${slText}.`;
-    }
-
-    function manualSelectionCard(row) {
-      if (!row) {
-        return `
-          <div class="micro-connect-card">
-            <div class="micro-connect-head">
-              <div class="micro-connect-title">
-                <h3>Manual Discord selection</h3>
-                <p>Geen SHORT true micro-family beschikbaar in de huidige analyze data.</p>
-              </div>
-              <span class="pill warn">GEEN DATA</span>
-            </div>
-
-            <div class="micro-connect-narrative">
-              Eerst scanner + TradeSystem laten draaien. Analyze moet observations schrijven voordat families zichtbaar worden.
-            </div>
-          </div>
-        `;
-      }
-
-      const micro = microId(row);
-      const macro = macroId(row);
-      const family = familyId(row);
-      const active = activeMicroSet().has(micro);
-      const score = row.dashboardBalancedScore ?? row.balancedScore;
-      const completed = microCompleted(row);
-      const seen = microObservationSample(row);
-      const tier = tierValue(row);
-
-      return `
-        <div class="micro-connect-card">
-          <div class="micro-connect-head">
-            <div class="micro-connect-title">
-              <h3>Exacte SHORT micro-family</h3>
-              <p>Deze knop activeert alleen Discord alerts voor deze exacte true micro. Virtual tracking blijft breed.</p>
-            </div>
-
-            <div class="micro-connect-score">
-              <strong>${escapeHtml(fmt(score, 2))}</strong>
-              <span>Balanced</span>
-            </div>
-          </div>
-
-          <div class="micro-connect-id">
-            <div><span class="id-label">True micro</span><code>${escapeHtml(micro || "NO_MICRO_ID")}</code></div>
-            <div><span class="id-label">Macro parent</span><code>${escapeHtml(macro || "NO_MACRO_ID")}</code></div>
-            <div><span class="id-label">Family</span><code>${escapeHtml(family || "NO_FAMILY")}</code></div>
-          </div>
-
-          <div class="micro-performance-grid">
-            <div class="micro-performance-stat"><span>Seen</span><strong>${escapeHtml(fmt(seen, 2))}</strong></div>
-            <div class="micro-performance-stat"><span>Completed</span><strong>${escapeHtml(fmt(completed, 2))}</strong></div>
-            <div class="micro-performance-stat"><span>Winrate</span><strong>${escapeHtml(microWinrateText(row))}</strong></div>
-            <div class="micro-performance-stat"><span>Fair WR</span><strong>${escapeHtml(microFairWinrateText(row))}</strong></div>
-            <div class="micro-performance-stat"><span>Net TotalR</span><strong>${escapeHtml(microPnlText(row))}</strong></div>
-            <div class="micro-performance-stat"><span>AvgR</span><strong>${escapeHtml(fmt(row.avgR, 3))}R</strong></div>
-            <div class="micro-performance-stat"><span>PF</span><strong>${escapeHtml(fmt(row.profitFactor, 2))}</strong></div>
-            <div class="micro-performance-stat"><span>AvgCostR</span><strong>${escapeHtml(fmt(row.avgCostR, 3))}</strong></div>
-          </div>
-
-          <div class="micro-connect-narrative">${escapeHtml(microNarrative(row))}</div>
-
-          <div class="micro-connect-actions">
-            <span class="pill short">SHORT</span>
-            ${active ? '<span class="pill active">DISCORD ACTIVE</span>' : '<span class="pill info">NOT SELECTED</span>'}
-            ${tier ? tierPill(tier) : ""}
-            <button type="button" class="short-action" data-activate-one="${escapeAttr(micro)}" ${micro ? "" : "disabled"}>
-              Activeer Discord voor deze exacte micro
-            </button>
-          </div>
-
-          <div class="micro-connect-route">
-            Handmatige selectie: exact microFamilyId → activeMicroFamilyIds → Discord eligibility. Geen automatische trade-selectie.
-          </div>
-        </div>
-      `;
-    }
-
-    function microRowsTable(rows, activeIdsInput = [], activeMacroIdsInput = []) {
-      const activeIds = activeIdsInput instanceof Set
-        ? activeIdsInput
-        : new Set(activeIdsInput || []);
-
-      const activeMacroIds = activeMacroIdsInput instanceof Set
-        ? activeMacroIdsInput
-        : new Set(activeMacroIdsInput || []);
-
-      return table(rows, [
-        { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
-        { label: "Discord", render: (row) => {
-          const microActive = activeIds.has(microId(row));
-          const macroActive = activeMacroIds.has(macroId(row));
-          const isActive = microActive || macroActive || Boolean(row.active);
-          const label = microActive ? "MICRO" : macroActive ? "MACRO" : isActive ? "ACTIVE" : "off";
-
-          return `<span class="pill ${isActive ? "active" : ""}">${escapeHtml(label)}</span>`;
-        }},
-        { label: "IDs", render: idStack },
-        { label: "Side", render: () => `<span class="pill short">SHORT</span>` },
-        { label: "Tier", render: (row) => tierValue(row) ? tierPill(tierValue(row)) : '<span class="pill">NA</span>' },
-        { label: "Status", render: (row) => `<span class="pill ${row.awaitingOutcomes ? "observation" : ""}">${escapeHtml(row.learningStatus || row.status || "NA")}</span>` },
-        { label: "Seen", render: (row) => fmtInt(row.seen ?? row.observations) },
-        { label: "Observations", render: (row) => fmtInt(row.observations ?? row.seen) },
-        { label: "Obs sample", render: (row) => fmt(microObservationSample(row), 2) },
-        { label: "Completed", render: (row) => fmt(microCompleted(row), 2) },
-        { label: "Wins", render: (row) => fmt(row.wins ?? row.realWins, 2) },
-        { label: "Losses", render: (row) => fmt(row.losses ?? row.realLosses, 2) },
-        { label: "Flats", render: (row) => fmt(row.flats ?? row.realFlats, 2) },
-        { label: "Fair WR", render: (row) => fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound) },
-        { label: "Winrate", render: (row) => fmtPctRatio(row.winrate) },
-        { label: "Net AvgR", render: (row) => fmt(row.avgR, 3) },
-        { label: "Net TotalR", render: (row) => fmt(row.totalR, 3) },
-        { label: "PF", render: (row) => fmt(row.profitFactor, 2) },
-        { label: "TotalCostR", render: (row) => fmt(row.totalCostR, 3) },
-        { label: "AvgCostR", render: (row) => fmt(row.avgCostR, 3) },
-        { label: "DirectSL", render: (row) => fmtPctRatio(row.directSLPct) },
-        { label: "Balanced", render: (row) => `<strong>${fmt(row.dashboardBalancedScore ?? row.balancedScore, 2)}</strong>` },
-        { label: "Actie", render: (row) => `
-          <button type="button" class="small short-action" data-activate-one="${escapeAttr(microId(row))}">Select exact</button>
-          <button type="button" class="small" data-copy-micro="${escapeAttr(microId(row))}">Copy micro</button>
-          <button type="button" class="small" data-copy-macro="${escapeAttr(macroId(row))}">Copy macro</button>
-        ` }
-      ], "Geen SHORT micro families gevonden.");
-    }
-
-    function bindMicroTableEvents() {
-      document.querySelectorAll("[data-open-micro]").forEach((btn) => {
-        btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
-      });
-
-      document.querySelectorAll("[data-copy-micro]").forEach((btn) => {
-        btn.addEventListener("click", () => copyText(btn.dataset.copyMicro, "MicroFamilyId gekopieerd."));
-      });
-
-      document.querySelectorAll("[data-copy-macro]").forEach((btn) => {
-        btn.addEventListener("click", () => copyText(btn.dataset.copyMacro, "MacroFamilyId gekopieerd."));
-      });
-
-      document.querySelectorAll("[data-activate-one]").forEach((btn) => {
-        btn.addEventListener("click", () => activateSelectedMicroFamilies([btn.dataset.activateOne]));
-      });
-    }
-
-    function renderMicrosTableOnly() {
-      const target = $("microsTable");
-
-      if (!target) return;
-
-      const rows = filterMicroRows(currentMicroRows());
-      const split = splitTopMicroRows(rows);
-
-      target.innerHTML = `
-        <div class="section-title">
-          <div>
-            <h2>SHORT micro-families + net stats</h2>
-            <p>Observation-only families blijven zichtbaar met completed=0 en status=OBSERVING.</p>
-          </div>
-        </div>
-        ${microRowsTable(split.shortRows, activeMicroSet(), activeMacroSet())}
-      `;
-
-      bindMicroTableEvents();
     }
 
     async function renderOverview() {
@@ -2511,68 +1535,52 @@
       const data = await api(endpoints.overview);
       state.overview = data;
 
-      const activeMicroIds = uniqueStrings([
+      const activeCount = uniqueStrings([
         data.activeMicroFamilyIds || [],
-        extractIdsFromRotation(data.activeRotation || {})
-      ]).filter(idAllowedInShortOnly);
-
-      const activeMacroIds = uniqueStrings([
-        data.activeMacroFamilyIds || [],
-        extractMacroIdsFromRotation(data.activeRotation || {})
-      ]).filter(idAllowedInShortOnly);
-
-      const activeMicroCount = activeMicroIds.length || data.activeRotationCount || data.activeMicroFamilies || 0;
-      const activeMacroCount = activeMacroIds.length || data.activeMacroFamilies || 0;
+        data.activeRotation?.activeMicroFamilyIds || [],
+        data.activeRotation?.microFamilyIds || []
+      ]).filter(idAllowedInShortOnly).length;
 
       $("overview").innerHTML = `
         <div class="grid">
-          ${metricCard("Current week", data.weekKey || data.currentWeekKey || data.currentWeek || "-")}
+          ${metricCard("Current week", data.weekKey || data.currentWeekKey || "-")}
           ${metricCard("Previous week", data.previousWeekKey || "-")}
-          ${metricCard("Discord selected micros", activeMicroCount)}
-          ${metricCard("Discord selected macros", activeMacroCount)}
-          ${metricCard("Open virtual positions", fmtInt(data.openPositions))}
-          ${metricCard("Scanner SHORT candidates", fmtInt(data.latestScan?.candidatesCount || data.scannerCandidates))}
-          ${metricCard("Current week families", fmtInt(data.currentWeekMicroFamilies))}
-          ${metricCard("Previous week families", fmtInt(data.previousWeekMicroFamilies))}
-        </div>
-
-        <div class="section-title">
-          <div>
-            <h2>System status</h2>
-            <p>SHORT-only. Virtual positions only. Manual selection only controls Discord alerts.</p>
-          </div>
+          ${metricCard("Discord selected micros", fmtInt(activeCount))}
+          ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
+          ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
+          ${metricCard("Current micro families", fmtInt(data.currentWeekMicroFamilies))}
+          ${metricCard("Observing families", fmtInt(data.observingMicroFamilies))}
+          ${metricCard("Completed families", fmtInt(data.completedMicroFamilies))}
         </div>
 
         <div class="grid-3">
           <div class="card">
-            <h3>Scanner</h3>
-            <div class="metric-value">${escapeHtml(fmtInt(data.latestScan?.candidatesCount || data.scannerCandidates || 0))}</div>
-            <div class="metric-extra">laatste SHORT candidates</div>
+            <h3>Mode</h3>
+            <div class="toolbar">
+              <span class="pill short">SHORT ONLY</span>
+              <span class="pill purple">VIRTUAL</span>
+              <span class="pill info">NET OUTCOMES</span>
+              <span class="pill dark">MANUAL DISCORD</span>
+            </div>
+            <div class="metric-extra">
+              Scanner zoekt alleen dalende candidates. TradeSystem opent alleen virtual SHORT posities.
+            </div>
           </div>
 
           <div class="card">
-            <h3>TradeSystem</h3>
-            <div class="metric-value">${escapeHtml(fmtInt(data.openPositions || 0))}</div>
-            <div class="metric-extra">open virtual SHORT posities</div>
+            <h3>Active manual selection</h3>
+            ${jsonBlock(data.activeRotation || null)}
           </div>
 
           <div class="card">
-            <h3>Manual Discord selection</h3>
-            <div class="metric-value">${escapeHtml(fmtInt(activeMicroCount))}</div>
-            <div class="metric-extra">exact activeMicroFamilyIds</div>
+            <h3>Warnings</h3>
+            ${jsonBlock(data.warnings || [])}
           </div>
         </div>
 
-        ${rotationDiagnosticsHtml(data, data.activeRotation || {})}
-
         <div class="card">
-          <h3>Active manual Discord selection</h3>
-          ${jsonBlock(data.activeRotation)}
-        </div>
-
-        <div class="card">
-          <h3>Trade meta</h3>
-          ${jsonBlock(data.tradeMeta || data.runMeta || data.tradeSummary || null)}
+          <h3>Overview raw</h3>
+          ${jsonBlock(data)}
         </div>
       `;
     }
@@ -2583,76 +1591,87 @@
       const data = await api(endpoints.scanner);
       state.scanner = data;
 
-      const snapshot = data.snapshot || data.latestSnapshot || data.latest || data.result || {};
-      const candidates = sanitizeShortRows(snapshot.candidates || data.candidates || []);
-      const topCandidates = candidates.slice(0, 12);
+      const snapshot = data.snapshot || data.latest || {};
+      const candidates = shortRows(snapshot.candidates || data.candidates || []);
 
       $("scanner").innerHTML = `
         <div class="toolbar">
           <button type="button" class="primary" id="runScannerBtn">Run Scanner now</button>
-          <button type="button" id="copyScannerJsonBtn">Copy scanner JSON</button>
+          <button type="button" id="copyScannerBtn">Copy JSON</button>
         </div>
 
         <div class="grid">
           ${metricCard("Snapshot ID", snapshot.snapshotId || data.snapshotId || "-")}
-          ${metricCard("Snapshot age", ageText(snapshot.createdAt), fmtTs(snapshot.createdAt))}
-          ${metricCard("BTC state", snapshot.btcState || "-")}
-          ${metricCard("Regime", snapshot.regime || "-")}
+          ${metricCard("Age", ageText(snapshot.createdAt), fmtTs(snapshot.createdAt))}
           ${metricCard("SHORT candidates", fmtInt(candidates.length))}
-          ${metricCard("Scanner gate", fmtInt(candidates.filter((candidate) => candidate.scannerGatePassed).length))}
-          ${metricCard("Fake breakout", fmtInt(candidates.filter((candidate) => candidate.fakeBreakout).length))}
+          ${metricCard("Scanner gate", fmtInt(candidates.filter((row) => row.scannerGatePassed).length))}
+          ${metricCard("Analyze-only", fmtInt(candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length))}
+          ${metricCard("Fake breakout", fmtInt(candidates.filter((row) => row.fakeBreakout).length))}
           ${metricCard("Ignored LONG", fmtInt(snapshot.rawLongCandidatesIgnored || data.rawOppositeCount || 0))}
+          ${metricCard("Unknown ignored", fmtInt(snapshot.rawUnknownSideCandidatesIgnored || 0))}
         </div>
 
         <div class="section-title">
           <div>
             <h2>Scanner SHORT candidates</h2>
-            <p>Scanner kiest geen trades en geen families. Alleen candidates.</p>
+            <p>Scanner schrijft alleen snapshots. Geen trades, geen Discord, geen micro-selectie.</p>
           </div>
         </div>
 
         <div class="coin-grid">
-          ${topCandidates.length ? topCandidates.map(coinCard).join("") : '<div class="empty">Geen SHORT scanner candidates.</div>'}
-        </div>
-
-        <div class="section-title">
-          <div>
-            <h2>Detailed scanner table</h2>
-            <p>Minimale scanner-output voor TradeSystem input.</p>
-          </div>
+          ${candidates.slice(0, 12).map(coinCard).join("") || '<div class="empty">Geen SHORT scanner candidates.</div>'}
         </div>
 
         ${table(candidates, [
-          { label: "Coin", render: (row) => coinAvatar(row, "sm") },
-          { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
-          { label: "Contract", render: (row) => escapeHtml(row.contractSymbol || "-") },
-          { label: "Side", render: () => `<span class="pill short">SHORT</span>` },
-          { label: "Price", render: (row) => `$${escapeHtml(fmtPrice(row.price))}` },
-          { label: "Score", render: (row) => `${escapeHtml(fmt(row.scannerScore ?? row.moveScore, 1))}${scoreBar(row.scannerScore ?? row.moveScore, 100)}` },
-          { label: "1h", render: (row) => fmtPctRaw(row.change1h) },
-          { label: "24h", render: (row) => fmtPctRaw(row.change24h) },
-          { label: "Vol24h", render: (row) => fmtMoneyLike(row.volume24h) },
+          { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
+          { label: "Contract", render: (row) => escapeHtml(row.contractSymbol || `${baseSymbol(row)}USDT`) },
+          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+          { label: "Price", render: (row) => fmtPrice(row.price) },
+          { label: "Score", render: (row) => fmt(row.scannerScore ?? row.moveScore, 2) },
+          { label: "1h", render: (row) => fmtRawPct(row.change1h) },
+          { label: "24h", render: (row) => fmtRawPct(row.change24h) },
+          { label: "Vol24h", render: (row) => fmtMoney(row.volume24h || row.quoteVolume24h) },
           { label: "BTC", render: (row) => escapeHtml(row.btcState || "-") },
           { label: "Regime", render: (row) => escapeHtml(row.regime || "-") },
-          { label: "FakeBO", render: (row) => row.fakeBreakout ? '<span class="pill danger">YES</span>' : '<span class="pill active">NO</span>' },
-          { label: "Reason", render: (row) => escapeHtml(row.scannerReason || "-") },
-          { label: "Created", render: (row) => fmtTs(row.createdAt || snapshot.createdAt) }
+          { label: "Reason", render: (row) => escapeHtml(row.scannerReason || row.reason || "-") }
         ], "Geen SHORT scanner candidates.")}
       `;
 
-      $("runScannerBtn")?.addEventListener("click", async () => {
-        try {
-          await api(endpoints.runScanner, { timeoutMs: 30000 });
-          setMessage("Scanner handmatig gestart.", "ok");
-          await renderScanner();
-        } catch (error) {
-          setMessage(friendlyApiMessage(error), "warn");
-        }
-      });
+      $("runScannerBtn")?.addEventListener("click", runScannerNow);
+      $("copyScannerBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Scanner JSON gekopieerd."));
+    }
 
-      $("copyScannerJsonBtn")?.addEventListener("click", () => {
-        copyText(JSON.stringify(data, null, 2), "Scanner JSON gekopieerd.");
-      });
+    async function runScannerNow() {
+      try {
+        const data = await api(endpoints.runScanner, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            force: true,
+            forced: true,
+
+            targetTradeSide: ONLY_SIDE,
+            tradeSide: ONLY_SIDE,
+            side: DASHBOARD_SIDE,
+            scannerSide: ONLY_SIDE,
+            direction: ONLY_SIDE,
+
+            shortOnly: true,
+            longDisabled: true,
+            disableLong: true,
+
+            scannerOnly: true,
+            noTradeExecution: true,
+            noDiscord: true,
+            noMicroFamilySelection: true
+          })
+        });
+
+        setMessage(`Scanner klaar. SHORT candidates=${data.shortCandidatesCount || data.candidatesCount || 0}`, "ok");
+        await renderScanner();
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
     }
 
     async function renderTrade() {
@@ -2661,68 +1680,50 @@
       const data = await api(endpoints.trade);
       state.trade = data;
 
-      const positions = sanitizeShortRows(getArrayRows(data, ["positions", "openPositions"]));
-      const topPositions = positions.slice(0, 12);
-      const runMeta = data.runMeta || data.tradeMeta || data.lastRun || data.run || {};
-
-      const activeMicroCount =
-        Array.isArray(data.activeMicroFamilyIds)
-          ? data.activeMicroFamilyIds.length
-          : data.activeMicroCount ?? runMeta.activeMicroFamilies ?? 0;
-
-      const activeMacroCount =
-        Array.isArray(data.activeMacroFamilyIds)
-          ? data.activeMacroFamilyIds.length
-          : data.activeMacroCount ?? runMeta.activeMacroFamilies ?? 0;
+      const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
+      const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
 
       $("trade").innerHTML = `
         <div class="toolbar">
           <button type="button" class="primary" id="runTradeBtn">Run TradeSystem now</button>
-          <button type="button" id="copyTradeJsonBtn">Copy trade JSON</button>
+          <button type="button" id="copyTradeBtn">Copy JSON</button>
         </div>
 
         <div class="grid">
-          ${metricCard("Open virtual SHORT positions", fmtInt(positions.length))}
-          ${metricCard("In sync", data.scannerAndTradeInSync ? "YES" : "NO")}
-          ${metricCard("Last processed", data.lastProcessed?.snapshotId || data.lastProcessedSnapshot || data.lastProcessedSnapshotId || "-")}
+          ${metricCard("Open virtual SHORT", fmtInt(positions.length))}
+          ${metricCard("Scanner/trade sync", data.scannerAndTradeInSync ? "YES" : "NO")}
+          ${metricCard("Last processed", data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || "-")}
           ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
-          ${metricCard("Discord selected micros", fmtInt(activeMicroCount))}
-          ${metricCard("Discord selected macros", fmtInt(activeMacroCount))}
-          ${metricCard("Last run", fmtTs(runMeta.completedAt || runMeta.startedAt || data.lastRunAt))}
-          ${metricCard("Virtual mode", "ON", "geen exchange orders")}
+          ${metricCard("Active micro IDs", fmtInt((data.activeMicroFamilyIds || []).length))}
+          ${metricCard("Active macro IDs", fmtInt((data.activeMacroFamilyIds || []).length))}
+          ${metricCard("Last run", fmtTs(runMeta.completedAt || runMeta.startedAt))}
+          ${metricCard("Orders", "0", "exchange disabled")}
         </div>
 
         <div class="section-title">
           <div>
             <h2>Open virtual SHORT positions</h2>
-            <p>PositionEngine monitort virtueel tot TP/SL/time-stop en schrijft netto outcome terug naar dezelfde micro-family.</p>
+            <p>Iedere risk-valide SHORT trade-vorm wordt virtual positie. Max één per coin tegelijk.</p>
           </div>
         </div>
 
         <div class="coin-grid">
-          ${topPositions.length ? topPositions.map(positionCard).join("") : '<div class="empty">Geen open virtual SHORT posities.</div>'}
-        </div>
-
-        <div class="section-title">
-          <div>
-            <h2>Position table</h2>
-            <p>Exacte waardes voor risk/outcome debugging.</p>
-          </div>
+          ${positions.slice(0, 12).map(positionCard).join("") || '<div class="empty">Geen open virtual SHORT posities.</div>'}
         </div>
 
         ${table(positions, [
-          { label: "Coin", render: (row) => coinAvatar(row, "sm") },
-          { label: "Side", render: () => `<span class="pill short">SHORT</span>` },
-          { label: "Source", render: (row) => `<span class="pill purple">${escapeHtml(row.source || "VIRTUAL")}</span>` },
+          { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
+          { label: "Source", render: () => '<span class="pill purple">VIRTUAL</span>' },
+          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
           { label: "Entry", render: (row) => fmtPrice(row.entry) },
-          { label: "SL", render: (row) => fmtPrice(row.sl) },
-          { label: "TP", render: (row) => fmtPrice(row.tp) },
+          { label: "SL", render: (row) => fmtPrice(row.sl || row.stopLoss) },
+          { label: "TP", render: (row) => fmtPrice(row.tp || row.takeProfit) },
           { label: "RR", render: (row) => fmt(row.rr, 2) },
-          { label: "CurR", render: (row) => fmt(row.currentR, 3) },
+          { label: "CurrentR", render: (row) => fmt(row.currentR, 3) },
           { label: "MFE", render: (row) => fmt(row.mfeR, 3) },
           { label: "MAE", render: (row) => fmt(row.maeR, 3) },
-          { label: "True Micro", render: (row) => `<code>${escapeHtml(microId(row))}</code>` },
-          { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row))}</code>` },
+          { label: "True micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_MICRO")}</code>` },
+          { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row) || "NO_MACRO")}</code>` },
           { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
         ], "Geen open virtual SHORT posities.")}
 
@@ -2732,139 +1733,360 @@
         </div>
       `;
 
-      $("runTradeBtn")?.addEventListener("click", async () => {
-        try {
-          const result = await api(endpoints.runTrade, { timeoutMs: 30000 });
-          const counts = result.counts || result.actionCounts || {};
-
-          setMessage(
-            `TradeSystem virtual run klaar.\n` +
-            `Entries=${counts.entries || counts.ENTRY || 0}, waits=${counts.waits || counts.WAIT || 0}, virtualOpened=${counts.virtualOpenedRows ?? result.run?.virtualOpenedRows ?? "-"}.`,
-            "ok"
-          );
-
-          await renderTrade();
-        } catch (error) {
-          setMessage(friendlyApiMessage(error), "warn");
-        }
-      });
-
-      $("copyTradeJsonBtn")?.addEventListener("click", () => {
-        copyText(JSON.stringify(data, null, 2), "Trade JSON gekopieerd.");
-      });
+      $("runTradeBtn")?.addEventListener("click", runTradeNow);
+      $("copyTradeBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Trade JSON gekopieerd."));
     }
 
-    async function renderMicros(mode = state.microMode) {
-      state.microMode = validMicroModes.includes(mode) ? mode : "balanced";
+    async function runTradeNow() {
+      try {
+        const data = await api(endpoints.runTrade, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            force: true,
+            forced: true,
+            forceProcessSnapshot: true,
+
+            monitorOpenPositionsFirst: true,
+            processScannerSnapshot: true,
+
+            targetTradeSide: ONLY_SIDE,
+            tradeSide: ONLY_SIDE,
+            side: DASHBOARD_SIDE,
+            positionSide: ONLY_SIDE,
+            direction: ONLY_SIDE,
+
+            shortOnly: true,
+            longDisabled: true,
+            disableLong: true,
+
+            virtualOnly: true,
+            virtualTracked: true,
+            shadowOnly: true,
+            source: "VIRTUAL",
+
+            realOrdersDisabled: true,
+            exchangeOrdersDisabled: true,
+            noExchangeOrders: true,
+            noRealOrders: true,
+
+            allowLearningWithoutActiveRotation: true,
+            ignoreMaxOpenPositionsForLearning: true,
+            oneOpenPositionPerSymbol: true,
+
+            discordOnlyForSelectedMicroFamilies: true
+          })
+        });
+
+        const counts = data.counts || {};
+        setMessage(
+          `TradeSystem klaar.\nEntries=${counts.entries || 0}, waits=${counts.waits || 0}, virtualExits=${counts.virtualExits || 0}.`,
+          "ok"
+        );
+
+        await renderTrade();
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
+    }
+
+    async function fetchMicros() {
+      const data = await api(microApiUrl(), {
+        timeoutMs: 22000
+      });
+
+      const best = extractRows(data, ["best25MicroFamilies", "topMicroFamilies", "bestMicroFamilies"]);
+      const direct = extractRows(data, ["shortRows", "rows", "microFamilies", "micros", "items"]);
+      const deep = extractDeepMicroRows(data);
+
+      const rows = best.length ? best : direct.length ? direct : deep;
+
+      return {
+        ...data,
+        rows,
+        bestRows: best,
+        directRows: direct,
+        deepRows: deep,
+        activeMicroFamilyIds: uniqueStrings([
+          data.activeMicroFamilyIds || [],
+          data.activeRotation?.activeMicroFamilyIds || [],
+          data.activeRotation?.microFamilyIds || []
+        ]).filter(idAllowedInShortOnly),
+        activeMacroFamilyIds: uniqueStrings([
+          data.activeMacroFamilyIds || [],
+          data.activeRotation?.activeMacroFamilyIds || [],
+          data.activeRotation?.macroFamilyIds || []
+        ]).filter(idAllowedInShortOnly)
+      };
+    }
+
+    function currentMicroRows() {
+      const rows = state.micros?.rows || [];
+      const search = state.microSearch.trim().toLowerCase();
+
+      if (!search) return shortRows(rows);
+
+      return shortRows(rows).filter((row) => JSON.stringify(row).toLowerCase().includes(search));
+    }
+
+    function manualCard(row) {
+      if (!row) {
+        return `
+          <div class="manual-card">
+            <h3>Manual Discord selection</h3>
+            <div class="empty">Geen SHORT micro-family beschikbaar. Laat scanner + TradeSystem eerst observations schrijven.</div>
+          </div>
+        `;
+      }
+
+      const id = microId(row);
+      const isActive = activeMicroIds().includes(id);
+
+      return `
+        <div class="manual-card">
+          <h3>Beste zichtbare SHORT true micro</h3>
+
+          <div class="toolbar">
+            <span class="pill short">SHORT</span>
+            ${isActive ? '<span class="pill active">DISCORD ACTIVE</span>' : '<span class="pill info">NOT SELECTED</span>'}
+            ${tierPill(tier(row))}
+          </div>
+
+          <div>
+            <div class="metric-extra">True micro</div>
+            <code>${escapeHtml(id || "NO_MICRO_ID")}</code>
+          </div>
+
+          <div style="margin-top:8px">
+            <div class="metric-extra">Macro</div>
+            <code>${escapeHtml(macroId(row) || "NO_MACRO_ID")}</code>
+          </div>
+
+          <div class="manual-grid">
+            <div class="manual-stat"><span>Seen</span><strong>${escapeHtml(fmt(observationSample(row), 2))}</strong></div>
+            <div class="manual-stat"><span>Completed</span><strong>${escapeHtml(fmt(completed(row), 2))}</strong></div>
+            <div class="manual-stat"><span>Winrate</span><strong>${escapeHtml(fmtPct(row.winrate))}</strong></div>
+            <div class="manual-stat"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}</strong></div>
+            <div class="manual-stat"><span>Net TotalR</span><strong>${escapeHtml(fmt(row.totalR, 3))}</strong></div>
+            <div class="manual-stat"><span>AvgR</span><strong>${escapeHtml(fmt(row.avgR, 3))}</strong></div>
+            <div class="manual-stat"><span>PF</span><strong>${escapeHtml(fmt(row.profitFactor, 2))}</strong></div>
+            <div class="manual-stat"><span>AvgCostR</span><strong>${escapeHtml(fmt(row.avgCostR, 3))}</strong></div>
+          </div>
+
+          <div class="metric-extra">
+            Discord wordt alleen actief voor deze exacte true micro. Virtual learning blijft alle risk-valide SHORT candidates volgen.
+          </div>
+
+          <div class="toolbar">
+            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${id ? "" : "disabled"}>Activeer Discord voor deze exacte micro</button>
+            <button type="button" data-copy="${escapeAttr(id)}" ${id ? "" : "disabled"}>Copy ID</button>
+          </div>
+        </div>
+      `;
+    }
+
+    async function renderMicros() {
       showLoading("micros");
 
-      const data = await fetchMicroRows(state.microMode);
-      state.micros = data;
+      try {
+        state.micros = await fetchMicros();
+      } catch (error) {
+        state.micros = {
+          rows: [],
+          error: friendlyApiMessage(error)
+        };
 
-      if (data.errors.length) {
-        setMessage(data.errors.join("\n"), "warn");
+        setMessage(state.micros.error, "warn");
       }
 
       const rows = currentMicroRows();
-      const filteredRows = filterMicroRows(rows);
-      const split = splitTopMicroRows(filteredRows);
-      const topRow = topMicroRow(rows);
-
-      const completedRows = rows.filter((row) => microCompleted(row) > 0);
-      const observationOnlyRows = rows.filter((row) => microCompleted(row) <= 0 && microObservationSample(row) > 0);
+      const top = rows[0] || null;
+      const observationRows = rows.filter((row) => completed(row) <= 0 && observationSample(row) > 0);
+      const completedRows = rows.filter((row) => completed(row) > 0);
 
       $("micros").innerHTML = `
         <div class="toolbar">
           <select id="microMode">
-            ${validMicroModes.map((modeName) => `
-              <option value="${escapeAttr(modeName)}" ${modeName === state.microMode ? "selected" : ""}>${escapeHtml(modeName)}</option>
+            ${validMicroModes.map((mode) => `
+              <option value="${escapeAttr(mode)}" ${mode === state.microMode ? "selected" : ""}>${escapeHtml(mode)}</option>
             `).join("")}
           </select>
 
-          <input id="microSearch" type="search" placeholder="Zoek binnen SHORT true micro, macro, family, bucket..." value="${escapeAttr(state.microSearch)}" />
+          <input id="microSearch" type="search" placeholder="Zoek true micro, macro, family, bucket..." value="${escapeAttr(state.microSearch)}" />
 
-          <button type="button" class="success" id="copyVisibleMicroIdsBtn">Copy visible micro IDs</button>
-          <button type="button" class="success" id="activateVisibleMicroIdsBtn">Activate visible IDs for Discord</button>
-          <button type="button" id="downloadMicrosBtn">Export JSON</button>
+          <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible micro IDs</button>
+          <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible IDs for Discord</button>
+          <button type="button" id="exportMicrosBtn">Export JSON</button>
         </div>
 
         <div class="section-title">
           <div>
             <h2>Manual Discord selection candidate</h2>
-            <p>Knop activeert exacte microFamilyId. Geen auto-rotatie. Geen echte orders.</p>
+            <p>Alleen exacte SHORT true micro IDs worden actief gezet.</p>
           </div>
         </div>
 
-        <div class="single-wide">
-          ${manualSelectionCard(topRow)}
-        </div>
+        ${manualCard(top)}
 
         <div class="grid">
           ${metricCard("SHORT rows", fmtInt(rows.length))}
-          ${metricCard("Visible SHORT rows", fmtInt(split.visibleRows.length))}
-          ${metricCard("Mode", state.microMode)}
-          ${metricCard("Discord active micros", fmtInt(activeMicroSet().size))}
           ${metricCard("Completed rows", fmtInt(completedRows.length))}
-          ${metricCard("Observation-only rows", fmtInt(observationOnlyRows.length))}
-          ${metricCard("Virtual outcomes", "NET R")}
-          ${metricCard("LONG rows", "0", "client-side filtered")}
+          ${metricCard("OBSERVING rows", fmtInt(observationRows.length))}
+          ${metricCard("Discord active micros", fmtInt(activeMicroIds().length))}
+          ${metricCard("Mode", state.microMode)}
+          ${metricCard("Outcomes", "NET R")}
+          ${metricCard("LONG rows", "0")}
+          ${metricCard("Manual only", "YES")}
         </div>
 
-        <div class="card">
-          <h3>Analyze status</h3>
-          <div class="metric-extra">
-            Families met seen/observations > 0 en completed = 0 blijven zichtbaar als OBSERVING.
-            Stats draaien op netto R zodra PositionEngine outcomes terugschrijft.
-          </div>
-        </div>
-
-        <div id="microsTable"></div>
+        ${microTable(rows.slice(0, state.bestLimit))}
 
         ${rows.length === 0 ? `
           <div class="card">
             <h3>Micro API debug</h3>
-            <div class="metric-extra">
-              Frontend heeft geen SHORT rows kunnen extraheren uit /api/admin/micro-families.
-            </div>
             ${jsonBlock({
-              ok: data.ok,
-              rawKeys: data.raw ? Object.keys(data.raw).slice(0, 50) : [],
-              bestRows: data.best25MicroFamilies.length,
-              fallbackRows: data.fallbackRows.length,
-              deepRows: data.deepRows.length,
-              summary: data.summary,
-              perf: data.perf
+              error: state.micros?.error || null,
+              keys: state.micros ? Object.keys(state.micros).slice(0, 50) : [],
+              bestRows: state.micros?.bestRows?.length || 0,
+              directRows: state.micros?.directRows?.length || 0,
+              deepRows: state.micros?.deepRows?.length || 0
             })}
           </div>
         ` : ""}
       `;
 
-      renderMicrosTableOnly();
-
       $("microMode")?.addEventListener("change", (event) => {
-        renderMicros(event.target.value);
+        state.microMode = event.target.value;
+        renderMicros();
       });
 
       $("microSearch")?.addEventListener("input", (event) => {
         state.microSearch = event.target.value;
-        renderMicrosTableOnly();
+        renderMicros();
       });
 
-      $("copyVisibleMicroIdsBtn")?.addEventListener("click", () => {
-        const ids = uniqueStrings(currentVisibleMicroRows().map(microId)).filter(idAllowedInShortOnly);
-        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} SHORT true microFamilyIds gekopieerd.`);
+      $("copyVisibleIdsBtn")?.addEventListener("click", () => {
+        const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} SHORT micro IDs gekopieerd.`);
       });
 
-      $("activateVisibleMicroIdsBtn")?.addEventListener("click", () => {
-        const ids = uniqueStrings(currentVisibleMicroRows().map(microId)).filter(idAllowedInShortOnly);
+      $("activateVisibleIdsBtn")?.addEventListener("click", () => {
+        const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
         activateSelectedMicroFamilies(ids);
       });
 
-      $("downloadMicrosBtn")?.addEventListener("click", () => {
-        downloadJson("short-micro-families.json", data);
+      $("exportMicrosBtn")?.addEventListener("click", () => {
+        downloadJson("short-micro-families.json", state.micros);
       });
 
-      bindMicroTableEvents();
+      bindMicroEvents();
+    }
+
+    async function renderRotation() {
+      showLoading("rotation");
+
+      const data = await api(rotationApiUrl(), {
+        timeoutMs: 22000
+      });
+
+      state.rotation = data;
+
+      const active = data.active || data.activeRotation || {};
+      const activeIds = uniqueStrings([
+        active.activeMicroFamilyIds || [],
+        active.microFamilyIds || [],
+        data.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
+
+      const activeMacros = uniqueStrings([
+        active.activeMacroFamilyIds || [],
+        active.macroFamilyIds || [],
+        data.activeMacroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
+
+      const rows = shortRows(data.activeRows || active.microFamilies || [])
+        .concat(
+          activeIds.map((id, index) => ({
+            rank: index + 1,
+            microFamilyId: id,
+            trueMicroFamilyId: id,
+            tradeSide: ONLY_SIDE,
+            side: DASHBOARD_SIDE,
+            selectedTier: "MANUAL",
+            shortOnly: true,
+            longDisabled: true
+          }))
+        )
+        .filter((row, index, arr) => arr.findIndex((candidate) => microId(candidate) === microId(row)) === index);
+
+      $("rotation").innerHTML = `
+        <div class="section-title">
+          <div>
+            <h2>Manual Discord selection</h2>
+            <p>Geen auto-rotatie. Geen next activation. Alleen exact geselecteerde SHORT true micro IDs.</p>
+          </div>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Active true micro IDs", fmtInt(activeIds.length))}
+          ${metricCard("Active macro IDs", fmtInt(activeMacros.length))}
+          ${metricCard("Rotation ID", active.rotationId || "-")}
+          ${metricCard("Mode", active.mode || "manual")}
+          ${metricCard("Source", active.source || "-")}
+          ${metricCard("Discord alerts", activeIds.length > 0 ? "ENABLED" : "OFF")}
+          ${metricCard("Virtual learning", "UNCHANGED")}
+          ${metricCard("Auto rotation", "DISABLED")}
+        </div>
+
+        <div class="card">
+          <h3>Manual exact micro IDs</h3>
+          <p class="metric-extra">
+            Plak één of meer true microFamilyIds. Deze selectie activeert alleen Discord alerts.
+          </p>
+
+          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_...">${escapeHtml(activeIds.join("\n"))}</textarea>
+
+          <div class="toolbar">
+            <button type="button" class="short-action" id="activateManualBtn">Save manual Discord selection</button>
+            <button type="button" id="clearManualBtn">Clear input</button>
+            <button type="button" class="success" id="copyActiveBtn">Copy active micro IDs</button>
+            <button type="button" id="exportRotationBtn">Export JSON</button>
+          </div>
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Active selected SHORT micro-families</h2>
+            <p>Deze IDs bepalen Discord eligibility. Niet-geselecteerde setups blijven stil leren.</p>
+          </div>
+        </div>
+
+        ${microTable(rows)}
+
+        <div class="card">
+          <h3>Raw rotation dashboard</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("activateManualBtn")?.addEventListener("click", () => {
+        const ids = uniqueStrings(($("manualMicroIds")?.value || "").split(/[\n,;\r]+/g));
+        activateSelectedMicroFamilies(ids);
+      });
+
+      $("clearManualBtn")?.addEventListener("click", () => {
+        $("manualMicroIds").value = "";
+      });
+
+      $("copyActiveBtn")?.addEventListener("click", () => {
+        copyText(JSON.stringify(activeIds, null, 2), "Active micro IDs gekopieerd.");
+      });
+
+      $("exportRotationBtn")?.addEventListener("click", () => {
+        downloadJson("manual-discord-selection.json", data);
+      });
+
+      bindMicroEvents();
     }
 
     async function activateSelectedMicroFamilies(ids = []) {
@@ -2879,7 +2101,7 @@
         `Activeer Discord alerts voor ${microFamilyIds.length} exacte SHORT micro-family ID(s)?\n\n` +
         `${microFamilyIds.slice(0, 8).join("\n")}` +
         `${microFamilyIds.length > 8 ? "\n..." : ""}\n\n` +
-        `Virtual learning blijft alle risk-valide SHORT candidates volgen.`
+        "Virtual learning blijft alle risk-valide SHORT candidates volgen."
       )) {
         return;
       }
@@ -2889,60 +2111,51 @@
         timeoutMs: 28000,
         body: JSON.stringify({
           action: "activateSelectedMicroFamilies",
+
           microFamilyIds,
           activeMicroFamilyIds: microFamilyIds,
+          trueMicroFamilyIds: microFamilyIds,
 
           side: DASHBOARD_SIDE,
           tradeSide: ONLY_SIDE,
           positionSide: ONLY_SIDE,
           direction: ONLY_SIDE,
-
           targetTradeSide: ONLY_SIDE,
           dashboardSide: DASHBOARD_SIDE,
 
           shortOnly: true,
           longDisabled: true,
+          disableLong: true,
+
           manualOnly: true,
-          discordOnly: true
+          adminSelected: true,
+          autoRotation: false,
+          discordOnlyForSelectedMicroFamilies: true
         })
       });
 
-      const active = data.activeRotation || data.active || {};
-      const activeMicroIds = extractIdsFromRotation(active);
-      const activeMacroIds = extractMacroIdsFromRotation(active);
+      const active = data.active || data.activeRotation || {};
+      const activeIds = uniqueStrings([
+        active.activeMicroFamilyIds || [],
+        active.microFamilyIds || [],
+        data.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
 
       state.rotation = {
         ...(state.rotation || {}),
+        ...data,
         active,
         activeRotation: active,
-        activeMicroFamilyIds: activeMicroIds,
-        activeMacroFamilyIds: activeMacroIds
+        activeMicroFamilyIds: activeIds
       };
 
-      if (state.micros) {
-        state.micros = {
-          ...state.micros,
-          activeRotation: active,
-          activeMicroFamilyIds: activeMicroIds,
-          activeMacroFamilyIds: activeMacroIds
-        };
-      }
-
       setMessage(
-        `Manual Discord selection opgeslagen.\n` +
-        `Active true micro IDs: ${activeMicroIds.length}\n` +
-        `Virtual learning blijft breed doorlopen; alleen Discord alerts zijn geselecteerd.`,
+        `Manual Discord selection opgeslagen.\nActive true micro IDs: ${activeIds.length}\nVirtual learning blijft breed doorlopen.`,
         "ok"
       );
 
-      if (state.activeTab === "rotation") {
-        await renderRotation();
-        return;
-      }
-
-      if (state.activeTab === "micros") {
-        await renderMicros(state.microMode);
-      }
+      if (state.activeTab === "rotation") await renderRotation();
+      if (state.activeTab === "micros") await renderMicros();
     }
 
     async function openMicro(id) {
@@ -2974,79 +2187,25 @@
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="metric-extra">
-                true micro=${escapeHtml(microId(row))} · macro=${escapeHtml(macroId(row))} · family=${escapeHtml(familyId(row))}
-              </div>
+              <div class="metric-extra">true micro=${escapeHtml(microId(row))} · macro=${escapeHtml(macroId(row))}</div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
 
           <div class="toolbar">
-            <button type="button" class="success" id="activateDrawerMicroBtn">Activate exact micro for Discord</button>
-            <button type="button" class="success" id="copyDrawerIdBtn">Copy true micro ID</button>
-            <button type="button" class="success" id="copyDrawerMacroBtn">Copy macro ID</button>
-            <button type="button" id="copyDrawerJsonBtn">Copy JSON</button>
+            <button type="button" class="short-action" id="activateDrawerBtn">Activate exact micro for Discord</button>
+            <button type="button" id="copyDrawerBtn">Copy ID</button>
           </div>
 
           <div class="grid">
             ${metricCard("Seen", fmtInt(row.seen ?? row.observations))}
             ${metricCard("Observations", fmtInt(row.observations ?? row.seen))}
-            ${metricCard("Completed", fmt(microCompleted(row), 2))}
+            ${metricCard("Completed", fmt(completed(row), 2))}
             ${metricCard("Status", row.learningStatus || row.status || "-")}
-            ${metricCard("Fair WR", fmtPctRatio(row.fairWinrate ?? row.sampleAdjustedWinrate))}
-            ${metricCard("Net AvgR", fmt(row.avgR, 3))}
-            ${metricCard("Net TotalR", fmt(row.totalR, 3))}
-            ${metricCard("AvgCostR", fmt(row.avgCostR, 3))}
-          </div>
-
-          <div class="two-col">
-            <div class="card">
-              <h3>IDs</h3>
-              ${jsonBlock({
-                microFamilyId: microId(row),
-                trueMicroFamilyId: row.trueMicroFamilyId || microId(row),
-                macroFamilyId: macroId(row),
-                parentMacroFamilyId: row.parentMacroFamilyId || macroId(row),
-                familyId: familyId(row),
-                tradeSide: "SHORT",
-                activeDiscord: activeMicroSet().has(microId(row))
-              })}
-            </div>
-
-            <div class="card">
-              <h3>Net stats</h3>
-              ${jsonBlock({
-                seen: row.seen,
-                observations: row.observations,
-                observationSample: row.observationSample,
-                completed: row.completed,
-                outcomeSample: row.outcomeSample,
-                wins: row.wins,
-                losses: row.losses,
-                flats: row.flats,
-                winrate: row.winrate,
-                fairWinrate: row.fairWinrate,
-                avgR: row.avgR,
-                totalR: row.totalR,
-                profitFactor: row.profitFactor,
-                totalCostR: row.totalCostR,
-                avgCostR: row.avgCostR,
-                balancedScore: row.balancedScore,
-                dashboardBalancedScore: row.dashboardBalancedScore
-              })}
-            </div>
-          </div>
-
-          <div class="two-col">
-            <div class="card">
-              <h3>True micro definition</h3>
-              ${jsonBlock(row.definitionParts || row.microDefinitionParts || row.definition || [])}
-            </div>
-
-            <div class="card">
-              <h3>Macro definition</h3>
-              ${jsonBlock(row.macroDefinitionParts || row.macroDefinition || row.parentDefinitionParts || [])}
-            </div>
+            ${metricCard("Winrate", fmtPct(row.winrate))}
+            ${metricCard("Fair WR", fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}
+            ${metricCard("AvgR net", fmt(row.avgR, 3))}
+            ${metricCard("TotalR net", fmt(row.totalR, 3))}
           </div>
 
           <div class="card">
@@ -3056,19 +2215,18 @@
         `;
 
         $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
-        $("activateDrawerMicroBtn")?.addEventListener("click", () => activateSelectedMicroFamilies([microId(row)]));
-        $("copyDrawerIdBtn")?.addEventListener("click", () => copyText(microId(row), "True microFamilyId gekopieerd."));
-        $("copyDrawerMacroBtn")?.addEventListener("click", () => copyText(macroId(row), "MacroFamilyId gekopieerd."));
-        $("copyDrawerJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "MicroFamily JSON gekopieerd."));
+        $("activateDrawerBtn")?.addEventListener("click", () => activateSelectedMicroFamilies([microId(row)]));
+        $("copyDrawerBtn")?.addEventListener("click", () => copyText(microId(row), "MicroFamilyId gekopieerd."));
       } catch (error) {
         drawer.innerHTML = `
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="metric-extra">Detail API niet geladen</div>
+              <div class="metric-extra">Detail API niet geladen.</div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
+
           <div class="message warn">${escapeHtml(friendlyApiMessage(error))}</div>
         `;
 
@@ -3081,121 +2239,6 @@
       $("drawer").innerHTML = "";
     }
 
-    function activeShortRowsFromRotation(active = {}) {
-      const rows = Array.isArray(active.microFamilies)
-        ? active.microFamilies
-        : [];
-
-      return sanitizeShortRows(rows);
-    }
-
-    async function renderRotation() {
-      showLoading("rotation");
-
-      const data = await api(rotationUrl(), {
-        timeoutMs: 18000
-      });
-
-      state.rotation = data;
-
-      const active = data.active || data.activeRotation || {};
-      const activeIds = extractIdsFromRotation(active);
-      const activeMacroIds = extractMacroIdsFromRotation(active);
-
-      const activeRowsRaw = getArrayRows(data, ["activeRows", "rows", "activeMicroFamilies"]);
-      const shortActiveRows = activeRowsRaw.length
-        ? sanitizeShortRows(activeRowsRaw)
-        : activeShortRowsFromRotation(active);
-
-      const activeRows = shortActiveRows.length
-        ? shortActiveRows
-        : activeIds.map((id, index) => ({
-          rank: index + 1,
-          microFamilyId: id,
-          trueMicroFamilyId: id,
-          tradeSide: ONLY_SIDE,
-          side: DASHBOARD_SIDE,
-          selectedTier: "MANUAL"
-        }));
-
-      $("rotation").innerHTML = `
-        <div class="section-title">
-          <div>
-            <h2>Manual Discord selection</h2>
-            <p>Alleen exacte true micro IDs. Geen auto-bootstrap. Geen activate-next. Geen weekly-freeze actie vanuit UI.</p>
-          </div>
-        </div>
-
-        <div class="grid">
-          ${metricCard("Active true micro IDs", fmtInt(activeIds.length))}
-          ${metricCard("Active macro IDs", fmtInt(activeMacroIds.length))}
-          ${metricCard("Source", active.source || "manual/none")}
-          ${metricCard("Mode", active.mode || "selected")}
-          ${metricCard("Rotation ID", active.rotationId || "NA")}
-          ${metricCard("Manual only", boolText(active.manualOnly !== false))}
-          ${metricCard("Discord only", "YES")}
-          ${metricCard("Virtual learning", "UNCHANGED")}
-        </div>
-
-        ${rotationDiagnosticsHtml(data, active)}
-
-        <div class="card">
-          <h3>Manual exact micro IDs</h3>
-          <p class="metric-extra">
-            Plak één of meer true microFamilyIds. Deze selectie activeert alleen Discord alerts.
-            TradeSystem blijft alle SHORT candidates analyseren en virtual positions tracken.
-          </p>
-
-          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_MF_V2|...&#10;MICRO_SHORT_MF_V2|...">${escapeHtml(activeIds.join("\n"))}</textarea>
-
-          <div class="toolbar">
-            <button type="button" class="short-action" id="activateManualMicroIdsBtn">Save manual Discord selection</button>
-            <button type="button" id="clearManualMicroIdsBtn">Clear input</button>
-            <button type="button" class="success" id="copyActiveMicroIdsBtn">Copy active true micro IDs</button>
-            <button type="button" class="success" id="copyActiveMacroIdsBtn">Copy active macro IDs</button>
-            <button type="button" id="downloadRotationBtn">Export rotation JSON</button>
-          </div>
-        </div>
-
-        <div class="section-title">
-          <div>
-            <h2>Active selected SHORT micro-families</h2>
-            <p>Deze IDs worden exact gebruikt voor Discord entry/exit alerts. Niet-geselecteerde families blijven stil leren.</p>
-          </div>
-        </div>
-
-        ${microRowsTable(activeRows, activeIds, activeMacroIds)}
-
-        <div class="card">
-          <h3>Copy block</h3>
-          <pre>${escapeHtml(JSON.stringify(activeIds, null, 2))}</pre>
-          <pre>${escapeHtml(`ACTIVE_MICRO_FAMILY_IDS=${activeIds.join(",")}`)}</pre>
-        </div>
-
-        <div class="card">
-          <h3>Raw rotation dashboard</h3>
-          ${jsonBlock(data)}
-        </div>
-      `;
-
-      $("activateManualMicroIdsBtn")?.addEventListener("click", () => {
-        const raw = $("manualMicroIds")?.value || "";
-        const ids = uniqueStrings(raw.split(/[\n,;\r]+/g));
-
-        activateSelectedMicroFamilies(ids);
-      });
-
-      $("clearManualMicroIdsBtn")?.addEventListener("click", () => {
-        $("manualMicroIds").value = "";
-      });
-
-      $("copyActiveMicroIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), `Copied ${activeIds.length} true micro IDs.`));
-      $("copyActiveMacroIdsBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeMacroIds, null, 2), `Copied ${activeMacroIds.length} macro IDs.`));
-      $("downloadRotationBtn")?.addEventListener("click", () => downloadJson("manual-discord-selection.json", data));
-
-      bindMicroTableEvents();
-    }
-
     async function renderDiscord() {
       showLoading("discord");
 
@@ -3205,12 +2248,12 @@
 
       state.discord = data;
 
-      const logs = getArrayRows(data, ["logs", "items"]);
+      const logs = asArray(data.logs || data.items || data.data);
 
       $("discord").innerHTML = `
         <div class="toolbar">
-          <button type="button" id="copyDiscordJsonBtn">Copy Discord JSON</button>
-          <button type="button" id="downloadDiscordBtn">Export JSON</button>
+          <button type="button" id="copyDiscordBtn">Copy JSON</button>
+          <button type="button" id="exportDiscordBtn">Export JSON</button>
         </div>
 
         <div class="grid">
@@ -3223,21 +2266,21 @@
         ${table(logs, [
           { label: "TS", render: (row) => fmtTs(row.ts || row.createdAt) },
           { label: "Type", render: (row) => escapeHtml(row.type || row.level || row.event || "-") },
-          { label: "Coin", render: (row) => coinAvatar(row.payload || row, "sm") },
-          { label: "Side", render: () => `<span class="pill short">SHORT</span>` },
+          { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row.payload || row)) },
+          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
           { label: "Selected", render: (row) => {
             const payload = row.payload || row;
-            const selected = Boolean(payload.discordAlertEligible || payload.selectedForDiscord || payload.wasSelected);
+            const selected = Boolean(payload.discordAlertEligible || payload.selectedForDiscord || payload.wasSelected || row.selectedOnly);
             return `<span class="pill ${selected ? "active" : ""}">${selected ? "YES" : "NO"}</span>`;
           }},
-          { label: "True Micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row))}</code>` },
-          { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row.payload || row))}</code>` },
-          { label: "Result", render: (row) => escapeHtml(row.result ? JSON.stringify(row.result) : row.message || row.content || "") }
+          { label: "True micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
+          { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row.payload || row) || "-")}</code>` },
+          { label: "Message", render: (row) => escapeHtml(row.message || row.content || row.result || "") }
         ], "Geen Discord logs.")}
       `;
 
-      $("copyDiscordJsonBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
-      $("downloadDiscordBtn")?.addEventListener("click", () => downloadJson("discord-logs.json", data));
+      $("copyDiscordBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
+      $("exportDiscordBtn")?.addEventListener("click", () => downloadJson("discord-logs.json", data));
     }
 
     function renderReset() {
@@ -3292,7 +2335,7 @@
       try {
         const data = await api(endpoints.resetLearning, {
           method: "POST",
-          timeoutMs: 25000,
+          timeoutMs: 30000,
           body: JSON.stringify({
             confirm: "RESET_LEARNING",
             confirmed: "RESET_LEARNING",
@@ -3319,7 +2362,7 @@
       try {
         const data = await api(endpoints.resetRotation, {
           method: "POST",
-          timeoutMs: 25000,
+          timeoutMs: 30000,
           body: JSON.stringify({
             confirm: "RESET_ROTATION",
             confirmed: "RESET_ROTATION",
@@ -3340,7 +2383,7 @@
 
     async function postFactoryReset() {
       const confirmValue = $("factoryConfirm").value.trim();
-      const forceValue = $("factoryForce").checked;
+      const force = $("factoryForce").checked;
 
       if (confirmValue !== "FACTORY_RESET_CONFIRMED") {
         setMessage("Factory reset geblokkeerd: bevestiging is niet exact FACTORY_RESET_CONFIRMED.", "error");
@@ -3356,11 +2399,13 @@
           body: JSON.stringify({
             confirm: "FACTORY_RESET_CONFIRMED",
             confirmed: "FACTORY_RESET_CONFIRMED",
-            force: forceValue,
-            forceClosePositions: forceValue,
+            force,
+            forceClosePositions: force,
+
             side: DASHBOARD_SIDE,
             tradeSide: ONLY_SIDE,
             targetTradeSide: ONLY_SIDE,
+
             shortOnly: true,
             longDisabled: true
           })
@@ -3374,18 +2419,18 @@
     }
 
     function showTab(id) {
-      if (!tabs.includes(id)) id = "overview";
+      const next = tabs.includes(id) ? id : "overview";
 
-      state.activeTab = id;
+      state.activeTab = next;
 
       document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
       document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
 
-      $(id).classList.remove("hidden");
-      document.querySelector(`[data-tab="${id}"]`)?.classList.add("active");
+      $(next).classList.remove("hidden");
+      document.querySelector(`[data-tab="${next}"]`)?.classList.add("active");
 
-      location.hash = id;
-      refresh(id);
+      location.hash = next;
+      refresh(next);
     }
 
     function renderSoftError(tab, error) {
@@ -3396,9 +2441,7 @@
       $(tab).innerHTML = `
         <div class="card">
           <h3>Niet geladen</h3>
-          <div class="empty">
-            ${escapeHtml(message)}
-          </div>
+          <div class="empty">${escapeHtml(message)}</div>
         </div>
       `;
     }
