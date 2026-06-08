@@ -8,8 +8,6 @@ import {
   readJsonLogs
 } from '../../src/redis.js';
 import {
-  getIsoWeekKey,
-  getPreviousIsoWeekKey,
   safeNumber,
   sideToTradeSide
 } from '../../src/utils.js';
@@ -20,6 +18,10 @@ import { getRotationDashboard } from '../../src/analyze/rotationEngine.js';
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
+
+// Vaste leer-sleutel: overview leest dezelfde doorlopende leerbak als analyzeEngine.js.
+// Geen ISO-week reset meer. Alleen handmatige factory-reset wist ANALYZE:*.
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const HARD_SAMPLE_MIN = 5;
 
@@ -40,6 +42,10 @@ function methodNotAllowed(res) {
 
 function modeFlags() {
   return {
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    weekResetDisabled: true,
+    isoWeekLearningDisabled: true,
+
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
 
@@ -59,8 +65,9 @@ function modeFlags() {
     shadowOnly: true,
     virtualOutcomesIncluded: true,
     shadowOutcomesIncluded: true,
+    realOutcomesExcluded: true,
     learningOutcomesOnly: true,
-    outcomesSourceMode: 'ALL_LEARNING_OUTCOMES',
+    outcomesSourceMode: 'VIRTUAL_AND_SHADOW_NET_OUTCOMES',
 
     observationFirst: true,
     netOutcomesOnly: true,
@@ -68,6 +75,13 @@ function modeFlags() {
     noRealOrders: true,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
+
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    analyzeMicroFamiliesOnly: true,
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    symbolExcludedFromFamilyId: true,
 
     manualSelectionOnly: true,
     autoRotationActivationDisabled: true,
@@ -91,7 +105,7 @@ function safeObject(value) {
 function sourceEntries(value = {}) {
   if (Array.isArray(value)) {
     return value.map((row, index) => [
-      row?.microFamilyId || row?.trueMicroFamilyId || row?.id || row?.key || String(index),
+      row?.trueMicroFamilyId || row?.microFamilyId || row?.id || row?.key || String(index),
       row
     ]);
   }
@@ -138,7 +152,22 @@ function cleanSideText(value = '') {
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY', 'SHORT');
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
+function isScannerFingerprintId(id = '') {
+  const value = upper(id);
+
+  return (
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('__SCANNER__') ||
+    value.includes('SCANNER_GATE_PASS') ||
+    value.includes('SCANNER_GATE_FAIL')
+  );
 }
 
 function extractSnapshotId(value) {
@@ -346,8 +375,11 @@ function inferTradeSide(input = {}) {
   );
 
   const microFamilyId = cleanSideText(
-    input.microFamilyId ||
     input.trueMicroFamilyId ||
+    input.microFamilyId ||
+    input.coarseMicroFamilyId ||
+    input.baseMicroFamilyId ||
+    input.legacyMicroFamilyId ||
     input.id ||
     input.key
   );
@@ -400,6 +432,21 @@ function inferTradeSide(input = {}) {
 }
 
 function isShortRow(row = {}) {
+  if (!row) return false;
+
+  const id = String(
+    row.trueMicroFamilyId ||
+    row.microFamilyId ||
+    row.coarseMicroFamilyId ||
+    row.id ||
+    row.key ||
+    ''
+  ).trim();
+
+  if (id && isScannerFingerprintId(id)) return false;
+  if (isScannerFingerprintId(row.trueMicroFamilyId)) return false;
+  if (isScannerFingerprintId(row.coarseMicroFamilyId)) return false;
+
   return inferTradeSide(row) !== OPPOSITE_TRADE_SIDE;
 }
 
@@ -408,7 +455,12 @@ function isLongRow(row = {}) {
 }
 
 function isAllowedShortId(id = '') {
-  return inferTradeSide(String(id || '')) !== OPPOSITE_TRADE_SIDE;
+  const value = String(id || '').trim();
+
+  if (!value) return false;
+  if (isScannerFingerprintId(value)) return false;
+
+  return inferTradeSide(value) !== OPPOSITE_TRADE_SIDE;
 }
 
 function filterShortRows(rows = []) {
@@ -448,8 +500,8 @@ function countLongMapOrArray(value) {
 
 function getMicroFamilyId(row = {}, key = '') {
   return (
-    row.microFamilyId ||
     row.trueMicroFamilyId ||
+    row.microFamilyId ||
     row.id ||
     row.key ||
     key ||
@@ -469,13 +521,28 @@ function getMacroFamilyId(row = {}) {
   );
 }
 
+function virtualKeyFromReal(realKey = '') {
+  if (!realKey || !String(realKey).startsWith('real')) return null;
+
+  return `virtual${String(realKey).slice(4)}`;
+}
+
+function shadowKeyFromReal(realKey = '') {
+  if (!realKey || !String(realKey).startsWith('real')) return null;
+
+  return `shadow${String(realKey).slice(4)}`;
+}
+
 function getLearningCount(row = {}, aggregateKey, realKey = null, shadowKey = null) {
   if (aggregateKey && hasValue(row[aggregateKey])) {
     return num(row[aggregateKey], 0);
   }
 
-  return num(realKey ? row[realKey] : 0, 0) +
-    num(shadowKey ? row[shadowKey] : 0, 0);
+  const virtualKey = virtualKeyFromReal(realKey);
+  const resolvedShadowKey = shadowKey || shadowKeyFromReal(realKey);
+
+  return num(virtualKey ? row[virtualKey] : 0, 0) +
+    num(resolvedShadowKey ? row[resolvedShadowKey] : 0, 0);
 }
 
 function getOutcomeCounts(row = {}) {
@@ -486,7 +553,7 @@ function getOutcomeCounts(row = {}) {
   const explicitCompleted = Math.max(
     num(row.completed, 0),
     num(row.outcomeSample, 0),
-    num(row.realCompleted, 0) + num(row.shadowCompleted, 0),
+    num(row.virtualCompleted, 0) + num(row.shadowCompleted, 0),
     0
   );
 
@@ -524,7 +591,7 @@ function getTotalR(row = {}) {
   if (hasValue(row.totalNetR)) return num(row.totalNetR, 0);
   if (hasValue(row.totalR)) return num(row.totalR, 0);
 
-  return num(row.realTotalR, 0) + num(row.shadowTotalR, 0);
+  return num(row.virtualTotalR, 0) + num(row.shadowTotalR, 0);
 }
 
 function getTotalCostR(row = {}) {
@@ -534,7 +601,7 @@ function getTotalCostR(row = {}) {
 
   if (hasValue(row.totalCostR)) return num(row.totalCostR, 0);
 
-  const combined = num(row.realTotalCostR, 0) + num(row.shadowTotalCostR, 0);
+  const combined = num(row.virtualTotalCostR, 0) + num(row.shadowTotalCostR, 0);
 
   if (combined > 0) return combined;
   if (hasValue(row.avgCostR)) return num(row.avgCostR, 0) * completed;
@@ -622,6 +689,8 @@ function summarizeMicros(micros = {}) {
 
   return {
     ...summary,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    weekResetDisabled: true,
     seen: round(summary.seen, 4),
     observations: round(summary.observations, 4),
     completed: round(summary.completed, 4),
@@ -866,7 +935,11 @@ function buildTradeSummary(tradeMeta) {
   const learningActions = allShortActions.filter((row) => row.learningAction || row.virtualOnly || row.shadowOnly);
   const longActionsIgnored = rawActions.filter(isLongRow).length;
 
-  const entries = allShortActions.filter((row) => row.action === 'ENTRY');
+  const entries = allShortActions.filter((row) => (
+    row.action === 'ENTRY' ||
+    row.action === 'VIRTUAL_ENTRY'
+  ));
+
   const waits = allShortActions.filter((row) => row.action === 'WAIT');
 
   const exitArrays = [
@@ -925,7 +998,7 @@ function buildTradeSummary(tradeMeta) {
     discordAlertsSent: discordAlertsSent.length,
 
     skippedNewEntries: Boolean(tradeMeta.skippedNewEntries),
-    reason: tradeMeta.reason || null,
+    reason: tradeMeta.reason || tradeMeta.skipReason || null,
 
     activeRotationId: tradeMeta.activeRotationId || null,
     activeMicroFamilies: tradeMeta.activeMicroFamilies ?? null,
@@ -1203,12 +1276,14 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Overview-Mode', 'short-only-virtual-learning-v2');
+  res.setHeader('X-Admin-Overview-Mode', 'short-only-persistent-virtual-learning-v3');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Virtual-Only', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
   res.setHeader('X-Manual-Selection-Only', 'true');
+  res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
+  res.setHeader('X-Week-Reset-Disabled', 'true');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -1218,8 +1293,9 @@ export default async function handler(req, res) {
     const durable = getDurableRedis();
     const volatile = getVolatileRedis();
 
-    const weekKey = getIsoWeekKey();
-    const previousWeekKey = getPreviousIsoWeekKey();
+    const weekKey = PERSISTENT_LEARNING_KEY;
+    const currentWeekKey = PERSISTENT_LEARNING_KEY;
+    const previousWeekKey = PERSISTENT_LEARNING_KEY;
 
     const [
       latestScanRead,
@@ -1249,14 +1325,14 @@ export default async function handler(req, res) {
       ),
 
       safeRead(
-        'currentWeekMicros',
-        () => getWeekMicros(weekKey),
+        'persistentLearningMicros',
+        () => getWeekMicros(PERSISTENT_LEARNING_KEY),
         {}
       ),
 
       safeRead(
-        'previousWeekMicros',
-        () => getWeekMicros(previousWeekKey),
+        'previousWeekMicrosDisabledPersistentLearning',
+        () => getWeekMicros(PERSISTENT_LEARNING_KEY),
         {}
       ),
 
@@ -1343,6 +1419,13 @@ export default async function handler(req, res) {
       currentWeekKey: weekKey,
       previousWeekKey,
 
+      persistentLearningKey: PERSISTENT_LEARNING_KEY,
+      requestedLearningKey: PERSISTENT_LEARNING_KEY,
+      activeLearningStoreKey: `ANALYZE:WEEK:${PERSISTENT_LEARNING_KEY}:MICROS`,
+      weekResetDisabled: true,
+      isoWeekLearningDisabled: true,
+      previousWeekComparisonDisabled: true,
+
       latestScan,
       latestScannerSnapshotId: latestScan?.snapshotId || null,
 
@@ -1367,6 +1450,9 @@ export default async function handler(req, res) {
 
       currentWeekMicroFamilies: currentMicroSummary.rows,
       previousWeekMicroFamilies: previousMicroSummary.rows,
+
+      persistentMicroFamilies: currentMicroSummary.rows,
+      persistentMicroSummary: currentMicroSummary,
 
       currentMicroSummary,
       previousMicroSummary,
@@ -1404,7 +1490,7 @@ export default async function handler(req, res) {
 
       perf: {
         durationMs: now() - startedAt,
-        source: 'short_only_virtual_learning_overview'
+        source: 'short_only_persistent_virtual_learning_overview'
       },
 
       serverTs: Date.now()
