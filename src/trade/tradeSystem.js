@@ -42,7 +42,7 @@ import {
 } from './positionSizing.js';
 import { sendEntryAlert } from '../discord/discord.js';
 
-const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 300;
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 1000;
 const SNAPSHOT_SEARCH_LIMIT = 80;
 
 const TARGET_TRADE_SIDE = 'SHORT';
@@ -125,7 +125,14 @@ function tradeConfig() {
 
   return {
     maxCandidatesPerSnapshot: positiveInt(
-      Math.max(configuredTradeMax, configuredAnalyzeMax, DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT),
+      Math.max(
+        configuredTradeMax,
+        configuredAnalyzeMax,
+        cfgNumber(CONFIG.scanner?.maxSymbols, 0),
+        cfgNumber(CONFIG.scanner?.maxCandidates, 0),
+        cfgNumber(CONFIG.scanner?.analyzeMaxCandidates, 0),
+        DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT
+      ),
       DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
       1,
       1000
