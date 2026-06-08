@@ -13,8 +13,60 @@ const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const DEFAULT_LOCK_TTL_SEC = 180;
 
+const RUN_SCOPE = 'TRADE_ONLY';
+const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
+const READ_SCOPE = 'READ_SCANNER_LATEST_ONLY';
+
 function now() {
   return Date.now();
+}
+
+function isolationFlags() {
+  return {
+    runScope: RUN_SCOPE,
+    writeScope: WRITE_SCOPE,
+    readScope: READ_SCOPE,
+
+    adminPageIsolation: true,
+    doesNotOverwriteOtherAdminPages: true,
+
+    readsScannerLatest: true,
+    scannerLatestReadOnly: true,
+    preserveScannerLatest: true,
+    preserveScannerSnapshot: true,
+    preserveScannerHistory: true,
+
+    scannerRunAllowed: false,
+    scannerRunDisabledInsideTradeRun: true,
+    noScannerRun: true,
+    noScannerRefresh: true,
+    noScannerLatestWrite: true,
+    noScannerSnapshotWrite: true,
+
+    writesScanner: false,
+    writesScannerLatest: false,
+    writesScannerSnapshot: false,
+    writesScannerHistory: false,
+
+    writesTrade: true,
+    writesTradeRunMeta: true,
+    writesTradePositions: true,
+
+    writesAnalyze: true,
+    writesAnalyzePartial: true,
+    writesMicroFamilies: true,
+    microFamiliesAppendOnly: true,
+    microFamiliesAntiWipe: true,
+    analyzeFullOverwriteDisabled: true,
+
+    writesRotation: false,
+    writesDiscordSelection: false,
+    writesManualSelection: false,
+
+    preserveRotation: true,
+    preserveManualSelection: true,
+    preserveDiscordSelection: true
+  };
 }
 
 function baseFlags() {
@@ -58,13 +110,18 @@ function baseFlags() {
     observationFirst: true,
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsHiddenFromLearning: true,
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
     exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
 
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForManualSelection: true,
-    discordOnlyForExactTrueMicroMatch: true
+    discordOnlyForExactTrueMicroMatch: true,
+
+    ...isolationFlags()
   };
 }
 
@@ -309,8 +366,12 @@ function scannerMetadataFrom(row = {}) {
       : scannerMicroFamilyId && Array.isArray(row.definitionParts)
         ? row.definitionParts
         : [],
+
     scannerFingerprintRole: 'METADATA_ONLY',
-    scannerFingerprintOnlyMetadata: Boolean(scannerMicroFamilyId),
+    scannerFingerprintOnlyMetadata: false,
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
     symbolExcludedFromFamilyId: true
   };
@@ -615,7 +676,9 @@ function forceShortVirtualRow(row = {}) {
       ? TARGET_TRADE_SIDE
       : inferredTradeSide,
 
-    inferredFromShortOnlyMode: inferredTradeSide === 'UNKNOWN'
+    inferredFromShortOnlyMode: inferredTradeSide === 'UNKNOWN',
+
+    ...isolationFlags()
   };
 }
 
@@ -752,7 +815,8 @@ function sanitizeExitRows(rows = []) {
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
     bitgetOrdersDisabled: true,
-    noRealOrders: true
+    noRealOrders: true,
+    ...isolationFlags()
   }));
 }
 
@@ -920,7 +984,14 @@ function sanitizeRunPayload(payload) {
 
     realTradesOnly: false,
     virtualLearningOnly: true,
-    shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED'
+    shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED',
+
+    scannerSnapshotPreserved: true,
+    scannerLatestPreserved: true,
+    microFamiliesAppendOnly: true,
+    analyzePartialOnly: true,
+
+    ...isolationFlags()
   };
 }
 
@@ -1062,7 +1133,10 @@ function responseCounts(lockResult) {
 
     scannerFingerprintActions: safeNumber(payload.scannerFingerprintActions, 0),
     scannerFingerprintExitRows: safeNumber(payload.scannerFingerprintExitRows, 0),
-    scannerFingerprintsUsedAsLearningFamily: 0
+    scannerFingerprintsUsedAsLearningFamily: 0,
+
+    scannerSnapshotPreserved: true,
+    microFamiliesAppendOnly: true
   };
 }
 
@@ -1128,6 +1202,9 @@ function buildRunOptions(req, body = {}) {
     observationFirst: true,
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsHiddenFromLearning: true,
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
     exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
@@ -1139,7 +1216,46 @@ function buildRunOptions(req, body = {}) {
 
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForManualSelection: true,
-    discordOnlyForExactTrueMicroMatch: true
+    discordOnlyForExactTrueMicroMatch: true,
+
+    runScope: RUN_SCOPE,
+    writeScope: WRITE_SCOPE,
+    readScope: READ_SCOPE,
+
+    scannerRunAllowed: false,
+    scannerRunDisabledInsideTradeRun: true,
+    preventScannerRun: true,
+    doNotRunScanner: true,
+    noScannerRun: true,
+    noScannerRefresh: true,
+
+    scannerLatestReadOnly: true,
+    readScannerLatestOnly: true,
+    preserveScannerLatest: true,
+    preserveScannerSnapshot: true,
+    preserveScannerHistory: true,
+
+    writeScannerLatest: false,
+    writeScannerSnapshot: false,
+    writeScannerHistory: false,
+
+    allowTradeWrite: true,
+    allowAnalyzePartialWrite: true,
+    allowScannerWrite: false,
+    allowRotationWrite: false,
+    allowDiscordSelectionWrite: false,
+
+    analyzePartialOnly: true,
+    microFamiliesAppendOnly: true,
+    analyzeFullOverwriteDisabled: true,
+    microFamiliesAntiWipe: true,
+
+    preserveRotation: true,
+    preserveManualSelection: true,
+    preserveDiscordSelection: true,
+
+    adminPageIsolation: true,
+    doesNotOverwriteOtherAdminPages: true
   };
 }
 
@@ -1155,6 +1271,13 @@ export default async function handler(req, res) {
   res.setHeader('X-Scanner-Fingerprint-Role', 'METADATA_ONLY');
   res.setHeader('X-Learning-Identity-Source', 'ANALYZE_MICRO_FAMILY');
   res.setHeader('X-Exact-True-Micro-Match', 'true');
+  res.setHeader('X-Run-Scope', RUN_SCOPE);
+  res.setHeader('X-Write-Scope', WRITE_SCOPE);
+  res.setHeader('X-Scanner-Write', 'false');
+  res.setHeader('X-Scanner-Run-Allowed', 'false');
+  res.setHeader('X-Preserve-Scanner-Latest', 'true');
+  res.setHeader('X-MicroFamilies-Append-Only', 'true');
+  res.setHeader('X-Admin-Page-Isolation', 'true');
 
   const startedAt = now();
 
@@ -1260,6 +1383,19 @@ export default async function handler(req, res) {
       selectedSnapshotReason: payload?.selectedSnapshotReason || null,
       selectedTargetCandidateCount: safeNumber(payload?.selectedTargetCandidateCount, 0),
       selectedOppositeCandidateCount: 0,
+
+      scannerLatestPreserved: true,
+      scannerSnapshotPreserved: true,
+      scannerHistoryPreserved: true,
+      scannerRunBlockedInsideTradeRun: true,
+
+      microFamiliesAppendOnly: true,
+      analyzePartialOnly: true,
+      analyzeFullOverwriteDisabled: true,
+
+      rotationPreserved: true,
+      manualSelectionPreserved: true,
+      discordSelectionPreserved: true,
 
       warnings: [
         payload?.ignoredLongActions > 0
