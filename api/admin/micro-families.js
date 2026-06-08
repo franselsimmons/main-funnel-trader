@@ -87,8 +87,8 @@ function modePayload() {
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForExactTrueMicroMatch: true,
 
-    scannerFingerprintLegacyFallbackEnabled: false,
-    scannerFingerprintsHidden: true,
+    scannerFingerprintLegacyFallbackEnabled: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK,
+    scannerFingerprintsHidden: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true,
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
 
@@ -589,7 +589,7 @@ function isAnalyzeMicroRow(row = {}) {
   if (isScannerFingerprintId(id)) return false;
   if (isScannerFingerprintId(row.trueMicroFamilyId)) return false;
   if (isScannerFingerprintId(row.coarseMicroFamilyId)) return false;
-  if (row.scannerFingerprintOnlyMetadata === true) return false;
+  if (row.scannerFingerprintOnlyMetadata === true && isScannerFingerprintId(id)) return false;
   if (row.legacyScannerFamilyFallback === true) return false;
 
   const side = inferTradeSide({
@@ -1970,6 +1970,17 @@ function compareIdAsc(a, b) {
   return String(a || '').localeCompare(String(b || ''));
 }
 
+function learningQualityRank(row = {}) {
+  const completed = num(row.outcomeSample ?? getCompletedSample(row), 0);
+  const observations = num(row.observationSample ?? getObservationSample(row), 0);
+
+  if (completed >= MIN_COMPLETED_ACTIVE_LEARNING) return 3;
+  if (completed > 0) return 2;
+  if (observations > 0) return 1;
+
+  return 0;
+}
+
 function compareRowsWinrate(a, b) {
   return (
     compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
@@ -1985,12 +1996,25 @@ function compareRowsWinrate(a, b) {
   );
 }
 
-function compareRowsBalanced(a, b) {
+function compareRowsBestData(a, b) {
   return (
+    compareNumberDesc(learningQualityRank(a), learningQualityRank(b)) ||
     compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
     compareNumberDesc(a.balancedScore, b.balancedScore) ||
-    compareRowsWinrate(a, b)
+    compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+    compareNumberDesc(getAvgR(a), getAvgR(b)) ||
+    compareNumberDesc(a.outcomeSample ?? getCompletedSample(a), b.outcomeSample ?? getCompletedSample(b)) ||
+    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
+    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
+    compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
+    compareNumberDesc(a.observationSample ?? getObservationSample(a), b.observationSample ?? getObservationSample(b)) ||
+    compareNumberDesc(a.seen, b.seen) ||
+    compareIdAsc(a.microFamilyId, b.microFamilyId)
   );
+}
+
+function compareRowsBalanced(a, b) {
+  return compareRowsBestData(a, b);
 }
 
 function compareRowsTotalR(a, b) {
@@ -2497,17 +2521,18 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-analyze-micro-net-outcome-observation-first-v10');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-analyze-micro-net-outcome-observation-first-best-data-v11');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
   res.setHeader('X-Virtual-Outcomes-Included', 'true');
   res.setHeader('X-Shadow-Outcomes-Included', 'true');
   res.setHeader('X-Manual-Selection-Only', 'true');
-  res.setHeader('X-Scanner-Fingerprint-Legacy-Fallback', 'false');
+  res.setHeader('X-Scanner-Fingerprint-Legacy-Fallback', String(SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK));
   res.setHeader('X-Scanner-Fingerprints-Metadata-Only', 'true');
   res.setHeader('X-Analyze-Micro-Families-Only', 'true');
   res.setHeader('X-Learning-Identity-Source', 'ANALYZE_MICRO_FAMILY');
+  res.setHeader('X-Default-Sort', 'BEST_DATA_FIRST');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -2709,10 +2734,11 @@ export default async function handler(req, res) {
       rankingPolicy: {
         defaultMode: 'balanced',
         activeMode: mode,
-        defaultSort: 'dashboardBalancedScore/balancedScore/fairWinrate',
+        defaultSort: 'learningQualityRank/dashboardBalancedScore/balancedScore/netR/totalR/avgR/sampleReliability/fairWinrate',
+        bestDataFirst: true,
         rawWinrateIsNeverDefault: true,
-        scannerFingerprintsExcludedFromRows: true,
-        scannerFingerprintLegacyFallback: false,
+        scannerFingerprintsExcludedFromRows: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true,
+        scannerFingerprintLegacyFallback: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK,
         scannerFingerprintsMetadataOnly: true,
         scannerFingerprintLegacyFallbackRows: 0,
         rawScannerFingerprintRowsHidden,
@@ -2801,7 +2827,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnlyNetOutcomeObservationFirstAnalyzeMicroOnlyScannerFingerprintMetadataOnly',
+        path: 'shortOnlyNetOutcomeObservationFirstAnalyzeMicroOnlyScannerFingerprintMetadataOnlyBestDataFirst',
         best25Source: 'mergedRowsBeforeFilters'
       },
 
