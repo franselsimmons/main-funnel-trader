@@ -29,7 +29,7 @@ const OPPOSITE_TRADE_SIDE = 'LONG';
 const POSITION_SOURCE = 'VIRTUAL';
 const OUTCOME_SOURCE = 'VIRTUAL';
 
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V2';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V3';
 
 const SHORT_DIRECT = new Set([
   'SHORT',
@@ -706,21 +706,14 @@ function detectExit({
     };
   }
 
-  const hitTP = current <= tp;
-  const hitSL = current >= sl;
-
-  const expired =
-    openedAt > 0 &&
-    timestamp - openedAt >= cfg.positionTimeStopMin * 60 * 1000;
-
-  if (hitTP) {
+  if (current <= tp) {
     return {
       shouldExit: true,
       reason: 'TP'
     };
   }
 
-  if (hitSL) {
+  if (current >= sl) {
     const source = String(position.slManagementSource || '').toUpperCase();
 
     if (source === 'TRAIL') {
@@ -742,6 +735,10 @@ function detectExit({
       reason: 'SL'
     };
   }
+
+  const expired =
+    openedAt > 0 &&
+    timestamp - openedAt >= cfg.positionTimeStopMin * 60 * 1000;
 
   if (expired) {
     return {
@@ -816,7 +813,7 @@ function calcGrossRFromPosition({
 
   if (entry <= 0 || initialSl <= 0 || exit <= 0) return 0;
 
-  const riskDistance = Math.abs(entry - initialSl);
+  const riskDistance = initialSl - entry;
 
   if (riskDistance <= 0) return 0;
 
@@ -830,6 +827,43 @@ function calcRiskPctFromPosition(position = {}) {
   if (entry <= 0 || initialSl <= 0) return 0;
 
   return Math.abs(entry - initialSl) / entry;
+}
+
+function positiveCostR(value) {
+  const n = safeNumber(value, NaN);
+
+  if (!Number.isFinite(n)) return null;
+
+  return Math.max(0, n);
+}
+
+function ratioToR(value, riskPct) {
+  const ratio = safeNumber(value, NaN);
+  const risk = safeNumber(riskPct, 0);
+
+  if (!Number.isFinite(ratio) || risk <= 0) return null;
+
+  return Math.max(0, ratio / risk);
+}
+
+function firstPositiveCostR(values = []) {
+  for (const value of values) {
+    const n = positiveCostR(value);
+
+    if (n !== null) return n;
+  }
+
+  return 0;
+}
+
+function firstRatioCostR(values = [], riskPct = 0) {
+  for (const value of values) {
+    const n = ratioToR(value, riskPct);
+
+    if (n !== null) return n;
+  }
+
+  return 0;
 }
 
 function calcRoundTripCostBreakdownR({
@@ -848,48 +882,122 @@ function calcRoundTripCostBreakdownR({
     };
   }
 
+  const grossMovePct = calcGrossMovePctFromPosition({
+    position,
+    exitPrice
+  });
+
+  const grossR = calcGrossRFromPosition({
+    position,
+    exitPrice
+  });
+
+  const entrySpreadPct = safeNumber(
+    position.spreadPct ??
+    position.liveSpreadPct ??
+    position.orderbookSpreadPct,
+    0
+  );
+
+  const exitSpreadPct = safeNumber(
+    position.exitSpreadPct ??
+    position.spreadPct ??
+    position.liveSpreadPct ??
+    position.orderbookSpreadPct,
+    0
+  );
+
   const cost = applyCosts({
     side: TARGET_TRADE_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
-    source: OUTCOME_SOURCE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
 
-    grossMovePct: calcGrossMovePctFromPosition({
-      position,
-      exitPrice
-    }),
+    source: OUTCOME_SOURCE,
+    outcomeSource: OUTCOME_SOURCE,
+
+    entry: safeNumber(position.entry, 0),
+    exitPrice: safeNumber(exitPrice, 0),
+    price: safeNumber(exitPrice, 0),
+
+    grossMovePct,
+    grossR,
+    rawR: grossR,
+    realizedGrossR: grossR,
 
     riskPct,
 
-    entrySpreadPct: safeNumber(
-      position.spreadPct ??
-      position.liveSpreadPct ??
-      position.orderbookSpreadPct,
-      0
-    ),
+    spreadPct: entrySpreadPct,
+    entrySpreadPct,
+    exitSpreadPct,
 
-    exitSpreadPct: safeNumber(
-      position.exitSpreadPct ??
-      position.spreadPct ??
-      position.liveSpreadPct ??
-      position.orderbookSpreadPct,
-      0
-    )
-  });
+    virtualOnly: true,
+    virtualTracked: true,
+    realTrade: false
+  }) || {};
 
-  const feeR = riskPct > 0
-    ? safeNumber(cost.feeRatio, 0) / riskPct
-    : 0;
+  const feeR = firstPositiveCostR([
+    cost.feeR,
+    cost.feesR,
+    cost.totalFeeR
+  ]) || firstRatioCostR([
+    cost.feeRatio,
+    cost.feesRatio,
+    cost.totalFeeRatio,
+    cost.feePct,
+    cost.feesPct
+  ], riskPct);
 
-  const slippageR = riskPct > 0
-    ? safeNumber(cost.slippageRatio, 0) / riskPct
-    : 0;
+  const slippageR = firstPositiveCostR([
+    cost.slippageR,
+    cost.totalSlippageR
+  ]) || firstRatioCostR([
+    cost.slippageRatio,
+    cost.totalSlippageRatio,
+    cost.slippagePct
+  ], riskPct);
+
+  const marketImpactR = firstPositiveCostR([
+    cost.marketImpactR,
+    cost.impactR
+  ]) || firstRatioCostR([
+    cost.marketImpactRatio,
+    cost.impactRatio,
+    cost.marketImpactPct
+  ], riskPct);
+
+  const spreadCostR = firstPositiveCostR([
+    cost.spreadCostR,
+    cost.spreadR
+  ]) || firstRatioCostR([
+    cost.spreadCostRatio,
+    cost.spreadRatio,
+    cost.spreadPct
+  ], riskPct);
+
+  const explicitCostR = firstPositiveCostR([
+    cost.costR,
+    cost.totalCostR,
+    cost.roundTripCostR
+  ]);
+
+  const ratioCostR = firstRatioCostR([
+    cost.costRatio,
+    cost.totalCostRatio,
+    cost.costPct,
+    cost.totalCostPct
+  ], riskPct);
+
+  const summedCostR = feeR + slippageR + marketImpactR + spreadCostR;
+
+  const costR = explicitCostR || ratioCostR || summedCostR;
 
   return {
-    costR: round6(cost.costR),
+    costR: round6(costR),
     feeR: round6(feeR),
     slippageR: round6(slippageR),
-    marketImpactR: 0,
-    spreadCostR: round6(slippageR)
+    marketImpactR: round6(marketImpactR),
+    spreadCostR: round6(spreadCostR)
   };
 }
 
@@ -916,6 +1024,7 @@ function applyNetCostModelToOutcome({
     return forceShortPositionFields({
       ...outcome,
       source: OUTCOME_SOURCE,
+      outcomeSource: OUTCOME_SOURCE,
       virtualOnly: true,
       virtualTracked: true,
       shadowOnly: false,
@@ -925,17 +1034,10 @@ function applyNetCostModelToOutcome({
     });
   }
 
-  const grossR = safeNumber(
-    outcome.grossR ??
-    outcome.rawR ??
-    outcome.realizedGrossR ??
-    outcome.realizedR ??
-    outcome.r,
-    calcGrossRFromPosition({
-      position,
-      exitPrice
-    })
-  );
+  const grossR = calcGrossRFromPosition({
+    position,
+    exitPrice
+  });
 
   const cost = calcRoundTripCostBreakdownR({
     position,
@@ -948,6 +1050,8 @@ function applyNetCostModelToOutcome({
     ...outcome,
 
     source: OUTCOME_SOURCE,
+    outcomeSource: OUTCOME_SOURCE,
+    positionSource: position.source || POSITION_SOURCE,
 
     virtualOnly: true,
     virtualTracked: true,
@@ -956,6 +1060,9 @@ function applyNetCostModelToOutcome({
     realTrade: false,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
 
     grossR: round6(grossR),
     rawR: round6(grossR),
@@ -963,6 +1070,7 @@ function applyNetCostModelToOutcome({
 
     costR: cost.costR,
     avgCostR: cost.costR,
+    totalCostR: cost.costR,
     feeR: cost.feeR,
     slippageR: cost.slippageR,
     marketImpactR: cost.marketImpactR,
@@ -981,7 +1089,8 @@ function applyNetCostModelToOutcome({
 
     costModelApplied: true,
     netCostModelApplied: true,
-    costModel: COST_MODEL_VERSION
+    costModel: COST_MODEL_VERSION,
+    costModelVersion: COST_MODEL_VERSION
   });
 }
 
@@ -1107,6 +1216,7 @@ export function updatePathMetrics(position, price) {
   const tpProgress = directionalMove / rewardDist;
 
   position.lastPrice = current;
+  position.currentPrice = current;
   position.currentR = round4(currentR);
 
   position.mfeR = round4(Math.max(
@@ -1251,7 +1361,10 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     ...identity,
 
     source: OUTCOME_SOURCE,
+    outcomeSource: OUTCOME_SOURCE,
     positionSource: position.source || POSITION_SOURCE,
+
+    tradeId: position.tradeId || outcome.tradeId || null,
 
     activeRotationId: position.activeRotationId || null,
     selectedRotationId: position.selectedRotationId || position.activeRotationId || null,
@@ -1279,6 +1392,9 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     realTrade: false,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
 
     isTrueMicro: identity.isTrueMicro,
     isLegacyMacro: identity.isLegacyMacro,
@@ -1361,20 +1477,41 @@ async function monitorOnePosition({
     };
   }
 
+  const closedAt = timestamp;
+  const exitPrice = roundPrice(price);
+
+  const closedPosition = forceShortPositionFields({
+    ...position,
+    status: 'CLOSED',
+    closedAt,
+    exitPrice,
+    exitReason: exit.reason,
+    outcomeSource: OUTCOME_SOURCE,
+    source: POSITION_SOURCE
+  });
+
   const baseOutcome = buildOutcomeFromPosition({
-    position: forceShortPositionFields(position),
-    exitPrice: price,
+    position: closedPosition,
+    exitPrice,
     exitReason: exit.reason,
     source: OUTCOME_SOURCE
   });
 
   const netOutcome = applyNetCostModelToOutcome({
-    outcome: baseOutcome,
-    position,
-    exitPrice: price
+    outcome: {
+      ...baseOutcome,
+      status: 'CLOSED',
+      closedAt,
+      exitPrice,
+      exitReason: exit.reason,
+      source: OUTCOME_SOURCE,
+      outcomeSource: OUTCOME_SOURCE
+    },
+    position: closedPosition,
+    exitPrice
   });
 
-  const outcome = enrichOutcomeIdentity(netOutcome, position);
+  const outcome = enrichOutcomeIdentity(netOutcome, closedPosition);
 
   const analyzeOutcome = clonePlainObject(outcome);
   const discordOutcome = clonePlainObject(outcome);
@@ -1383,13 +1520,13 @@ async function monitorOnePosition({
     source: OUTCOME_SOURCE
   });
 
-  const discordResult = await maybeSendExitAlert(position, discordOutcome);
+  const discordResult = await maybeSendExitAlert(closedPosition, discordOutcome);
 
-  await deleteOpenPosition(position.symbol || position.contractSymbol);
+  await deleteOpenPosition(closedPosition.symbol || closedPosition.contractSymbol);
 
   return {
     type: 'EXIT',
-    position,
+    position: closedPosition,
     outcome: {
       ...discordOutcome,
       discordExitAlertResult: discordResult,
