@@ -38,17 +38,18 @@ function baseFlags() {
 
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
     source: 'VIRTUAL',
 
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
     noExchangeOrders: true,
     noRealOrders: true,
 
     realTrade: false,
     realOrder: false,
     exchangeOrder: false,
+    bitgetOrderPlaced: false,
 
     learningOnly: true,
     microFamilyLearning: true,
@@ -121,6 +122,11 @@ function isTrue(value) {
   return ['true', '1', 'yes', 'y', 'on', 'force', 'forced'].includes(raw);
 }
 
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function getLockTtlSec() {
   const ttl = Number(CONFIG.trade?.lockTtlSec || DEFAULT_LOCK_TTL_SEC);
 
@@ -186,7 +192,9 @@ function cleanSideText(value = '') {
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY', 'SHORT');
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
 function normalizeTradeSide(value) {
@@ -352,6 +360,7 @@ function inferActionTradeSide(row = {}) {
     row.liveMicroFamilyId,
     row.realMicroFamilyId,
     row.executionMicroFamilyId,
+    row.coarseMicroFamilyId,
     row.id,
     row.key,
 
@@ -372,7 +381,7 @@ function inferActionTradeSide(row = {}) {
     ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
     ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
-    .map((value) => String(value || '').trim())
+    .map((part) => String(part || '').trim())
     .filter(Boolean)
     .join('|');
 
@@ -417,19 +426,21 @@ function forceShortVirtualRow(row = {}) {
     longOnly: false,
     shortDisabled: false,
 
-    source: 'VIRTUAL',
+    source: row.source || 'VIRTUAL',
+    outcomeSource: row.outcomeSource || row.source || 'VIRTUAL',
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
 
     realTrade: false,
     realOrder: false,
     exchangeOrder: false,
+    bitgetOrderPlaced: false,
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
     noExchangeOrders: true,
+    noRealOrders: true,
 
-    learningOnly: true,
     microFamilyLearning: true,
 
     inferredTradeSide: inferredTradeSide === 'UNKNOWN'
@@ -443,7 +454,6 @@ function forceShortVirtualRow(row = {}) {
 function countActionsByType(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
-
     acc[key] = (acc[key] || 0) + 1;
 
     return acc;
@@ -486,6 +496,7 @@ function responseReason(lockResult) {
   return (
     lockResult?.reason ||
     payload?.reason ||
+    payload?.skipReason ||
     null
   );
 }
@@ -518,30 +529,111 @@ function sanitizeIds(ids = []) {
   )];
 }
 
+function selectRawExitRows(payload = {}) {
+  if (Array.isArray(payload.virtualExits)) return payload.virtualExits;
+  if (Array.isArray(payload.shadowExits)) return payload.shadowExits;
+  if (Array.isArray(payload.exits)) return payload.exits;
+  if (Array.isArray(payload.closedPositions)) return payload.closedPositions;
+  if (Array.isArray(payload.outcomes)) return payload.outcomes;
+
+  return [];
+}
+
+function buildExitAction(exit = {}) {
+  return forceShortVirtualRow({
+    ...exit,
+    action: 'VIRTUAL_EXIT',
+    reason: exit.exitReason || exit.reason || 'VIRTUAL_POSITION_CLOSED',
+    source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL'
+  });
+}
+
+function sanitizeExitRows(rows = []) {
+  return sanitizeArray(rows).map((row) => ({
+    ...row,
+    action: 'VIRTUAL_EXIT',
+    source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
+    virtualOnly: true,
+    virtualTracked: true,
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    noRealOrders: true
+  }));
+}
+
+function buildMergedActionCounts(actions = [], virtualExits = [], payloadActionCounts = {}) {
+  const exitActions = virtualExits.map(buildExitAction);
+
+  return {
+    ...(payloadActionCounts || {}),
+    ...countActionsByType([
+      ...actions,
+      ...exitActions
+    ])
+  };
+}
+
 function sanitizeRunPayload(payload) {
   if (!payload || typeof payload !== 'object') return payload;
 
   const rawActions = Array.isArray(payload.actions) ? payload.actions : [];
-
-  const rawExitRows = [
-    ...(Array.isArray(payload.virtualExits) ? payload.virtualExits : []),
-    ...(Array.isArray(payload.shadowExits) ? payload.shadowExits : []),
-    ...(Array.isArray(payload.realExits) ? payload.realExits : []),
-    ...(Array.isArray(payload.exits) ? payload.exits : []),
-    ...(Array.isArray(payload.closedPositions) ? payload.closedPositions : []),
-    ...(Array.isArray(payload.outcomes) ? payload.outcomes : [])
-  ];
+  const rawExitRows = selectRawExitRows(payload);
 
   const actions = sanitizeArray(rawActions);
-  const virtualExits = sanitizeArray(rawExitRows);
+  const virtualExits = sanitizeExitRows(rawExitRows);
+  const shadowExits = virtualExits;
 
   const ignoredLongActions = rawActions.filter(isLongAction).length;
   const ignoredUnknownSideActions = rawActions.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
+
   const ignoredLongExitRows = rawExitRows.filter(isLongAction).length;
   const ignoredUnknownSideExitRows = rawExitRows.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
 
-  const activeMicroFamilyIds = sanitizeIds(payload.activeMicroFamilyIds || payload.microFamilyIds || []);
-  const activeMacroFamilyIds = sanitizeIds(payload.activeMacroFamilyIds || payload.macroFamilyIds || []);
+  const activeMicroFamilyIds = sanitizeIds(
+    payload.activeMicroFamilyIds ||
+    payload.selectedMicroFamilyIds ||
+    payload.microFamilyIds ||
+    []
+  );
+
+  const activeMacroFamilyIds = sanitizeIds(
+    payload.activeMacroFamilyIds ||
+    payload.selectedMacroFamilyIds ||
+    payload.macroFamilyIds ||
+    []
+  );
+
+  const actionCounts = buildMergedActionCounts(
+    actions,
+    virtualExits,
+    payload.actionCounts
+  );
+
+  const entryRows = safeNumber(
+    payload.entryRows ??
+    actions.filter((row) => row.action === 'VIRTUAL_ENTRY' || row.action === 'ENTRY').length,
+    0
+  );
+
+  const waitRows = safeNumber(
+    payload.waitRows ??
+    actions.filter((row) => row.action === 'WAIT').length,
+    0
+  );
+
+  const virtualCreatedRows = safeNumber(
+    payload.virtualCreatedRows ??
+    payload.shadowCreatedRows ??
+    entryRows,
+    0
+  );
 
   return {
     ...payload,
@@ -551,19 +643,33 @@ function sanitizeRunPayload(payload) {
     actions,
     virtualActions: actions,
 
-    actionCounts: countActionsByType(actions),
+    actionCounts,
 
     actionsCount: actions.length,
     virtualActionsCount: actions.length,
 
+    entryRows,
+    waitRows,
+    virtualCreatedRows,
+
+    virtualSkippedRows: safeNumber(payload.virtualSkippedRows ?? payload.shadowSkippedRows, 0),
+    virtualFailedRows: safeNumber(payload.virtualFailedRows ?? payload.shadowFailedRows, 0),
+
+    shadowCreatedRows: safeNumber(payload.shadowCreatedRows ?? virtualCreatedRows, virtualCreatedRows),
+    shadowSkippedRows: safeNumber(payload.shadowSkippedRows ?? payload.virtualSkippedRows, 0),
+    shadowFailedRows: safeNumber(payload.shadowFailedRows ?? payload.virtualFailedRows, 0),
+
     realExits: [],
     realExitsCount: 0,
+    realExitRows: 0,
 
-    shadowExits: virtualExits,
-    shadowExitsCount: virtualExits.length,
+    shadowExits,
+    shadowExitsCount: shadowExits.length,
+    shadowExitRows: shadowExits.length,
 
     virtualExits,
     virtualExitsCount: virtualExits.length,
+    virtualExitRows: virtualExits.length,
 
     exits: virtualExits,
     exitsCount: virtualExits.length,
@@ -582,10 +688,16 @@ function sanitizeRunPayload(payload) {
     activeMicroFamilyIds,
     activeMacroFamilyIds,
 
-    activeMicroFamilies: Number(payload.activeMicroFamilies || activeMicroFamilyIds.length || 0),
-    activeMacroFamilies: Number(payload.activeMacroFamilies || activeMacroFamilyIds.length || 0),
+    selectedMicroFamilyIds: sanitizeIds(payload.selectedMicroFamilyIds || activeMicroFamilyIds),
+    selectedMacroFamilyIds: sanitizeIds(payload.selectedMacroFamilyIds || activeMacroFamilyIds),
+
+    activeMicroFamilies: safeNumber(payload.activeMicroFamilies || activeMicroFamilyIds.length, 0),
+    activeMacroFamilies: safeNumber(payload.activeMacroFamilies || activeMacroFamilyIds.length, 0),
 
     selectedOppositeCandidateCount: 0,
+
+    skippedNewEntries: Boolean(payload.skippedNewEntries),
+    skipReason: payload.skipReason || payload.reason || null,
 
     realTradesOnly: false,
     virtualLearningOnly: true,
@@ -603,7 +715,7 @@ function sanitizeLockResult(lockResult) {
   return {
     ok: lockResult.ok !== false && payload?.ok !== false,
     skipped: Boolean(lockResult.skipped || payload?.skipped || payload?.skippedNewEntries),
-    reason: lockResult.reason || payload?.reason || null,
+    reason: lockResult.reason || payload?.reason || payload?.skipReason || null,
 
     ...baseFlags(),
 
@@ -613,17 +725,6 @@ function sanitizeLockResult(lockResult) {
 
 function responseActionCounts(lockResult) {
   const payload = sanitizeRunPayload(unwrapLockResult(lockResult));
-
-  const actions = Array.isArray(payload?.actions)
-    ? payload.actions
-    : [];
-
-  if (actions.length > 0) {
-    return {
-      ...baseFlags(),
-      ...countActionsByType(actions)
-    };
-  }
 
   return {
     ...baseFlags(),
@@ -640,47 +741,64 @@ function responseCounts(lockResult) {
   return {
     ...baseFlags(),
 
-    candidates: Number(payload.candidates || payload.candidatesCount || 0),
-    shortCandidateCount: Number(payload.shortCandidateCount || payload.targetCandidateCount || payload.shortCandidatesCount || 0),
-    nonShortCandidateCount: Number(payload.nonShortCandidateCount || payload.nonTargetCandidateCount || 0),
-
-    processed: Number(payload.processed || 0),
-    earlyActions: Number(payload.earlyActions || 0),
-
-    liveRows: Number(payload.liveRows || 0),
-    analyzeInputRows: Number(payload.analyzeInputRows || 0),
-    actualLiveRows: Number(payload.actualLiveRows || 0),
-
-    observationOnlyRows: Number(payload.observationOnlyRows || 0),
-    learningOnlyRows: Number(payload.learningOnlyRows || 0),
-
-    riskValidRows: Number(payload.riskValidRows || payload.analyzedRiskValidRows || 0),
-    riskInvalidRows: Number(payload.riskInvalidRows || 0),
-
-    analyzedRowsRaw: Number(payload.analyzedRowsRaw || 0),
-    analyzedRows: Number(payload.analyzedRows || 0),
-    analyzedActualRows: Number(payload.analyzedActualRows || 0),
-    analyzedRiskValidRows: Number(payload.analyzedRiskValidRows || 0),
-
-    virtualOpenedRows: Number(
-      payload.virtualOpenedRows ||
-      payload.shadowCreatedRows ||
-      actions.filter((row) => row.action === 'ENTRY').length ||
+    candidates: safeNumber(payload.candidates || payload.candidatesCount, 0),
+    shortCandidateCount: safeNumber(
+      payload.shortCandidateCount ||
+      payload.targetCandidateCount ||
+      payload.shortCandidatesCount,
+      0
+    ),
+    nonShortCandidateCount: safeNumber(
+      payload.nonShortCandidateCount ||
+      payload.nonTargetCandidateCount,
       0
     ),
 
-    virtualSkippedRows: Number(payload.virtualSkippedRows || payload.shadowSkippedRows || 0),
-    virtualFailedRows: Number(payload.virtualFailedRows || payload.shadowFailedRows || 0),
+    processed: safeNumber(payload.processed, 0),
+    earlyActions: safeNumber(payload.earlyActions, 0),
 
-    shadowCreatedRows: Number(payload.shadowCreatedRows || 0),
-    shadowSkippedRows: Number(payload.shadowSkippedRows || 0),
-    shadowFailedRows: Number(payload.shadowFailedRows || 0),
+    liveRows: safeNumber(payload.liveRows, 0),
+    analyzeInputRows: safeNumber(payload.analyzeInputRows, 0),
+    actualLiveRows: safeNumber(payload.actualLiveRows, 0),
 
-    actions: actions.length || Number(payload.actionsCount || 0),
+    observationOnlyRows: safeNumber(payload.observationOnlyRows, 0),
+    learningOnlyRows: safeNumber(payload.learningOnlyRows, 0),
+
+    riskValidRows: safeNumber(payload.riskValidRows || payload.analyzedRiskValidRows, 0),
+    riskInvalidRows: safeNumber(payload.riskInvalidRows, 0),
+
+    analyzedRowsRaw: safeNumber(payload.analyzedRowsRaw, 0),
+    analyzedRows: safeNumber(payload.analyzedRows, 0),
+    analyzedActualRows: safeNumber(payload.analyzedActualRows, 0),
+    analyzedRiskValidRows: safeNumber(payload.analyzedRiskValidRows, 0),
+
+    entryRows: safeNumber(payload.entryRows, 0),
+    waitRows: safeNumber(payload.waitRows, 0),
+
+    virtualCreatedRows: safeNumber(payload.virtualCreatedRows, 0),
+    virtualOpenedRows: safeNumber(payload.virtualCreatedRows, 0),
+    virtualSkippedRows: safeNumber(payload.virtualSkippedRows, 0),
+    virtualFailedRows: safeNumber(payload.virtualFailedRows, 0),
+
+    shadowCreatedRows: safeNumber(payload.shadowCreatedRows, 0),
+    shadowSkippedRows: safeNumber(payload.shadowSkippedRows, 0),
+    shadowFailedRows: safeNumber(payload.shadowFailedRows, 0),
+
+    actions: actions.length || safeNumber(payload.actionsCount, 0),
     shortActions: actions.length,
 
-    entries: actions.filter((row) => row?.action === 'ENTRY').length,
-    waits: actions.filter((row) => row?.action === 'WAIT').length,
+    entries: safeNumber(
+      payload.entryRows ||
+      actions.filter((row) => row?.action === 'VIRTUAL_ENTRY' || row?.action === 'ENTRY').length,
+      0
+    ),
+
+    waits: safeNumber(
+      payload.waitRows ||
+      actions.filter((row) => row?.action === 'WAIT').length,
+      0
+    ),
+
     observations: actions.filter((row) => (
       row?.action === 'OBSERVATION' ||
       row?.observationWritten ||
@@ -689,25 +807,39 @@ function responseCounts(lockResult) {
     )).length,
 
     realExits: 0,
+    realExitRows: 0,
+
     shadowExits: virtualExits.length,
+    shadowExitRows: virtualExits.length,
+
     virtualExits: virtualExits.length,
+    virtualExitRows: virtualExits.length,
 
-    activeMicroFamilies: Number(payload.activeMicroFamilies || 0),
-    activeMacroFamilies: Number(payload.activeMacroFamilies || 0),
+    activeMicroFamilies: safeNumber(payload.activeMicroFamilies, 0),
+    activeMacroFamilies: safeNumber(payload.activeMacroFamilies, 0),
 
-    selectedTargetCandidateCount: Number(payload.selectedTargetCandidateCount || 0),
+    selectedTargetCandidateCount: safeNumber(payload.selectedTargetCandidateCount, 0),
     selectedOppositeCandidateCount: 0,
 
-    discordEligibleEntries: Number(payload.discordEligibleEntries || 0),
-    discordSkippedNotSelected: Number(payload.discordSkippedNotSelected || 0),
+    discordEligibleEntries: safeNumber(
+      payload.discordAlertEligibleRows ||
+      payload.discordEligibleEntries,
+      0
+    ),
 
-    ignoredLongActions: Number(payload.ignoredLongActions || 0),
-    ignoredUnknownSideActions: Number(payload.ignoredUnknownSideActions || 0),
-    ignoredLongExitRows: Number(payload.ignoredLongExitRows || 0),
-    ignoredUnknownSideExitRows: Number(payload.ignoredUnknownSideExitRows || 0),
+    discordSkippedNotSelected: safeNumber(
+      payload.discordAlertsSkippedNoSelectedMicro ||
+      payload.discordSkippedNotSelected,
+      0
+    ),
 
-    longActionsBlockedOrIgnored: Number(payload.longActionsBlockedOrIgnored || 0),
-    longExitsBlockedOrIgnored: Number(payload.longExitsBlockedOrIgnored || 0)
+    ignoredLongActions: safeNumber(payload.ignoredLongActions, 0),
+    ignoredUnknownSideActions: safeNumber(payload.ignoredUnknownSideActions, 0),
+    ignoredLongExitRows: safeNumber(payload.ignoredLongExitRows, 0),
+    ignoredUnknownSideExitRows: safeNumber(payload.ignoredUnknownSideExitRows, 0),
+
+    longActionsBlockedOrIgnored: safeNumber(payload.longActionsBlockedOrIgnored, 0),
+    longExitsBlockedOrIgnored: safeNumber(payload.longExitsBlockedOrIgnored, 0)
   };
 }
 
@@ -758,11 +890,11 @@ function buildRunOptions(req, body = {}) {
 
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
     source: 'VIRTUAL',
 
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
     noExchangeOrders: true,
     noRealOrders: true,
 
@@ -813,10 +945,14 @@ export default async function handler(req, res) {
     const payload = sanitizeRunPayload(unwrapLockResult(rawResult));
     const result = sanitizeLockResult(rawResult);
 
+    const actionCounts = responseActionCounts(rawResult);
+    const counts = responseCounts(rawResult);
+
     return res.status(200).json({
       ok: responseOk(rawResult),
       skipped: responseSkipped(rawResult),
       reason: responseReason(rawResult),
+      skipReason: payload?.skipReason || responseReason(rawResult),
 
       ...baseFlags(),
 
@@ -826,16 +962,36 @@ export default async function handler(req, res) {
       forceProcessSnapshot: runOptions.forceProcessSnapshot,
       monitorOnly: runOptions.monitorOnly,
       monitorOpenPositionsFirst: runOptions.monitorOpenPositionsFirst,
+      processScannerSnapshot: runOptions.processScannerSnapshot,
 
       runId: responseRunId(rawResult),
       snapshotId: responseSnapshotId(rawResult),
 
-      actionCounts: responseActionCounts(rawResult),
-      counts: responseCounts(rawResult),
+      entryRows: safeNumber(payload?.entryRows, 0),
+      waitRows: safeNumber(payload?.waitRows, 0),
+      virtualCreatedRows: safeNumber(payload?.virtualCreatedRows, 0),
+
+      virtualExitRows: safeNumber(payload?.virtualExitRows, 0),
+      shadowExitRows: safeNumber(payload?.shadowExitRows, 0),
+
+      virtualExits: Array.isArray(payload?.virtualExits)
+        ? payload.virtualExits
+        : [],
+
+      shadowExits: Array.isArray(payload?.shadowExits)
+        ? payload.shadowExits
+        : [],
+
+      realExits: [],
+
+      actionCounts,
+      counts,
 
       activeRotationId: payload?.activeRotationId || null,
-      activeMicroFamilies: Number(payload?.activeMicroFamilies || 0),
-      activeMacroFamilies: Number(payload?.activeMacroFamilies || 0),
+      selectedRotationId: payload?.selectedRotationId || payload?.activeRotationId || null,
+
+      activeMicroFamilies: safeNumber(payload?.activeMicroFamilies, 0),
+      activeMacroFamilies: safeNumber(payload?.activeMacroFamilies, 0),
 
       activeMicroFamilyIds: Array.isArray(payload?.activeMicroFamilyIds)
         ? payload.activeMicroFamilyIds
@@ -845,9 +1001,17 @@ export default async function handler(req, res) {
         ? payload.activeMacroFamilyIds
         : [],
 
+      selectedMicroFamilyIds: Array.isArray(payload?.selectedMicroFamilyIds)
+        ? payload.selectedMicroFamilyIds
+        : [],
+
+      selectedMacroFamilyIds: Array.isArray(payload?.selectedMacroFamilyIds)
+        ? payload.selectedMacroFamilyIds
+        : [],
+
       selectedSnapshotSource: payload?.selectedSnapshotSource || null,
       selectedSnapshotReason: payload?.selectedSnapshotReason || null,
-      selectedTargetCandidateCount: Number(payload?.selectedTargetCandidateCount || 0),
+      selectedTargetCandidateCount: safeNumber(payload?.selectedTargetCandidateCount, 0),
       selectedOppositeCandidateCount: 0,
 
       warnings: [
@@ -859,6 +1023,9 @@ export default async function handler(req, res) {
           : null,
         payload?.ignoredUnknownSideActions > 0
           ? `UNKNOWN_SIDE_ACTIONS_FORCED_SHORT:${payload.ignoredUnknownSideActions}`
+          : null,
+        payload?.ignoredUnknownSideExitRows > 0
+          ? `UNKNOWN_SIDE_EXIT_ROWS_FORCED_SHORT:${payload.ignoredUnknownSideExitRows}`
           : null
       ].filter(Boolean),
 
