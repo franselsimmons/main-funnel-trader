@@ -35,6 +35,9 @@ const TARGET_DASHBOARD_SIDE = 'bear';
 
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
+const SCANNER_RUN_SCOPE = 'SCANNER_ONLY';
+const SCANNER_WRITE_SCOPE = 'SCAN_KEYS_ONLY';
+
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
 
@@ -53,6 +56,69 @@ const BLOCKED_BASE_SYMBOLS = new Set([
 
 function now() {
   return Date.now();
+}
+
+function scopeFlags() {
+  return {
+    runScope: SCANNER_RUN_SCOPE,
+    writeScope: SCANNER_WRITE_SCOPE,
+
+    scannerOnly: true,
+    scannerDecidesTrade: false,
+    scannerDoesNotTrade: true,
+    scannerDoesNotSelectMicroFamilies: true,
+    scannerDoesNotSendDiscord: true,
+
+    noTradeExecution: true,
+    noMicroFamilySelection: true,
+    noDiscord: true,
+
+    writesScanner: true,
+    writesScannerLatest: true,
+    writesScannerSnapshot: true,
+
+    writesTrade: false,
+    writesAnalyze: false,
+    writesMicroFamilies: false,
+    writesPositions: false,
+    writesRotation: false,
+    writesDiscordSelection: false,
+    writesRealOrders: false,
+    writesExchangeOrders: false,
+    writesBitgetOrders: false,
+
+    readOnlyForTrade: true,
+    readOnlyForAnalyze: true,
+    readOnlyForMicroFamilies: true,
+    readOnlyForRotation: true,
+    readOnlyForDiscordSelection: true,
+
+    adminPageIsolation: true,
+    doesNotOverwriteOtherAdminPages: true
+  };
+}
+
+function sideFlags() {
+  return {
+    sideMode: 'SHORT_ONLY',
+    targetTradeSide: TARGET_TRADE_SIDE,
+    targetScannerSide: TARGET_SCANNER_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
+  };
 }
 
 function cfgNumber(pathValue, fallback) {
@@ -688,6 +754,9 @@ function buildScannerFingerprint({
     microFamilyId,
     trueMicroFamilyId: microFamilyId,
 
+    scannerMicroFamilyId: microFamilyId,
+    scannerFamilyId: familyId,
+
     definition: microFamilyId,
     microDefinition: microFamilyId,
     macroDefinition: macroFamilyId,
@@ -698,10 +767,17 @@ function buildScannerFingerprint({
     macroDefinitionParts,
     parentDefinitionParts: macroDefinitionParts,
 
+    scannerDefinition: microFamilyId,
+    scannerDefinitionParts: microDefinitionParts,
+
     executionFingerprintParts: microDefinitionParts,
 
     scannerFingerprintVersion: 'short_scanner_v3',
-    scannerFamilySource: 'SCANNER_DISCOVERY'
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    scannerFamilySource: 'SCANNER_DISCOVERY',
+    scannerDiscoveryOnly: true
   };
 }
 
@@ -1016,10 +1092,26 @@ function normalizeShortCandidate(candidate = {}) {
     longOnly: false,
     shortDisabled: false,
 
+    scannerOnly: true,
+    scannerDecidesTrade: false,
+    scannerDoesNotTrade: true,
+    scannerDoesNotSelectMicroFamilies: true,
+    scannerDoesNotSendDiscord: true,
+
+    noTradeExecution: true,
+    noMicroFamilySelection: true,
+    noDiscord: true,
+
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+
     isMirrorMicroFamily: false,
     observationMirror: false,
     analysisMirror: false,
-    mirrorAnalysisOnly: false
+    mirrorAnalysisOnly: false,
+
+    ...scopeFlags()
   };
 }
 
@@ -1205,7 +1297,8 @@ async function analyzeTickerCandidate({
     ...fake,
     ...gates,
 
-    scannerTs: startedAt
+    scannerTs: startedAt,
+    createdAt: startedAt
   });
 
   return {
@@ -1247,15 +1340,8 @@ function buildSnapshotSummary(snapshot) {
   return {
     ok: true,
 
-    sideMode: 'SHORT_ONLY',
-    targetTradeSide: TARGET_TRADE_SIDE,
-    targetScannerSide: TARGET_SCANNER_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    ...sideFlags(),
+    ...scopeFlags(),
 
     snapshotId: snapshot.snapshotId,
     createdAt: snapshot.createdAt,
@@ -1299,6 +1385,55 @@ function buildSnapshotSummary(snapshot) {
 
     candidates: snapshot.candidates
   };
+}
+
+function assertScannerWriteKey({ key, latestKey, snapshotKey }) {
+  const value = String(key || '');
+
+  if (!value) {
+    throw new Error('SCANNER_WRITE_KEY_MISSING');
+  }
+
+  if (value === latestKey || value === snapshotKey) {
+    return true;
+  }
+
+  const error = new Error('SCANNER_RUN_REFUSED_NON_SCANNER_KEY_WRITE');
+
+  error.details = {
+    key: value,
+    allowed: [
+      latestKey,
+      snapshotKey
+    ],
+    runScope: SCANNER_RUN_SCOPE,
+    writeScope: SCANNER_WRITE_SCOPE
+  };
+
+  throw error;
+}
+
+async function setScannerJson(redis, key, value, options = {}, {
+  latestKey,
+  snapshotKey,
+  role
+} = {}) {
+  assertScannerWriteKey({
+    key,
+    latestKey,
+    snapshotKey
+  });
+
+  return setJson(
+    redis,
+    key,
+    {
+      ...value,
+      scannerStorageRole: role || null,
+      ...scopeFlags()
+    },
+    options
+  );
 }
 
 export async function runScanner(options = {}) {
@@ -1360,15 +1495,8 @@ export async function runScanner(options = {}) {
     ok: true,
     persisted: true,
 
-    sideMode: 'SHORT_ONLY',
-    targetTradeSide: TARGET_TRADE_SIDE,
-    targetScannerSide: TARGET_SCANNER_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    ...sideFlags(),
+    ...scopeFlags(),
 
     force: Boolean(options.force || options.forced),
 
@@ -1428,21 +1556,35 @@ export async function runScanner(options = {}) {
     candidates: cleanCandidates
   };
 
-  await setJson(
+  const snapshotKey = KEYS.scan.snapshot(snapshotId);
+  const latestKey = KEYS.scan.latest;
+  const ttlSec = snapshotTtlSec();
+
+  await setScannerJson(
     redis,
-    KEYS.scan.snapshot(snapshotId),
+    snapshotKey,
     snapshot,
     {
-      ex: snapshotTtlSec()
+      ex: ttlSec
+    },
+    {
+      latestKey,
+      snapshotKey,
+      role: 'SCAN_SNAPSHOT'
     }
   );
 
-  await setJson(
+  await setScannerJson(
     redis,
-    KEYS.scan.latest,
+    latestKey,
     buildSnapshotSummary(snapshot),
     {
-      ex: snapshotTtlSec()
+      ex: ttlSec
+    },
+    {
+      latestKey,
+      snapshotKey,
+      role: 'SCAN_LATEST'
     }
   );
 
