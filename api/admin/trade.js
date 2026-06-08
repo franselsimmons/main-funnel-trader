@@ -1,5 +1,6 @@
 // ================= FILE: api/admin/trade.js =================
 
+import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import {
   getDurableRedis,
@@ -52,7 +53,9 @@ function modeFlags() {
 
     learningMode: 'MICRO_FAMILY_SHORT_ONLY_VIRTUAL',
     discordOnlyForManualSelection: true,
-    manualSelectionOnly: true
+    manualSelectionOnly: true,
+
+    adminReadOnly: true
   };
 }
 
@@ -100,7 +103,9 @@ function cleanSideText(value = '') {
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY', 'SHORT');
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
 function uniqueStrings(values = []) {
@@ -115,6 +120,14 @@ function uniqueStrings(values = []) {
 
 function getArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function getPositionTimeStopMin() {
+  const value = num(CONFIG.trade?.positionTimeStopMin, 720);
+
+  if (!Number.isFinite(value) || value <= 0) return 720;
+
+  return value;
 }
 
 function getDefinitionHaystack(row = {}) {
@@ -326,6 +339,7 @@ function inferTradeSide(row = {}) {
     row.liveMicroFamilyId,
     row.realMicroFamilyId,
     row.executionMicroFamilyId,
+    row.coarseMicroFamilyId,
     row.id,
     row.key
   ]
@@ -413,6 +427,24 @@ function forceShortRow(row = {}) {
   return {
     ...row,
     ...modeFlags(),
+
+    source: row.source || 'VIRTUAL',
+    outcomeSource: row.outcomeSource || row.source || 'VIRTUAL',
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: Boolean(row.shadowOnly),
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    noRealOrders: true,
+
     inferredTradeSide: TARGET_TRADE_SIDE
   };
 }
@@ -485,8 +517,8 @@ function getMacroFamilyId(row = {}) {
 
 function getMicroFamilyId(row = {}) {
   return (
-    row.microFamilyId ||
     row.trueMicroFamilyId ||
+    row.microFamilyId ||
     row.liveMicroFamilyId ||
     row.realMicroFamilyId ||
     row.executionMicroFamilyId ||
@@ -545,6 +577,54 @@ function validShortRiskShape({
   return e > 0 && sl > e && target > 0 && target < e;
 }
 
+function buildExitDebug({
+  entry,
+  sl,
+  initialSl,
+  tp,
+  currentPrice,
+  openedAt
+} = {}) {
+  const ageSec = calcAgeSec(openedAt);
+  const timeStopMin = getPositionTimeStopMin();
+  const timeStopSec = timeStopMin * 60;
+
+  const tpHitNow = currentPrice > 0 && tp > 0 && currentPrice <= tp;
+  const slHitNow = currentPrice > 0 && sl > 0 && currentPrice >= sl;
+  const timeStopHitNow = ageSec !== null && ageSec >= timeStopSec;
+
+  let exitReasonNow = null;
+
+  if (tpHitNow) exitReasonNow = 'TP';
+  else if (slHitNow) exitReasonNow = 'SL';
+  else if (timeStopHitNow) exitReasonNow = 'TIME_STOP';
+
+  return {
+    tpHitNow,
+    slHitNow,
+    timeStopHitNow,
+    exitReadyNow: Boolean(exitReasonNow),
+    exitReasonNow,
+
+    timeStopMin,
+    timeStopSec,
+    ageSec,
+    secondsUntilTimeStop: ageSec === null
+      ? null
+      : Math.max(0, timeStopSec - ageSec),
+
+    grossRIfClosedNow: round(
+      calcCurrentR({
+        entry,
+        initialSl,
+        currentPrice,
+        fallback: 0
+      }),
+      4
+    )
+  };
+}
+
 function normalizePosition(position = {}) {
   const rawSymbol =
     position.symbol ||
@@ -587,12 +667,20 @@ function normalizePosition(position = {}) {
   );
   const tp = num(position.tp ?? position.takeProfit, 0);
 
-  const currentPrice = num(
+  const lastPrice = num(
     position.lastPrice ??
     position.currentPrice ??
     position.markPrice ??
     position.price,
     0
+  );
+
+  const currentPrice = num(
+    position.currentPrice ??
+    position.lastPrice ??
+    position.markPrice ??
+    position.price,
+    lastPrice
   );
 
   const riskDistance = calcRiskDistance(entry, initialSl);
@@ -637,6 +725,15 @@ function normalizePosition(position = {}) {
     tp
   });
 
+  const exitDebug = buildExitDebug({
+    entry,
+    sl,
+    initialSl,
+    tp,
+    currentPrice,
+    openedAt
+  });
+
   return {
     ...position,
 
@@ -653,13 +750,19 @@ function normalizePosition(position = {}) {
     inferredFromShortOnlyMode: rawInferredTradeSide === 'UNKNOWN',
 
     source: 'VIRTUAL',
+    outcomeSource: position.outcomeSource || 'VIRTUAL',
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: Boolean(position.shadowOnly),
     realTrade: false,
     realOrder: false,
     exchangeOrder: false,
     bitgetOrderPlaced: false,
+
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    noRealOrders: true,
 
     entry,
     sl,
@@ -669,6 +772,7 @@ function normalizePosition(position = {}) {
 
     shortRiskShapeValid: riskShapeValid,
 
+    lastPrice,
     currentPrice,
     currentR: round(currentR, 4),
     mfeR: round(position.mfeR, 4),
@@ -696,13 +800,15 @@ function normalizePosition(position = {}) {
     ),
 
     activeRotationId: position.activeRotationId || null,
+    selectedRotationId: position.selectedRotationId || position.activeRotationId || null,
+
     discordAlertEligible: Boolean(position.discordAlertEligible),
     selectedMicroFamilyAlert: Boolean(position.selectedMicroFamilyAlert),
     discordEntryAlertSent: Boolean(position.discordEntryAlertSent),
     discordExitAlertSent: Boolean(position.discordExitAlertSent),
 
     openedAt,
-    ageSec: calcAgeSec(openedAt),
+    ageSec: exitDebug.ageSec,
 
     riskDistance: round(riskDistance, 10),
     rewardDistance: round(rewardDistance, 10),
@@ -726,9 +832,9 @@ function normalizePosition(position = {}) {
     gaveBackAfterOneR: Boolean(position.gaveBackAfterOneR),
     nearTpThenLoss: Boolean(position.nearTpThenLoss),
 
-    liveManaged: false,
-    beLiveApplied: false,
-    trailLiveApplied: false,
+    liveManaged: Boolean(position.liveManaged),
+    beLiveApplied: Boolean(position.beLiveApplied),
+    trailLiveApplied: Boolean(position.trailLiveApplied),
     slManagementSource: position.slManagementSource || null,
 
     breakEvenArmed: Boolean(position.beArmed || position.breakEvenArmed),
@@ -736,7 +842,9 @@ function normalizePosition(position = {}) {
       position.trailLiveApplied ||
       position.trailingActive ||
       upper(position.slManagementSource) === 'TRAIL'
-    )
+    ),
+
+    ...exitDebug
   };
 }
 
@@ -805,6 +913,11 @@ function buildPositionStats(positions = [], ignored = {}) {
     profitablePositions: profitable.length,
     losingPositions: losing.length,
     flatPositions: shortRows.length - profitable.length - losing.length,
+
+    exitReadyNow: shortRows.filter((p) => p.exitReadyNow).length,
+    tpHitNow: shortRows.filter((p) => p.tpHitNow).length,
+    slHitNow: shortRows.filter((p) => p.slHitNow).length,
+    timeStopHitNow: shortRows.filter((p) => p.timeStopHitNow).length,
 
     totalCurrentR: round(totalCurrentR, 4),
     avgCurrentR: round(average(shortRows, (p) => p.currentR), 4),
@@ -940,6 +1053,8 @@ function normalizeAction(action = {}) {
     realOrder: false,
     exchangeOrder: false,
     bitgetOrderPlaced: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
 
     familyId,
     macroFamilyId,
@@ -956,8 +1071,8 @@ function normalizeAction(action = {}) {
     spreadPct: round(action.spreadPct, 6),
     depthMinUsd1p: round(action.depthMinUsd1p, 2),
 
-    liveEligible: false,
-    riskValid: Boolean(action.riskValid),
+    liveEligible: Boolean(action.liveEligible),
+    riskValid: Boolean(action.riskValid || action.liveRiskValid),
 
     discordAlertEligible: Boolean(action.discordAlertEligible),
     selectedMicroFamilyAlert: Boolean(action.selectedMicroFamilyAlert),
@@ -974,7 +1089,10 @@ function normalizeExit(row = {}) {
   return {
     ...action,
 
+    action: 'VIRTUAL_EXIT',
+
     source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
     virtualOnly: true,
     virtualTracked: true,
     shadowOnly: true,
@@ -982,18 +1100,26 @@ function normalizeExit(row = {}) {
     realOrder: false,
     exchangeOrder: false,
     bitgetOrderPlaced: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
 
     grossR: round(row.grossR, 4),
     costR: round(row.costR ?? row.totalCostR, 4),
+    avgCostR: round(row.avgCostR ?? row.costR ?? row.totalCostR, 4),
     netR: round(netR, 4),
     r: round(netR, 4),
+    realizedR: round(row.realizedR ?? netR, 4),
 
     pnlPct: round(row.pnlPct ?? row.netPnlPct, 4),
     grossPnlPct: round(row.grossPnlPct, 4),
     totalCostR: round(row.totalCostR ?? row.costR, 4),
 
     exitReason: row.exitReason || row.reason || null,
-    exitedAt: row.exitedAt || row.closedAt || row.ts || null
+    exitedAt: row.exitedAt || row.closedAt || row.ts || null,
+
+    win: Boolean(row.win ?? num(netR, 0) > 0),
+    loss: Boolean(row.loss ?? num(netR, 0) < 0),
+    flat: Boolean(row.flat ?? num(netR, 0) === 0)
   };
 }
 
@@ -1004,6 +1130,27 @@ function actionCounts(actions = []) {
 
     return acc;
   }, {});
+}
+
+function mergeActionCounts(...counts) {
+  return counts.reduce((acc, row) => {
+    for (const [key, value] of Object.entries(row || {})) {
+      acc[key] = num(acc[key], 0) + num(value, 0);
+    }
+
+    return acc;
+  }, {});
+}
+
+function selectRunExitRows(runMeta = {}) {
+  if (Array.isArray(runMeta.virtualExits)) return runMeta.virtualExits;
+  if (Array.isArray(runMeta.shadowExits)) return runMeta.shadowExits;
+  if (Array.isArray(runMeta.exits)) return runMeta.exits;
+  if (Array.isArray(runMeta.closedPositions)) return runMeta.closedPositions;
+  if (Array.isArray(runMeta.outcomes)) return runMeta.outcomes;
+  if (Array.isArray(runMeta.realExits)) return runMeta.realExits;
+
+  return [];
 }
 
 function normalizeRunMeta(runMeta) {
@@ -1019,40 +1166,54 @@ function normalizeRunMeta(runMeta) {
   const ignoredLongActions = normalizedActions.filter(isLongRow).length;
   const unknownSideActionsTreatedAsShort = normalizedActions.filter(isUnknownSideRow).length;
 
-  const entryActions = allShortActions.filter((action) => action.action === 'ENTRY');
+  const entryActions = allShortActions.filter((action) => (
+    action.action === 'VIRTUAL_ENTRY' ||
+    action.action === 'ENTRY'
+  ));
+
   const waitActions = allShortActions.filter((action) => action.action === 'WAIT');
+
   const observationActions = allShortActions.filter((action) => (
     action.action === 'OBSERVATION' ||
     action.observationWritten ||
     action.analysisInputOnly ||
     action.observationOnly
   ));
+
   const skippedActions = allShortActions.filter((action) => (
     action.action === 'SKIP' ||
     action.skipped ||
-    action.reason
+    (
+      action.reason &&
+      action.action !== 'VIRTUAL_ENTRY' &&
+      action.action !== 'ENTRY'
+    )
   ));
 
-  const runVirtualExitsRaw = [
-    ...asArray(runMeta.virtualExits),
-    ...asArray(runMeta.realExits),
-    ...asArray(runMeta.shadowExits),
-    ...asArray(runMeta.exits),
-    ...asArray(runMeta.closedPositions),
-    ...asArray(runMeta.outcomes)
-  ];
-
+  const runVirtualExitsRaw = selectRunExitRows(runMeta);
   const normalizedExitRows = runVirtualExitsRaw.map(normalizeExit);
 
   const virtualExits = normalizedExitRows
     .filter(isShortRow)
     .map(forceShortRow);
 
+  const exitActionCounts = virtualExits.length
+    ? { VIRTUAL_EXIT: virtualExits.length }
+    : {};
+
+  const normalizedActionCounts = mergeActionCounts(
+    runMeta.actionCounts || {},
+    actionCounts(allShortActions),
+    exitActionCounts
+  );
+
   const discordEntryAlerts = allShortActions.filter((action) => (
     action.discordAlertEligible &&
     (
       action.discordEntryAlertSent ||
       action.discordAlertSent ||
+      action.discordAlertQueued ||
+      action.action === 'VIRTUAL_ENTRY' ||
       action.action === 'ENTRY'
     )
   ));
@@ -1082,8 +1243,20 @@ function normalizeRunMeta(runMeta) {
     ignoredUnknownSideActions: 0,
     unknownSideActionsTreatedAsShort,
 
-    actionCounts: actionCounts(allShortActions),
+    actionCounts: normalizedActionCounts,
     rawActionCounts: runMeta.actionCounts || actionCounts(normalizedActions),
+
+    entryRows: num(runMeta.entryRows ?? entryActions.length, entryActions.length),
+    waitRows: num(runMeta.waitRows ?? waitActions.length, waitActions.length),
+    virtualCreatedRows: num(
+      runMeta.virtualCreatedRows ??
+      runMeta.shadowCreatedRows ??
+      entryActions.length,
+      entryActions.length
+    ),
+
+    virtualSkippedRows: num(runMeta.virtualSkippedRows ?? runMeta.shadowSkippedRows, 0),
+    virtualFailedRows: num(runMeta.virtualFailedRows ?? runMeta.shadowFailedRows, 0),
 
     entries: entryActions,
     entriesCount: entryActions.length,
@@ -1099,14 +1272,17 @@ function normalizeRunMeta(runMeta) {
 
     virtualExits,
     virtualExitsCount: virtualExits.length,
+    virtualExitRows: virtualExits.length,
 
     exits: virtualExits,
     exitsCount: virtualExits.length,
 
     realExits: [],
     realExitsCount: 0,
+
     shadowExits: virtualExits,
     shadowExitsCount: virtualExits.length,
+    shadowExitRows: virtualExits.length,
 
     rawExitRowsCount: runVirtualExitsRaw.length,
     ignoredLongExitRows: normalizedExitRows.filter(isLongRow).length,
@@ -1129,7 +1305,10 @@ function normalizeRunMeta(runMeta) {
     durationMs: runMeta.durationMs ?? null,
 
     snapshotId: runMeta.snapshotId || null,
-    snapshotAgeSec: runMeta.snapshotAgeSec ?? null
+    snapshotAgeSec: runMeta.snapshotAgeSec ?? null,
+
+    skippedNewEntries: Boolean(runMeta.skippedNewEntries),
+    skipReason: runMeta.skipReason || runMeta.reason || null
   };
 }
 
@@ -1355,10 +1534,19 @@ function buildSummary({
 
     openVirtualPositions: positions.length,
 
-    virtualEntriesLastRun: num(runMeta?.entriesCount, 0),
+    virtualEntriesLastRun: num(runMeta?.entryRows ?? runMeta?.entriesCount, 0),
     virtualExitsLastRun: num(runMeta?.virtualExitsCount, 0),
+    shadowExitsLastRun: num(runMeta?.shadowExitsCount, 0),
     observationsLastRun: num(runMeta?.observationsCount, 0),
     skippedActionsLastRun: num(runMeta?.skippedActionsCount, 0),
+    waitRowsLastRun: num(runMeta?.waitRows ?? runMeta?.waitsCount, 0),
+
+    actionCountsLastRun: runMeta?.actionCounts || {},
+
+    exitReadyNow: positions.filter((position) => position.exitReadyNow).length,
+    tpHitNow: positions.filter((position) => position.tpHitNow).length,
+    slHitNow: positions.filter((position) => position.slHitNow).length,
+    timeStopHitNow: positions.filter((position) => position.timeStopHitNow).length,
 
     activeMicroFamilies: num(activeRotation?.activeMicroCount, 0),
     activeMacroFamilies: num(activeRotation?.activeMacroCount, 0),
@@ -1383,6 +1571,7 @@ export default async function handler(req, res) {
   res.setHeader('X-Virtual-Only', 'true');
   res.setHeader('X-No-Real-Orders', 'true');
   res.setHeader('X-Real-Orders-Disabled', 'true');
+  res.setHeader('X-Admin-Read-Only', 'true');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -1484,6 +1673,33 @@ export default async function handler(req, res) {
       activeMacroCount: activeRotation.activeMacroCount,
       activeRotation,
 
+      debugFields: {
+        positionExitChecks: [
+          'currentPrice',
+          'lastPrice',
+          'entry',
+          'sl',
+          'initialSl',
+          'tp',
+          'ageSec',
+          'currentR',
+          'mfeR',
+          'maeR',
+          'tpHitNow',
+          'slHitNow',
+          'timeStopHitNow',
+          'exitReadyNow',
+          'exitReasonNow'
+        ],
+        runMetaExitFields: [
+          'virtualExits',
+          'shadowExits',
+          'virtualExitsCount',
+          'shadowExitsCount',
+          'actionCounts'
+        ]
+      },
+
       warnings: uniqueStrings([
         activeRotation.activeMicroCount <= 0
           ? 'NO_MANUAL_MICRO_FAMILY_SELECTION_ACTIVE_DISCORD_DISABLED'
@@ -1508,6 +1724,9 @@ export default async function handler(req, res) {
           : null,
         stats.invalidShortRiskShapePositions > 0
           ? `INVALID_SHORT_RISK_SHAPE_POSITIONS:${stats.invalidShortRiskShapePositions}`
+          : null,
+        stats.exitReadyNow > 0
+          ? `POSITIONS_READY_TO_CLOSE_ON_NEXT_TRADE_RUN:${stats.exitReadyNow}`
           : null
       ].filter(Boolean)),
 
