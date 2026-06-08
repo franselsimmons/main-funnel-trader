@@ -2240,13 +2240,41 @@ async function saveWeekMicrosTopSnapshot(redis, weekKey, micros = {}, {
   const cfg = getWeekStorageConfig();
   const schemaMeta = getAnalyzeSchemaMeta();
 
+  const incoming = normalizeMicros(micros);
+  const incomingIds = Object.keys(incoming);
+
+  if (!mergeExisting && incomingIds.length === 0) {
+    const existing = await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => ({}));
+    const existingIds = Object.keys(existing || {});
+
+    if (existingIds.length > 0) {
+      return {
+        ids: existingIds,
+        count: existingIds.length,
+        payloadBytes: 0,
+        rawBytes: 0,
+        compressedBytes: 0,
+        skippedEmptyTopSnapshotSave: true
+      };
+    }
+
+    return {
+      ids: [],
+      count: 0,
+      payloadBytes: 0,
+      rawBytes: 0,
+      compressedBytes: 0,
+      skippedEmptyTopSnapshotSave: true
+    };
+  }
+
   const currentTop = mergeExisting
     ? await readWeekMicrosTopSnapshot(redis, weekKey).catch(() => ({}))
     : {};
 
   const merged = {
     ...(currentTop || {}),
-    ...normalizeMicros(micros)
+    ...incoming
   };
 
   const topMicros = selectTopMicrosObject(
@@ -2255,6 +2283,17 @@ async function saveWeekMicrosTopSnapshot(redis, weekKey, micros = {}, {
   );
 
   const ids = Object.keys(topMicros);
+
+  if (ids.length === 0) {
+    return {
+      ids: [],
+      count: 0,
+      payloadBytes: 0,
+      rawBytes: 0,
+      compressedBytes: 0,
+      skippedEmptyTopSnapshotSave: true
+    };
+  }
 
   const encoded = encodeStoragePayload(
     {
@@ -2443,14 +2482,51 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
     .filter((id) => micros[id] && isShortOnlyRow(micros[id]))
     .sort();
 
-  const writeIds = onlyIds
+  const requestedWriteIds = onlyIds
     ? uniqueStrings(onlyIds)
       .filter((id) => !isScannerFamilyId(id))
+    : null;
+
+  const writeIds = requestedWriteIds
+    ? requestedWriteIds
       .filter((id) => micros[id])
       .filter((id) => isShortOnlyRow(micros[id]))
     : cleanIds;
 
   const fullSave = !onlyIds;
+
+  const existingIndex = await getWeekMicrosIndex(redis, weekKey);
+  const existingIds = Array.isArray(existingIndex?.ids)
+    ? existingIndex.ids.filter(Boolean).filter((id) => !isScannerFamilyId(id))
+    : [];
+
+  if (fullSave && cleanIds.length === 0) {
+    return {
+      ids: existingIds,
+      writtenIds: [],
+      rowMeta: [],
+      totalPayloadBytes: 0,
+      totalRawBytes: 0,
+      maxRowBytes: 0,
+      fullSave: true,
+      skippedEmptyFullSave: true
+    };
+  }
+
+  if (!fullSave && writeIds.length === 0) {
+    const ids = uniqueStrings([...existingIds, ...cleanIds]).filter((id) => !isScannerFamilyId(id)).sort();
+
+    return {
+      ids,
+      writtenIds: [],
+      rowMeta: [],
+      totalPayloadBytes: 0,
+      totalRawBytes: 0,
+      maxRowBytes: 0,
+      fullSave: false,
+      skippedEmptyPartialSave: true
+    };
+  }
 
   const rowMeta = await mapLimit(
     writeIds,
@@ -2501,14 +2577,9 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
     }
   );
 
-  const existingIndex = await getWeekMicrosIndex(redis, weekKey);
-  const existingIds = Array.isArray(existingIndex?.ids)
-    ? existingIndex.ids.filter(Boolean).filter((id) => !isScannerFamilyId(id))
-    : [];
-
   const ids = fullSave
     ? cleanIds
-    : uniqueStrings([...existingIds, ...writeIds]).filter((id) => !isScannerFamilyId(id)).sort();
+    : uniqueStrings([...existingIds, ...cleanIds, ...writeIds]).filter((id) => !isScannerFamilyId(id)).sort();
 
   const totalPayloadBytes = rowMeta.reduce(
     (sum, row) => sum + safeNumber(row.bytes, 0),
@@ -2527,50 +2598,52 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
 
   const schemaMeta = getAnalyzeSchemaMeta();
 
-  await setJson(
-    redis,
-    getWeekMicrosIndexKey(weekKey),
-    {
-      weekKey,
-      ids,
-      count: ids.length,
+  if (ids.length > 0) {
+    await setJson(
+      redis,
+      getWeekMicrosIndexKey(weekKey),
+      {
+        weekKey,
+        ids,
+        count: ids.length,
 
-      storageMode: 'SHARDED_COMPRESSED_ROWS',
-      codec: WEEK_MICRO_ROW_CODEC,
+        storageMode: 'SHARDED_COMPRESSED_ROWS',
+        codec: WEEK_MICRO_ROW_CODEC,
 
-      targetTradeSide: TARGET_TRADE_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
+        targetTradeSide: TARGET_TRADE_SIDE,
+        dashboardSide: TARGET_DASHBOARD_SIDE,
 
-      shortOnly: true,
-      longDisabled: true,
-      longOnly: false,
-      shortDisabled: false,
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false,
 
-      scannerFingerprintsMetadataOnly: true,
-      scannerFingerprintsUsedAsLearningFamily: false,
-      analyzeMicroFamiliesOnly: true,
-      executionMicroRefined: false,
-      executionMicroSuffix: EXECUTION_MICRO_SUFFIX,
-      executionFingerprintRole: 'METADATA_ONLY',
+        scannerFingerprintsMetadataOnly: true,
+        scannerFingerprintsUsedAsLearningFamily: false,
+        analyzeMicroFamiliesOnly: true,
+        executionMicroRefined: false,
+        executionMicroSuffix: EXECUTION_MICRO_SUFFIX,
+        executionFingerprintRole: 'METADATA_ONLY',
 
-      lastWriteMode: fullSave ? 'FULL' : 'PARTIAL',
-      lastWrittenCount: writeIds.length,
+        lastWriteMode: fullSave ? 'FULL' : 'PARTIAL',
+        lastWrittenCount: writeIds.length,
 
-      totalPayloadBytes,
-      totalRawBytes,
-      maxRowBytes,
+        totalPayloadBytes,
+        totalRawBytes,
+        maxRowBytes,
 
-      updatedAt: now(),
+        updatedAt: now(),
 
-      schema: schemaMeta.schema,
-      macroSchema: schemaMeta.macroSchema,
-      microSchema: schemaMeta.microSchema,
-      strategyVersion: schemaMeta.strategyVersion
-    },
-    {
-      ex: cfg.weekMicrosTtlSec
-    }
-  );
+        schema: schemaMeta.schema,
+        macroSchema: schemaMeta.macroSchema,
+        microSchema: schemaMeta.microSchema,
+        strategyVersion: schemaMeta.strategyVersion
+      },
+      {
+        ex: cfg.weekMicrosTtlSec
+      }
+    );
+  }
 
   const topInput = Object.fromEntries(
     writeIds
@@ -2579,16 +2652,20 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
       .map((id) => [id, withAnalyzeIdentityFlags(micros[id])])
   );
 
-  await saveWeekMicrosTopSnapshot(
-    redis,
-    weekKey,
-    fullSave ? micros : topInput,
-    {
-      mergeExisting: !fullSave
-    }
-  ).catch(() => null);
+  if (writeIds.length > 0) {
+    await saveWeekMicrosTopSnapshot(
+      redis,
+      weekKey,
+      fullSave ? micros : topInput,
+      {
+        mergeExisting: !fullSave
+      }
+    ).catch(() => null);
+  }
 
-  await redis.del(getWeekMicrosBaseKey(weekKey)).catch(() => null);
+  if (ids.length > 0) {
+    await redis.del(getWeekMicrosBaseKey(weekKey)).catch(() => null);
+  }
 
   return {
     ids,
@@ -2670,7 +2747,8 @@ export async function saveWeekMicros(
   weekKey,
   micros,
   {
-    onlyIds = null
+    onlyIds = null,
+    allowEmptyFullSave = false
   } = {}
 ) {
   if (!weekKey) {
@@ -2680,7 +2758,25 @@ export async function saveWeekMicros(
   const redis = getDurableRedis();
   const cfg = getWeekStorageConfig();
   const clean = normalizeMicros(micros);
+  const cleanIds = Object.keys(clean);
   const schemaMeta = getAnalyzeSchemaMeta();
+
+  if (!onlyIds && cleanIds.length === 0 && !allowEmptyFullSave) {
+    const existing = await getWeekMicros(weekKey).catch(() => ({}));
+    const existingClean = normalizeMicros(existing || {});
+    const existingIds = Object.keys(existingClean);
+
+    if (existingIds.length > 0) {
+      return existingClean;
+    }
+
+    return {};
+  }
+
+  if (onlyIds && cleanIds.length === 0) {
+    const existing = await getWeekMicros(weekKey).catch(() => ({}));
+    return normalizeMicros(existing || {});
+  }
 
   let storage;
   let topStorage = null;
@@ -2703,6 +2799,17 @@ export async function saveWeekMicros(
   } catch (error) {
     if (onlyIds) {
       throw error;
+    }
+
+    if (cleanIds.length === 0 && !allowEmptyFullSave) {
+      const existing = await getWeekMicros(weekKey).catch(() => ({}));
+      const existingClean = normalizeMicros(existing || {});
+
+      if (Object.keys(existingClean).length > 0) {
+        return existingClean;
+      }
+
+      return {};
     }
 
     const legacy = encodeLegacyWeekMicrosPayload(clean);
@@ -2785,6 +2892,9 @@ export async function saveWeekMicros(
         fallbackToLegacy: Boolean(storage.fallbackToLegacy),
         fallbackReason: storage.fallbackReason || null,
 
+        skippedEmptyFullSave: Boolean(storage.skippedEmptyFullSave),
+        skippedEmptyPartialSave: Boolean(storage.skippedEmptyPartialSave),
+
         topSnapshot: {
           enabled: true,
           codec: WEEK_MICROS_TOP_CODEC,
@@ -2859,11 +2969,7 @@ export async function analyzeCandidatesBatch(
     return [];
   }
 
-  const partialMode = await hasWeekMicrosIndex(redis, weekKey);
-
-  const micros = partialMode
-    ? await getWeekMicrosByIds(weekKey, touchedIds)
-    : await getWeekMicros(weekKey);
+  const micros = await getWeekMicros(weekKey);
 
   const analyzed = [];
   const actuallyTouchedIds = new Set();
@@ -3010,9 +3116,9 @@ export async function analyzeCandidatesBatch(
     await saveWeekMicros(
       weekKey,
       micros,
-      partialMode
-        ? { onlyIds: [...actuallyTouchedIds] }
-        : {}
+      {
+        onlyIds: [...actuallyTouchedIds]
+      }
     );
   }
 
@@ -3369,12 +3475,7 @@ export async function recordOutcome(
     microFamilyId
   ]);
 
-  const redis = getDurableRedis();
-  const partialMode = await hasWeekMicrosIndex(redis, weekKey);
-
-  const micros = partialMode
-    ? await getWeekMicrosByIds(weekKey, touchedIds)
-    : await getWeekMicros(weekKey);
+  const micros = await getWeekMicros(weekKey);
 
   const micro = getOrCreateMicro(
     micros,
@@ -3438,9 +3539,9 @@ export async function recordOutcome(
   await saveWeekMicros(
     weekKey,
     micros,
-    partialMode
-      ? { onlyIds: touchedIds }
-      : {}
+    {
+      onlyIds: touchedIds
+    }
   );
 
   return withAnalyzeIdentityFlags({
