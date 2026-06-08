@@ -1,8 +1,6 @@
 // ================= FILE: api/admin/micro-families.js =================
 
 import {
-  getIsoWeekKey,
-  getPreviousIsoWeekKey,
   sideToTradeSide,
   safeNumber
 } from '../../src/utils.js';
@@ -12,6 +10,10 @@ import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
+
+// Dashboard leest dezelfde vaste Analyze-bak als analyzeEngine.js.
+// Geen ISO-week reset meer. Alleen factory-reset wist ANALYZE:*.
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK = false;
 
@@ -40,8 +42,8 @@ const MAX_SIDE_LIMIT = 120;
 const DEFAULT_BEST_LIMIT = 25;
 const MAX_BEST_LIMIT = 100;
 
-const DEFAULT_RECENT_WEEK_LOOKBACK = 10;
-const MAX_RECENT_WEEK_LOOKBACK = 16;
+const DEFAULT_RECENT_WEEK_LOOKBACK = 1;
+const MAX_RECENT_WEEK_LOOKBACK = 1;
 
 const ACTIVE_ROTATION_TIMEOUT_MS = 1_800;
 const WEEK_MICROS_TIMEOUT_MS = 9_500;
@@ -73,6 +75,10 @@ function modePayload() {
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
+
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    weekResetDisabled: true,
+    isoWeekLearningDisabled: true,
 
     observationFirst: true,
     virtualLearning: true,
@@ -652,7 +658,7 @@ function weeksInIsoYear(year) {
 function previousIsoWeekKeyFrom(weekKey = '') {
   const parsed = parseIsoWeekKey(weekKey);
 
-  if (!parsed) return getPreviousIsoWeekKey();
+  if (!parsed) return PERSISTENT_LEARNING_KEY;
 
   let { year, week } = parsed;
 
@@ -669,14 +675,20 @@ function previousIsoWeekKeyFrom(weekKey = '') {
 }
 
 function recentIsoWeekKeys(startWeekKey, count = DEFAULT_RECENT_WEEK_LOOKBACK) {
+  const cursor = String(startWeekKey || PERSISTENT_LEARNING_KEY).trim() || PERSISTENT_LEARNING_KEY;
+
+  if (!parseIsoWeekKey(cursor)) {
+    return [cursor];
+  }
+
   const keys = [];
-  let cursor = String(startWeekKey || getIsoWeekKey()).trim();
+  let current = cursor;
 
   for (let index = 0; index < count; index += 1) {
-    if (!cursor || keys.includes(cursor)) break;
+    if (!current || keys.includes(current)) break;
 
-    keys.push(cursor);
-    cursor = previousIsoWeekKeyFrom(cursor);
+    keys.push(current);
+    current = previousIsoWeekKeyFrom(current);
   }
 
   return keys;
@@ -1129,8 +1141,8 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     inferredTradeSide,
     inferredFromShortOnlyMode: inferredTradeSide === 'UNKNOWN',
 
-    sourceWeekKey: row.sourceWeekKey || null,
-    sourceWeekPrimary: Boolean(row.sourceWeekPrimary),
+    sourceWeekKey: row.sourceWeekKey || PERSISTENT_LEARNING_KEY,
+    sourceWeekPrimary: row.sourceWeekPrimary !== false,
     sourceWeekFallback: Boolean(row.sourceWeekFallback),
 
     active: Boolean(row.active),
@@ -1345,6 +1357,9 @@ function buildRowsFromMicros(micros = {}) {
         microFamilyId: id,
         trueMicroFamilyId: getTrueMicroFamilyId(row, id),
         coarseMicroFamilyId: getCoarseMicroFamilyId(row, id),
+        sourceWeekKey: PERSISTENT_LEARNING_KEY,
+        sourceWeekPrimary: true,
+        sourceWeekFallback: false,
         ...modePayload()
       };
 
@@ -1575,8 +1590,8 @@ function normalizeMicroRow(
     inferredTradeSide: row.inferredTradeSide || inferTradeSide(row),
     inferredFromShortOnlyMode: Boolean(row.inferredFromShortOnlyMode),
 
-    sourceWeekKey: row.sourceWeekKey || null,
-    sourceWeekPrimary: Boolean(row.sourceWeekPrimary),
+    sourceWeekKey: row.sourceWeekKey || PERSISTENT_LEARNING_KEY,
+    sourceWeekPrimary: row.sourceWeekPrimary !== false,
     sourceWeekFallback: Boolean(row.sourceWeekFallback),
 
     active,
@@ -2306,7 +2321,7 @@ function mergeMicrosByRecency(weekResults = []) {
   const merged = {};
 
   for (const result of [...weekResults].reverse()) {
-    const weekKey = result?.weekKey || null;
+    const weekKey = result?.weekKey || PERSISTENT_LEARNING_KEY;
     const isPrimary = weekKey === weekResults[0]?.weekKey;
 
     for (const [key, row] of sourceEntriesFromMicros(result?.micros || {})) {
@@ -2374,19 +2389,8 @@ async function getRecentWeekMicrosMerged({
       .filter(Boolean)
   );
 
-  let selectedResults = results;
-  let merged = mergeMicrosByRecency(selectedResults);
-
-  for (let count = 1; count <= results.length; count += 1) {
-    const partial = results.slice(0, count);
-    const partialMerged = mergeMicrosByRecency(partial);
-
-    if (microsCount(partialMerged) >= minRows) {
-      selectedResults = partial;
-      merged = partialMerged;
-      break;
-    }
-  }
+  const selectedResults = results;
+  const merged = mergeMicrosByRecency(selectedResults);
 
   const selectedCount = selectedResults.length;
   const primary = results[0] || null;
@@ -2397,21 +2401,17 @@ async function getRecentWeekMicrosMerged({
     requestedWeekKey,
     sourceWeekKeyUsed: requestedWeekKey,
 
-    source: selectedCount <= 1
-      ? 'requestedWeek'
-      : microsCount(merged) >= minRows
-        ? 'recentWeeksMerged'
-        : 'recentWeeksMergedInsufficientRows',
+    source: 'persistentLearningKey',
 
     micros: merged,
 
     primaryWeekKey: requestedWeekKey,
-    previousWeekKey: weekKeys[1] || getPreviousIsoWeekKey(),
+    previousWeekKey: PERSISTENT_LEARNING_KEY,
 
     primaryRows: microsCount(primary?.micros || {}),
     previousRows: microsCount(previous?.micros || {}),
 
-    mergedPreviousWeek: selectedCount > 1,
+    mergedPreviousWeek: false,
 
     recentWeekLookback: safeLookback,
     recentWeekKeysScanned: selectedResults.map((row) => row.weekKey),
@@ -2440,7 +2440,7 @@ async function getRecentWeekMicrosMerged({
         ? `MERGED_RECENT_WEEKS:${selectedCount}`
         : null,
       microsCount(merged) < minRows
-        ? `RECENT_WEEK_ROWS_BELOW_TARGET:${microsCount(merged)}:${minRows}`
+        ? `PERSISTENT_LEARNING_ROWS_BELOW_TARGET:${microsCount(merged)}:${minRows}`
         : null
     ].filter(Boolean))
   };
@@ -2521,7 +2521,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-analyze-micro-net-outcome-observation-first-best-data-v11');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-persistent-learning-analyze-micro-net-outcome-observation-first-best-data-v12');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
@@ -2532,6 +2532,8 @@ export default async function handler(req, res) {
   res.setHeader('X-Scanner-Fingerprints-Metadata-Only', 'true');
   res.setHeader('X-Analyze-Micro-Families-Only', 'true');
   res.setHeader('X-Learning-Identity-Source', 'ANALYZE_MICRO_FAMILY');
+  res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
+  res.setHeader('X-Week-Reset-Disabled', 'true');
   res.setHeader('X-Default-Sort', 'BEST_DATA_FIRST');
 
   if (req.method !== 'GET') {
@@ -2539,12 +2541,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    const currentWeekKey = getIsoWeekKey();
-    const previousWeekKey = getPreviousIsoWeekKey();
+    const currentWeekKey = PERSISTENT_LEARNING_KEY;
+    const previousWeekKey = PERSISTENT_LEARNING_KEY;
 
-    const requestedWeekKey = String(
-      firstQueryValue(req.query?.weekKey, currentWeekKey) || currentWeekKey
+    const requestedQueryWeekKey = String(
+      firstQueryValue(req.query?.weekKey, PERSISTENT_LEARNING_KEY) || PERSISTENT_LEARNING_KEY
     ).trim();
+
+    const requestedWeekKey = PERSISTENT_LEARNING_KEY;
 
     const requestedMode = String(firstQueryValue(req.query?.mode, 'balanced') || 'balanced');
     const mode = normalizeMode(requestedMode);
@@ -2568,11 +2572,7 @@ export default async function handler(req, res) {
       MAX_BEST_LIMIT
     );
 
-    const recentWeekLookback = toSafeLimit(
-      firstQueryValue(req.query?.recentWeekLookback, DEFAULT_RECENT_WEEK_LOOKBACK),
-      DEFAULT_RECENT_WEEK_LOOKBACK,
-      MAX_RECENT_WEEK_LOOKBACK
-    );
+    const recentWeekLookback = 1;
 
     const minPrimaryRowsForMerge = toSafeLimit(
       firstQueryValue(
@@ -2698,6 +2698,9 @@ export default async function handler(req, res) {
       .length;
 
     const warnings = uniqueStrings([
+      requestedQueryWeekKey !== PERSISTENT_LEARNING_KEY
+        ? `QUERY_WEEKKEY_IGNORED_USING_PERSISTENT:${requestedQueryWeekKey}`
+        : null,
       ...(weekResult.warnings || []),
       weekRows.length === 0 && activeFallbackRows.length > 0
         ? 'USED_ACTIVE_ROTATION_FALLBACK_ROWS'
@@ -2744,21 +2747,27 @@ export default async function handler(req, res) {
         rawScannerFingerprintRowsHidden,
         analyzeMicroFamiliesOnly: true,
         trueMicroFamilyOnly: true,
-        symbolExcludedFromFamilyId: true
+        symbolExcludedFromFamilyId: true,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        weekResetDisabled: true
       },
 
-      weekKey: weekResult.weekKey || requestedWeekKey,
-      requestedWeekKey,
-      sourceWeekKeyUsed: weekResult.sourceWeekKeyUsed || weekResult.weekKey || requestedWeekKey,
-      source: weekResult.source || 'unknown',
+      weekKey: PERSISTENT_LEARNING_KEY,
+      requestedWeekKey: PERSISTENT_LEARNING_KEY,
+      requestedQueryWeekKey,
+      ignoredQueryWeekKey: requestedQueryWeekKey !== PERSISTENT_LEARNING_KEY
+        ? requestedQueryWeekKey
+        : null,
+      sourceWeekKeyUsed: PERSISTENT_LEARNING_KEY,
+      source: weekResult.source || 'persistentLearningKey',
 
       currentWeekKey,
       previousWeekKey,
 
-      primaryWeekKey: weekResult.primaryWeekKey || requestedWeekKey,
+      primaryWeekKey: PERSISTENT_LEARNING_KEY,
       primaryWeekRows: weekResult.primaryRows ?? null,
-      previousWeekRows: weekResult.previousRows ?? null,
-      mergedPreviousWeek: Boolean(weekResult.mergedPreviousWeek),
+      previousWeekRows: 0,
+      mergedPreviousWeek: false,
       minPrimaryRowsForMerge,
 
       recentWeekLookback,
@@ -2827,8 +2836,8 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnlyNetOutcomeObservationFirstAnalyzeMicroOnlyScannerFingerprintMetadataOnlyBestDataFirst',
-        best25Source: 'mergedRowsBeforeFilters'
+        path: 'shortOnlyPersistentLearningNetOutcomeObservationFirstAnalyzeMicroOnlyScannerFingerprintMetadataOnlyBestDataFirst',
+        best25Source: 'persistentLearningMergedRowsBeforeFilters'
       },
 
       serverTs: Date.now()
