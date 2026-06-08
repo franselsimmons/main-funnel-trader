@@ -4,7 +4,11 @@ export const env = process.env;
 
 const ROOT_TRADE_SIDE = 'SHORT';
 const ROOT_DASHBOARD_SIDE = 'bear';
+const ROOT_SCANNER_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
+
+const NO_GLOBAL_POSITION_LIMIT = 100_000;
+const NO_GLOBAL_RISK_CAP = 1;
 
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
@@ -83,10 +87,11 @@ const rootSide = () => ROOT_TRADE_SIDE;
 const rootMode = () => 'SHORT_ONLY';
 
 export const CONFIG = Object.freeze({
-  strategyVersion: str(env.STRATEGY_VERSION, 'COARSE_MF_TS_SHORT_ONLY_STABLE_V3'),
+  strategyVersion: str(env.STRATEGY_VERSION, 'COARSE_MF_TS_SHORT_ONLY_STABLE_V4'),
 
   root: {
     tradeSide: ROOT_TRADE_SIDE,
+    scannerSide: ROOT_SCANNER_SIDE,
     dashboardSide: ROOT_DASHBOARD_SIDE,
     oppositeTradeSide: OPPOSITE_TRADE_SIDE,
 
@@ -94,7 +99,11 @@ export const CONFIG = Object.freeze({
     longDisabled: true,
     shortDisabled: false,
     blockLong: true,
-    blockShort: false
+    blockShort: false,
+
+    virtualOnly: true,
+    realOrdersDisabled: true,
+    source: 'VIRTUAL'
   },
 
   direction: {
@@ -108,6 +117,7 @@ export const CONFIG = Object.freeze({
     blockLong: true,
     blockShort: false,
 
+    scannerSide: ROOT_SCANNER_SIDE,
     dashboardSide: ROOT_DASHBOARD_SIDE,
     targetDashboardSide: ROOT_DASHBOARD_SIDE
   },
@@ -133,6 +143,7 @@ export const CONFIG = Object.freeze({
     allowedTradeSides: shortOnlySides(),
     primaryTradeSide: rootSide(),
     targetTradeSide: rootSide(),
+    targetScannerSide: ROOT_SCANNER_SIDE,
     dashboardSide: ROOT_DASHBOARD_SIDE,
 
     shortEnabled: true,
@@ -156,10 +167,11 @@ export const CONFIG = Object.freeze({
     strictFilters: bool(env.SCANNER_STRICT_FILTERS, false),
 
     /*
-      Voor SHORT root: fake breakout-rommel standaard wegfilteren.
-      Zet alleen uit met SCANNER_BLOCK_FAKE_BREAKOUT=false als je bewust discovery breder wilt.
+      Learning-first:
+      false = fake breakout blijft kandidaat/leerdata.
+      Alleen true zetten als je bewust scanner-output harder wilt snijden.
     */
-    blockFakeBreakout: bool(env.SCANNER_BLOCK_FAKE_BREAKOUT, true),
+    blockFakeBreakout: bool(env.SCANNER_BLOCK_FAKE_BREAKOUT, false),
     blockNoDirection: bool(env.SCANNER_BLOCK_NO_DIRECTION, false),
     blockSmallMove: bool(env.SCANNER_BLOCK_SMALL_MOVE, false),
 
@@ -175,6 +187,7 @@ export const CONFIG = Object.freeze({
     allowedTradeSides: shortOnlySides(),
     primaryTradeSide: rootSide(),
     targetTradeSide: rootSide(),
+    targetScannerSide: ROOT_SCANNER_SIDE,
     dashboardSide: ROOT_DASHBOARD_SIDE,
 
     shortEnabled: true,
@@ -182,6 +195,11 @@ export const CONFIG = Object.freeze({
 
     blockLongEntries: true,
     blockShortEntries: false,
+
+    virtualOnly: true,
+    realOrdersDisabled: true,
+    positionSource: 'VIRTUAL',
+    outcomeSource: 'SHADOW',
 
     lockTtlSec: positiveInt(env.TRADE_LOCK_TTL_SEC, 180, 30, 1800),
 
@@ -193,8 +211,14 @@ export const CONFIG = Object.freeze({
 
     dataConcurrency: positiveInt(env.TRADE_DATA_CONCURRENCY, 8, 1, 30),
 
-    maxOpenPositions: positiveInt(env.TRADE_MAX_OPEN_POSITIONS, 30, 1, 500),
-    maxOpenSameSide: positiveInt(env.TRADE_MAX_OPEN_SAME_SIDE, 30, 1, 500),
+    /*
+      Deprecated soft config.
+      De actieve funnel mag geen globale positielimiet gebruiken.
+      Enige harde limiter hoort te zijn: maximaal één open positie per coin.
+    */
+    maxOpenPositions: positiveInt(env.TRADE_MAX_OPEN_POSITIONS, NO_GLOBAL_POSITION_LIMIT, 1, NO_GLOBAL_POSITION_LIMIT),
+    maxOpenSameSide: positiveInt(env.TRADE_MAX_OPEN_SAME_SIDE, NO_GLOBAL_POSITION_LIMIT, 1, NO_GLOBAL_POSITION_LIMIT),
+    enforceMaxOpenPositions: bool(env.TRADE_ENFORCE_MAX_OPEN_POSITIONS, false),
 
     positionTimeStopMin: positiveInt(env.TRADE_POSITION_TIME_STOP_MIN, 12 * 60, 5, 7 * 24 * 60),
 
@@ -210,10 +234,15 @@ export const CONFIG = Object.freeze({
     atrRiskMult: boundedNum(env.TRADE_ATR_RISK_MULT, 1.2, 0.1, 20),
     spreadRiskMult: boundedNum(env.TRADE_SPREAD_RISK_MULT, 5, 0.1, 100),
 
-    requireScannerGateForLiveEntries: bool(env.TRADE_REQUIRE_SCANNER_GATE_FOR_LIVE_ENTRIES, true),
-    blockDiscoveryOnlyLiveEntries: bool(env.TRADE_BLOCK_DISCOVERY_ONLY_LIVE_ENTRIES, true),
-    allowFakeBreakoutLiveEntries: bool(env.TRADE_ALLOW_FAKE_BREAKOUT_LIVE_ENTRIES, false),
-    allowLowConfidenceLiveEntries: bool(env.TRADE_ALLOW_LOW_CONFIDENCE_LIVE_ENTRIES, false),
+    /*
+      Learning-first:
+      TradeSystem mag Analyze voeden met observation-only rows.
+      Virtuele positie wordt alsnog alleen gemaakt bij geldige short risk-shape.
+    */
+    requireScannerGateForLiveEntries: bool(env.TRADE_REQUIRE_SCANNER_GATE_FOR_LIVE_ENTRIES, false),
+    blockDiscoveryOnlyLiveEntries: bool(env.TRADE_BLOCK_DISCOVERY_ONLY_LIVE_ENTRIES, false),
+    allowFakeBreakoutLiveEntries: bool(env.TRADE_ALLOW_FAKE_BREAKOUT_LIVE_ENTRIES, true),
+    allowLowConfidenceLiveEntries: bool(env.TRADE_ALLOW_LOW_CONFIDENCE_LIVE_ENTRIES, true),
     minLiveScannerScore: boundedNum(env.TRADE_MIN_LIVE_SCANNER_SCORE, 0, 0, 100),
 
     allowLegacyMacroLiveEntries: bool(env.TRADE_ALLOW_LEGACY_MACRO_LIVE_ENTRIES, false),
@@ -225,6 +254,13 @@ export const CONFIG = Object.freeze({
     */
     allowCoarseMicroAliasLiveEntries: bool(env.TRADE_ALLOW_COARSE_MICRO_ALIAS_LIVE_ENTRIES, true),
 
+    /*
+      Synthetic risk blijft standaard uit.
+      Geldige trade-vorm = entry > 0, SL boven entry, TP onder entry.
+    */
+    allowSyntheticRiskFallback: bool(env.TRADE_ALLOW_SYNTHETIC_RISK_FALLBACK, false),
+    allowSyntheticRiskVirtualEntries: bool(env.TRADE_ALLOW_SYNTHETIC_RISK_VIRTUAL_ENTRIES, false),
+
     candleTtlSec: positiveInt(env.TRADE_CANDLE_CACHE_TTL_SEC, 90, 5, 3600),
     orderbookTtlSec: positiveInt(env.TRADE_ORDERBOOK_CACHE_TTL_SEC, 12, 2, 300),
     fundingTtlSec: positiveInt(env.TRADE_FUNDING_CACHE_TTL_SEC, 120, 10, 3600)
@@ -235,6 +271,7 @@ export const CONFIG = Object.freeze({
     allowedTradeSides: shortOnlySides(),
     primaryTradeSide: rootSide(),
     targetTradeSide: rootSide(),
+    targetScannerSide: ROOT_SCANNER_SIDE,
     dashboardSide: ROOT_DASHBOARD_SIDE,
 
     shortEnabled: true,
@@ -270,6 +307,13 @@ export const CONFIG = Object.freeze({
     includeSymbolClassInMicroId: false,
     includeFineBucketsInMicroId: false,
     mergeRefinedExecutionMicros: true,
+
+    /*
+      Elke Analyze-input telt seen +1.
+      Geldige virtual outcomes tellen als SHADOW en worden gewogen.
+    */
+    countObservationWithoutTrade: true,
+    showObservingFamilies: true,
 
     shadowEnabled: bool(env.ANALYZE_SHADOW_ENABLED, true),
     shadowHorizonMin: positiveInt(env.ANALYZE_SHADOW_HORIZON_MIN, 6 * 60, 5, 7 * 24 * 60),
@@ -325,13 +369,24 @@ export const CONFIG = Object.freeze({
     blockLongActivation: true,
     blockShortActivation: false,
 
+    /*
+      Het systeem kiest nooit zelf actief.
+      Weekly/freeze mag rapporteren/bouwen, maar activeRotation blijft handmatig.
+    */
+    manualOnly: true,
+    autoRotation: false,
+    autoActivationEnabled: false,
+    activationDisabled: true,
+    preserveManualSelection: true,
+    neverOverwriteManualSelection: true,
+
     topNPerSide: positiveInt(env.ROTATION_TOP_N_PER_SIDE, 1, 1, 50),
     topNShort: positiveInt(env.ROTATION_TOP_N_SHORT, 1, 1, 50),
     topNLong: 0,
 
     /*
-      0.35 betekent: shadow weighted completed mag al activeren.
-      Niet op 1.0 zetten, anders wacht je onnodig lang.
+      0.35 betekent: shadow weighted completed mag al zichtbaar/eligible worden.
+      Manual selectie mag daaronder alsnog.
     */
     minWeightedCompleted: boundedNum(env.ROTATION_MIN_WEIGHTED_COMPLETED, 0.35, 0, 100),
 
@@ -370,7 +425,17 @@ export const CONFIG = Object.freeze({
     dashboardSide: ROOT_DASHBOARD_SIDE,
 
     shortEnabled: true,
-    longEnabled: false
+    longEnabled: false,
+
+    /*
+      Entry alerts worden in tradeSystem/discord.js al gated op handmatige activeRotation match.
+      Rotation reports standaard uit om geen ruis te sturen.
+    */
+    sendRotationReports: bool(env.DISCORD_SEND_ROTATION_REPORTS, false),
+    sendResetReports: bool(env.DISCORD_SEND_RESET_REPORTS, true),
+    selectedMicroOnly: true,
+    noAlertWithoutManualSelection: true,
+    neverThrow: true
   },
 
   reset: {
@@ -385,10 +450,13 @@ export const CONFIG = Object.freeze({
     minMult: boundedNum(env.SIZING_MIN_MULT, 0.5, 0.01, 10),
     maxMult: boundedNum(env.SIZING_MAX_MULT, 1.25, 0.01, 10),
 
-    maxTotalRiskPct: boundedNum(env.SIZING_MAX_TOTAL_RISK_PCT, 0.03, 0.0001, 1),
-    maxSameSideRiskPct: boundedNum(env.SIZING_MAX_SAME_SIDE_RISK_PCT, 0.03, 0.0001, 1),
-
-    maxCounterBtcRiskPct: boundedNum(env.SIZING_MAX_COUNTER_BTC_RISK_PCT, 0.0075, 0.0001, 1)
+    /*
+      Virtuele posities mogen niet door globale exposure caps worden geblokkeerd.
+      checkRiskCaps blijft bruikbaar als aparte guard, maar default cap is effectief ruim.
+    */
+    maxTotalRiskPct: boundedNum(env.SIZING_MAX_TOTAL_RISK_PCT, NO_GLOBAL_RISK_CAP, 0.0001, 1),
+    maxSameSideRiskPct: boundedNum(env.SIZING_MAX_SAME_SIDE_RISK_PCT, NO_GLOBAL_RISK_CAP, 0.0001, 1),
+    maxCounterBtcRiskPct: boundedNum(env.SIZING_MAX_COUNTER_BTC_RISK_PCT, NO_GLOBAL_RISK_CAP, 0.0001, 1)
   },
 
   manage: {
@@ -405,7 +473,16 @@ export const CONFIG = Object.freeze({
     takerFeePct: boundedNum(env.COST_TAKER_FEE_PCT, 0.0006, 0, 0.05),
     makerFeePct: boundedNum(env.COST_MAKER_FEE_PCT, 0.0002, 0, 0.05),
 
+    /*
+      costModel.js gebruikt marketImpactPct + spread.
+      positionEngine.js ondersteunt ook slippagePct/marketSlippagePct.
+      Alle aliases staan hier expliciet zodat netto-resultaten consistent blijven.
+    */
+    slippagePct: boundedNum(env.COST_SLIPPAGE_PCT, 0.0002, 0, 0.05),
+    marketSlippagePct: boundedNum(env.COST_MARKET_SLIPPAGE_PCT || env.COST_SLIPPAGE_PCT, 0.0002, 0, 0.05),
+
     marketImpactPct: boundedNum(env.COST_MARKET_IMPACT_PCT, 0.0003, 0, 0.05),
+    impactPct: boundedNum(env.COST_IMPACT_PCT || env.COST_MARKET_IMPACT_PCT, 0.0003, 0, 0.05),
 
     fallbackSpreadPct: boundedNum(env.COST_FALLBACK_SPREAD_PCT, 0.0008, 0, 0.05)
   }
