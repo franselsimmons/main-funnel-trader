@@ -2,10 +2,6 @@
 
 import { CONFIG } from '../config.js';
 import {
-  bucketDepth,
-  bucketFunding,
-  bucketSpread,
-  bucketStep,
   getObRelation,
   sideToTradeSide,
   stableHash,
@@ -47,7 +43,7 @@ const LONG_TOKENS = new Set([
 function getMacroSchema() {
   return String(
     CONFIG?.analyze?.macroSchema ||
-    CONFIG?.analyze?.schema ||
+    CONFIG?.analyze?.legacySchema ||
     FALLBACK_MACRO_SCHEMA
   ).toUpperCase();
 }
@@ -59,8 +55,8 @@ function getMicroSchema() {
   ).toUpperCase();
 }
 
-function shouldRefineExecutionMicroIds() {
-  return CONFIG.analyze?.refineExecutionMicroIds !== false;
+function shouldBuildExecutionFingerprintMetadata() {
+  return CONFIG.analyze?.buildExecutionFingerprintMetadata !== false;
 }
 
 function toUpper(value, fallback = 'UNKNOWN') {
@@ -190,7 +186,6 @@ function tradeSideFromText(value = '') {
 
   if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
-
   if (shortHit && longHit) return 'MIXED';
 
   return 'UNKNOWN';
@@ -201,10 +196,6 @@ function normalizeTradeSideValue(value) {
 
   if (side === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
   if (side === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
-
-  const raw = toUpper(value, '');
-
-  if (!raw) return TARGET_TRADE_SIDE;
 
   return TARGET_TRADE_SIDE;
 }
@@ -507,10 +498,6 @@ function coarseRsi(zone) {
   return 'MID';
 }
 
-function exactRsiZone(zone) {
-  return coarseRsi(zone);
-}
-
 function tier(score) {
   const s = safeNumber(score, NaN);
 
@@ -527,16 +514,6 @@ function scoreBucket(score, prefix) {
 
 function signedScoreBucket(score, prefix) {
   return signedScoreTier(score, prefix);
-}
-
-function bucketBps(value, prefix) {
-  const bps = ratioToBps(value);
-
-  if (!Number.isFinite(bps)) return `${prefix}_NA`;
-  if (bps < 4) return `${prefix}_LO`;
-  if (bps >= 15) return `${prefix}_HI`;
-
-  return `${prefix}_MID`;
 }
 
 function bucketDistancePct(value, prefix) {
@@ -599,10 +576,6 @@ function coarseRegime(regime) {
   return 'NORMAL_VOL';
 }
 
-function exactRegime(regime) {
-  return coarseRegime(regime);
-}
-
 function coarseFlow(flow) {
   const f = toUpper(flow, 'NEUTRAL');
 
@@ -610,10 +583,6 @@ function coarseFlow(flow) {
   if (f === 'BUILDING') return 'BUILDING';
 
   return 'NEUTRAL';
-}
-
-function exactFlow(flow) {
-  return coarseFlow(flow);
 }
 
 function coarseScannerReason(reason) {
@@ -626,10 +595,6 @@ function coarseScannerReason(reason) {
   if (r.includes('MOMENTUM')) return 'MOMENTUM';
 
   return 'UNKNOWN';
-}
-
-function exactScannerReason(reason) {
-  return coarseScannerReason(reason);
 }
 
 function normalizeObRelation(metrics = {}) {
@@ -809,56 +774,79 @@ function getSpreadPct(metrics = {}) {
   return NaN;
 }
 
-function costBucket(costR) {
-  return costTier(costR);
+function isScannerFamilyId(id = '') {
+  const value = String(id || '').toUpperCase();
+
+  return (
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('__SCANNER__')
+  );
 }
 
-function numberBucket(value, prefix, {
-  step = 1,
-  min = -Infinity,
-  max = Infinity,
-  decimals = 0,
-  scale = 1
-} = {}) {
-  const n = safeNumber(value, NaN);
+function isAnalyzeFamilyId(id = '') {
+  const value = String(id || '').toUpperCase();
 
-  if (!Number.isFinite(n)) return `${prefix}_NA`;
+  if (!value) return false;
+  if (isScannerFamilyId(value)) return false;
 
-  const scaled = n * scale;
-  const clipped = Math.max(min, Math.min(max, scaled));
-  const bucket = Math.round(clipped / step) * step;
-
-  return `${prefix}_${formatBucketNumber(bucket, decimals)}`;
+  return (
+    /^SHORT_F\d{2}$/u.test(value) ||
+    (
+      value.startsWith('SHORT_') &&
+      !value.startsWith('SHORT_SCANNER_')
+    )
+  );
 }
 
-function ratioBucket(value, prefix, {
-  stepBps = 10,
-  maxBps = 300
-} = {}) {
-  const bps = ratioToBps(value);
+function getScannerMetadata(metrics = {}) {
+  const scannerMicroFamilyId = firstValue(
+    metrics.scannerMicroFamilyId,
+    isScannerFamilyId(metrics.trueMicroFamilyId) ? metrics.trueMicroFamilyId : null,
+    isScannerFamilyId(metrics.microFamilyId) ? metrics.microFamilyId : null,
+    isScannerFamilyId(metrics.id) ? metrics.id : null,
+    isScannerFamilyId(metrics.key) ? metrics.key : null
+  );
 
-  if (!Number.isFinite(bps)) return `${prefix}_NA`;
+  const scannerFamilyId = firstValue(
+    metrics.scannerFamilyId,
+    isScannerFamilyId(metrics.familyId) ? metrics.familyId : null,
+    isScannerFamilyId(metrics.baseFamilyId) ? metrics.baseFamilyId : null
+  );
 
-  if (bps < stepBps) return `${prefix}_LO`;
-  if (bps >= maxBps / 2) return `${prefix}_HI`;
+  const scannerDefinitionParts = Array.isArray(metrics.scannerDefinitionParts)
+    ? metrics.scannerDefinitionParts
+    : Array.isArray(metrics.definitionParts) && scannerMicroFamilyId
+      ? metrics.definitionParts
+      : [];
 
-  return `${prefix}_MID`;
+  const scannerDefinition = firstValue(
+    metrics.scannerDefinition,
+    scannerMicroFamilyId ? metrics.definition : null,
+    scannerMicroFamilyId ? metrics.microDefinition : null
+  );
+
+  return {
+    scannerMicroFamilyId: scannerMicroFamilyId || null,
+    scannerFamilyId: scannerFamilyId || null,
+    scannerDefinition: scannerDefinition || null,
+    scannerDefinitionParts
+  };
 }
 
-function signedRatioBucket(value, prefix, {
-  stepBps = 10,
-  maxBps = 300
-} = {}) {
-  const n = safeNumber(value, NaN);
+function resolveAnalyzeFamilyId(metrics = {}) {
+  const candidate = firstValue(
+    metrics.analyzeFamilyId,
+    metrics.learningFamilyId,
+    metrics.familyId
+  );
 
-  if (!Number.isFinite(n)) return `${prefix}_NA`;
+  if (isAnalyzeFamilyId(candidate)) {
+    return String(candidate).toUpperCase();
+  }
 
-  const bps = n * 10000;
-
-  if (bps <= -stepBps) return `${prefix}_NEG`;
-  if (bps >= stepBps) return `${prefix}_POS`;
-
-  return `${prefix}_FLAT`;
+  return classifyFamily(metrics);
 }
 
 function buildMacroDefinitionParts(metrics = {}, familyId) {
@@ -971,7 +959,7 @@ function buildMicroDefinitionParts(metrics = {}, parent) {
       highLabel: 'FAR'
     })}`,
 
-    `cost=${costBucket(costR)}`,
+    `cost=${costTier(costR)}`,
 
     `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
     `fakeBreakoutRisk=${boolToken(metrics.fakeBreakoutRisk)}`,
@@ -1074,11 +1062,7 @@ function buildExecutionFingerprintParts(metrics = {}, parent) {
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [values])
-      .flatMap((value) => {
-        if (Array.isArray(value)) return value;
-
-        return [value];
-      })
+      .flatMap((value) => Array.isArray(value) ? value : [value])
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -1107,9 +1091,7 @@ export function buildMicroFamilyV1(metrics = {}) {
   const sideSafeMetrics = assertShortOnly(metrics);
   const tradeSide = TARGET_TRADE_SIDE;
 
-  const familyId = metrics.familyId && String(metrics.familyId).toUpperCase().startsWith(`${TARGET_TRADE_SIDE}_`)
-    ? metrics.familyId
-    : classifyFamily(sideSafeMetrics);
+  const familyId = resolveAnalyzeFamilyId(sideSafeMetrics);
 
   const normalizedSide = TARGET_DASHBOARD_SIDE;
   const obRelation = normalizeObRelation(sideSafeMetrics);
@@ -1126,6 +1108,7 @@ export function buildMicroFamilyV1(metrics = {}) {
   return {
     schema,
     version: 'macro',
+
     familyId,
     microFamilyId,
     macroFamilyId: microFamilyId,
@@ -1162,15 +1145,16 @@ export function buildMicroFamilyV2(metrics = {}) {
   const sideSafeMetrics = assertShortOnly(metrics);
   const tradeSide = TARGET_TRADE_SIDE;
 
+  const scannerMetadata = getScannerMetadata(sideSafeMetrics);
   const parent = buildMicroFamilyV1(sideSafeMetrics);
 
   const baseDefinitionParts = buildMicroDefinitionParts(sideSafeMetrics, parent);
   const coarseHash = stableHash(baseDefinitionParts.join('|'), 8);
   const schema = getMicroSchema();
 
-  const baseMicroFamilyId = `MICRO_${TARGET_TRADE_SIDE}_${parent.familyId}_${schema}_${coarseHash}`;
+  const analyzeMicroFamilyId = `MICRO_${TARGET_TRADE_SIDE}_${parent.familyId}_${schema}_${coarseHash}`;
 
-  const executionFingerprintParts = shouldRefineExecutionMicroIds()
+  const executionFingerprintParts = shouldBuildExecutionFingerprintMetadata()
     ? buildExecutionFingerprintParts(sideSafeMetrics, parent)
     : [];
 
@@ -1178,32 +1162,42 @@ export function buildMicroFamilyV2(metrics = {}) {
     ? stableHash(executionFingerprintParts.join('|'), EXECUTION_MICRO_HASH_LEN)
     : null;
 
-  const microFamilyId = executionFingerprintHash
-    ? `${baseMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionFingerprintHash}`
-    : baseMicroFamilyId;
-
   const definitionParts = uniqueStrings([
     ...baseDefinitionParts,
-    ...executionFingerprintParts,
-    `coarseMicroFamilyId=${baseMicroFamilyId}`,
-    executionFingerprintHash ? `executionFingerprintHash=${executionFingerprintHash}` : null,
-    executionFingerprintHash ? `executionFingerprintSchema=${EXECUTION_MICRO_SUFFIX}` : null
-  ].filter(Boolean));
+    `analyzeMicroFamilyId=${analyzeMicroFamilyId}`,
+    `coarseMicroFamilyId=${analyzeMicroFamilyId}`,
+    `learningIdentity=ANALYZE_MICRO_FAMILY`,
+    `scannerFingerprintRole=METADATA_ONLY`
+  ]);
 
   return {
     schema,
     version: 'micro',
-    familyId: parent.familyId,
-    microFamilyId,
-    trueMicroFamilyId: microFamilyId,
 
-    coarseMicroFamilyId: baseMicroFamilyId,
-    baseMicroFamilyId,
-    legacyMicroFamilyId: baseMicroFamilyId,
+    familyId: parent.familyId,
+
+    microFamilyId: analyzeMicroFamilyId,
+    trueMicroFamilyId: analyzeMicroFamilyId,
+
+    coarseMicroFamilyId: analyzeMicroFamilyId,
+    baseMicroFamilyId: analyzeMicroFamilyId,
+    legacyMicroFamilyId: analyzeMicroFamilyId,
+
+    analyzeMicroFamilyId,
+    learningMicroFamilyId: analyzeMicroFamilyId,
+
+    scannerMicroFamilyId: scannerMetadata.scannerMicroFamilyId,
+    scannerFamilyId: scannerMetadata.scannerFamilyId,
+    scannerDefinition: scannerMetadata.scannerDefinition,
+    scannerDefinitionParts: scannerMetadata.scannerDefinitionParts,
 
     executionFingerprintHash,
     executionFingerprintParts,
     executionFingerprintSchema: executionFingerprintHash ? EXECUTION_MICRO_SUFFIX : null,
+    executionMicroFamilyId: executionFingerprintHash
+      ? `${analyzeMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionFingerprintHash}`
+      : null,
+    executionFingerprintRole: 'METADATA_ONLY',
 
     macroFamilyId: parent.microFamilyId,
     parentMacroFamilyId: parent.microFamilyId,
@@ -1216,7 +1210,7 @@ export function buildMicroFamilyV2(metrics = {}) {
     definitionParts,
 
     side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
+    tradeSide,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
@@ -1311,7 +1305,8 @@ export function isMicroFamilyV1Id(id) {
 
   return (
     value.includes(`_${getMacroSchema()}_`) &&
-    value.includes('MICRO_SHORT_')
+    value.includes('MICRO_SHORT_') &&
+    !isScannerFamilyId(value)
   );
 }
 
@@ -1320,7 +1315,8 @@ export function isMicroFamilyV2Id(id) {
 
   return (
     value.includes(`_${getMicroSchema()}_`) &&
-    value.includes('MICRO_SHORT_')
+    value.includes('MICRO_SHORT_') &&
+    !isScannerFamilyId(value)
   );
 }
 
@@ -1333,9 +1329,14 @@ export function isExecutionRefinedMicroFamilyId(id) {
   );
 }
 
+export function isScannerMicroFamilyId(id) {
+  return isScannerFamilyId(id);
+}
+
 export function attachMicroFamilies(metrics = {}) {
   const sideSafeMetrics = assertShortOnly(metrics);
 
+  const scannerMetadata = getScannerMetadata(sideSafeMetrics);
   const macro = buildMicroFamilyV1(sideSafeMetrics);
   const micro = buildMicroFamilyV2(sideSafeMetrics);
 
@@ -1368,9 +1369,21 @@ export function attachMicroFamilies(metrics = {}) {
     baseMicroFamilyId: micro.baseMicroFamilyId,
     legacyMicroFamilyId: micro.legacyMicroFamilyId,
 
+    analyzeMicroFamilyId: micro.analyzeMicroFamilyId,
+    learningMicroFamilyId: micro.learningMicroFamilyId,
+
+    scannerMicroFamilyId: scannerMetadata.scannerMicroFamilyId || micro.scannerMicroFamilyId,
+    scannerFamilyId: scannerMetadata.scannerFamilyId || micro.scannerFamilyId,
+    scannerDefinition: scannerMetadata.scannerDefinition || micro.scannerDefinition,
+    scannerDefinitionParts: scannerMetadata.scannerDefinitionParts?.length
+      ? scannerMetadata.scannerDefinitionParts
+      : micro.scannerDefinitionParts,
+
     executionFingerprintHash: micro.executionFingerprintHash,
     executionFingerprintParts: micro.executionFingerprintParts,
     executionFingerprintSchema: micro.executionFingerprintSchema,
+    executionMicroFamilyId: micro.executionMicroFamilyId,
+    executionFingerprintRole: 'METADATA_ONLY',
 
     microFamilySchema: micro.schema,
 
@@ -1378,7 +1391,10 @@ export function attachMicroFamilies(metrics = {}) {
     microFamilyDefinitionParts: micro.definitionParts,
 
     macroFamilyDefinition: macro.definition,
-    macroFamilyDefinitionParts: macro.definitionParts
+    macroFamilyDefinitionParts: macro.definitionParts,
+
+    scannerFingerprintRole: 'METADATA_ONLY',
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY'
   };
 }
 
