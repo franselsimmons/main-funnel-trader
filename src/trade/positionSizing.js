@@ -12,19 +12,29 @@ import {
 } from '../utils.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const SHORT_DIRECT = new Set([
   'SHORT',
   'BEAR',
   'BEARISH',
-  'SELL'
+  'SELL',
+  'ASK',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
 ]);
 
 const LONG_DIRECT = new Set([
   'LONG',
   'BULL',
   'BULLISH',
-  'BUY'
+  'BUY',
+  'BID',
+  'UP',
+  'UPSIDE',
+  'GREEN'
 ]);
 
 function round6(value) {
@@ -78,17 +88,89 @@ function upper(value, fallback = '') {
   return text ? text.toUpperCase() : fallback;
 }
 
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
 function normalizeTradeSide(value) {
-  const direct = sideToTradeSide(value);
-
-  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
-  if (direct === 'LONG') return 'LONG';
-
-  const raw = upper(value);
+  const raw = cleanSideText(value);
 
   if (!raw) return 'UNKNOWN';
+
+  const direct = sideToTradeSide(raw);
+
+  if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+
   if (SHORT_DIRECT.has(raw)) return TARGET_TRADE_SIDE;
-  if (LONG_DIRECT.has(raw)) return 'LONG';
+  if (LONG_DIRECT.has(raw)) return OPPOSITE_TRADE_SIDE;
+
+  const normalized = raw
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  const shortHit =
+    normalized === 'SHORT' ||
+    normalized === 'BEAR' ||
+    normalized === 'SELL' ||
+    normalized.includes('MICRO_SHORT_') ||
+    normalized.includes('TRADESIDE_SHORT') ||
+    normalized.includes('TRADE_SIDE_SHORT') ||
+    normalized.includes('POSITION_SIDE_SHORT') ||
+    normalized.includes('POSITIONSIDE_SHORT') ||
+    normalized.includes('SIDE_SHORT') ||
+    normalized.includes('SIDE_BEAR') ||
+    normalized.includes('DIRECTION_SHORT') ||
+    normalized.includes('DIRECTION_BEAR') ||
+    normalized.includes('SIDE_SELL') ||
+    normalized.includes('DIRECTION_SELL') ||
+    normalized.startsWith('SHORT_') ||
+    normalized.includes('_SHORT_') ||
+    normalized.endsWith('_SHORT') ||
+    normalized.startsWith('BEAR_') ||
+    normalized.includes('_BEAR_') ||
+    normalized.endsWith('_BEAR') ||
+    normalized.startsWith('SELL_') ||
+    normalized.includes('_SELL_') ||
+    normalized.endsWith('_SELL');
+
+  const longHit =
+    normalized === 'LONG' ||
+    normalized === 'BULL' ||
+    normalized === 'BUY' ||
+    normalized.includes('MICRO_LONG_') ||
+    normalized.includes('TRADESIDE_LONG') ||
+    normalized.includes('TRADE_SIDE_LONG') ||
+    normalized.includes('POSITION_SIDE_LONG') ||
+    normalized.includes('POSITIONSIDE_LONG') ||
+    normalized.includes('SIDE_LONG') ||
+    normalized.includes('SIDE_BULL') ||
+    normalized.includes('DIRECTION_LONG') ||
+    normalized.includes('DIRECTION_BULL') ||
+    normalized.includes('SIDE_BUY') ||
+    normalized.includes('DIRECTION_BUY') ||
+    normalized.startsWith('LONG_') ||
+    normalized.includes('_LONG_') ||
+    normalized.endsWith('_LONG') ||
+    normalized.startsWith('BULL_') ||
+    normalized.includes('_BULL_') ||
+    normalized.endsWith('_BULL') ||
+    normalized.startsWith('BUY_') ||
+    normalized.includes('_BUY_') ||
+    normalized.endsWith('_BUY');
+
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+
+  if (longHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
@@ -103,7 +185,8 @@ function textParts(row = {}) {
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
-    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : [])
+    ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
   ]
     .map((value) => upper(value))
     .filter(Boolean);
@@ -210,7 +293,7 @@ function inferTradeSideFromIds(row = {}) {
 
   if (!haystack) return 'UNKNOWN';
 
-  if (hasLongIdSignal(haystack)) return 'LONG';
+  if (hasLongIdSignal(haystack)) return OPPOSITE_TRADE_SIDE;
   if (hasShortIdSignal(haystack)) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
@@ -221,7 +304,7 @@ function inferTradeSideFromDefinitions(row = {}) {
 
   if (!parts.length) return 'UNKNOWN';
 
-  if (hasLongDefinitionSignal(parts)) return 'LONG';
+  if (hasLongDefinitionSignal(parts)) return OPPOSITE_TRADE_SIDE;
   if (hasShortDefinitionSignal(parts)) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
@@ -246,16 +329,16 @@ function inferTradeSide(row = {}) {
   for (const value of directSources) {
     const side = normalizeTradeSide(value);
 
-    if (side === TARGET_TRADE_SIDE || side === 'LONG') return side;
+    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) return side;
   }
 
   const fromIds = inferTradeSideFromIds(row);
 
-  if (fromIds === TARGET_TRADE_SIDE || fromIds === 'LONG') return fromIds;
+  if (fromIds === TARGET_TRADE_SIDE || fromIds === OPPOSITE_TRADE_SIDE) return fromIds;
 
   const fromDefinitions = inferTradeSideFromDefinitions(row);
 
-  if (fromDefinitions === TARGET_TRADE_SIDE || fromDefinitions === 'LONG') {
+  if (fromDefinitions === TARGET_TRADE_SIDE || fromDefinitions === OPPOSITE_TRADE_SIDE) {
     return fromDefinitions;
   }
 
@@ -269,10 +352,13 @@ function inferTradeSide(row = {}) {
 function normalizeBtcRelation(value) {
   const relation = upper(value, 'BTC_UNKNOWN');
 
-  if (relation === 'BTC_WITH') return 'BTC_WITH';
-  if (relation === 'BTC_AGAINST') return 'BTC_AGAINST';
-  if (relation === 'BTC_NEUTRAL') return 'BTC_NEUTRAL';
-  if (relation === 'BTC_UNKNOWN') return 'BTC_UNKNOWN';
+  if (relation === 'BTC_WITH' || relation === 'WITH') return 'BTC_WITH';
+  if (relation === 'BTC_AGAINST' || relation === 'AGAINST') return 'BTC_AGAINST';
+  if (relation === 'BTC_NEUTRAL' || relation === 'NEUTRAL') return 'BTC_NEUTRAL';
+  if (relation === 'BTC_UNKNOWN' || relation === 'UNKNOWN') return 'BTC_UNKNOWN';
+
+  if (relation === 'BEARISH' || relation === 'STRONG_BEAR') return 'BTC_WITH';
+  if (relation === 'BULLISH' || relation === 'STRONG_BULL') return 'BTC_AGAINST';
 
   return 'BTC_UNKNOWN';
 }
@@ -280,19 +366,27 @@ function normalizeBtcRelation(value) {
 function relationFromDefinitionParts(definitionParts = []) {
   const parts = Array.isArray(definitionParts) ? definitionParts : [];
 
-  const match = parts.find((part) => (
-    upper(part).startsWith('BTCRELATION=')
-  ));
+  const directMatch = parts.find((part) => {
+    const text = upper(part);
 
-  if (!match) return 'BTC_UNKNOWN';
+    return (
+      text.startsWith('BTCRELATION=') ||
+      text.startsWith('BTC_RELATION=') ||
+      text.startsWith('BTC=') ||
+      text.startsWith('BTC_STATE=')
+    );
+  });
 
-  return normalizeBtcRelation(String(match).split('=').at(1));
+  if (!directMatch) return 'BTC_UNKNOWN';
+
+  return normalizeBtcRelation(String(directMatch).split('=').at(1));
 }
 
 function btcRelationFromRow(row = {}) {
   return normalizeBtcRelation(
     row.btcRelation ||
     row.btcStateRelation ||
+    row.btcState ||
     relationFromDefinitionParts(row.definitionParts)
   );
 }
@@ -324,17 +418,50 @@ function normalizeRiskFraction(value) {
   );
 }
 
-export function riskFractionForEntry({ weeklyStats } = {}) {
+function buildStatsSideProbe({
+  weeklyStats,
+  side,
+  tradeSide
+} = {}) {
+  return {
+    ...(weeklyStats || {}),
+
+    side: side ?? weeklyStats?.side,
+    tradeSide: tradeSide ?? weeklyStats?.tradeSide,
+    positionSide: tradeSide ?? weeklyStats?.positionSide,
+    direction: tradeSide ?? weeklyStats?.direction
+  };
+}
+
+export function riskFractionForEntry({
+  weeklyStats,
+  side = null,
+  tradeSide = null
+} = {}) {
   const cfg = sizingConfig();
+
+  const explicitSideProvided =
+    side !== null ||
+    tradeSide !== null ||
+    weeklyStats?.tradeSide ||
+    weeklyStats?.side ||
+    weeklyStats?.positionSide ||
+    weeklyStats?.direction;
+
+  const statsSide = inferTradeSide(
+    buildStatsSideProbe({
+      weeklyStats,
+      side,
+      tradeSide
+    })
+  );
+
+  if (explicitSideProvided && statsSide !== TARGET_TRADE_SIDE) {
+    return 0;
+  }
 
   if (!cfg.enabled) {
     return round6(cfg.baseRiskPct);
-  }
-
-  const statsSide = inferTradeSide(weeklyStats || {});
-
-  if (weeklyStats && statsSide !== TARGET_TRADE_SIDE) {
-    return round6(cfg.baseRiskPct * cfg.minMult);
   }
 
   const completed = safeNumber(weeklyStats?.completed, 0);
@@ -426,14 +553,20 @@ export function summarizeOpenRisk(openPositions = []) {
     unknownSideRisk: round6(unknownSideRisk),
     counterBtcRisk: round6(counterBtcRisk),
 
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
-    longDisabled: true
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
   };
 }
 
 export function checkRiskCaps({
   openPositions = [],
   side,
+  tradeSide = side,
   btcRelation,
   riskFraction
 } = {}) {
@@ -441,23 +574,54 @@ export function checkRiskCaps({
   const want = normalizeRiskFraction(riskFraction);
   const open = summarizeOpenRisk(openPositions);
 
-  const tradeSide = inferTradeSide({
+  const requestedTradeSide = inferTradeSide({
     side,
-    tradeSide: side
+    tradeSide,
+    positionSide: tradeSide,
+    direction: tradeSide,
+    shortOnly: tradeSide === TARGET_TRADE_SIDE || side === TARGET_TRADE_SIDE,
+    longDisabled: true
   });
 
   const relation = normalizeBtcRelation(btcRelation);
 
-  if (tradeSide !== TARGET_TRADE_SIDE) {
+  if (requestedTradeSide !== TARGET_TRADE_SIDE) {
     return {
       ok: false,
       reason: 'SHORT_ONLY_SYSTEM_REJECTED_NON_SHORT_RISK',
       side,
-      tradeSide,
+      tradeSide: requestedTradeSide,
+      riskFraction: 0,
       want,
       riskState: open,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
-      longDisabled: true
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false
+    };
+  }
+
+  if (want <= 0) {
+    return {
+      ok: false,
+      reason: 'ZERO_RISK_FRACTION',
+      side: TARGET_DASHBOARD_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+      riskFraction: 0,
+      want,
+      riskState: open,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
+      shortOnly: true,
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false
     };
   }
 
@@ -470,8 +634,14 @@ export function checkRiskCaps({
       openRiskAfter: round6(open.total + want),
       sideRiskAfter: round6(open.shortRisk + want),
       riskState: open,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
-      longDisabled: true
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false
     };
   }
 
@@ -483,8 +653,14 @@ export function checkRiskCaps({
       want,
       cap: cfg.maxTotalRiskPct,
       riskState: open,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
-      longDisabled: true
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false
     };
   }
 
@@ -497,8 +673,14 @@ export function checkRiskCaps({
       want,
       cap: cfg.maxSameSideRiskPct,
       riskState: open,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
-      longDisabled: true
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false
     };
   }
 
@@ -513,8 +695,14 @@ export function checkRiskCaps({
       want,
       cap: cfg.maxCounterBtcRiskPct,
       riskState: open,
+
+      targetTradeSide: TARGET_TRADE_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+
       shortOnly: true,
-      longDisabled: true
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false
     };
   }
 
@@ -528,7 +716,13 @@ export function checkRiskCaps({
       ? round6(open.counterBtcRisk + want)
       : open.counterBtcRisk,
     riskState: open,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
     shortOnly: true,
-    longDisabled: true
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
   };
 }
