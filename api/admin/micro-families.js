@@ -12,7 +12,7 @@ import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 
-const SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK = true;
+const SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK = false;
 
 const VALID_MODES = new Set([
   'balanced',
@@ -84,8 +84,10 @@ function modePayload() {
     autoRotationActivationDisabled: true,
     discordOnlyForSelectedMicroFamilies: true,
 
-    scannerFingerprintLegacyFallbackEnabled: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK,
-    scannerFingerprintsHidden: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true,
+    scannerFingerprintLegacyFallbackEnabled: false,
+    scannerFingerprintsHidden: true,
+    scannerFingerprintsMetadataOnly: true,
+    analyzeMicroFamiliesOnly: true,
 
     minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING
   };
@@ -286,6 +288,18 @@ function getMicroFamilyId(row = {}, fallback = null) {
   );
 }
 
+function getCoarseMicroFamilyId(row = {}, fallback = null) {
+  return (
+    row.coarseMicroFamilyId ||
+    row.trueMicroFamilyId ||
+    row.microFamilyId ||
+    row.id ||
+    row.key ||
+    fallback ||
+    null
+  );
+}
+
 function getMacroFamilyId(row = {}) {
   return (
     row.parentMacroFamilyId ||
@@ -312,7 +326,7 @@ function isScannerFingerprintId(id = '') {
 }
 
 function allowScannerFingerprintRow(id = '') {
-  return SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK === true || !isScannerFingerprintId(id);
+  return !isScannerFingerprintId(id);
 }
 
 function cleanSideHaystack(text = '') {
@@ -354,6 +368,7 @@ function collectSideText(input = {}) {
 
     input.microFamilyId,
     input.trueMicroFamilyId,
+    input.coarseMicroFamilyId,
     input.id,
     input.key,
 
@@ -499,6 +514,7 @@ function inferTradeSide(input = {}) {
   const microFamilyId = cleanSideHaystack(
     input.trueMicroFamilyId ||
     input.microFamilyId ||
+    input.coarseMicroFamilyId ||
     input.id ||
     input.key
   );
@@ -546,18 +562,22 @@ function isAnalyzeMicroRow(row = {}) {
   const id = getMicroFamilyId(row);
 
   if (!id) return false;
+  if (isScannerFingerprintId(id)) return false;
+
+  const scannerId = row.scannerMicroFamilyId || row.scannerFingerprintId || null;
+
+  if (scannerId && id === scannerId) return false;
+  if (row.scannerFingerprintOnlyMetadata === true) return false;
+  if (row.legacyScannerFamilyFallback === true) return false;
 
   const side = inferTradeSide({
     ...row,
     microFamilyId: id,
-    trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || id
+    trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || id,
+    coarseMicroFamilyId: row.coarseMicroFamilyId || id
   });
 
   if (side === 'LONG') return false;
-
-  if (isScannerFingerprintId(id)) {
-    return SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK === true;
-  }
 
   return true;
 }
@@ -576,7 +596,13 @@ function sourceEntriesFromMicros(micros = {}) {
 }
 
 function microsCount(micros = {}) {
-  return sourceEntriesFromMicros(micros).length;
+  return sourceEntriesFromMicros(micros)
+    .filter(([key, row]) => {
+      const id = getMicroFamilyId(row, key);
+
+      return id && allowScannerFingerprintRow(id);
+    })
+    .length;
 }
 
 function parseIsoWeekKey(weekKey = '') {
@@ -1009,12 +1035,7 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
   const microFamilyId = getMicroFamilyId(row, key);
 
   if (!microFamilyId) return null;
-
-  const scannerFingerprintLegacy = isScannerFingerprintId(microFamilyId);
-
-  if (scannerFingerprintLegacy && SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true) {
-    return null;
-  }
+  if (isScannerFingerprintId(microFamilyId)) return null;
 
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId({
@@ -1022,6 +1043,10 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     microFamilyId,
     familyId
   });
+  const coarseMicroFamilyId = getCoarseMicroFamilyId({
+    ...row,
+    microFamilyId
+  }, microFamilyId);
 
   const definitionParts = getDefinitionParts(row);
   const macroDefinitionParts = getMacroDefinitionParts(row);
@@ -1029,6 +1054,8 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
   const inferredTradeSide = inferTradeSide({
     ...row,
     microFamilyId,
+    trueMicroFamilyId: row.trueMicroFamilyId || microFamilyId,
+    coarseMicroFamilyId,
     familyId,
     macroFamilyId,
     definitionParts,
@@ -1046,22 +1073,23 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
     sourceIndex: index,
 
     microFamilyId,
-    trueMicroFamilyId: microFamilyId,
+    trueMicroFamilyId: row.trueMicroFamilyId || microFamilyId,
+    coarseMicroFamilyId,
     familyId,
     macroFamilyId,
 
     parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
-    scannerMicroFamilyId: row.scannerMicroFamilyId || (scannerFingerprintLegacy ? microFamilyId : null),
+    scannerMicroFamilyId: row.scannerMicroFamilyId || row.scannerFingerprintId || null,
     scannerDefinition: row.scannerDefinition || null,
     scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
       ? row.scannerDefinitionParts
       : [],
 
-    scannerFingerprintLegacy,
-    legacyScannerFamilyFallback: scannerFingerprintLegacy,
-    scannerFingerprintOnlyMetadata: scannerFingerprintLegacy,
+    scannerFingerprintLegacy: false,
+    legacyScannerFamilyFallback: false,
+    scannerFingerprintOnlyMetadata: false,
 
     ...modePayload(),
 
@@ -1200,12 +1228,7 @@ function buildRawMicroRow(row = {}, key = '', index = 0) {
 
 function decorateMicroRow(row = {}) {
   if (!row?.microFamilyId) return null;
-
-  const scannerFingerprintLegacy = isScannerFingerprintId(row.microFamilyId);
-
-  if (scannerFingerprintLegacy && SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true) {
-    return null;
-  }
+  if (isScannerFingerprintId(row.microFamilyId)) return null;
 
   const winrate = getSampleAdjustedWinrate(row);
   const dashboardBalancedScore = getDashboardBalancedScore(row, winrate);
@@ -1218,9 +1241,9 @@ function decorateMicroRow(row = {}) {
 
     ...modePayload(),
 
-    scannerFingerprintLegacy,
-    legacyScannerFamilyFallback: scannerFingerprintLegacy,
-    scannerFingerprintOnlyMetadata: scannerFingerprintLegacy,
+    scannerFingerprintLegacy: false,
+    legacyScannerFamilyFallback: false,
+    scannerFingerprintOnlyMetadata: false,
 
     completed: round(winrate.outcomeSample, 4),
     wins: round(winrate.wins, 4),
@@ -1287,7 +1310,8 @@ function buildRowsFromMicros(micros = {}) {
         ...(row || {}),
         key,
         microFamilyId: id,
-        trueMicroFamilyId: id,
+        trueMicroFamilyId: row?.trueMicroFamilyId || id,
+        coarseMicroFamilyId: getCoarseMicroFamilyId(row, id),
         ...modePayload()
       };
 
@@ -1344,14 +1368,12 @@ function mergeRows(primaryRows = [], fallbackRows = []) {
 
 function manualRowFromId(id, index = 0) {
   if (!id || inferTradeSide(id) === 'LONG') return null;
-
-  if (isScannerFingerprintId(id) && SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true) {
-    return null;
-  }
+  if (isScannerFingerprintId(id)) return null;
 
   const raw = buildRawMicroRow({
     microFamilyId: id,
     trueMicroFamilyId: id,
+    coarseMicroFamilyId: id,
     familyId: null,
     macroFamilyId: null,
 
@@ -1435,6 +1457,9 @@ function buildRowsFromActiveRotation(activeRotation) {
           const raw = buildRawMicroRow({
             ...row,
             ...modePayload(),
+            microFamilyId: id,
+            trueMicroFamilyId: row.trueMicroFamilyId || id,
+            coarseMicroFamilyId: getCoarseMicroFamilyId(row, id),
             active: true,
             selectedTier: row.selectedTier || row.rotationEligibilityTier || activeRotation.selectedTier || 'RAW'
           }, id, index);
@@ -1471,13 +1496,14 @@ function normalizeMicroRow(
   } = {}
 ) {
   const microFamilyId = getMicroFamilyId(row);
+  const trueMicroFamilyId = row.trueMicroFamilyId || microFamilyId;
+  const coarseMicroFamilyId = getCoarseMicroFamilyId(row, trueMicroFamilyId);
   const familyId = getFamilyId(row);
   const macroFamilyId = getMacroFamilyId(row);
-  const scannerFingerprintLegacy = isScannerFingerprintId(microFamilyId);
 
   const active = Boolean(row.active) || (
-    microFamilyId
-      ? activeSet.has(microFamilyId)
+    trueMicroFamilyId
+      ? activeSet.has(trueMicroFamilyId)
       : false
   );
 
@@ -1496,22 +1522,23 @@ function normalizeMicroRow(
     rank: index + 1,
 
     microFamilyId,
-    trueMicroFamilyId: microFamilyId,
+    trueMicroFamilyId,
+    coarseMicroFamilyId,
     familyId,
     macroFamilyId,
 
     parentMacroFamilyId: row.parentMacroFamilyId || macroFamilyId || null,
     parentMicroFamilyId: row.parentMicroFamilyId || macroFamilyId || null,
 
-    scannerMicroFamilyId: row.scannerMicroFamilyId || (scannerFingerprintLegacy ? microFamilyId : null),
+    scannerMicroFamilyId: row.scannerMicroFamilyId || row.scannerFingerprintId || null,
     scannerDefinition: row.scannerDefinition || null,
     scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
       ? row.scannerDefinitionParts
       : [],
 
-    scannerFingerprintLegacy,
-    legacyScannerFamilyFallback: scannerFingerprintLegacy,
-    scannerFingerprintOnlyMetadata: scannerFingerprintLegacy,
+    scannerFingerprintLegacy: false,
+    legacyScannerFamilyFallback: false,
+    scannerFingerprintOnlyMetadata: false,
 
     ...modePayload(),
 
@@ -1673,19 +1700,21 @@ function compactBestRow(row) {
   if (!isAnalyzeMicroRow(row)) return null;
 
   const microFamilyId = getMicroFamilyId(row);
-  const scannerFingerprintLegacy = isScannerFingerprintId(microFamilyId);
+  const trueMicroFamilyId = row.trueMicroFamilyId || microFamilyId;
 
   return {
     microFamilyId,
-    trueMicroFamilyId: microFamilyId,
+    trueMicroFamilyId,
+    coarseMicroFamilyId: getCoarseMicroFamilyId(row, trueMicroFamilyId),
     familyId: getFamilyId(row),
     macroFamilyId: getMacroFamilyId(row),
 
     ...modePayload(),
 
-    scannerFingerprintLegacy,
-    legacyScannerFamilyFallback: scannerFingerprintLegacy,
-    scannerFingerprintOnlyMetadata: scannerFingerprintLegacy,
+    scannerMicroFamilyId: row.scannerMicroFamilyId || row.scannerFingerprintId || null,
+    scannerFingerprintLegacy: false,
+    legacyScannerFamilyFallback: false,
+    scannerFingerprintOnlyMetadata: false,
 
     active: Boolean(row.active),
     macroActive: Boolean(row.macroActive),
@@ -1750,7 +1779,7 @@ function compactActiveRotation(activeRotation) {
     adminSelected: Boolean(activeRotation.adminSelected || activeRotation.manualOnly),
     liveSelectable: Boolean(activeRotation.liveSelectable),
 
-    usedLegacyFallback: Boolean(activeRotation.usedLegacyFallback),
+    usedLegacyFallback: false,
     usedSoftFallback: Boolean(activeRotation.usedSoftFallback),
     usedObservationFallback: Boolean(activeRotation.usedObservationFallback),
     usedRawFallback: Boolean(activeRotation.usedRawFallback),
@@ -1820,6 +1849,7 @@ function rowMatchesSearch(row = {}, q = '') {
   const haystack = [
     row.microFamilyId,
     row.trueMicroFamilyId,
+    row.coarseMicroFamilyId,
     row.id,
     row.key,
     row.familyId,
@@ -1862,7 +1892,7 @@ function rowPassesFilters(row = {}, filters, activeSet, activeMacroSet) {
     return false;
   }
 
-  if (filters.activeOnly && !activeSet.has(row.microFamilyId)) {
+  if (filters.activeOnly && !activeSet.has(row.trueMicroFamilyId || row.microFamilyId)) {
     return false;
   }
 
@@ -2067,7 +2097,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
   const observingRows = safeRows.filter((row) => row.status === 'OBSERVING');
 
   const activeRows = safeRows.filter((row) => (
-    activeSet.has(row.microFamilyId || row.trueMicroFamilyId || row.id || row.key)
+    activeSet.has(row.trueMicroFamilyId || row.microFamilyId || row.id || row.key)
   ));
 
   let totalR = 0;
@@ -2234,7 +2264,8 @@ function mergeMicrosByRecency(weekResults = []) {
       if (inferTradeSide({
         ...row,
         microFamilyId: id,
-        trueMicroFamilyId: id
+        trueMicroFamilyId: row.trueMicroFamilyId || id,
+        coarseMicroFamilyId: getCoarseMicroFamilyId(row, id)
       }) === 'LONG') {
         continue;
       }
@@ -2242,7 +2273,8 @@ function mergeMicrosByRecency(weekResults = []) {
       merged[id] = {
         ...row,
         microFamilyId: id,
-        trueMicroFamilyId: id,
+        trueMicroFamilyId: row.trueMicroFamilyId || id,
+        coarseMicroFamilyId: getCoarseMicroFamilyId(row, id),
         sourceWeekKey: weekKey,
         sourceWeekPrimary: Boolean(isPrimary),
         sourceWeekFallback: !isPrimary,
@@ -2429,14 +2461,16 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-net-outcome-observation-first-legacy-scanner-fallback-v8');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-analyze-micro-family-net-outcome-v9');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
   res.setHeader('X-Virtual-Outcomes-Included', 'true');
   res.setHeader('X-Shadow-Outcomes-Included', 'true');
   res.setHeader('X-Manual-Selection-Only', 'true');
-  res.setHeader('X-Scanner-Fingerprint-Legacy-Fallback', SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK ? 'true' : 'false');
+  res.setHeader('X-Scanner-Fingerprint-Legacy-Fallback', 'false');
+  res.setHeader('X-Scanner-Fingerprints-Metadata-Only', 'true');
+  res.setHeader('X-Analyze-Micro-Families-Only', 'true');
 
   if (req.method !== 'GET') {
     return methodNotAllowed(res);
@@ -2589,8 +2623,8 @@ export default async function handler(req, res) {
       split.shortRows[0] ||
       null;
 
-    const scannerFingerprintLegacyRows = mergedRows
-      .filter((row) => isScannerFingerprintId(getMicroFamilyId(row)))
+    const rawScannerFingerprintRows = sourceEntriesFromMicros(weekResult.micros)
+      .filter(([key, row]) => isScannerFingerprintId(getMicroFamilyId(row, key)))
       .length;
 
     const warnings = uniqueStrings([
@@ -2601,14 +2635,14 @@ export default async function handler(req, res) {
       usedForcedShortFallback
         ? 'USED_FORCED_SHORT_ACTIVE_ROTATION_FALLBACK'
         : null,
-      scannerFingerprintLegacyRows > 0
-        ? `SCANNER_FINGERPRINT_LEGACY_FALLBACK_ROWS:${scannerFingerprintLegacyRows}`
+      rawScannerFingerprintRows > 0
+        ? `SCANNER_FINGERPRINT_ROWS_HIDDEN_METADATA_ONLY:${rawScannerFingerprintRows}`
         : null,
       rankedRows.length === 0
-        ? 'NO_ROWS_AFTER_FILTERS'
+        ? 'NO_ANALYZE_MICRO_ROWS_AFTER_FILTERS'
         : null,
       best25MicroFamilies.length === 0
-        ? 'NO_BEST25_MICRO_FAMILIES_AVAILABLE'
+        ? 'NO_ANALYZE_MICRO_FAMILIES_AVAILABLE'
         : null
     ].filter(Boolean));
 
@@ -2632,9 +2666,11 @@ export default async function handler(req, res) {
         activeMode: mode,
         defaultSort: 'dashboardBalancedScore/balancedScore/fairWinrate',
         rawWinrateIsNeverDefault: true,
-        scannerFingerprintsExcludedFromRows: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true,
-        scannerFingerprintLegacyFallback: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK,
-        scannerFingerprintLegacyFallbackRows
+        scannerFingerprintsExcludedFromRows: true,
+        scannerFingerprintLegacyFallback: false,
+        scannerFingerprintsMetadataOnly: true,
+        analyzeMicroFamiliesOnly: true,
+        trueMicroFamilyOnly: true
       },
 
       weekKey: weekResult.weekKey || requestedWeekKey,
@@ -2681,7 +2717,8 @@ export default async function handler(req, res) {
       totalAvailable: mergedRows.length,
       weekRows: weekRows.length,
       activeFallbackRows: activeFallbackRows.length,
-      scannerFingerprintLegacyRows,
+      scannerFingerprintLegacyRows: 0,
+      rawScannerFingerprintRowsHidden: rawScannerFingerprintRows,
 
       rawSideCounts: sideCounts(mergedRows),
       filteredSideCounts: sideCounts(rankedRows),
@@ -2716,7 +2753,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnlyNetOutcomeObservationFirstBest25RecentWeeksMergeAnalyzeMicroOnlyLegacyScannerFallback',
+        path: 'shortOnlyAnalyzeMicroFamilyNetOutcomeScannerFingerprintMetadataOnly',
         best25Source: 'mergedRowsBeforeFilters'
       },
 
