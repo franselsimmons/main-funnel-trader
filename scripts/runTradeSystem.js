@@ -15,9 +15,11 @@ function argv() {
 }
 
 function hasFlag(flag) {
+  const name = String(flag || '').replace(/^--/, '');
+
   return (
-    process.argv.includes(flag) ||
-    process.argv.includes(`--${flag}`)
+    process.argv.includes(name) ||
+    process.argv.includes(`--${name}`)
   );
 }
 
@@ -36,7 +38,7 @@ function isTrue(value) {
 
   const raw = String(value ?? '').trim().toLowerCase();
 
-  return ['true', '1', 'yes', 'y', 'on', 'force'].includes(raw);
+  return ['true', '1', 'yes', 'y', 'on', 'force', 'forced'].includes(raw);
 }
 
 function firstValue(...values) {
@@ -47,15 +49,54 @@ function firstValue(...values) {
   return null;
 }
 
+function baseFlags() {
+  return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    source: 'VIRTUAL',
+    sourceMode: 'VIRTUAL',
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    noExchangeOrders: true,
+    noRealOrders: true,
+
+    learningOnly: true,
+    microFamilyLearning: true,
+    allowLearningWithoutActiveRotation: true,
+    ignoreMaxOpenPositionsForLearning: true,
+    ignoreRiskCapsForLearning: true,
+    oneOpenPositionPerSymbol: true,
+
+    manualSelectionOnly: true,
+    autoSelectionDisabled: true,
+    discordOnlyForSelectedMicroFamilies: true
+  };
+}
+
 function shouldForceProcessSnapshot() {
   return (
     hasFlag('force') ||
-    hasFlag('--force') ||
+    hasFlag('forced') ||
     hasFlag('forceProcessSnapshot') ||
-    hasFlag('--forceProcessSnapshot') ||
     hasFlag('force-process-snapshot') ||
-    hasFlag('--force-process-snapshot') ||
     isTrue(getArgValue('force')) ||
+    isTrue(getArgValue('forced')) ||
     isTrue(getArgValue('forceProcessSnapshot')) ||
     isTrue(getArgValue('force-process-snapshot'))
   );
@@ -64,9 +105,7 @@ function shouldForceProcessSnapshot() {
 function shouldMonitorOnly() {
   return (
     hasFlag('monitorOnly') ||
-    hasFlag('--monitorOnly') ||
     hasFlag('monitor-only') ||
-    hasFlag('--monitor-only') ||
     isTrue(getArgValue('monitorOnly')) ||
     isTrue(getArgValue('monitor-only'))
   );
@@ -75,7 +114,6 @@ function shouldMonitorOnly() {
 function shouldManualRun() {
   return (
     hasFlag('manual') ||
-    hasFlag('--manual') ||
     shouldForceProcessSnapshot() ||
     isTrue(getArgValue('manual'))
   );
@@ -102,6 +140,15 @@ function flattenValues(values = []) {
 function uniqueStrings(values = []) {
   return [...new Set(
     flattenValues(values)
+      .flatMap((value) => {
+        if (typeof value === 'string') {
+          return value
+            .split(/[\s,;\n\r]+/g)
+            .map((part) => part.trim());
+        }
+
+        return [value];
+      })
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
@@ -129,6 +176,8 @@ function cleanSideText(value = '') {
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT');
@@ -137,18 +186,21 @@ function cleanSideText(value = '') {
 function normalizeTradeSide(side) {
   const raw = cleanSideText(side);
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return OPPOSITE_TRADE_SIDE;
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'DOWN', 'DOWNSIDE'].includes(raw)) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  if (['LONG', 'BULL', 'BULLISH', 'BUY', 'UP', 'UPSIDE'].includes(raw)) {
+    return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
 
-function inferSideFromText(value = '') {
+function hasShortSignal(value = '') {
   const text = cleanSideText(value);
 
-  if (!text) return 'UNKNOWN';
-
-  const shortHit = (
+  return (
     text.includes('MICRO_SHORT_') ||
     text.includes('TRADESIDE=SHORT') ||
     text.includes('TRADE_SIDE=SHORT') ||
@@ -156,9 +208,9 @@ function inferSideFromText(value = '') {
     text.includes('POSITIONSIDE=SHORT') ||
     text.includes('SIDE=SHORT') ||
     text.includes('SIDE=BEAR') ||
+    text.includes('SIDE=SELL') ||
     text.includes('DIRECTION=SHORT') ||
     text.includes('DIRECTION=BEAR') ||
-    text.includes('SIDE=SELL') ||
     text.includes('DIRECTION=SELL') ||
     text.startsWith('SHORT_') ||
     text.includes('_SHORT_') ||
@@ -168,10 +220,24 @@ function inferSideFromText(value = '') {
     text.endsWith('_BEAR') ||
     text.startsWith('SELL_') ||
     text.includes('_SELL_') ||
-    text.endsWith('_SELL')
+    text.endsWith('_SELL') ||
+    text.includes('|SHORT|') ||
+    text.includes('|BEAR|') ||
+    text.includes('|SELL|') ||
+    text.includes(':SHORT') ||
+    text.includes(':BEAR') ||
+    text.includes(':SELL') ||
+    text.includes('=SHORT') ||
+    text.includes('=BEAR') ||
+    text.includes('=SELL') ||
+    text.includes('DOWNSIDE')
   );
+}
 
-  const longHit = (
+function hasLongSignal(value = '') {
+  const text = cleanSideText(value);
+
+  return (
     text.includes('MICRO_LONG_') ||
     text.includes('TRADESIDE=LONG') ||
     text.includes('TRADE_SIDE=LONG') ||
@@ -179,9 +245,9 @@ function inferSideFromText(value = '') {
     text.includes('POSITIONSIDE=LONG') ||
     text.includes('SIDE=LONG') ||
     text.includes('SIDE=BULL') ||
+    text.includes('SIDE=BUY') ||
     text.includes('DIRECTION=LONG') ||
     text.includes('DIRECTION=BULL') ||
-    text.includes('SIDE=BUY') ||
     text.includes('DIRECTION=BUY') ||
     text.startsWith('LONG_') ||
     text.includes('_LONG_') ||
@@ -191,14 +257,37 @@ function inferSideFromText(value = '') {
     text.endsWith('_BULL') ||
     text.startsWith('BUY_') ||
     text.includes('_BUY_') ||
-    text.endsWith('_BUY')
+    text.endsWith('_BUY') ||
+    text.includes('|LONG|') ||
+    text.includes('|BULL|') ||
+    text.includes('|BUY|') ||
+    text.includes(':LONG') ||
+    text.includes(':BULL') ||
+    text.includes(':BUY') ||
+    text.includes('=LONG') ||
+    text.includes('=BULL') ||
+    text.includes('=BUY') ||
+    text.includes('UPSIDE')
   );
+}
+
+function inferSideFromText(value = '') {
+  const text = cleanSideText(value);
+
+  if (!text) return 'UNKNOWN';
+
+  const shortHit = hasShortSignal(text);
+  const longHit = hasLongSignal(text);
 
   if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
 
-  if (shortHit) return TARGET_TRADE_SIDE;
-  if (longHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && longHit) {
+    if (text.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (text.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+    if (text.includes('TRADE_SIDE=SHORT') || text.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
+    if (text.includes('TRADE_SIDE=LONG') || text.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
@@ -235,6 +324,7 @@ function getDefinitionHaystack(row = {}) {
     row.signalReason,
     row.actionReason,
     row.exitReason,
+    row.rejectionReason,
 
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
@@ -299,25 +389,19 @@ function forceShortRow(row = {}) {
   return {
     ...row,
 
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
+    ...baseFlags(),
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
+    inferredTradeSide: TARGET_TRADE_SIDE,
 
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    source: row.source || 'VIRTUAL',
-    virtualOnly: row.virtualOnly !== false,
-    virtualTracked: row.virtualTracked !== false,
+    source: 'VIRTUAL',
+    sourceMode: 'VIRTUAL',
+    virtualOnly: true,
+    virtualTracked: true,
     shadowOnly: row.shadowOnly !== false,
 
-    realTrade: false
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false
   };
 }
 
@@ -368,9 +452,11 @@ function getMacroFamilyId(row = {}) {
     row?.activeMacroFamilyId ||
     row?.macroFamilyId ||
     row?.parentMicroFamilyId ||
+    row?.parentFamilyId ||
     row?.legacyMicroFamilyId ||
     row?.coarseMicroFamilyId ||
     row?.familyMacroId ||
+    row?.macroId ||
     row?.familyId ||
     null
   );
@@ -385,6 +471,8 @@ function getSymbol(row = {}) {
     row?.symbol ||
     row?.baseSymbol ||
     row?.contractSymbol ||
+    row?.instId ||
+    row?.instrumentId ||
     null
   );
 }
@@ -392,6 +480,7 @@ function getSymbol(row = {}) {
 function netR(row = {}) {
   const value = Number(
     row.netR ??
+    row.r ??
     row.finalNetR ??
     row.outcomeNetR ??
     row.resultNetR ??
@@ -409,6 +498,8 @@ function grossR(row = {}) {
     row.outcomeGrossR ??
     row.resultGrossR ??
     row.rGross ??
+    row.netR ??
+    row.r ??
     0
   );
 
@@ -416,15 +507,16 @@ function grossR(row = {}) {
 }
 
 function costR(row = {}) {
-  const value = Number(
+  const explicit = Number(
     row.costR ??
     row.totalCostR ??
     row.feeCostR ??
-    row.executionCostR ??
-    Math.max(0, grossR(row) - netR(row))
+    row.executionCostR
   );
 
-  return Number.isFinite(value) ? value : 0;
+  if (Number.isFinite(explicit)) return explicit;
+
+  return Math.max(0, grossR(row) - netR(row));
 }
 
 function countBy(rows = [], selector) {
@@ -464,6 +556,7 @@ function round(value, decimals = 4) {
 function unwrapRunResult(result = {}) {
   if (!result || typeof result !== 'object') return {};
 
+  if (result.result?.result?.result) return result.result.result.result;
   if (result.result?.result) return result.result.result;
   if (result.result) return result.result;
 
@@ -487,7 +580,10 @@ function extractVirtualExits(payload = {}) {
     ...asArray(payload.shadowExits),
     ...asArray(payload.learningShadowExits),
     ...asArray(payload.closedPositions),
-    ...asArray(payload.outcomes)
+    ...asArray(payload.outcomes),
+    ...asArray(payload.result?.virtualExits),
+    ...asArray(payload.result?.exits),
+    ...asArray(payload.result?.closedPositions)
   ]);
 }
 
@@ -501,18 +597,8 @@ function extractOpenPositions(payload = {}) {
   );
 }
 
-function getActionCounts(payload = {}, actions = []) {
-  if (payload.actionCounts && typeof payload.actionCounts === 'object') {
-    const shortActions = onlyShortRows(actions);
-
-    if (shortActions.length > 0) {
-      return countBy(shortActions, actionType);
-    }
-
-    return payload.actionCounts;
-  }
-
-  return countBy(actions, actionType);
+function getActionCounts(actions = []) {
+  return countBy(onlyShortRows(actions), actionType);
 }
 
 function summarizeEntries(actions = []) {
@@ -636,32 +722,11 @@ function buildRequestedOptions() {
       getArgValue('snapshot')
     ) || undefined,
 
-    source: shouldManualRun()
-      ? 'CLI_MANUAL_RUN'
-      : 'CLI_RUN',
+    runSource: shouldManualRun()
+      ? 'CLI_MANUAL_TRADE_RUN'
+      : 'CLI_TRADE_RUN',
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    disableLong: true,
-
-    longOnly: false,
-    shortDisabled: false,
-
-    sourceMode: 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    shadowOnly: true,
-
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true
+    ...baseFlags()
   };
 }
 
@@ -671,69 +736,37 @@ function buildRunOptions(requested = {}) {
     forceProcessSnapshot: Boolean(requested.forceProcessSnapshot),
     monitorOnly: Boolean(requested.monitorOnly),
 
+    monitorOpenPositionsFirst: true,
+    processScannerSnapshot: !requested.monitorOnly,
+
     snapshotId: requested.snapshotId,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    disableLong: true,
-
-    longOnly: false,
-    shortDisabled: false,
-
-    source: 'VIRTUAL',
-    sourceMode: 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    shadowOnly: true,
-
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true
+    ...baseFlags()
   };
 }
 
 function sanitizePayload(payload = {}) {
   if (!payload || typeof payload !== 'object') return payload;
 
-  const actions = onlyShortRows(extractActions(payload));
-  const exits = onlyShortRows(extractVirtualExits(payload));
-  const openPositions = onlyShortRows(extractOpenPositions(payload));
+  const rawActions = extractActions(payload);
+  const rawExits = extractVirtualExits(payload);
+  const rawPositions = extractOpenPositions(payload);
+
+  const actions = onlyShortRows(rawActions);
+  const exits = onlyShortRows(rawExits);
+  const openPositions = onlyShortRows(rawPositions);
 
   return {
     ...payload,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    source: payload.source || 'VIRTUAL',
-    sourceMode: payload.sourceMode || 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    shadowOnly: true,
-
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
+    ...baseFlags(),
 
     actions,
     actionCounts: countBy(actions, actionType),
     actionsCount: actions.length,
+
+    virtualActions: actions,
+    virtualActionsCount: actions.length,
 
     virtualExits: exits,
     exits,
@@ -749,8 +782,18 @@ function sanitizePayload(payload = {}) {
     virtualPositions: openPositions,
     openPositionsCount: openPositions.length,
 
-    longActionsBlockedOrIgnored: asArray(payload.actions).filter(isLongRow).length,
-    longDisabledRowsIgnored: asArray(payload.actions).filter(isLongRow).length
+    longActionsBlockedOrIgnored: rawActions.filter(isLongRow).length,
+    unknownSideActionsIgnored: rawActions.filter((row) => getSide(row) === 'UNKNOWN').length,
+
+    longExitsBlockedOrIgnored: rawExits.filter(isLongRow).length,
+    unknownSideExitsIgnored: rawExits.filter((row) => getSide(row) === 'UNKNOWN').length,
+
+    longPositionsBlockedOrIgnored: rawPositions.filter(isLongRow).length,
+    unknownSidePositionsIgnored: rawPositions.filter((row) => getSide(row) === 'UNKNOWN').length,
+
+    realTradesOnly: false,
+    virtualLearningOnly: true,
+    shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED'
   };
 }
 
@@ -764,7 +807,7 @@ function buildCliResponse({
   const payload = sanitizePayload(rawPayload);
 
   const actions = extractActions(payload);
-  const actionCounts = getActionCounts(payload, actions);
+  const actionCounts = getActionCounts(actions);
   const entries = summarizeEntries(actions);
   const waits = summarizeWaits(actions);
   const exits = summarizeVirtualExits(payload);
@@ -773,38 +816,23 @@ function buildCliResponse({
 
   return {
     ok: payload?.ok !== false,
+    skipped: Boolean(payload?.skipped || payload?.skippedNewEntries),
+    reason: payload?.reason || null,
 
     source: 'CLI_RUN_TRADE_SYSTEM_SHORT_ONLY',
-    runSource: requested.source,
+    runSource: requested.runSource,
 
     argv: argv(),
     requested,
     runOptions,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    sourceMode: 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    shadowOnly: true,
-
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
+    ...baseFlags(),
 
     force: Boolean(requested.force),
     forceProcessSnapshot: Boolean(requested.forceProcessSnapshot),
     monitorOnly: Boolean(requested.monitorOnly),
+    monitorOpenPositionsFirst: true,
+    processScannerSnapshot: !requested.monitorOnly,
 
     runId: payload?.runId || null,
 
@@ -813,11 +841,22 @@ function buildCliResponse({
     snapshotAgeSec: payload?.snapshotAgeSec ?? null,
 
     skippedNewEntries: Boolean(payload?.skippedNewEntries),
-    reason: payload?.reason || null,
 
-    candidates: payload?.candidates ?? null,
-    shortCandidateCount: payload?.shortCandidateCount ?? payload?.targetCandidateCount ?? null,
-    nonShortCandidateCount: payload?.nonShortCandidateCount ?? payload?.nonTargetCandidateCount ?? null,
+    candidates: payload?.candidates ?? payload?.candidatesCount ?? null,
+    shortCandidateCount:
+      payload?.shortCandidateCount ??
+      payload?.targetCandidateCount ??
+      payload?.shortCandidatesCount ??
+      null,
+
+    nonShortCandidateCount:
+      payload?.nonShortCandidateCount ??
+      payload?.nonTargetCandidateCount ??
+      payload?.selectedOppositeCandidateCount ??
+      null,
+
+    selectedTargetCandidateCount: payload?.selectedTargetCandidateCount ?? null,
+    selectedOppositeCandidateCount: payload?.selectedOppositeCandidateCount ?? null,
 
     processed: payload?.processed ?? null,
     earlyActions: payload?.earlyActions ?? null,
@@ -830,18 +869,41 @@ function buildCliResponse({
     actualLiveRows: payload?.actualLiveRows ?? null,
     analyzeInputRows: payload?.analyzeInputRows ?? null,
     observationOnlyRows: payload?.observationOnlyRows ?? null,
-    riskValidRows: payload?.riskValidRows ?? null,
+    learningOnlyRows: payload?.learningOnlyRows ?? null,
+    riskValidRows: payload?.riskValidRows ?? payload?.analyzedRiskValidRows ?? null,
+    riskInvalidRows: payload?.riskInvalidRows ?? null,
 
-    virtualPositionsOpened: payload?.virtualPositionsOpened ?? payload?.shadowCreatedRows ?? null,
-    virtualPositionsSkipped: payload?.virtualPositionsSkipped ?? payload?.shadowSkippedRows ?? null,
-    virtualPositionsFailed: payload?.virtualPositionsFailed ?? payload?.shadowFailedRows ?? null,
+    virtualPositionsOpened:
+      payload?.virtualPositionsOpened ??
+      payload?.virtualOpenedRows ??
+      payload?.shadowCreatedRows ??
+      entries.count,
+
+    virtualPositionsSkipped:
+      payload?.virtualPositionsSkipped ??
+      payload?.virtualSkippedRows ??
+      payload?.shadowSkippedRows ??
+      null,
+
+    virtualPositionsFailed:
+      payload?.virtualPositionsFailed ??
+      payload?.virtualFailedRows ??
+      payload?.shadowFailedRows ??
+      null,
 
     activeRotationId: payload?.activeRotationId || null,
     activeMicroFamilies: payload?.activeMicroFamilies ?? null,
     activeMacroFamilies: payload?.activeMacroFamilies ?? null,
+    activeMicroFamilyIds: Array.isArray(payload?.activeMicroFamilyIds)
+      ? payload.activeMicroFamilyIds
+      : [],
+
     trueMicroOnly: payload?.trueMicroOnly ?? true,
     manualSelectionOnly: payload?.manualSelectionOnly ?? true,
     autoSelectionDisabled: true,
+
+    discordEligibleEntries: payload?.discordEligibleEntries ?? null,
+    discordSkippedNotSelected: payload?.discordSkippedNotSelected ?? null,
 
     actions: actions.length,
     actionCounts,
@@ -876,26 +938,7 @@ function buildCliError({
     requested,
     runOptions,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    sourceMode: 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    shadowOnly: true,
-
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
+    ...baseFlags(),
 
     force: Boolean(requested.force),
     forceProcessSnapshot: Boolean(requested.forceProcessSnapshot),
