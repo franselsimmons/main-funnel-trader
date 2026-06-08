@@ -5,6 +5,7 @@ import { KEYS } from '../../src/keys.js';
 import { getVolatileRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
 import { runScanner } from '../../src/market/scanner.js';
+import { sideToTradeSide } from '../../src/utils.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
@@ -27,6 +28,10 @@ function baseFlags() {
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
+    scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
@@ -34,9 +39,19 @@ function baseFlags() {
 
     scannerOnly: true,
     scannerDecidesTrade: false,
+    scannerDoesNotTrade: true,
+    scannerDoesNotSelectMicroFamilies: true,
+    scannerDoesNotSendDiscord: true,
+
     noTradeExecution: true,
     noMicroFamilySelection: true,
-    noDiscord: true
+    noDiscord: true,
+
+    noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+
+    virtualLearning: true
   };
 }
 
@@ -146,7 +161,17 @@ function cleanSideText(value = '') {
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORT_ONLY', 'SHORT');
+}
+
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return fallback;
+
+  return n;
 }
 
 function normalizeTradeSide(value) {
@@ -154,14 +179,24 @@ function normalizeTradeSide(value) {
 
   if (!raw) return 'UNKNOWN';
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return OPPOSITE_TRADE_SIDE;
+  const converted = sideToTradeSide(raw);
+
+  if (converted === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (converted === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'DOWN', 'DOWNSIDE'].includes(raw)) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  if (['LONG', 'BULL', 'BULLISH', 'BUY', 'UP', 'UPSIDE'].includes(raw)) {
+    return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
 
 function hasShortSignal(value = '') {
-  const text = cleanSideText(value);
+  const text = ` ${cleanSideText(value)} `;
 
   return (
     text.includes('MICRO_SHORT_') ||
@@ -175,26 +210,29 @@ function hasShortSignal(value = '') {
     text.includes('DIRECTION=SHORT') ||
     text.includes('DIRECTION=BEAR') ||
     text.includes('DIRECTION=SELL') ||
-    text.startsWith('SHORT_') ||
+    text.includes(' SHORT_') ||
+    text.includes('_SHORT ') ||
     text.includes('_SHORT_') ||
-    text.endsWith('_SHORT') ||
-    text.startsWith('BEAR_') ||
-    text.includes('_BEAR_') ||
-    text.endsWith('_BEAR') ||
-    text.startsWith('SELL_') ||
-    text.includes('_SELL_') ||
-    text.endsWith('_SELL') ||
     text.includes('|SHORT|') ||
-    text.includes('|BEAR|') ||
-    text.includes('|SELL|') ||
+    text.includes(':SHORT') ||
     text.includes('=SHORT') ||
+    text.includes(' BEAR ') ||
+    text.includes('_BEAR') ||
+    text.includes('BEAR_') ||
+    text.includes('|BEAR|') ||
+    text.includes(':BEAR') ||
     text.includes('=BEAR') ||
+    text.includes(' SELL ') ||
+    text.includes('_SELL') ||
+    text.includes('SELL_') ||
+    text.includes('|SELL|') ||
+    text.includes(':SELL') ||
     text.includes('=SELL')
   );
 }
 
 function hasLongSignal(value = '') {
-  const text = cleanSideText(value);
+  const text = ` ${cleanSideText(value)} `;
 
   return (
     text.includes('MICRO_LONG_') ||
@@ -208,20 +246,23 @@ function hasLongSignal(value = '') {
     text.includes('DIRECTION=LONG') ||
     text.includes('DIRECTION=BULL') ||
     text.includes('DIRECTION=BUY') ||
-    text.startsWith('LONG_') ||
+    text.includes(' LONG_') ||
+    text.includes('_LONG ') ||
     text.includes('_LONG_') ||
-    text.endsWith('_LONG') ||
-    text.startsWith('BULL_') ||
-    text.includes('_BULL_') ||
-    text.endsWith('_BULL') ||
-    text.startsWith('BUY_') ||
-    text.includes('_BUY_') ||
-    text.endsWith('_BUY') ||
     text.includes('|LONG|') ||
-    text.includes('|BULL|') ||
-    text.includes('|BUY|') ||
+    text.includes(':LONG') ||
     text.includes('=LONG') ||
+    text.includes(' BULL ') ||
+    text.includes('_BULL') ||
+    text.includes('BULL_') ||
+    text.includes('|BULL|') ||
+    text.includes(':BULL') ||
     text.includes('=BULL') ||
+    text.includes(' BUY ') ||
+    text.includes('_BUY') ||
+    text.includes('BUY_') ||
+    text.includes('|BUY|') ||
+    text.includes(':BUY') ||
     text.includes('=BUY')
   );
 }
@@ -230,6 +271,12 @@ function inferTradeSideFromText(value) {
   const text = cleanSideText(value);
 
   if (!text) return 'UNKNOWN';
+
+  const direct = normalizeTradeSide(text);
+
+  if (direct === TARGET_TRADE_SIDE || direct === OPPOSITE_TRADE_SIDE) {
+    return direct;
+  }
 
   const shortHit = hasShortSignal(text);
   const longHit = hasLongSignal(text);
@@ -247,6 +294,64 @@ function inferTradeSideFromText(value) {
   return 'UNKNOWN';
 }
 
+function moveMetricValues(row = {}) {
+  return [
+    row.change1m,
+    row.change3m,
+    row.change5m,
+    row.change15m,
+    row.change30m,
+    row.change1h,
+    row.change2h,
+    row.change4h,
+    row.change24h,
+
+    row.priceChange1m,
+    row.priceChange3m,
+    row.priceChange5m,
+    row.priceChange15m,
+    row.priceChange30m,
+    row.priceChange1h,
+    row.priceChange2h,
+    row.priceChange4h,
+    row.priceChange24h,
+
+    row.priceChange1mPct,
+    row.priceChange3mPct,
+    row.priceChange5mPct,
+    row.priceChange15mPct,
+    row.priceChange30mPct,
+    row.priceChange1hPct,
+    row.priceChange2hPct,
+    row.priceChange4hPct,
+    row.priceChange24hPct,
+
+    row.percentChange,
+    row.changePct,
+    row.movePct,
+    row.pctMove,
+    row.scoreMovePct
+  ]
+    .map((value) => Number(value))
+    .filter(Number.isFinite);
+}
+
+function hasBearishMove(row = {}) {
+  const values = moveMetricValues(row);
+
+  if (!values.length) return false;
+
+  return values.some((value) => value < 0);
+}
+
+function hasOnlyBullishMove(row = {}) {
+  const values = moveMetricValues(row);
+
+  if (!values.length) return false;
+
+  return values.every((value) => value > 0);
+}
+
 function rowSide(row = {}) {
   if (typeof row === 'string') return inferTradeSideFromText(row);
 
@@ -261,7 +366,9 @@ function rowSide(row = {}) {
     row.analysisSide ||
     row.signalSide ||
     row.entrySide ||
-    row.side
+    row.side ||
+    row.bias ||
+    row.marketBias
   );
 
   if (direct !== 'UNKNOWN') return direct;
@@ -271,6 +378,7 @@ function rowSide(row = {}) {
     row.reason ||
     row.signalReason ||
     row.actionReason ||
+    row.rejectionReason ||
     ''
   );
 
@@ -314,9 +422,16 @@ function rowSide(row = {}) {
 
   if (textSide !== 'UNKNOWN') return textSide;
 
+  if (row.longOnly === true || row.shortDisabled === true) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
   if (row.shortOnly === true || row.longDisabled === true) {
     return TARGET_TRADE_SIDE;
   }
+
+  if (hasBearishMove(row)) return TARGET_TRADE_SIDE;
+  if (hasOnlyBullishMove(row)) return OPPOSITE_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
@@ -327,14 +442,6 @@ function isShortCandidate(row = {}) {
 
 function isLongCandidate(row = {}) {
   return rowSide(row) === OPPOSITE_TRADE_SIDE;
-}
-
-function safeNumber(value, fallback = 0) {
-  const n = Number(value);
-
-  if (!Number.isFinite(n)) return fallback;
-
-  return n;
 }
 
 function normalizeSymbol(value = '') {
@@ -358,12 +465,16 @@ function normalizeShortCandidate(candidate = {}) {
   const symbol = normalizeSymbol(
     candidate.symbol ||
     candidate.baseSymbol ||
-    candidate.contractSymbol
+    candidate.contractSymbol ||
+    candidate.instId ||
+    candidate.instrumentId
   );
 
   const contractSymbol = normalizeContractSymbol(
     candidate.contractSymbol ||
     candidate.symbol ||
+    candidate.instId ||
+    candidate.instrumentId ||
     symbol
   );
 
@@ -404,10 +515,18 @@ function normalizeShortCandidate(candidate = {}) {
     longOnly: false,
     shortDisabled: false,
 
+    scannerOnly: true,
+    scannerDecidesTrade: false,
+    scannerDoesNotTrade: true,
+    scannerDoesNotSelectMicroFamilies: true,
+    scannerDoesNotSendDiscord: true,
+
     scannerScore: safeNumber(candidate.scannerScore ?? candidate.moveScore, 0),
-    change1h: safeNumber(candidate.change1h, 0),
-    change24h: safeNumber(candidate.change24h, 0),
-    volume24h: safeNumber(candidate.volume24h ?? candidate.quoteVolume24h, 0),
+    moveScore: safeNumber(candidate.moveScore ?? candidate.scannerScore, 0),
+
+    change1h: safeNumber(candidate.change1h ?? candidate.priceChange1hPct, 0),
+    change24h: safeNumber(candidate.change24h ?? candidate.priceChange24hPct, 0),
+    volume24h: safeNumber(candidate.volume24h ?? candidate.quoteVolume24h ?? candidate.quoteVolume, 0),
 
     btcState: candidate.btcState || null,
     regime: candidate.regime || null,
@@ -467,7 +586,10 @@ function normalizePayload(payload = {}) {
       candidates: [],
       candidatesCount: 0,
       shortCandidatesCount: 0,
-      longCandidatesCount: 0
+      longCandidatesCount: 0,
+      rawCandidatesCount: 0,
+      rawLongCandidatesIgnored: 0,
+      rawUnknownSideCandidatesIgnored: 0
     };
   }
 
@@ -614,6 +736,8 @@ function buildScannerOptions(req, body = {}) {
     tradeSide: TARGET_TRADE_SIDE,
     side: TARGET_DASHBOARD_SIDE,
     scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -626,6 +750,7 @@ function buildScannerOptions(req, body = {}) {
     shortDisabled: false,
 
     scannerOnly: true,
+    scannerDecidesTrade: false,
     noTradeExecution: true,
     noDiscord: true,
     noMicroFamilySelection: true
@@ -639,6 +764,8 @@ export default async function handler(req, res) {
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Scanner-Only', 'true');
+  res.setHeader('X-No-Trade-Execution', 'true');
+  res.setHeader('X-No-Discord', 'true');
 
   const startedAt = now();
 
