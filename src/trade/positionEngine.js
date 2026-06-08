@@ -1,3 +1,5 @@
+// ================= FILE: src/trade/positionEngine.js =================
+
 import { KEYS } from '../keys.js';
 import { CONFIG } from '../config.js';
 import {
@@ -18,25 +20,37 @@ import {
   recordOutcome
 } from '../analyze/analyzeEngine.js';
 import { sendExitAlert } from '../discord/discord.js';
+import { applyCosts } from './costModel.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const POSITION_SOURCE = 'VIRTUAL';
-const OUTCOME_SOURCE = 'SHADOW';
+const OUTCOME_SOURCE = 'VIRTUAL';
+
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V2';
 
 const SHORT_DIRECT = new Set([
   'SHORT',
   'BEAR',
   'BEARISH',
-  'SELL'
+  'SELL',
+  'ASK',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
 ]);
 
 const LONG_DIRECT = new Set([
   'LONG',
   'BULL',
   'BULLISH',
-  'BUY'
+  'BUY',
+  'BID',
+  'UP',
+  'UPSIDE',
+  'GREEN'
 ]);
 
 function now() {
@@ -64,37 +78,6 @@ function manageConfig() {
     beLockR: safeNumber(CONFIG.manage?.beLockR, 0.05),
     trailArmR: safeNumber(CONFIG.manage?.trailArmR, 1.00),
     trailLockR: safeNumber(CONFIG.manage?.trailLockR, 0.35)
-  };
-}
-
-function costConfig() {
-  return {
-    takerFeePct: safeNumber(
-      CONFIG.cost?.takerFeePct ??
-      CONFIG.cost?.feePct ??
-      0.0006,
-      0.0006
-    ),
-
-    slippagePct: safeNumber(
-      CONFIG.cost?.slippagePct ??
-      CONFIG.cost?.marketSlippagePct ??
-      0.0002,
-      0.0002
-    ),
-
-    marketImpactPct: safeNumber(
-      CONFIG.cost?.marketImpactPct ??
-      CONFIG.cost?.impactPct ??
-      0.0001,
-      0.0001
-    ),
-
-    fallbackSpreadPct: safeNumber(
-      CONFIG.cost?.fallbackSpreadPct ??
-      0.0008,
-      0.0008
-    )
   };
 }
 
@@ -157,16 +140,91 @@ function storageSymbol(input) {
   return base || String(raw || '').toUpperCase().trim();
 }
 
+function cleanSideText(value = '') {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
+}
+
 function normalizeTradeSide(value) {
-  const direct = sideToTradeSide(value);
+  const raw = cleanSideText(value);
+
+  if (!raw) return 'UNKNOWN';
+
+  const direct = sideToTradeSide(raw);
 
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
-  if (direct === 'LONG') return 'LONG';
-
-  const raw = String(value || '').trim().toUpperCase();
+  if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
 
   if (SHORT_DIRECT.has(raw)) return TARGET_TRADE_SIDE;
-  if (LONG_DIRECT.has(raw)) return 'LONG';
+  if (LONG_DIRECT.has(raw)) return OPPOSITE_TRADE_SIDE;
+
+  const normalized = raw
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  const shortHit =
+    normalized === 'SHORT' ||
+    normalized === 'BEAR' ||
+    normalized === 'SELL' ||
+    normalized.includes('MICRO_SHORT_') ||
+    normalized.includes('TRADESIDE_SHORT') ||
+    normalized.includes('TRADE_SIDE_SHORT') ||
+    normalized.includes('POSITION_SIDE_SHORT') ||
+    normalized.includes('POSITIONSIDE_SHORT') ||
+    normalized.includes('SIDE_SHORT') ||
+    normalized.includes('SIDE_BEAR') ||
+    normalized.includes('DIRECTION_SHORT') ||
+    normalized.includes('DIRECTION_BEAR') ||
+    normalized.includes('SIDE_SELL') ||
+    normalized.includes('DIRECTION_SELL') ||
+    normalized.startsWith('SHORT_') ||
+    normalized.includes('_SHORT_') ||
+    normalized.endsWith('_SHORT') ||
+    normalized.startsWith('BEAR_') ||
+    normalized.includes('_BEAR_') ||
+    normalized.endsWith('_BEAR') ||
+    normalized.startsWith('SELL_') ||
+    normalized.includes('_SELL_') ||
+    normalized.endsWith('_SELL');
+
+  const longHit =
+    normalized === 'LONG' ||
+    normalized === 'BULL' ||
+    normalized === 'BUY' ||
+    normalized.includes('MICRO_LONG_') ||
+    normalized.includes('TRADESIDE_LONG') ||
+    normalized.includes('TRADE_SIDE_LONG') ||
+    normalized.includes('POSITION_SIDE_LONG') ||
+    normalized.includes('POSITIONSIDE_LONG') ||
+    normalized.includes('SIDE_LONG') ||
+    normalized.includes('SIDE_BULL') ||
+    normalized.includes('DIRECTION_LONG') ||
+    normalized.includes('DIRECTION_BULL') ||
+    normalized.includes('SIDE_BUY') ||
+    normalized.includes('DIRECTION_BUY') ||
+    normalized.startsWith('LONG_') ||
+    normalized.includes('_LONG_') ||
+    normalized.endsWith('_LONG') ||
+    normalized.startsWith('BULL_') ||
+    normalized.includes('_BULL_') ||
+    normalized.endsWith('_BULL') ||
+    normalized.startsWith('BUY_') ||
+    normalized.includes('_BUY_') ||
+    normalized.endsWith('_BUY');
+
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+
+  if (longHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
@@ -287,7 +345,7 @@ function inferTradeSideFromIds(row = {}) {
 
   if (!haystack) return 'UNKNOWN';
 
-  if (hasLongIdSignal(haystack)) return 'LONG';
+  if (hasLongIdSignal(haystack)) return OPPOSITE_TRADE_SIDE;
   if (hasShortIdSignal(haystack)) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
@@ -298,13 +356,17 @@ function inferTradeSideFromDefinitions(row = {}) {
 
   if (!parts.length) return 'UNKNOWN';
 
-  if (hasLongDefinitionSignal(parts)) return 'LONG';
+  if (hasLongDefinitionSignal(parts)) return OPPOSITE_TRADE_SIDE;
   if (hasShortDefinitionSignal(parts)) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
 
 function inferPositionTradeSide(row = {}) {
+  if (typeof row === 'string') return normalizeTradeSide(row);
+
+  if (!row || typeof row !== 'object') return 'UNKNOWN';
+
   const directSources = [
     row.tradeSide,
     row.positionSide,
@@ -319,16 +381,16 @@ function inferPositionTradeSide(row = {}) {
   for (const value of directSources) {
     const side = normalizeTradeSide(value);
 
-    if (side === TARGET_TRADE_SIDE || side === 'LONG') return side;
+    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) return side;
   }
 
   const fromIds = inferTradeSideFromIds(row);
 
-  if (fromIds === TARGET_TRADE_SIDE || fromIds === 'LONG') return fromIds;
+  if (fromIds === TARGET_TRADE_SIDE || fromIds === OPPOSITE_TRADE_SIDE) return fromIds;
 
   const fromDefinitions = inferTradeSideFromDefinitions(row);
 
-  if (fromDefinitions === TARGET_TRADE_SIDE || fromDefinitions === 'LONG') {
+  if (fromDefinitions === TARGET_TRADE_SIDE || fromDefinitions === OPPOSITE_TRADE_SIDE) {
     return fromDefinitions;
   }
 
@@ -517,6 +579,14 @@ function assertPositionPersistable(position = {}) {
 
   if (position.status && String(position.status).toUpperCase() !== 'OPEN') {
     throw new Error('OPEN_POSITION_STATUS_MUST_BE_OPEN');
+  }
+}
+
+function assertShortInput(row = {}, context = 'POSITION') {
+  const side = inferPositionTradeSide(row);
+
+  if (side !== TARGET_TRADE_SIDE) {
+    throw new Error(`${context}_SHORT_ONLY_REJECTED_${side}`);
   }
 }
 
@@ -712,12 +782,28 @@ function buildVirtualFlags(row = {}) {
 
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: false,
+
+    realTrade: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
 
     liveEligible: Boolean(row.liveEligible),
     discordAlertEligible: Boolean(row.discordAlertEligible),
     selectedMicroFamilyAlert: Boolean(row.selectedMicroFamilyAlert)
   };
+}
+
+function calcGrossMovePctFromPosition({
+  position,
+  exitPrice
+} = {}) {
+  const entry = safeNumber(position.entry, 0);
+  const exit = safeNumber(exitPrice, 0);
+
+  if (entry <= 0 || exit <= 0) return 0;
+
+  return (entry - exit) / entry;
 }
 
 function calcGrossRFromPosition({
@@ -737,23 +823,22 @@ function calcGrossRFromPosition({
   return (entry - exit) / riskDistance;
 }
 
+function calcRiskPctFromPosition(position = {}) {
+  const entry = safeNumber(position.entry, 0);
+  const initialSl = safeNumber(position.initialSl || position.sl, 0);
+
+  if (entry <= 0 || initialSl <= 0) return 0;
+
+  return Math.abs(entry - initialSl) / entry;
+}
+
 function calcRoundTripCostBreakdownR({
   position,
   exitPrice
 } = {}) {
-  const cfg = costConfig();
+  const riskPct = calcRiskPctFromPosition(position);
 
-  const entry = safeNumber(position.entry, 0);
-  const exit = safeNumber(exitPrice, 0);
-  const initialSl = safeNumber(position.initialSl || position.sl, 0);
-  const spreadPct = safeNumber(
-    position.spreadPct ??
-    position.liveSpreadPct ??
-    position.orderbookSpreadPct,
-    cfg.fallbackSpreadPct
-  );
-
-  if (entry <= 0 || exit <= 0 || initialSl <= 0) {
+  if (riskPct <= 0) {
     return {
       costR: 0,
       feeR: 0,
@@ -763,38 +848,48 @@ function calcRoundTripCostBreakdownR({
     };
   }
 
-  const riskDistance = Math.abs(entry - initialSl);
+  const cost = applyCosts({
+    side: TARGET_TRADE_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    source: OUTCOME_SOURCE,
 
-  if (riskDistance <= 0) {
-    return {
-      costR: 0,
-      feeR: 0,
-      slippageR: 0,
-      marketImpactR: 0,
-      spreadCostR: 0
-    };
-  }
+    grossMovePct: calcGrossMovePctFromPosition({
+      position,
+      exitPrice
+    }),
 
-  const notionalSum = entry + exit;
+    riskPct,
 
-  const feePrice = notionalSum * cfg.takerFeePct;
-  const slippagePrice = notionalSum * cfg.slippagePct;
-  const marketImpactPrice = notionalSum * cfg.marketImpactPct;
-  const spreadCostPrice = notionalSum * Math.max(0, spreadPct) * 0.5;
+    entrySpreadPct: safeNumber(
+      position.spreadPct ??
+      position.liveSpreadPct ??
+      position.orderbookSpreadPct,
+      0
+    ),
 
-  const feeR = feePrice / riskDistance;
-  const slippageR = slippagePrice / riskDistance;
-  const marketImpactR = marketImpactPrice / riskDistance;
-  const spreadCostR = spreadCostPrice / riskDistance;
+    exitSpreadPct: safeNumber(
+      position.exitSpreadPct ??
+      position.spreadPct ??
+      position.liveSpreadPct ??
+      position.orderbookSpreadPct,
+      0
+    )
+  });
 
-  const costR = feeR + slippageR + marketImpactR + spreadCostR;
+  const feeR = riskPct > 0
+    ? safeNumber(cost.feeRatio, 0) / riskPct
+    : 0;
+
+  const slippageR = riskPct > 0
+    ? safeNumber(cost.slippageRatio, 0) / riskPct
+    : 0;
 
   return {
-    costR: round6(costR),
+    costR: round6(cost.costR),
     feeR: round6(feeR),
     slippageR: round6(slippageR),
-    marketImpactR: round6(marketImpactR),
-    spreadCostR: round6(spreadCostR)
+    marketImpactR: 0,
+    spreadCostR: round6(slippageR)
   };
 }
 
@@ -805,8 +900,29 @@ function applyNetCostModelToOutcome({
 } = {}) {
   if (!outcome || typeof outcome !== 'object') return outcome;
 
+  if (!isShortPosition(position) || !isShortPosition(outcome)) {
+    return {
+      ...outcome,
+      skipped: true,
+      reason: 'NON_SHORT_OUTCOME_COST_MODEL_REJECTED',
+      source: OUTCOME_SOURCE,
+      shortOnly: true,
+      longDisabled: true,
+      realTrade: false
+    };
+  }
+
   if (outcome.netCostModelApplied === true) {
-    return outcome;
+    return forceShortPositionFields({
+      ...outcome,
+      source: OUTCOME_SOURCE,
+      virtualOnly: true,
+      virtualTracked: true,
+      shadowOnly: false,
+      realTrade: false,
+      realOrdersDisabled: true,
+      bitgetOrdersDisabled: true
+    });
   }
 
   const grossR = safeNumber(
@@ -828,8 +944,18 @@ function applyNetCostModelToOutcome({
 
   const netR = grossR - cost.costR;
 
-  return {
+  return forceShortPositionFields({
     ...outcome,
+
+    source: OUTCOME_SOURCE,
+
+    virtualOnly: true,
+    virtualTracked: true,
+    shadowOnly: false,
+
+    realTrade: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
 
     grossR: round6(grossR),
     rawR: round6(grossR),
@@ -855,8 +981,8 @@ function applyNetCostModelToOutcome({
 
     costModelApplied: true,
     netCostModelApplied: true,
-    costModel: 'TAKER_FEE_PLUS_SLIPPAGE_SPREAD_IMPACT_R_V1'
-  };
+    costModel: COST_MODEL_VERSION
+  });
 }
 
 export async function getOpenPositions() {
@@ -896,6 +1022,8 @@ export async function getOpenPosition(symbol) {
 }
 
 export async function saveOpenPosition(position) {
+  assertShortInput(position, 'SAVE_OPEN_POSITION');
+
   const keySymbol = storageSymbol(position);
 
   if (!keySymbol) {
@@ -945,7 +1073,7 @@ export function updatePathMetrics(position, price) {
 
   if (!isShortPosition(position)) {
     position.updatedAt = now();
-    position.shortOnly = false;
+    position.shortOnly = true;
     position.longDisabled = true;
     position.liveManagementSkippedReason = 'NON_SHORT_POSITION_IGNORED';
 
@@ -1042,6 +1170,8 @@ export function updatePathMetrics(position, price) {
 }
 
 export function buildOpenPositionFromEntry(entry) {
+  assertShortInput(entry, 'BUILD_OPEN_POSITION_FROM_ENTRY');
+
   const normalizedEntry = forceShortPositionFields(entry);
   const keySymbol = storageSymbol(normalizedEntry);
   const openedAt = now();
@@ -1144,7 +1274,11 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
 
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: false,
+
+    realTrade: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
 
     isTrueMicro: identity.isTrueMicro,
     isLegacyMacro: identity.isLegacyMacro,
