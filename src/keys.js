@@ -5,17 +5,25 @@ const keyPart = (value, fallback = 'UNKNOWN') => {
     ? fallback
     : value;
 
-  return String(raw)
+  const normalized = String(raw)
     .trim()
     .replaceAll(':', '_')
     .replaceAll('|', '_')
-    .replace(/\s+/g, '_');
+    .replaceAll('/', '_')
+    .replaceAll('\\', '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized || fallback;
 };
 
 const symbolPart = (value, fallback = 'UNKNOWN') => {
   return keyPart(value, fallback)
     .toUpperCase()
-    .replace(/[^A-Z0-9_.-]/g, '_');
+    .replace(/[^A-Z0-9_.-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || fallback;
 };
 
 const deepFreeze = (object) => {
@@ -40,7 +48,10 @@ export const KEYS = deepFreeze({
     lock: 'SCAN:LOCK',
 
     snapshot: (snapshotId) => `SCAN:SNAPSHOT:${keyPart(snapshotId)}`,
-    snapshotPattern: 'SCAN:SNAPSHOT:*'
+    snapshotPattern: 'SCAN:SNAPSHOT:*',
+
+    runMeta: 'SCAN:RUN:META',
+    runMetaPattern: 'SCAN:RUN:*'
   },
 
   live: {
@@ -55,7 +66,17 @@ export const KEYS = deepFreeze({
     lastProcessedSnapshot: 'TRADE:LAST_PROCESSED_SNAPSHOT',
 
     open: (symbol) => `TRADE:OPEN:${symbolPart(symbol)}`,
-    openPattern: 'TRADE:OPEN:*'
+    openPattern: 'TRADE:OPEN:*',
+
+    /*
+      Append-only logs. Alleen diagnostisch/admin.
+      Posities zelf blijven onder TRADE:OPEN:<SYMBOL>.
+    */
+    eventLog: 'TRADE:EVENTS',
+    entryLog: 'TRADE:ENTRIES',
+    exitLog: 'TRADE:EXITS',
+
+    pattern: 'TRADE:*'
   },
 
   analyze: {
@@ -85,8 +106,17 @@ export const KEYS = deepFreeze({
     nextRotation: 'ANALYZE:NEXT_ROTATION',
     rotationValidFrom: 'ANALYZE:ROTATION_VALID_FROM',
 
+    /*
+      Manual-only rotation support.
+      Het systeem mag dit nooit automatisch overschrijven.
+    */
+    manualSelectionLog: 'ANALYZE:MANUAL_SELECTION_LOG',
+    rotationHistory: 'ANALYZE:ROTATION_HISTORY',
+
     freezeLock: 'ANALYZE:WEEKLY_FREEZE_LOCK',
-    activateLock: 'ANALYZE:ROTATION_ACTIVATE_LOCK'
+    activateLock: 'ANALYZE:ROTATION_ACTIVATE_LOCK',
+
+    pattern: 'ANALYZE:*'
   },
 
   circuit: {
@@ -95,10 +125,48 @@ export const KEYS = deepFreeze({
   },
 
   discord: {
-    logList: 'DISCORD:LOGS'
+    logList: 'DISCORD:LOGS',
+    pattern: 'DISCORD:*'
   },
 
   reset: {
     logList: 'RESET:LOGS'
+  },
+
+  /*
+    Centrale patterns voor factory reset/admin cleanup.
+    Gebruik selectief; niet blind verwijderen in normale runs.
+  */
+  patterns: {
+    scan: 'SCAN:*',
+    live: 'LIVE:*',
+    trade: 'TRADE:*',
+    analyze: 'ANALYZE:*',
+    circuit: 'CIRCUIT:*',
+    discord: 'DISCORD:*',
+    reset: 'RESET:*',
+
+    volatile: [
+      'SCAN:*',
+      'LIVE:*'
+    ],
+
+    durableLearning: [
+      'ANALYZE:*'
+    ],
+
+    durableTrade: [
+      'TRADE:*'
+    ],
+
+    all: [
+      'SCAN:*',
+      'LIVE:*',
+      'TRADE:*',
+      'ANALYZE:*',
+      'CIRCUIT:*',
+      'DISCORD:*',
+      'RESET:*'
+    ]
   }
 });
