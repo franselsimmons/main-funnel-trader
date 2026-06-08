@@ -5,6 +5,7 @@ import { KEYS } from '../../src/keys.js';
 import { getDurableRedis } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
 import { runTradeSystem } from '../../src/trade/tradeSystem.js';
+import { sideToTradeSide } from '../../src/utils.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
@@ -26,6 +27,10 @@ function baseFlags() {
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
+    scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
@@ -39,9 +44,17 @@ function baseFlags() {
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
     noExchangeOrders: true,
+    noRealOrders: true,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
 
     learningOnly: true,
-    microFamilyLearning: true
+    microFamilyLearning: true,
+
+    discordOnlyForSelectedMicroFamilies: true,
+    discordOnlyForManualSelection: true
   };
 }
 
@@ -171,6 +184,8 @@ function cleanSideText(value = '') {
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORT_ONLY', 'SHORT');
 }
 
@@ -179,14 +194,24 @@ function normalizeTradeSide(value) {
 
   if (!raw) return 'UNKNOWN';
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL'].includes(raw)) return TARGET_TRADE_SIDE;
-  if (['LONG', 'BULL', 'BULLISH', 'BUY'].includes(raw)) return OPPOSITE_TRADE_SIDE;
+  const converted = sideToTradeSide(raw);
+
+  if (converted === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (converted === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+
+  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'DOWN', 'DOWNSIDE'].includes(raw)) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  if (['LONG', 'BULL', 'BULLISH', 'BUY', 'UP', 'UPSIDE'].includes(raw)) {
+    return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
 
 function hasShortSignal(value = '') {
-  const text = cleanSideText(value);
+  const text = ` ${cleanSideText(value)} `;
 
   return (
     text.includes('MICRO_SHORT_') ||
@@ -200,26 +225,29 @@ function hasShortSignal(value = '') {
     text.includes('DIRECTION=SHORT') ||
     text.includes('DIRECTION=BEAR') ||
     text.includes('DIRECTION=SELL') ||
-    text.startsWith('SHORT_') ||
+    text.includes(' SHORT_') ||
+    text.includes('_SHORT ') ||
     text.includes('_SHORT_') ||
-    text.endsWith('_SHORT') ||
-    text.startsWith('BEAR_') ||
-    text.includes('_BEAR_') ||
-    text.endsWith('_BEAR') ||
-    text.startsWith('SELL_') ||
-    text.includes('_SELL_') ||
-    text.endsWith('_SELL') ||
     text.includes('|SHORT|') ||
-    text.includes('|BEAR|') ||
-    text.includes('|SELL|') ||
+    text.includes(':SHORT') ||
     text.includes('=SHORT') ||
+    text.includes(' BEAR ') ||
+    text.includes('_BEAR') ||
+    text.includes('BEAR_') ||
+    text.includes('|BEAR|') ||
+    text.includes(':BEAR') ||
     text.includes('=BEAR') ||
+    text.includes(' SELL ') ||
+    text.includes('_SELL') ||
+    text.includes('SELL_') ||
+    text.includes('|SELL|') ||
+    text.includes(':SELL') ||
     text.includes('=SELL')
   );
 }
 
 function hasLongSignal(value = '') {
-  const text = cleanSideText(value);
+  const text = ` ${cleanSideText(value)} `;
 
   return (
     text.includes('MICRO_LONG_') ||
@@ -233,20 +261,23 @@ function hasLongSignal(value = '') {
     text.includes('DIRECTION=LONG') ||
     text.includes('DIRECTION=BULL') ||
     text.includes('DIRECTION=BUY') ||
-    text.startsWith('LONG_') ||
+    text.includes(' LONG_') ||
+    text.includes('_LONG ') ||
     text.includes('_LONG_') ||
-    text.endsWith('_LONG') ||
-    text.startsWith('BULL_') ||
-    text.includes('_BULL_') ||
-    text.endsWith('_BULL') ||
-    text.startsWith('BUY_') ||
-    text.includes('_BUY_') ||
-    text.endsWith('_BUY') ||
     text.includes('|LONG|') ||
-    text.includes('|BULL|') ||
-    text.includes('|BUY|') ||
+    text.includes(':LONG') ||
     text.includes('=LONG') ||
+    text.includes(' BULL ') ||
+    text.includes('_BULL') ||
+    text.includes('BULL_') ||
+    text.includes('|BULL|') ||
+    text.includes(':BULL') ||
     text.includes('=BULL') ||
+    text.includes(' BUY ') ||
+    text.includes('_BUY') ||
+    text.includes('BUY_') ||
+    text.includes('|BUY|') ||
+    text.includes(':BUY') ||
     text.includes('=BUY')
   );
 }
@@ -255,6 +286,12 @@ function inferTradeSideFromText(value) {
   const text = cleanSideText(value);
 
   if (!text) return 'UNKNOWN';
+
+  const direct = normalizeTradeSide(text);
+
+  if (direct === TARGET_TRADE_SIDE || direct === OPPOSITE_TRADE_SIDE) {
+    return direct;
+  }
 
   const shortHit = hasShortSignal(text);
   const longHit = hasLongSignal(text);
@@ -286,7 +323,9 @@ function inferActionTradeSide(row = {}) {
     row.actualScannerSide ||
     row.analysisSide ||
     row.entrySide ||
-    row.side
+    row.side ||
+    row.bias ||
+    row.marketBias
   );
 
   if (direct !== 'UNKNOWN') return direct;
@@ -297,6 +336,7 @@ function inferActionTradeSide(row = {}) {
     row.signalReason ||
     row.actionReason ||
     row.exitReason ||
+    row.rejectionReason ||
     ''
   );
 
@@ -340,13 +380,14 @@ function inferActionTradeSide(row = {}) {
 
   if (side !== 'UNKNOWN') return side;
 
+  if (row.longOnly === true || row.shortDisabled === true) return OPPOSITE_TRADE_SIDE;
   if (row.shortOnly === true || row.longDisabled === true) return TARGET_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
 
 function isShortAction(row = {}) {
-  return inferActionTradeSide(row) === TARGET_TRADE_SIDE;
+  return inferActionTradeSide(row) !== OPPOSITE_TRADE_SIDE;
 }
 
 function isLongAction(row = {}) {
@@ -354,6 +395,8 @@ function isLongAction(row = {}) {
 }
 
 function forceShortVirtualRow(row = {}) {
+  const inferredTradeSide = inferActionTradeSide(row);
+
   return {
     ...row,
 
@@ -361,6 +404,10 @@ function forceShortVirtualRow(row = {}) {
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
+
+    scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -370,14 +417,26 @@ function forceShortVirtualRow(row = {}) {
     longOnly: false,
     shortDisabled: false,
 
-    source: row.source || 'VIRTUAL',
+    source: 'VIRTUAL',
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: row.shadowOnly !== false,
+    shadowOnly: true,
+
     realTrade: false,
+    realOrder: false,
     exchangeOrder: false,
+    realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
-    noExchangeOrders: true
+    noExchangeOrders: true,
+
+    learningOnly: true,
+    microFamilyLearning: true,
+
+    inferredTradeSide: inferredTradeSide === 'UNKNOWN'
+      ? TARGET_TRADE_SIDE
+      : inferredTradeSide,
+
+    inferredFromShortOnlyMode: inferredTradeSide === 'UNKNOWN'
   };
 }
 
@@ -449,25 +508,40 @@ function sanitizeArray(rows = []) {
     .map(forceShortVirtualRow);
 }
 
+function sanitizeIds(ids = []) {
+  return [...new Set(
+    (Array.isArray(ids) ? ids : [])
+      .flatMap((value) => Array.isArray(value) ? value : [value])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .filter((id) => inferTradeSideFromText(id) !== OPPOSITE_TRADE_SIDE)
+  )];
+}
+
 function sanitizeRunPayload(payload) {
   if (!payload || typeof payload !== 'object') return payload;
 
   const rawActions = Array.isArray(payload.actions) ? payload.actions : [];
-  const rawRealExits = Array.isArray(payload.realExits) ? payload.realExits : [];
-  const rawShadowExits = Array.isArray(payload.shadowExits) ? payload.shadowExits : [];
-  const rawVirtualExits = Array.isArray(payload.virtualExits) ? payload.virtualExits : [];
+
+  const rawExitRows = [
+    ...(Array.isArray(payload.virtualExits) ? payload.virtualExits : []),
+    ...(Array.isArray(payload.shadowExits) ? payload.shadowExits : []),
+    ...(Array.isArray(payload.realExits) ? payload.realExits : []),
+    ...(Array.isArray(payload.exits) ? payload.exits : []),
+    ...(Array.isArray(payload.closedPositions) ? payload.closedPositions : []),
+    ...(Array.isArray(payload.outcomes) ? payload.outcomes : [])
+  ];
 
   const actions = sanitizeArray(rawActions);
-  const realExits = sanitizeArray(rawRealExits);
-  const shadowExits = sanitizeArray(rawShadowExits);
-  const virtualExits = sanitizeArray(rawVirtualExits.length ? rawVirtualExits : rawShadowExits);
+  const virtualExits = sanitizeArray(rawExitRows);
 
   const ignoredLongActions = rawActions.filter(isLongAction).length;
   const ignoredUnknownSideActions = rawActions.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
+  const ignoredLongExitRows = rawExitRows.filter(isLongAction).length;
+  const ignoredUnknownSideExitRows = rawExitRows.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
 
-  const ignoredLongRealExits = rawRealExits.filter(isLongAction).length;
-  const ignoredLongShadowExits = rawShadowExits.filter(isLongAction).length;
-  const ignoredLongVirtualExits = rawVirtualExits.filter(isLongAction).length;
+  const activeMicroFamilyIds = sanitizeIds(payload.activeMicroFamilyIds || payload.microFamilyIds || []);
+  const activeMacroFamilyIds = sanitizeIds(payload.activeMacroFamilyIds || payload.macroFamilyIds || []);
 
   return {
     ...payload,
@@ -475,29 +549,65 @@ function sanitizeRunPayload(payload) {
     ...baseFlags(),
 
     actions,
-    realExits,
-    shadowExits,
-    virtualExits,
+    virtualActions: actions,
 
     actionCounts: countActionsByType(actions),
 
     actionsCount: actions.length,
-    realExitsCount: realExits.length,
-    shadowExitsCount: shadowExits.length,
+    virtualActionsCount: actions.length,
+
+    realExits: [],
+    realExitsCount: 0,
+
+    shadowExits: virtualExits,
+    shadowExitsCount: virtualExits.length,
+
+    virtualExits,
     virtualExitsCount: virtualExits.length,
+
+    exits: virtualExits,
+    exitsCount: virtualExits.length,
+
+    rawActionsCount: rawActions.length,
+    rawExitRowsCount: rawExitRows.length,
 
     ignoredLongActions,
     ignoredUnknownSideActions,
-    ignoredLongRealExits,
-    ignoredLongShadowExits,
-    ignoredLongVirtualExits,
+    ignoredLongExitRows,
+    ignoredUnknownSideExitRows,
 
     longActionsBlockedOrIgnored: ignoredLongActions,
-    longExitsBlockedOrIgnored: ignoredLongRealExits + ignoredLongShadowExits + ignoredLongVirtualExits,
+    longExitsBlockedOrIgnored: ignoredLongExitRows,
+
+    activeMicroFamilyIds,
+    activeMacroFamilyIds,
+
+    activeMicroFamilies: Number(payload.activeMicroFamilies || activeMicroFamilyIds.length || 0),
+    activeMacroFamilies: Number(payload.activeMacroFamilies || activeMacroFamilyIds.length || 0),
+
+    selectedOppositeCandidateCount: 0,
 
     realTradesOnly: false,
     virtualLearningOnly: true,
     shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED'
+  };
+}
+
+function sanitizeLockResult(lockResult) {
+  if (!lockResult || typeof lockResult !== 'object') {
+    return lockResult;
+  }
+
+  const payload = sanitizeRunPayload(unwrapLockResult(lockResult));
+
+  return {
+    ok: lockResult.ok !== false && payload?.ok !== false,
+    skipped: Boolean(lockResult.skipped || payload?.skipped || payload?.skippedNewEntries),
+    reason: lockResult.reason || payload?.reason || null,
+
+    ...baseFlags(),
+
+    result: payload
   };
 }
 
@@ -510,14 +620,14 @@ function responseActionCounts(lockResult) {
 
   if (actions.length > 0) {
     return {
-      ...countActionsByType(actions),
-      ...baseFlags()
+      ...baseFlags(),
+      ...countActionsByType(actions)
     };
   }
 
   return {
-    ...(payload?.actionCounts || {}),
-    ...baseFlags()
+    ...baseFlags(),
+    ...(payload?.actionCounts || {})
   };
 }
 
@@ -525,8 +635,6 @@ function responseCounts(lockResult) {
   const payload = sanitizeRunPayload(unwrapLockResult(lockResult)) || {};
 
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
-  const realExits = Array.isArray(payload.realExits) ? payload.realExits : [];
-  const shadowExits = Array.isArray(payload.shadowExits) ? payload.shadowExits : [];
   const virtualExits = Array.isArray(payload.virtualExits) ? payload.virtualExits : [];
 
   return {
@@ -573,22 +681,31 @@ function responseCounts(lockResult) {
 
     entries: actions.filter((row) => row?.action === 'ENTRY').length,
     waits: actions.filter((row) => row?.action === 'WAIT').length,
+    observations: actions.filter((row) => (
+      row?.action === 'OBSERVATION' ||
+      row?.observationWritten ||
+      row?.analysisInputOnly ||
+      row?.observationOnly
+    )).length,
 
-    realExits: realExits.length,
-    shadowExits: shadowExits.length,
+    realExits: 0,
+    shadowExits: virtualExits.length,
     virtualExits: virtualExits.length,
 
     activeMicroFamilies: Number(payload.activeMicroFamilies || 0),
     activeMacroFamilies: Number(payload.activeMacroFamilies || 0),
 
     selectedTargetCandidateCount: Number(payload.selectedTargetCandidateCount || 0),
-    selectedOppositeCandidateCount: Number(payload.selectedOppositeCandidateCount || 0),
+    selectedOppositeCandidateCount: 0,
 
     discordEligibleEntries: Number(payload.discordEligibleEntries || 0),
     discordSkippedNotSelected: Number(payload.discordSkippedNotSelected || 0),
 
     ignoredLongActions: Number(payload.ignoredLongActions || 0),
     ignoredUnknownSideActions: Number(payload.ignoredUnknownSideActions || 0),
+    ignoredLongExitRows: Number(payload.ignoredLongExitRows || 0),
+    ignoredUnknownSideExitRows: Number(payload.ignoredUnknownSideExitRows || 0),
+
     longActionsBlockedOrIgnored: Number(payload.longActionsBlockedOrIgnored || 0),
     longExitsBlockedOrIgnored: Number(payload.longExitsBlockedOrIgnored || 0)
   };
@@ -626,6 +743,10 @@ function buildRunOptions(req, body = {}) {
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
+    scannerSide: TARGET_TRADE_SIDE,
+    actualScannerSide: TARGET_TRADE_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
     dashboardSide: TARGET_DASHBOARD_SIDE,
 
     shortOnly: true,
@@ -643,6 +764,7 @@ function buildRunOptions(req, body = {}) {
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
     noExchangeOrders: true,
+    noRealOrders: true,
 
     learningOnly: true,
     microFamilyLearning: true,
@@ -652,7 +774,8 @@ function buildRunOptions(req, body = {}) {
     ignoreRiskCapsForLearning: true,
     oneOpenPositionPerSymbol: true,
 
-    discordOnlyForSelectedMicroFamilies: true
+    discordOnlyForSelectedMicroFamilies: true,
+    discordOnlyForManualSelection: true
   };
 }
 
@@ -664,6 +787,7 @@ export default async function handler(req, res) {
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Virtual-Only', 'true');
   res.setHeader('X-Exchange-Orders-Disabled', 'true');
+  res.setHeader('X-No-Real-Orders', 'true');
 
   const startedAt = now();
 
@@ -679,34 +803,35 @@ export default async function handler(req, res) {
     const lockKey = KEYS.trade?.lock || 'TRADE:LOCK';
     const lockTtlSec = getLockTtlSec();
 
-    const result = await withRedisLock(
+    const rawResult = await withRedisLock(
       redis,
       lockKey,
       lockTtlSec,
       async () => runTradeSystem(runOptions)
     );
 
-    const payload = sanitizeRunPayload(unwrapLockResult(result));
+    const payload = sanitizeRunPayload(unwrapLockResult(rawResult));
+    const result = sanitizeLockResult(rawResult);
 
     return res.status(200).json({
-      ok: responseOk(result),
-      skipped: responseSkipped(result),
-      reason: responseReason(result),
-
-      source: getRunSource(req, body),
+      ok: responseOk(rawResult),
+      skipped: responseSkipped(rawResult),
+      reason: responseReason(rawResult),
 
       ...baseFlags(),
+
+      runSource: getRunSource(req, body),
 
       force: runOptions.force,
       forceProcessSnapshot: runOptions.forceProcessSnapshot,
       monitorOnly: runOptions.monitorOnly,
       monitorOpenPositionsFirst: runOptions.monitorOpenPositionsFirst,
 
-      runId: responseRunId(result),
-      snapshotId: responseSnapshotId(result),
+      runId: responseRunId(rawResult),
+      snapshotId: responseSnapshotId(rawResult),
 
-      actionCounts: responseActionCounts(result),
-      counts: responseCounts(result),
+      actionCounts: responseActionCounts(rawResult),
+      counts: responseCounts(rawResult),
 
       activeRotationId: payload?.activeRotationId || null,
       activeMicroFamilies: Number(payload?.activeMicroFamilies || 0),
@@ -716,10 +841,26 @@ export default async function handler(req, res) {
         ? payload.activeMicroFamilyIds
         : [],
 
+      activeMacroFamilyIds: Array.isArray(payload?.activeMacroFamilyIds)
+        ? payload.activeMacroFamilyIds
+        : [],
+
       selectedSnapshotSource: payload?.selectedSnapshotSource || null,
       selectedSnapshotReason: payload?.selectedSnapshotReason || null,
       selectedTargetCandidateCount: Number(payload?.selectedTargetCandidateCount || 0),
-      selectedOppositeCandidateCount: Number(payload?.selectedOppositeCandidateCount || 0),
+      selectedOppositeCandidateCount: 0,
+
+      warnings: [
+        payload?.ignoredLongActions > 0
+          ? `LONG_ACTIONS_IGNORED:${payload.ignoredLongActions}`
+          : null,
+        payload?.ignoredLongExitRows > 0
+          ? `LONG_EXIT_ROWS_IGNORED:${payload.ignoredLongExitRows}`
+          : null,
+        payload?.ignoredUnknownSideActions > 0
+          ? `UNKNOWN_SIDE_ACTIONS_FORCED_SHORT:${payload.ignoredUnknownSideActions}`
+          : null
+      ].filter(Boolean),
 
       durationMs: now() - startedAt,
 
