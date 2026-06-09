@@ -48,6 +48,11 @@ const OUTCOME_SOURCE = 'VIRTUAL';
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
+// Nieuwe bredere true-microfamilies.
+// MF_V2 blijft metadata/fine-id; echte learning key wordt MF_V3.
+const TRUE_MICRO_SCHEMA = 'MF_V3';
+const TRUE_MICRO_HASH_LEN = 8;
+
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
 
@@ -239,6 +244,15 @@ function normalizeAnalyzeFamilyId(id = '', row = {}) {
   return removeSymbolTokensFromFamilyId(raw, row);
 }
 
+function isMicroFamilyV3Id(id = '') {
+  const value = String(id || '').toUpperCase();
+
+  return (
+    value.startsWith('MICRO_SHORT_') &&
+    value.includes('_MF_V3_')
+  );
+}
+
 function isAnalyzeMicroFamilyId(id = '') {
   const value = String(id || '').toUpperCase();
 
@@ -248,8 +262,10 @@ function isAnalyzeMicroFamilyId(id = '') {
   return (
     value.startsWith('MICRO_SHORT_') &&
     (
+      isMicroFamilyV3Id(value) ||
       isMicroFamilyV2Id(value) ||
       isMicroFamilyV1Id(value) ||
+      value.includes('_MF_V3_') ||
       value.includes('_MF_V2_') ||
       value.includes('_MF_V1_')
     )
@@ -268,7 +284,11 @@ function analyzeIdentityFlags() {
 
     analyzeMicroFamiliesOnly: true,
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
-    symbolExcludedFromFamilyId: true
+    symbolExcludedFromFamilyId: true,
+
+    broadTrueMicroFamilies: true,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true
   };
 }
 
@@ -493,11 +513,15 @@ function normalizeClassifiedSide(classified = {}) {
   });
 }
 
+function shouldUseBroadTrueMicroFamilies() {
+  return CONFIG.analyze?.broadTrueMicroFamilies !== false;
+}
+
 function getAnalyzeSchemaMeta() {
   return {
     schema: CONFIG?.analyze?.schema,
     macroSchema: CONFIG?.analyze?.macroSchema || CONFIG?.analyze?.schema || 'MF_V1',
-    microSchema: CONFIG?.analyze?.microSchema || 'MF_V2',
+    microSchema: CONFIG?.analyze?.microSchema || (shouldUseBroadTrueMicroFamilies() ? TRUE_MICRO_SCHEMA : 'MF_V2'),
     strategyVersion: CONFIG.strategyVersion
   };
 }
@@ -696,6 +720,7 @@ function shouldReclassifyAsTrueMicro(row = {}) {
   if (isMicroFamilyV1Id(row.microFamilyId)) return true;
 
   if (isAnalyzeMicroFamilyId(row.microFamilyId)) return false;
+  if (isMicroFamilyV3Id(row.microFamilyId)) return false;
   if (isMicroFamilyV2Id(row.microFamilyId)) return false;
 
   return !row.parentMacroFamilyId && !row.macroFamilyId;
@@ -784,6 +809,9 @@ function compactExample(example, maxStringLength = 480) {
     coarseMicroFamilyId: example.coarseMicroFamilyId || example.trueMicroFamilyId || example.microFamilyId || null,
     macroFamilyId: example.macroFamilyId || example.parentMacroFamilyId || null,
     parentMacroFamilyId: example.parentMacroFamilyId || example.macroFamilyId || null,
+
+    fineMicroFamilyId: example.fineMicroFamilyId || example.narrowMicroFamilyId || null,
+    broadTrueMicroFamilyId: example.broadTrueMicroFamilyId || null,
 
     observationOnly: Boolean(example.observationOnly),
     analysisInputOnly: Boolean(example.analysisInputOnly),
@@ -933,6 +961,23 @@ function normalizeBucketText(value, fallback = 'NA') {
     .slice(0, 48) || fallback;
 }
 
+function normalizeBroadBucketText(value, fallback = 'NA') {
+  const text = normalizeBucketText(value, fallback);
+
+  if (!text || text === 'NA') return fallback;
+
+  return text
+    .replace(/VERY_/g, '')
+    .replace(/EXTREME_/g, '')
+    .replace(/STRONG_/g, '')
+    .replace(/WEAK_/g, '')
+    .replace(/MIDRANGE/g, 'MID')
+    .replace(/NEUTRAL/g, 'MID')
+    .replace(/BALANCED/g, 'MID')
+    .replace(/SIDEWAYS/g, 'RANGE')
+    .slice(0, 32) || fallback;
+}
+
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') return value;
@@ -1046,6 +1091,162 @@ function getScannerMetadata(row = {}) {
   };
 }
 
+function buildBroadTrueMicroDefinitionParts(row = {}, classified = {}, macro = {}) {
+  const familyId = normalizeBucketText(
+    classified.familyId ||
+    row.familyId ||
+    row.family ||
+    'SHORT_GENERIC'
+  );
+
+  const macroId = normalizeBucketText(
+    classified.coarseMicroFamilyId ||
+    classified.baseMicroFamilyId ||
+    classified.macroFamilyId ||
+    classified.parentMacroFamilyId ||
+    macro.microFamilyId ||
+    row.coarseMicroFamilyId ||
+    row.macroFamilyId ||
+    row.parentMacroFamilyId ||
+    'NO_MACRO'
+  );
+
+  const rsi = normalizeBroadBucketText(
+    classified.rsiCoarse ||
+    row.rsiCoarse ||
+    classified.rsiZone ||
+    row.rsiZone ||
+    'NA'
+  );
+
+  const flow = normalizeBroadBucketText(
+    classified.flowCoarse ||
+    row.flowCoarse ||
+    classified.flow ||
+    row.flow ||
+    'NA'
+  );
+
+  const obRelation = normalizeBroadBucketText(
+    classified.obRelation ||
+    row.obRelation ||
+    'NA'
+  );
+
+  const btcState = normalizeBroadBucketText(
+    classified.btcState ||
+    row.btcState ||
+    'NA'
+  );
+
+  const regime = normalizeBroadBucketText(
+    classified.regimeCoarse ||
+    row.regimeCoarse ||
+    classified.regime ||
+    row.regime ||
+    'NA'
+  );
+
+  return mergeDefinitionParts([
+    `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
+    `FAMILY=${familyId}`,
+    `MACRO=${macroId}`,
+    `RSI=${rsi}`,
+    `FLOW=${flow}`,
+    `OB_REL=${obRelation}`,
+    `BTC_STATE=${btcState}`,
+    `REGIME=${regime}`
+  ]);
+}
+
+function buildBroadTrueMicroFamilyId(row = {}, classified = {}, macro = {}) {
+  const familyId = normalizeBucketText(
+    classified.familyId ||
+    row.familyId ||
+    row.family ||
+    'SHORT_GENERIC'
+  );
+
+  const safeFamilyId = familyId.startsWith('SHORT_')
+    ? familyId
+    : `SHORT_${familyId}`;
+
+  const parts = buildBroadTrueMicroDefinitionParts(row, classified, macro);
+  const hash = hashText(parts.join('|'), TRUE_MICRO_HASH_LEN);
+
+  return {
+    trueMicroFamilyId: `MICRO_SHORT_${safeFamilyId}_${TRUE_MICRO_SCHEMA}_${hash}`,
+    definitionParts: parts
+  };
+}
+
+function applyBroadTrueMicroFamily(classified = {}, row = {}, macro = {}) {
+  const normalized = normalizeClassifiedSide(classified);
+
+  if (!shouldUseBroadTrueMicroFamilies()) {
+    return normalized;
+  }
+
+  const fineMicroFamilyId = normalizeAnalyzeFamilyId(
+    normalized.trueMicroFamilyId ||
+    normalized.microFamilyId ||
+    '',
+    row
+  );
+
+  const fineDefinitionParts = mergeDefinitionParts(
+    normalized.definitionParts || [],
+    normalized.microDefinitionParts || []
+  );
+
+  const broad = buildBroadTrueMicroFamilyId(row, normalized, macro);
+  const broadTrueMicroFamilyId = normalizeAnalyzeFamilyId(broad.trueMicroFamilyId, row);
+
+  const coarseMicroFamilyId = normalizeAnalyzeFamilyId(
+    normalized.coarseMicroFamilyId ||
+    normalized.baseMicroFamilyId ||
+    normalized.legacyMicroFamilyId ||
+    normalized.macroFamilyId ||
+    normalized.parentMacroFamilyId ||
+    macro.microFamilyId ||
+    broadTrueMicroFamilyId,
+    row
+  );
+
+  return withAnalyzeIdentityFlags({
+    ...normalized,
+
+    microFamilyId: broadTrueMicroFamilyId,
+    trueMicroFamilyId: broadTrueMicroFamilyId,
+
+    coarseMicroFamilyId,
+    baseMicroFamilyId: normalizeAnalyzeFamilyId(normalized.baseMicroFamilyId || coarseMicroFamilyId, row),
+    legacyMicroFamilyId: normalizeAnalyzeFamilyId(normalized.legacyMicroFamilyId || coarseMicroFamilyId, row),
+
+    fineMicroFamilyId: fineMicroFamilyId || null,
+    narrowMicroFamilyId: fineMicroFamilyId || null,
+    mfV2MicroFamilyId: fineMicroFamilyId || null,
+
+    fineDefinitionParts,
+    narrowDefinitionParts: fineDefinitionParts,
+
+    broadTrueMicroFamilyId,
+    broadTrueDefinitionParts: broad.definitionParts,
+    broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
+
+    definitionParts: broad.definitionParts,
+    microDefinitionParts: broad.definitionParts,
+    definition: broad.definitionParts.join(' | '),
+    microDefinition: broad.definitionParts.join(' | '),
+
+    schema: TRUE_MICRO_SCHEMA,
+    microFamilySchema: TRUE_MICRO_SCHEMA,
+    version: 'broad-micro'
+  });
+}
+
 function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
   const scannerReason = firstDefined(
     classified.scannerReasonCoarse,
@@ -1135,6 +1336,9 @@ function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
       row.parentMacroFamilyId ||
       'NO_MACRO'
     )}`,
+
+    `TRUE_MICRO=${normalizeBucketText(classified.trueMicroFamilyId || classified.microFamilyId || 'NO_TRUE_MICRO')}`,
+    `FINE_MICRO=${normalizeBucketText(classified.fineMicroFamilyId || classified.narrowMicroFamilyId || 'NO_FINE_MICRO')}`,
 
     `RSI=${normalizeBucketText(classified.rsiZone || row.rsiZone || 'NA')}`,
     `RSI_COARSE=${normalizeBucketText(classified.rsiCoarse || row.rsiCoarse || 'NA')}`,
@@ -1309,8 +1513,14 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
   const macro = normalizeClassifiedSide(rawMacro);
 
   const rawClassified = classifyMicroFamily(classifyInput);
-  const classified = attachExecutionFingerprintMetadata(
+  const broadClassified = applyBroadTrueMicroFamily(
     normalizeClassifiedSide(rawClassified),
+    classifyInput,
+    macro
+  );
+
+  const classified = attachExecutionFingerprintMetadata(
+    broadClassified,
     classifyInput,
     macro
   );
@@ -1373,7 +1583,11 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
     scannerFingerprintRole: 'METADATA_ONLY',
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
 
-    symbolExcludedFromFamilyId: true
+    symbolExcludedFromFamilyId: true,
+
+    broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true
   });
 
   if (shouldReclassifyAsTrueMicro(classifyInput)) {
@@ -1387,6 +1601,13 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
       coarseMicroFamilyId,
       baseMicroFamilyId: normalizeAnalyzeFamilyId(classified.baseMicroFamilyId || coarseMicroFamilyId, classifyInput),
       legacyMicroFamilyId: normalizeAnalyzeFamilyId(classified.legacyMicroFamilyId || coarseMicroFamilyId, classifyInput),
+
+      fineMicroFamilyId: classified.fineMicroFamilyId || null,
+      narrowMicroFamilyId: classified.narrowMicroFamilyId || null,
+      mfV2MicroFamilyId: classified.mfV2MicroFamilyId || null,
+      broadTrueMicroFamilyId: classified.broadTrueMicroFamilyId || trueMicroFamilyId,
+      broadTrueDefinitionParts: classified.broadTrueDefinitionParts || classificationDefinitionParts,
+      broadTrueMicroFamilySchema: classified.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
 
       executionFingerprintHash: classified.executionFingerprintHash || null,
       executionFingerprintParts: classified.executionFingerprintParts || [],
@@ -1406,9 +1627,9 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
       parentDefinition: classified.parentDefinition || macro.definition,
       parentDefinitionParts,
 
-      schema: classified.schema,
-      microFamilySchema: classified.schema,
-      version: classified.version,
+      schema: classified.schema || TRUE_MICRO_SCHEMA,
+      microFamilySchema: classified.microFamilySchema || classified.schema || TRUE_MICRO_SCHEMA,
+      version: classified.version || 'broad-micro',
 
       ...common,
 
@@ -1452,6 +1673,13 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
       classifyInput
     ),
 
+    fineMicroFamilyId: row.fineMicroFamilyId || classified.fineMicroFamilyId || null,
+    narrowMicroFamilyId: row.narrowMicroFamilyId || classified.narrowMicroFamilyId || null,
+    mfV2MicroFamilyId: row.mfV2MicroFamilyId || classified.mfV2MicroFamilyId || null,
+    broadTrueMicroFamilyId: row.broadTrueMicroFamilyId || classified.broadTrueMicroFamilyId || trueMicroFamilyId,
+    broadTrueDefinitionParts: row.broadTrueDefinitionParts || classified.broadTrueDefinitionParts || classificationDefinitionParts,
+    broadTrueMicroFamilySchema: row.broadTrueMicroFamilySchema || classified.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+
     executionFingerprintHash: row.executionFingerprintHash || classified.executionFingerprintHash || null,
     executionFingerprintParts: row.executionFingerprintParts || classified.executionFingerprintParts || [],
     executionFingerprintSchema: row.executionFingerprintSchema || classified.executionFingerprintSchema || null,
@@ -1470,9 +1698,9 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
     parentDefinition: row.parentDefinition || classified.parentDefinition || macro.definition,
     parentDefinitionParts,
 
-    schema: row.schema || classified.schema,
-    microFamilySchema: row.microFamilySchema || row.schema || classified.schema,
-    version: row.version || classified.version,
+    schema: row.schema || classified.schema || TRUE_MICRO_SCHEMA,
+    microFamilySchema: row.microFamilySchema || row.schema || classified.schema || TRUE_MICRO_SCHEMA,
+    version: row.version || classified.version || 'broad-micro',
 
     ...common,
 
@@ -1524,6 +1752,18 @@ function compactMicroForStorage(row = {}, aggressive = false) {
     microFamilyId: normalizeAnalyzeFamilyId(refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
     trueMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
     coarseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.coarseMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
+
+    baseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.baseMicroFamilyId || refreshed.coarseMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
+    legacyMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.legacyMicroFamilyId || refreshed.coarseMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
+
+    fineMicroFamilyId: refreshed.fineMicroFamilyId || refreshed.narrowMicroFamilyId || refreshed.mfV2MicroFamilyId || null,
+    narrowMicroFamilyId: refreshed.narrowMicroFamilyId || refreshed.fineMicroFamilyId || refreshed.mfV2MicroFamilyId || null,
+    mfV2MicroFamilyId: refreshed.mfV2MicroFamilyId || refreshed.fineMicroFamilyId || refreshed.narrowMicroFamilyId || null,
+    broadTrueMicroFamilyId: refreshed.broadTrueMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId || null,
+    broadTrueDefinitionParts: compactDefinitionParts(refreshed.broadTrueDefinitionParts, 16, maxStringLength),
+    broadTrueMicroFamilySchema: refreshed.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: refreshed.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -1589,6 +1829,15 @@ function getMinimalMicroForStorage(row = {}) {
     baseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.baseMicroFamilyId || refreshed.coarseMicroFamilyId || microFamilyId, refreshed),
     legacyMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.legacyMicroFamilyId || refreshed.coarseMicroFamilyId || microFamilyId, refreshed),
 
+    fineMicroFamilyId: refreshed.fineMicroFamilyId || refreshed.narrowMicroFamilyId || refreshed.mfV2MicroFamilyId || null,
+    narrowMicroFamilyId: refreshed.narrowMicroFamilyId || refreshed.fineMicroFamilyId || refreshed.mfV2MicroFamilyId || null,
+    mfV2MicroFamilyId: refreshed.mfV2MicroFamilyId || refreshed.fineMicroFamilyId || refreshed.narrowMicroFamilyId || null,
+    broadTrueMicroFamilyId: refreshed.broadTrueMicroFamilyId || microFamilyId,
+    broadTrueDefinitionParts: compactDefinitionParts(refreshed.broadTrueDefinitionParts, 12, 120),
+    broadTrueMicroFamilySchema: refreshed.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: refreshed.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
+
     executionFingerprintHash: refreshed.executionFingerprintHash || null,
     executionFingerprintParts: refreshed.executionFingerprintParts || [],
     executionFingerprintSchema: refreshed.executionFingerprintSchema || null,
@@ -1619,9 +1868,9 @@ function getMinimalMicroForStorage(row = {}) {
     longOnly: false,
     shortDisabled: false,
 
-    schema: refreshed.schema,
-    microFamilySchema: refreshed.microFamilySchema,
-    version: refreshed.version,
+    schema: refreshed.schema || TRUE_MICRO_SCHEMA,
+    microFamilySchema: refreshed.microFamilySchema || TRUE_MICRO_SCHEMA,
+    version: refreshed.version || 'broad-micro',
 
     macroFamilyId: refreshed.macroFamilyId,
     parentMacroFamilyId: refreshed.parentMacroFamilyId,
@@ -1775,6 +2024,15 @@ function getOrCreateMicro(micros, classified, side) {
   micro.baseMicroFamilyId ||= normalizeAnalyzeFamilyId(classified.baseMicroFamilyId || classified.coarseMicroFamilyId || microFamilyId, classified);
   micro.legacyMicroFamilyId ||= normalizeAnalyzeFamilyId(classified.legacyMicroFamilyId || classified.coarseMicroFamilyId || microFamilyId, classified);
 
+  micro.fineMicroFamilyId ||= classified.fineMicroFamilyId || classified.narrowMicroFamilyId || classified.mfV2MicroFamilyId || null;
+  micro.narrowMicroFamilyId ||= classified.narrowMicroFamilyId || classified.fineMicroFamilyId || classified.mfV2MicroFamilyId || null;
+  micro.mfV2MicroFamilyId ||= classified.mfV2MicroFamilyId || classified.fineMicroFamilyId || classified.narrowMicroFamilyId || null;
+  micro.broadTrueMicroFamilyId ||= classified.broadTrueMicroFamilyId || microFamilyId;
+  micro.broadTrueDefinitionParts ||= classified.broadTrueDefinitionParts || classified.definitionParts || [];
+  micro.broadTrueMicroFamilySchema ||= classified.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA;
+  micro.trueMicroFamilySchema ||= classified.trueMicroFamilySchema || TRUE_MICRO_SCHEMA;
+  micro.fineMicroFamilyAsMetadataOnly = true;
+
   micro.executionFingerprintHash ||= classified.executionFingerprintHash || null;
   micro.executionFingerprintParts ||= classified.executionFingerprintParts || [];
   micro.executionFingerprintSchema ||= classified.executionFingerprintSchema || null;
@@ -1803,7 +2061,7 @@ function getOrCreateMicro(micros, classified, side) {
 
   micro.schema ||= classified.schema || classified.microFamilySchema || getAnalyzeSchemaMeta().microSchema;
   micro.microFamilySchema ||= classified.microFamilySchema || classified.schema || getAnalyzeSchemaMeta().microSchema;
-  micro.version ||= classified.version || 'micro';
+  micro.version ||= classified.version || 'broad-micro';
 
   micro.macroFamilyId ||= classified.macroFamilyId || classified.parentMacroFamilyId || null;
   micro.parentMacroFamilyId ||= classified.parentMacroFamilyId || classified.macroFamilyId || null;
@@ -1996,6 +2254,9 @@ function encodeStoragePayload(value = {}, {
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
     analyzeMicroFamiliesOnly: true,
+    broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
 
     schema: schemaMeta.schema,
     macroSchema: schemaMeta.macroSchema,
@@ -2319,6 +2580,10 @@ async function saveWeekMicrosTopSnapshot(redis, weekKey, micros = {}, {
       scannerFingerprintsMetadataOnly: true,
       scannerFingerprintsUsedAsLearningFamily: false,
       analyzeMicroFamiliesOnly: true,
+      broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
+      trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      fineMicroFamilyAsMetadataOnly: true,
+
       executionMicroRefined: false,
       executionMicroSuffix: EXECUTION_MICRO_SUFFIX,
       executionFingerprintRole: 'METADATA_ONLY',
@@ -2624,6 +2889,10 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
         scannerFingerprintsMetadataOnly: true,
         scannerFingerprintsUsedAsLearningFamily: false,
         analyzeMicroFamiliesOnly: true,
+        broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
+        trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+        fineMicroFamilyAsMetadataOnly: true,
+
         executionMicroRefined: false,
         executionMicroSuffix: EXECUTION_MICRO_SUFFIX,
         executionFingerprintRole: 'METADATA_ONLY',
@@ -2865,6 +3134,10 @@ export async function saveWeekMicros(
       scannerFingerprintsUsedAsLearningFamily: false,
       analyzeMicroFamiliesOnly: true,
       symbolExcludedFromFamilyId: true,
+
+      broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
+      trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      fineMicroFamilyAsMetadataOnly: true,
 
       executionMicroRefined: false,
       executionMicroSuffix: EXECUTION_MICRO_SUFFIX,
@@ -3173,6 +3446,7 @@ function buildLockedOutcomeRow(outcome = {}) {
 
   const definitionParts = mergeDefinitionParts(
     outcome.definitionParts || [],
+    outcome.broadTrueDefinitionParts || [],
     [
       `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
       `LOCKED_MICRO=${microFamilyId}`,
@@ -3203,6 +3477,15 @@ function buildLockedOutcomeRow(outcome = {}) {
 
     baseMicroFamilyId: normalizeAnalyzeFamilyId(outcome.baseMicroFamilyId || coarseMicroFamilyId, outcome),
     legacyMicroFamilyId: normalizeAnalyzeFamilyId(outcome.legacyMicroFamilyId || coarseMicroFamilyId, outcome),
+
+    fineMicroFamilyId: outcome.fineMicroFamilyId || outcome.narrowMicroFamilyId || outcome.mfV2MicroFamilyId || null,
+    narrowMicroFamilyId: outcome.narrowMicroFamilyId || outcome.fineMicroFamilyId || outcome.mfV2MicroFamilyId || null,
+    mfV2MicroFamilyId: outcome.mfV2MicroFamilyId || outcome.fineMicroFamilyId || outcome.narrowMicroFamilyId || null,
+    broadTrueMicroFamilyId: outcome.broadTrueMicroFamilyId || trueMicroFamilyId,
+    broadTrueDefinitionParts: outcome.broadTrueDefinitionParts || [],
+    broadTrueMicroFamilySchema: outcome.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: outcome.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
 
     macroFamilyId: outcome.macroFamilyId || parentMacroFamilyId,
     parentMacroFamilyId,
@@ -3621,6 +3904,15 @@ function copyMicroClassificationFields(position = {}) {
     baseMicroFamilyId: normalizeAnalyzeFamilyId(position.baseMicroFamilyId || coarseMicroFamilyId, position),
     legacyMicroFamilyId: normalizeAnalyzeFamilyId(position.legacyMicroFamilyId || coarseMicroFamilyId, position),
 
+    fineMicroFamilyId: position.fineMicroFamilyId || position.narrowMicroFamilyId || position.mfV2MicroFamilyId || null,
+    narrowMicroFamilyId: position.narrowMicroFamilyId || position.fineMicroFamilyId || position.mfV2MicroFamilyId || null,
+    mfV2MicroFamilyId: position.mfV2MicroFamilyId || position.fineMicroFamilyId || position.narrowMicroFamilyId || null,
+    broadTrueMicroFamilyId: position.broadTrueMicroFamilyId || microFamilyId,
+    broadTrueDefinitionParts: position.broadTrueDefinitionParts || [],
+    broadTrueMicroFamilySchema: position.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: position.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
+
     executionFingerprintHash: position.executionFingerprintHash || null,
     executionFingerprintParts: position.executionFingerprintParts || [],
     executionFingerprintSchema: position.executionFingerprintSchema || null,
@@ -3643,9 +3935,9 @@ function copyMicroClassificationFields(position = {}) {
     parentDefinition: position.parentDefinition || null,
     parentDefinitionParts: position.parentDefinitionParts || [],
 
-    schema: position.schema || position.microFamilySchema || null,
-    microFamilySchema: position.microFamilySchema || position.schema || null,
-    version: position.version || null,
+    schema: position.schema || position.microFamilySchema || TRUE_MICRO_SCHEMA,
+    microFamilySchema: position.microFamilySchema || position.schema || TRUE_MICRO_SCHEMA,
+    version: position.version || 'broad-micro',
 
     assetClass: position.assetClass || null,
 
