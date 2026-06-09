@@ -2014,16 +2014,18 @@ function compareRowsWinrate(a, b) {
 function compareRowsBestData(a, b) {
   return (
     compareNumberDesc(learningQualityRank(a), learningQualityRank(b)) ||
-    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
-    compareNumberDesc(a.balancedScore, b.balancedScore) ||
+    compareNumberDesc(a.outcomeSample ?? getCompletedSample(a), b.outcomeSample ?? getCompletedSample(b)) ||
+    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
+    compareNumberDesc(a.fairWinrate, b.fairWinrate) ||
+    compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
+    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
     compareNumberDesc(getTotalR(a), getTotalR(b)) ||
     compareNumberDesc(getAvgR(a), getAvgR(b)) ||
-    compareNumberDesc(a.outcomeSample ?? getCompletedSample(a), b.outcomeSample ?? getCompletedSample(b)) ||
-    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
-    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
-    compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
+    compareNumberAsc(a.directSLPct, b.directSLPct) ||
     compareNumberDesc(a.observationSample ?? getObservationSample(a), b.observationSample ?? getObservationSample(b)) ||
     compareNumberDesc(a.seen, b.seen) ||
+    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
+    compareNumberDesc(a.balancedScore, b.balancedScore) ||
     compareIdAsc(a.microFamilyId, b.microFamilyId)
   );
 }
@@ -2737,8 +2739,9 @@ export default async function handler(req, res) {
       rankingPolicy: {
         defaultMode: 'balanced',
         activeMode: mode,
-        defaultSort: 'learningQualityRank/dashboardBalancedScore/balancedScore/netR/totalR/avgR/sampleReliability/fairWinrate',
+        defaultSort: 'learningQualityRank/completed/fairWinrate/totalR/avgR/directSL/observations/dashboardBalancedScore',
         bestDataFirst: true,
+        completedBeforeRawScore: true,
         rawWinrateIsNeverDefault: true,
         scannerFingerprintsExcludedFromRows: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK !== true,
         scannerFingerprintLegacyFallback: SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK,
