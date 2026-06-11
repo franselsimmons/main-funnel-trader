@@ -18,6 +18,14 @@ const OPPOSITE_TRADE_SIDE = 'LONG';
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
+/*
+  Bijna dezelfde precisie als eerst.
+  Enige bewuste versoepeling:
+  - liqDistance wordt niet meer gebruikt in de echte Analyze learning-hash.
+  - liqDistance blijft wel metadata/debug.
+*/
+const LEARNING_GRANULARITY = 'SHORT_PRECISE_TINY_LOOSER_V2';
+
 const SHORT_TOKENS = new Set([
   'SHORT',
   'BEAR',
@@ -881,12 +889,22 @@ function buildMacroDefinitionParts(metrics = {}, familyId) {
   ];
 }
 
+/*
+  Dit is de echte Analyze learning-ID.
+  Hij is maar heel klein beetje losser dan eerst:
+  - parent blijft parent.microFamilyId
+  - entryDistance blijft erin
+  - risk/slDistance blijft erin
+  - reward/tpDistance blijft erin
+  - spoof blijft erin
+  - spread/depth/funding/cost blijven erin
+  - alleen liqDistance is eruit gehaald om mini-versnippering te verminderen
+*/
 function buildMicroDefinitionParts(metrics = {}, parent) {
   const spreadPct = getSpreadPct(metrics);
   const entryDistancePct = getEntryDistancePct(metrics);
   const slDistancePct = getSlDistancePct(metrics);
   const tpDistancePct = getTpDistancePct(metrics);
-  const liqDistancePct = getLiquidationDistancePct(metrics);
   const volatilityPct = getVolatilityPct(metrics);
   const spoofScore = getSpoofScore(metrics);
   const orderbookImbalance = getOrderbookImbalance(metrics);
@@ -895,6 +913,7 @@ function buildMicroDefinitionParts(metrics = {}, parent) {
 
   return [
     `schema=${getMicroSchema()}`,
+    `granularity=${LEARNING_GRANULARITY}`,
     `parent=${parent.microFamilyId}`,
     `side=${TARGET_DASHBOARD_SIDE}`,
     `tradeSide=${TARGET_TRADE_SIDE}`,
@@ -949,14 +968,6 @@ function buildMicroDefinitionParts(metrics = {}, parent) {
       lowLabel: 'SMALL',
       midLabel: 'NORMAL',
       highLabel: 'LARGE'
-    })}`,
-    `liqDistance=${pctThreeTier(liqDistancePct, {
-      prefix: 'LIQ_DIST',
-      lowBps: 100,
-      highBps: 500,
-      lowLabel: 'NEAR',
-      midLabel: 'MID',
-      highLabel: 'FAR'
     })}`,
 
     `cost=${costTier(costR)}`,
@@ -1162,12 +1173,24 @@ export function buildMicroFamilyV2(metrics = {}) {
     ? stableHash(executionFingerprintParts.join('|'), EXECUTION_MICRO_HASH_LEN)
     : null;
 
+  const liqDistancePct = getLiquidationDistancePct(sideSafeMetrics);
+
   const definitionParts = uniqueStrings([
     ...baseDefinitionParts,
+    `liqDistanceMetadataOnly=${pctThreeTier(liqDistancePct, {
+      prefix: 'LIQ_DIST',
+      lowBps: 100,
+      highBps: 500,
+      lowLabel: 'NEAR',
+      midLabel: 'MID',
+      highLabel: 'FAR'
+    })}`,
     `analyzeMicroFamilyId=${analyzeMicroFamilyId}`,
     `coarseMicroFamilyId=${analyzeMicroFamilyId}`,
+    `learningGranularity=${LEARNING_GRANULARITY}`,
     `learningIdentity=ANALYZE_MICRO_FAMILY`,
-    `scannerFingerprintRole=METADATA_ONLY`
+    `scannerFingerprintRole=METADATA_ONLY`,
+    `executionFingerprintRole=METADATA_ONLY`
   ]);
 
   return {
@@ -1185,6 +1208,9 @@ export function buildMicroFamilyV2(metrics = {}) {
 
     analyzeMicroFamilyId,
     learningMicroFamilyId: analyzeMicroFamilyId,
+
+    learningGranularity: LEARNING_GRANULARITY,
+    learningHashInputParts: baseDefinitionParts,
 
     scannerMicroFamilyId: scannerMetadata.scannerMicroFamilyId,
     scannerFamilyId: scannerMetadata.scannerFamilyId,
@@ -1371,6 +1397,9 @@ export function attachMicroFamilies(metrics = {}) {
 
     analyzeMicroFamilyId: micro.analyzeMicroFamilyId,
     learningMicroFamilyId: micro.learningMicroFamilyId,
+
+    learningGranularity: micro.learningGranularity,
+    learningHashInputParts: micro.learningHashInputParts,
 
     scannerMicroFamilyId: scannerMetadata.scannerMicroFamilyId || micro.scannerMicroFamilyId,
     scannerFamilyId: scannerMetadata.scannerFamilyId || micro.scannerFamilyId,
