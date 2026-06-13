@@ -48,32 +48,43 @@ import { sendEntryAlert } from '../discord/discord.js';
 const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 1000;
 const SNAPSHOT_SEARCH_LIMIT = 80;
 
-const TARGET_TRADE_SIDE = 'LONG';
-const TARGET_DASHBOARD_SIDE = 'bull';
-const TARGET_SCANNER_SIDE = 'bull';
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+const TARGET_SCANNER_SIDE = 'bear';
 
-const OPPOSITE_TRADE_SIDE = 'SHORT';
+const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const RUN_SCOPE = 'TRADE_ONLY';
 const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
 const READ_SCOPE = 'READ_SCANNER_LATEST_ONLY';
 
 /*
-  Kwaliteitsvariant LONG:
-  - iets soepeler op candle-count: 30 -> 25
-  - iets ruimere risk range: 0.40%-2.50% -> 0.35%-3.00%
-  - synthetic risk NIET standaard aan
-  - echte Analyze trueMicroFamilyId blijft verplicht
-  - echte risk shape blijft verplicht
-  - één open positie per symbol blijft verplicht
+  SHORT kwaliteitsvariant:
+  - geen synthetic shadow-laag standaard
+  - geen kunstmatig completed-volume
+  - wel iets soepeler maar nog betrouwbaar:
+    - 30 -> 25 candles
+    - risk range 0.40%-2.50% -> 0.35%-3.00%
+  - echte Analyze trueMicroFamilyId verplicht
+  - scanner fingerprint metadata-only
+  - echte SHORT risk shape verplicht
+  - één open positie per symbol
 */
-const ENTRY_RELAXATION_PROFILE = 'LONG_ENTRY_QUALITY_TINY_LOOSER_V1';
+const ENTRY_RELAXATION_PROFILE = 'SHORT_ENTRY_QUALITY_TINY_LOOSER_V1';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_DISCIPLINED_QUALITY_AUDIT_V1';
+
 const DEFAULT_MIN_LIVE_CANDLES_15M = 25;
 const DEFAULT_MIN_RISK_PCT = 0.0035;
 const DEFAULT_MAX_RISK_PCT = 0.03;
 const DEFAULT_FALLBACK_RISK_PCT = 0.005;
+
 const DEFAULT_ALLOW_SYNTHETIC_RISK_FALLBACK = false;
 const DEFAULT_ALLOW_SYNTHETIC_RISK_VIRTUAL_ENTRIES = false;
+
+const FREEZE_MEASUREMENT_RECOMMENDED_DAYS = 14;
+const MIN_COMPLETED_EARLY_SIGNAL = 20;
+const MIN_COMPLETED_REASONABLE_SIGNAL = 50;
+const MIN_COMPLETED_STRONG_SIGNAL = 100;
 
 const KNOWN_TRADE_SIDES = new Set([
   TARGET_TRADE_SIDE,
@@ -161,19 +172,35 @@ function isolationFlags() {
     preserveManualSelection: true,
     preserveDiscordSelection: true,
 
+    noResetCron: true,
+    resetCronDisabled: true,
+    noActivateCron: true,
+    activateCronDisabled: true,
+    noFreezeCron: true,
+    freezeCronDisabled: true,
+    autoRotationActivationDisabled: true,
+    manualSelectionPreserved: true,
+
     realOrdersDisabled: true,
     exchangeOrdersDisabled: true,
     bitgetOrdersDisabled: true,
     noRealOrders: true,
-    noExchangeOrders: true
+    noExchangeOrders: true,
+
+    ignoreGlobalMaxOpenPositions: true,
+    noGlobalMaxOpenPositionsBlock: true,
+    oneOpenPositionPerSymbol: true
   };
 }
 
 function sideFlags() {
   return {
+    sideMode: 'SHORT_ONLY',
+
     targetTradeSide: TARGET_TRADE_SIDE,
     targetScannerSide: TARGET_SCANNER_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -184,10 +211,10 @@ function sideFlags() {
     actualScannerSide: TARGET_TRADE_SIDE,
     analysisSide: TARGET_TRADE_SIDE,
 
-    longOnly: true,
-    shortDisabled: true,
-    shortOnly: false,
-    longDisabled: false
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
   };
 }
 
@@ -195,6 +222,7 @@ function virtualFlags() {
   return {
     virtualOnly: true,
     virtualTracked: true,
+    virtualLearning: true,
     source: 'VIRTUAL',
     outcomeSource: 'VIRTUAL',
 
@@ -213,6 +241,9 @@ function virtualFlags() {
     microFamilyLearning: true,
 
     observationFirst: true,
+    observationFirstLearning: true,
+    everyAnalyzeRowCountsSeen: true,
+
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintOnlyMetadata: false,
     scannerFingerprintsMetadataOnly: true,
@@ -224,7 +255,35 @@ function virtualFlags() {
 
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
     entrySlightlyLoosened: true,
-    syntheticRiskDefaultEnabled: DEFAULT_ALLOW_SYNTHETIC_RISK_FALLBACK
+    syntheticRiskDefaultEnabled: DEFAULT_ALLOW_SYNTHETIC_RISK_FALLBACK,
+
+    qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
+    noSyntheticShadowLayer: true,
+    disciplinedMeasurement: true,
+    recommendedFreezeDays: FREEZE_MEASUREMENT_RECOMMENDED_DAYS,
+
+    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    scoringRSource: 'netR',
+    winsLossesFlatsSource: 'netR',
+    winrateDefinition: 'netR > 0',
+    avgRSource: 'netR',
+    totalRSource: 'netR',
+    avgCostRShown: true,
+
+    defaultRanking: 'dashboardBalancedScore',
+    defaultRankingNeverBareWinrate: true,
+
+    learningStatusRules: {
+      observing: 'completed = 0',
+      earlyOutcomes: 'completed > 0 && completed < 20',
+      activeLearning: 'completed >= 20'
+    },
+
+    completedThresholds: {
+      earlySignal: MIN_COMPLETED_EARLY_SIGNAL,
+      reasonableSignal: MIN_COMPLETED_REASONABLE_SIGNAL,
+      strongSignal: MIN_COMPLETED_STRONG_SIGNAL
+    }
   };
 }
 
@@ -256,6 +315,19 @@ function clampNumber(value, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function ratio(part, total) {
+  const p = safeNumber(part, 0);
+  const t = safeNumber(total, 0);
+
+  if (t <= 0) return 0;
+
+  return p / t;
+}
+
+function pct(part, total) {
+  return Number((ratio(part, total) * 100).toFixed(2));
+}
+
 function tradeConfig() {
   const configuredTradeMax = cfgNumber(CONFIG.trade?.maxCandidatesPerSnapshot, 0);
   const configuredAnalyzeMax = cfgNumber(
@@ -268,6 +340,7 @@ function tradeConfig() {
 
   return {
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+    qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
 
     maxCandidatesPerSnapshot: positiveInt(
       Math.max(
@@ -348,7 +421,8 @@ function tradeConfig() {
     maxRiskPct: cfgNumber(CONFIG.trade?.maxRiskPct, DEFAULT_MAX_RISK_PCT),
     fallbackRiskPct: cfgNumber(CONFIG.trade?.fallbackRiskPct, DEFAULT_FALLBACK_RISK_PCT),
     defaultRR: cfgNumber(CONFIG.trade?.defaultRR, 1.5),
-    minRR: cfgNumber(CONFIG.trade?.minRR, 0.5)
+    minRR: cfgNumber(CONFIG.trade?.minRR, 0.5),
+    positionTimeStopMin: cfgNumber(CONFIG.trade?.positionTimeStopMin, 720)
   };
 }
 
@@ -391,6 +465,21 @@ function actionCounts(actions = []) {
   }, {});
 }
 
+function reasonCounts(actions = []) {
+  return actions.reduce((acc, row) => {
+    const key = row?.reason || row?.liveEntryBlockedReason || 'UNKNOWN_REASON';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function topReasonCounts(actions = [], limit = 10) {
+  return Object.entries(reasonCounts(actions))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([reason, count]) => ({ reason, count }));
+}
+
 function uniqueStrings(values = []) {
   return [...new Set(
     (Array.isArray(values) ? values : [])
@@ -408,26 +497,31 @@ function upper(value, fallback = '') {
 
 function cleanSideText(value = '') {
   return upper(value, '')
-    .replaceAll('SHORT_DISABLED', '')
-    .replaceAll('SHORTDISABLED', '')
-    .replaceAll('SHORT_DISABLED_TRUE', '')
-    .replaceAll('SHORTDISABLED_TRUE', '')
-    .replaceAll('SHORT_ENABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY_FALSE', '')
-    .replaceAll('LONG_DISABLED_FALSE', '')
-    .replaceAll('LONGDISABLED_FALSE', '')
-    .replaceAll('LONG_ONLY_MODE', 'LONG')
-    .replaceAll('LONG_ONLY', 'LONG')
-    .replaceAll('LONG-ONLY', 'LONG');
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('LONG_DISABLED_TRUE', '')
+    .replaceAll('LONGDISABLED_TRUE', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
 function isScannerFamilyId(id = '') {
   const value = String(id || '').toUpperCase();
 
   return (
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('SHORT_SCANNER_') ||
     value.startsWith('MICRO_LONG_SCANNER__') ||
     value.includes('MICRO_LONG_SCANNER__') ||
     value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -564,37 +658,12 @@ function normalizeTradeSide(side) {
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
   if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
 
-  if (LONG_TOKENS.has(raw)) return TARGET_TRADE_SIDE;
-  if (SHORT_TOKENS.has(raw)) return OPPOSITE_TRADE_SIDE;
+  if (SHORT_TOKENS.has(raw)) return TARGET_TRADE_SIDE;
+  if (LONG_TOKENS.has(raw)) return OPPOSITE_TRADE_SIDE;
 
   const normalized = raw
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-
-  const longHit =
-    normalized === 'LONG' ||
-    normalized === 'BULL' ||
-    normalized === 'BUY' ||
-    normalized.includes('MICRO_LONG_') ||
-    normalized.includes('TRADESIDE_LONG') ||
-    normalized.includes('TRADE_SIDE_LONG') ||
-    normalized.includes('POSITION_SIDE_LONG') ||
-    normalized.includes('POSITIONSIDE_LONG') ||
-    normalized.includes('SIDE_LONG') ||
-    normalized.includes('SIDE_BULL') ||
-    normalized.includes('DIRECTION_LONG') ||
-    normalized.includes('DIRECTION_BULL') ||
-    normalized.includes('SIDE_BUY') ||
-    normalized.includes('DIRECTION_BUY') ||
-    normalized.startsWith('LONG_') ||
-    normalized.includes('_LONG_') ||
-    normalized.endsWith('_LONG') ||
-    normalized.startsWith('BULL_') ||
-    normalized.includes('_BULL_') ||
-    normalized.endsWith('_BULL') ||
-    normalized.startsWith('BUY_') ||
-    normalized.includes('_BUY_') ||
-    normalized.endsWith('_BUY');
 
   const shortHit =
     normalized === 'SHORT' ||
@@ -621,46 +690,54 @@ function normalizeTradeSide(side) {
     normalized.includes('_SELL_') ||
     normalized.endsWith('_SELL');
 
-  if (shortHit && !longHit) return OPPOSITE_TRADE_SIDE;
-  if (longHit && !shortHit) return TARGET_TRADE_SIDE;
+  const longHit =
+    normalized === 'LONG' ||
+    normalized === 'BULL' ||
+    normalized === 'BUY' ||
+    normalized.includes('MICRO_LONG_') ||
+    normalized.includes('TRADESIDE_LONG') ||
+    normalized.includes('TRADE_SIDE_LONG') ||
+    normalized.includes('POSITION_SIDE_LONG') ||
+    normalized.includes('POSITIONSIDE_LONG') ||
+    normalized.includes('SIDE_LONG') ||
+    normalized.includes('SIDE_BULL') ||
+    normalized.includes('DIRECTION_LONG') ||
+    normalized.includes('DIRECTION_BULL') ||
+    normalized.includes('SIDE_BUY') ||
+    normalized.includes('DIRECTION_BUY') ||
+    normalized.startsWith('LONG_') ||
+    normalized.includes('_LONG_') ||
+    normalized.endsWith('_LONG') ||
+    normalized.startsWith('BULL_') ||
+    normalized.includes('_BULL_') ||
+    normalized.endsWith('_BULL') ||
+    normalized.startsWith('BUY_') ||
+    normalized.includes('_BUY_') ||
+    normalized.endsWith('_BUY');
 
-  if (longHit) return TARGET_TRADE_SIDE;
-  if (shortHit) return OPPOSITE_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+
+  if (shortHit && longHit) {
+    if (normalized.includes('TRADE_SIDE_SHORT') || normalized.includes('TRADESIDE_SHORT')) {
+      return TARGET_TRADE_SIDE;
+    }
+
+    if (normalized.includes('TRADE_SIDE_LONG') || normalized.includes('TRADESIDE_LONG')) {
+      return OPPOSITE_TRADE_SIDE;
+    }
+
+    if (normalized.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (normalized.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  }
+
+  if (shortHit) return TARGET_TRADE_SIDE;
+  if (longHit) return OPPOSITE_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
 
 function idLooksLikeTargetFamily(id = '') {
-  const value = cleanSideText(id);
-
-  if (!value) return false;
-
-  return (
-    value.includes('MICRO_LONG_') ||
-    /^LONG_\d+$/u.test(value) ||
-    value.startsWith('LONG_') ||
-    value.includes('_LONG_') ||
-    value.endsWith('_LONG') ||
-    value.startsWith('BULL_') ||
-    value.includes('_BULL_') ||
-    value.endsWith('_BULL') ||
-    value.startsWith('BUY_') ||
-    value.includes('_BUY_') ||
-    value.endsWith('_BUY') ||
-    value.includes('TRADESIDE=LONG') ||
-    value.includes('TRADE_SIDE=LONG') ||
-    value.includes('POSITION_SIDE=LONG') ||
-    value.includes('POSITIONSIDE=LONG') ||
-    value.includes('SIDE=LONG') ||
-    value.includes('SIDE=BULL') ||
-    value.includes('DIRECTION=LONG') ||
-    value.includes('DIRECTION=BULL') ||
-    value.includes('SIDE=BUY') ||
-    value.includes('DIRECTION=BUY')
-  );
-}
-
-function idLooksLikeOppositeFamily(id = '') {
   const value = cleanSideText(id);
 
   if (!value) return false;
@@ -687,6 +764,36 @@ function idLooksLikeOppositeFamily(id = '') {
     value.includes('DIRECTION=BEAR') ||
     value.includes('SIDE=SELL') ||
     value.includes('DIRECTION=SELL')
+  );
+}
+
+function idLooksLikeOppositeFamily(id = '') {
+  const value = cleanSideText(id);
+
+  if (!value) return false;
+
+  return (
+    value.includes('MICRO_LONG_') ||
+    /^LONG_\d+$/u.test(value) ||
+    value.startsWith('LONG_') ||
+    value.includes('_LONG_') ||
+    value.endsWith('_LONG') ||
+    value.startsWith('BULL_') ||
+    value.includes('_BULL_') ||
+    value.endsWith('_BULL') ||
+    value.startsWith('BUY_') ||
+    value.includes('_BUY_') ||
+    value.endsWith('_BUY') ||
+    value.includes('TRADESIDE=LONG') ||
+    value.includes('TRADE_SIDE=LONG') ||
+    value.includes('POSITION_SIDE=LONG') ||
+    value.includes('POSITIONSIDE=LONG') ||
+    value.includes('SIDE=LONG') ||
+    value.includes('SIDE=BULL') ||
+    value.includes('DIRECTION=LONG') ||
+    value.includes('DIRECTION=BULL') ||
+    value.includes('SIDE=BUY') ||
+    value.includes('DIRECTION=BUY')
   );
 }
 
@@ -723,12 +830,24 @@ function inferSideFromIds(row = {}) {
 
   if (!haystack) return 'UNKNOWN';
 
-  const shortHit = idLooksLikeOppositeFamily(haystack);
-  const longHit = idLooksLikeTargetFamily(haystack);
+  const shortHit = idLooksLikeTargetFamily(haystack);
+  const longHit = idLooksLikeOppositeFamily(haystack);
 
-  if (shortHit && !longHit) return OPPOSITE_TRADE_SIDE;
-  if (longHit) return TARGET_TRADE_SIDE;
-  if (shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+
+  if (shortHit && longHit) {
+    if (haystack.includes('TRADESIDE=SHORT') || haystack.includes('TRADE_SIDE=SHORT')) {
+      return TARGET_TRADE_SIDE;
+    }
+
+    if (haystack.includes('TRADESIDE=LONG') || haystack.includes('TRADE_SIDE=LONG')) {
+      return OPPOSITE_TRADE_SIDE;
+    }
+
+    if (haystack.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (haystack.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
@@ -752,19 +871,6 @@ function inferSideFromDefinitions(row = {}) {
 
   if (!haystack) return 'UNKNOWN';
 
-  const longHit =
-    haystack.includes('TRADESIDE=LONG') ||
-    haystack.includes('TRADE_SIDE=LONG') ||
-    haystack.includes('POSITION_SIDE=LONG') ||
-    haystack.includes('POSITIONSIDE=LONG') ||
-    haystack.includes('SIDE=LONG') ||
-    haystack.includes('SIDE=BULL') ||
-    haystack.includes('DIRECTION=LONG') ||
-    haystack.includes('DIRECTION=BULL') ||
-    haystack.includes('SIDE=BUY') ||
-    haystack.includes('DIRECTION=BUY') ||
-    idLooksLikeTargetFamily(haystack);
-
   const shortHit =
     haystack.includes('TRADESIDE=SHORT') ||
     haystack.includes('TRADE_SIDE=SHORT') ||
@@ -776,11 +882,36 @@ function inferSideFromDefinitions(row = {}) {
     haystack.includes('DIRECTION=BEAR') ||
     haystack.includes('SIDE=SELL') ||
     haystack.includes('DIRECTION=SELL') ||
+    idLooksLikeTargetFamily(haystack);
+
+  const longHit =
+    haystack.includes('TRADESIDE=LONG') ||
+    haystack.includes('TRADE_SIDE=LONG') ||
+    haystack.includes('POSITION_SIDE=LONG') ||
+    haystack.includes('POSITIONSIDE=LONG') ||
+    haystack.includes('SIDE=LONG') ||
+    haystack.includes('SIDE=BULL') ||
+    haystack.includes('DIRECTION=LONG') ||
+    haystack.includes('DIRECTION=BULL') ||
+    haystack.includes('SIDE=BUY') ||
+    haystack.includes('DIRECTION=BUY') ||
     idLooksLikeOppositeFamily(haystack);
 
-  if (shortHit && !longHit) return OPPOSITE_TRADE_SIDE;
-  if (longHit) return TARGET_TRADE_SIDE;
-  if (shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+
+  if (shortHit && longHit) {
+    if (haystack.includes('TRADESIDE=SHORT') || haystack.includes('TRADE_SIDE=SHORT')) {
+      return TARGET_TRADE_SIDE;
+    }
+
+    if (haystack.includes('TRADESIDE=LONG') || haystack.includes('TRADE_SIDE=LONG')) {
+      return OPPOSITE_TRADE_SIDE;
+    }
+
+    if (haystack.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (haystack.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  }
 
   return 'UNKNOWN';
 }
@@ -816,8 +947,12 @@ function inferRowTradeSide(row = {}) {
 
   if (KNOWN_TRADE_SIDES.has(fromDefinitions)) return fromDefinitions;
 
-  if (row.longOnly === true || row.shortDisabled === true) {
+  if (row.shortOnly === true || row.longDisabled === true) {
     return TARGET_TRADE_SIDE;
+  }
+
+  if (row.longOnly === true || row.shortDisabled === true) {
+    return OPPOSITE_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
@@ -905,11 +1040,12 @@ function waitAction(candidate, reason, extra = {}) {
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
 
-    longOnly: true,
-    shortDisabled: true,
-    shortOnly: false,
-    longDisabled: false,
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
 
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
 
@@ -952,6 +1088,24 @@ function buildVirtualExitAction(outcome = {}) {
     netR: outcome.netR ?? outcome.realizedR ?? outcome.r ?? null,
     realizedR: outcome.realizedR ?? outcome.netR ?? outcome.r ?? null,
     costR: outcome.costR ?? null,
+    avgCostR: outcome.avgCostR ?? outcome.costR ?? null,
+
+    currentPrice: outcome.currentPrice ?? outcome.lastPrice ?? outcome.exitPrice ?? null,
+    lastPrice: outcome.lastPrice ?? outcome.currentPrice ?? outcome.exitPrice ?? null,
+    entry: outcome.entry ?? null,
+    sl: outcome.sl ?? null,
+    tp: outcome.tp ?? null,
+    ageSec: outcome.ageSec ?? null,
+    currentR: outcome.currentR ?? null,
+    mfeR: outcome.mfeR ?? null,
+    maeR: outcome.maeR ?? null,
+    reachedHalfR: Boolean(outcome.reachedHalfR),
+    reachedOneR: Boolean(outcome.reachedOneR),
+    nearTpSeen: Boolean(outcome.nearTpSeen),
+
+    tpHitNow: Boolean(outcome.tpHitNow || outcome.exitReason === 'TP'),
+    slHitNow: Boolean(outcome.slHitNow || outcome.exitReason === 'SL'),
+    timeStopHitNow: Boolean(outcome.timeStopHitNow || outcome.exitReason === 'TIME_STOP'),
 
     discordExitAlertSent: Boolean(outcome.discordExitAlertSent),
 
@@ -961,6 +1115,8 @@ function buildVirtualExitAction(outcome = {}) {
     realOrder: false,
     exchangeOrder: false,
     bitgetOrderPlaced: false,
+
+    entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
 
     ...sideFlags(),
     ...isolationFlags()
@@ -1116,7 +1272,7 @@ function isKnownTrueMicroFamilyId(id = '') {
 
   return (
     idHasSchema(id, microSchema) ||
-    String(id).toUpperCase().startsWith('MICRO_LONG_')
+    String(id).toUpperCase().startsWith('MICRO_SHORT_')
   );
 }
 
@@ -1259,8 +1415,13 @@ function buildSelectedAlertContext(activeRotation) {
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
-    longOnly: true,
-    shortDisabled: true,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
     selectionPurpose: 'DISCORD_ALERT_ONLY',
 
     ...isolationFlags()
@@ -1305,7 +1466,7 @@ function hasValidRiskShape(row = {}) {
 
   if (entry <= 0 || sl <= 0 || tp <= 0 || rr <= 0) return false;
 
-  return sl < entry && tp > entry;
+  return sl > entry && tp < entry;
 }
 
 function validateVirtualEntry(row = {}) {
@@ -1316,7 +1477,7 @@ function validateVirtualEntry(row = {}) {
   if (tradeSide !== TARGET_TRADE_SIDE) {
     return {
       ok: false,
-      reason: 'SHORT_DISABLED_LONG_ONLY_SYSTEM',
+      reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM',
       tradeSide
     };
   }
@@ -1354,15 +1515,15 @@ function validateVirtualEntry(row = {}) {
   if (!hasValidRiskShape(row)) {
     return {
       ok: false,
-      reason: row.liveEntryBlockedReason || 'LONG_RISK_INVALID'
+      reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID'
     };
   }
 
   return {
     ok: true,
     reason: row.syntheticRisk
-      ? 'LONG_VIRTUAL_RISK_VALID_SYNTHETIC_EXPLICITLY_ENABLED'
-      : 'LONG_VIRTUAL_RISK_VALID'
+      ? 'SHORT_VIRTUAL_RISK_VALID_SYNTHETIC_EXPLICITLY_ENABLED'
+      : 'SHORT_VIRTUAL_RISK_VALID'
   };
 }
 
@@ -1570,12 +1731,12 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
       ...isolationFlags()
     }));
 
-  const blockedNonLongCandidates = rows
+  const blockedNonShortCandidates = rows
     .filter((candidate) => candidateTradeSide(candidate) !== TARGET_TRADE_SIDE)
     .slice(0, 100)
     .map((candidate) => waitAction(
       normalizeCandidate(candidate),
-      'SHORT_DISABLED_LONG_ONLY_SYSTEM',
+      'LONG_DISABLED_SHORT_ONLY_SYSTEM',
       {
         skippedBeforeAnalyze: true,
         skippedBeforeLiveFetch: true,
@@ -1589,9 +1750,15 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
     selectedSnapshotSource: meta.source || null,
     selectedSnapshotReason: meta.reason || null,
     selectedTargetCandidateCount: targetRows.length,
+    selectedShortCandidateCount: targetRows.length,
     selectedOppositeCandidateCount: countOppositeCandidates(snapshot),
+    selectedLongCandidateCount: countOppositeCandidates(snapshot),
 
-    blockedNonLongCandidates,
+    blockedNonShortCandidates,
+    blockedNonShortCandidatesCount: rows.length - targetRows.length,
+
+    // Backward-compatible admin field name.
+    blockedNonLongCandidates: blockedNonShortCandidates,
     blockedNonLongCandidatesCount: rows.length - targetRows.length,
 
     ...sideFlags(),
@@ -1599,8 +1766,8 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
 
     candidates: targetRows,
     candidatesCount: targetRows.length,
-    longCandidatesCount: targetRows.length,
-    shortCandidatesCount: 0,
+    shortCandidatesCount: targetRows.length,
+    longCandidatesCount: 0,
 
     scannerGateCandidatesCount: targetRows.filter((row) => row.scannerGatePassed).length,
     analyzeOnlyCandidatesCount: targetRows.filter((row) => (
@@ -1711,8 +1878,8 @@ async function getLatestSnapshot() {
   return normalizeSelectedSnapshot(latestAvailable.snapshot, {
     source: latestAvailable.source,
     reason: latestAvailable.targetCount > 0
-      ? 'LATEST_SCANNER_SNAPSHOT'
-      : 'LATEST_SCANNER_SNAPSHOT_WITH_NO_LONG_CANDIDATES'
+      ? 'LATEST_SHORT_SCANNER_SNAPSHOT'
+      : 'LATEST_SHORT_SCANNER_SNAPSHOT_WITH_NO_SHORT_CANDIDATES'
   });
 }
 
@@ -1762,6 +1929,7 @@ function enrichMetricsWithScannerAndLiveGates({
     ...isolationFlags(),
 
     entryRelaxationProfile: cfg.entryRelaxationProfile,
+    qualityMeasurementProfile: cfg.qualityMeasurementProfile,
     minLiveCandles15m: cfg.minLiveCandles15m,
 
     snapshotId: normalized.snapshotId || metrics.snapshotId || null,
@@ -1825,6 +1993,17 @@ function enrichMetricsWithScannerAndLiveGates({
 
     learningOnly: Boolean(metrics.learningOnly),
 
+    validShortRiskShape: hasValidRiskShape({
+      ...metrics,
+      ...learningIds,
+      ...sideFlags()
+    }),
+
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    positionTimeStopMin: cfg.positionTimeStopMin,
+
     liveDataTs: now()
   };
 
@@ -1837,7 +2016,7 @@ function enrichMetricsWithScannerAndLiveGates({
 function buildObservationOnlyMetrics({
   normalized,
   data = {},
-  reason = 'LONG_RISK_INVALID'
+  reason = 'SHORT_RISK_INVALID'
 }) {
   const ob = data.ob || {};
   const spreadPct = safeNumber(
@@ -1896,7 +2075,8 @@ function buildObservationOnlyMetrics({
       learningOnly: true,
       liveRiskValid: false,
       liveEntryBlockedReason: reason,
-      entryRelaxationProfile: ENTRY_RELAXATION_PROFILE
+      entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+      qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE
     },
     candidate: {
       ...normalized,
@@ -1906,10 +2086,10 @@ function buildObservationOnlyMetrics({
   });
 }
 
-function buildSyntheticLongRiskMetrics({
+function buildSyntheticShortRiskMetrics({
   normalized,
   data = {},
-  reason = 'RISK_ENGINE_EMPTY_SYNTHETIC_LONG_RISK'
+  reason = 'RISK_ENGINE_EMPTY_SYNTHETIC_SHORT_RISK'
 }) {
   const cfg = tradeConfig();
   const ob = data.ob || {};
@@ -1937,7 +2117,7 @@ function buildSyntheticLongRiskMetrics({
     return buildObservationOnlyMetrics({
       normalized,
       data,
-      reason: 'SYNTHETIC_LONG_RISK_BLOCKED_SCANNER_GATE_FAILED'
+      reason: 'SYNTHETIC_SHORT_RISK_BLOCKED_SCANNER_GATE_FAILED'
     });
   }
 
@@ -1945,7 +2125,7 @@ function buildSyntheticLongRiskMetrics({
     return buildObservationOnlyMetrics({
       normalized,
       data,
-      reason: 'SYNTHETIC_LONG_RISK_BLOCKED_ANALYZE_NOT_ELIGIBLE'
+      reason: 'SYNTHETIC_SHORT_RISK_BLOCKED_ANALYZE_NOT_ELIGIBLE'
     });
   }
 
@@ -1953,7 +2133,7 @@ function buildSyntheticLongRiskMetrics({
     return buildObservationOnlyMetrics({
       normalized,
       data,
-      reason: 'SYNTHETIC_LONG_RISK_BLOCKED_SPREAD_TOO_WIDE'
+      reason: 'SYNTHETIC_SHORT_RISK_BLOCKED_SPREAD_TOO_WIDE'
     });
   }
 
@@ -1961,7 +2141,7 @@ function buildSyntheticLongRiskMetrics({
     return buildObservationOnlyMetrics({
       normalized,
       data,
-      reason: 'SYNTHETIC_LONG_RISK_NO_MID_PRICE'
+      reason: 'SYNTHETIC_SHORT_RISK_NO_MID_PRICE'
     });
   }
 
@@ -1978,9 +2158,9 @@ function buildSyntheticLongRiskMetrics({
   );
 
   const entry = mid;
-  const sl = Math.max(entry * (1 - riskPct), entry * 0.0001);
-  const tp = entry * (1 + riskPct * rr);
-  const rewardPct = Math.max(0, (tp - entry) / entry);
+  const sl = entry * (1 + riskPct);
+  const tp = Math.max(entry * (1 - riskPct * rr), entry * 0.0001);
+  const rewardPct = Math.max(0, (entry - tp) / entry);
 
   return enrichMetricsWithScannerAndLiveGates({
     metrics: {
@@ -2031,7 +2211,8 @@ function buildSyntheticLongRiskMetrics({
       liveRiskValid: true,
       liveEntryBlockedReason: null,
 
-      entryRelaxationProfile: cfg.entryRelaxationProfile
+      entryRelaxationProfile: cfg.entryRelaxationProfile,
+      qualityMeasurementProfile: cfg.qualityMeasurementProfile
     },
     candidate: {
       ...normalized,
@@ -2053,16 +2234,16 @@ function buildActualRiskWaitIfNeeded({
         side: scannerSide,
         tradeSide: scannerSide
       },
-      'SHORT_DISABLED_LONG_ONLY_SYSTEM'
+      'LONG_DISABLED_SHORT_ONLY_SYSTEM'
     );
   }
 
-  const hasLongMetrics = metricsRows.some((row) => (
+  const hasShortMetrics = metricsRows.some((row) => (
     inferRowTradeSide(row) === TARGET_TRADE_SIDE &&
     hasValidRiskShape(row)
   ));
 
-  if (hasLongMetrics) return null;
+  if (hasShortMetrics) return null;
 
   return waitAction(
     {
@@ -2070,7 +2251,7 @@ function buildActualRiskWaitIfNeeded({
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE
     },
-    'LONG_RISK_INVALID_OBSERVATION_ONLY'
+    'SHORT_RISK_INVALID_OBSERVATION_ONLY'
   );
 }
 
@@ -2096,7 +2277,7 @@ async function processCandidate(candidate) {
             tradeSide: scannerSide,
             side: normalized.side
           },
-          'SHORT_DISABLED_LONG_ONLY_SYSTEM',
+          'LONG_DISABLED_SHORT_ONLY_SYSTEM',
           {
             skippedBeforeAnalyze: true,
             skippedBeforeLiveFetch: true,
@@ -2193,21 +2374,21 @@ async function processCandidate(candidate) {
     })
     .filter(Boolean);
 
-  const hasValidLongRisk = metrics.some(hasValidRiskShape);
+  const hasValidShortRisk = metrics.some(hasValidRiskShape);
 
-  const finalMetrics = hasValidLongRisk
+  const finalMetrics = hasValidShortRisk
     ? metrics
     : [
       cfg.allowSyntheticRiskFallback
-        ? buildSyntheticLongRiskMetrics({
+        ? buildSyntheticShortRiskMetrics({
           normalized,
           data,
-          reason: 'RISK_ENGINE_EMPTY_SYNTHETIC_LONG_RISK'
+          reason: 'RISK_ENGINE_EMPTY_SYNTHETIC_SHORT_RISK'
         })
         : buildObservationOnlyMetrics({
           normalized,
           data,
-          reason: 'RISK_ENGINE_EMPTY_LONG_RISK_OBSERVATION_ONLY'
+          reason: 'RISK_ENGINE_EMPTY_SHORT_RISK_OBSERVATION_ONLY'
         })
     ];
 
@@ -2282,8 +2463,8 @@ function buildVirtualEntryAction({
 
     action: 'VIRTUAL_ENTRY',
     reason: row.syntheticRisk
-      ? 'LONG_VIRTUAL_RISK_VALID_SYNTHETIC_EXPLICITLY_ENABLED'
-      : 'LONG_VIRTUAL_RISK_VALID',
+      ? 'SHORT_VIRTUAL_RISK_VALID_SYNTHETIC_EXPLICITLY_ENABLED'
+      : 'SHORT_VIRTUAL_RISK_VALID',
 
     shadowOnly: false,
 
@@ -2293,7 +2474,7 @@ function buildVirtualEntryAction({
     selectedMicroFamilyAlert: Boolean(discordAlertEligible),
     discordAlertEligible: Boolean(discordAlertEligible),
     discordAlertReason: discordAlertEligible
-      ? 'SELECTED_LONG_TRUE_MICRO_FAMILY_EXACT_MATCH'
+      ? 'SELECTED_SHORT_TRUE_MICRO_FAMILY_EXACT_MATCH'
       : alertContext.empty
         ? 'NO_MANUAL_MICRO_FAMILY_SELECTED'
         : 'MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT',
@@ -2316,7 +2497,13 @@ function buildVirtualEntryAction({
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
     symbolExcludedFromFamilyId: true,
 
+    validShortRiskShape: true,
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    positionTimeStopMin: tradeConfig().positionTimeStopMin,
+
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+    qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
 
     entryCreatedAt: now()
   };
@@ -2340,6 +2527,181 @@ function maybeSendDiscordEntryAlert(entry = {}) {
     queued: true,
     fireAndForget: true,
     reason: 'DISCORD_ENTRY_ALERT_QUEUED_FIRE_AND_FORGET'
+  };
+}
+
+function inferPrimaryBottleneck({
+  candidates,
+  processed,
+  liveRows,
+  riskValidRows,
+  analyzedRows,
+  analyzedRiskValidRows,
+  virtualCreatedRows,
+  virtualExitRows,
+  openPositionCountAfterEntries,
+  actionCountMap
+}) {
+  if (candidates <= 0) return 'NO_SHORT_CANDIDATES';
+  if (processed <= 0) return 'NO_CANDIDATES_PROCESSED';
+  if (liveRows <= 0) return 'NO_LIVE_ROWS';
+
+  if ((actionCountMap?.SNAPSHOT_ALREADY_PROCESSED || 0) > 0) {
+    return 'SNAPSHOT_ALREADY_PROCESSED';
+  }
+
+  if ((actionCountMap?.SNAPSHOT_TOO_STALE || 0) > 0) {
+    return 'SNAPSHOT_TOO_STALE';
+  }
+
+  if (riskValidRows <= 0) {
+    return 'RISK_ENGINE_OR_LIVE_RISK_SHAPE';
+  }
+
+  if (analyzedRows <= 0) {
+    return 'ANALYZE_RETURNED_NO_TARGET_ROWS';
+  }
+
+  if (analyzedRiskValidRows <= 0) {
+    return 'ANALYZE_REMOVED_OR_DID_NOT_CONFIRM_RISK_ROWS';
+  }
+
+  if (virtualCreatedRows <= 0) {
+    return 'VIRTUAL_ENTRY_GATE_OR_SYMBOL_LOCK';
+  }
+
+  if (virtualCreatedRows > 0 && virtualExitRows <= 0 && openPositionCountAfterEntries > 0) {
+    return 'POSITIONS_OPEN_WAITING_FOR_OUTCOMES';
+  }
+
+  if (virtualCreatedRows > 0 && virtualExitRows > 0) {
+    return 'HEALTHY_OUTCOME_PIPELINE';
+  }
+
+  return 'PIPELINE_ACTIVE_MONITOR_REQUIRED';
+}
+
+function buildQualityAudit({
+  snapshot,
+  candidates,
+  processed,
+  liveRows,
+  analyzedRowsRaw,
+  analyzedRows,
+  actions,
+  actionCountMap,
+  virtualExits,
+  counts,
+  openPositionCountBeforeEntries,
+  openPositionCountAfterEntries
+}) {
+  const candidateCount = candidates.length;
+  const processedCount = processed.length;
+  const liveRowsCount = liveRows.length;
+  const analyzedRowsRawCount = analyzedRowsRaw.length;
+  const analyzedRowsCount = analyzedRows.length;
+
+  const virtualExitRows = virtualExits.length;
+
+  const riskValidRows = counts.riskValidRows;
+  const analyzedRiskValidRows = counts.analyzedRiskValidRows;
+  const entryRows = counts.entryRows;
+  const virtualCreatedRows = counts.virtualCreatedRows;
+  const waitRows = counts.waitRows;
+
+  const primaryBottleneck = inferPrimaryBottleneck({
+    candidates: candidateCount,
+    processed: processedCount,
+    liveRows: liveRowsCount,
+    riskValidRows,
+    analyzedRows: analyzedRowsCount,
+    analyzedRiskValidRows,
+    virtualCreatedRows,
+    virtualExitRows,
+    openPositionCountAfterEntries,
+    actionCountMap
+  });
+
+  const waitReasons = topReasonCounts(actions, 12);
+
+  return {
+    profile: QUALITY_MEASUREMENT_PROFILE,
+    entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    noSyntheticShadowLayer: true,
+    syntheticRiskDefaultEnabled: DEFAULT_ALLOW_SYNTHETIC_RISK_FALLBACK,
+    completedIsPureClosedVirtualOutcome: true,
+
+    recommendedFreezeDays: FREEZE_MEASUREMENT_RECOMMENDED_DAYS,
+
+    completedThresholds: {
+      earlySignal: MIN_COMPLETED_EARLY_SIGNAL,
+      reasonableSignal: MIN_COMPLETED_REASONABLE_SIGNAL,
+      strongSignal: MIN_COMPLETED_STRONG_SIGNAL
+    },
+
+    snapshot: {
+      snapshotId: snapshot?.snapshotId || null,
+      selectedSnapshotSource: snapshot?.selectedSnapshotSource || null,
+      selectedSnapshotReason: snapshot?.selectedSnapshotReason || null,
+      selectedTargetCandidateCount: snapshot?.selectedTargetCandidateCount || 0,
+      selectedShortCandidateCount: snapshot?.selectedShortCandidateCount || 0,
+      selectedOppositeCandidateCount: snapshot?.selectedOppositeCandidateCount || 0,
+      selectedLongCandidateCount: snapshot?.selectedLongCandidateCount || 0
+    },
+
+    pipelineCounts: {
+      candidates: candidateCount,
+      processed: processedCount,
+      liveRows: liveRowsCount,
+      riskValidRows,
+      analyzedRowsRaw: analyzedRowsRawCount,
+      analyzedRows: analyzedRowsCount,
+      analyzedRiskValidRows,
+      entryRows,
+      virtualCreatedRows,
+      virtualExitRows,
+      waitRows,
+      openPositionCountBeforeEntries,
+      openPositionCountAfterEntries
+    },
+
+    conversionRatesPct: {
+      processedPerCandidate: pct(processedCount, candidateCount),
+      liveRowsPerCandidate: pct(liveRowsCount, candidateCount),
+      riskValidPerLiveRow: pct(riskValidRows, liveRowsCount),
+      analyzedPerLiveRow: pct(analyzedRowsCount, liveRowsCount),
+      analyzedRiskValidPerAnalyzed: pct(analyzedRiskValidRows, analyzedRowsCount),
+      virtualCreatedPerAnalyzedRiskValid: pct(virtualCreatedRows, analyzedRiskValidRows),
+      virtualExitPerCreatedThisRun: pct(virtualExitRows, virtualCreatedRows)
+    },
+
+    primaryBottleneck,
+    topWaitReasons: waitReasons,
+
+    interpretation: {
+      ifVirtualCreatedLow: 'Entry/gating/risk pipeline geeft te weinig nieuwe outcome-kansen.',
+      ifVirtualCreatedHighAndExitLow: 'Posities lopen nog; completed komt later via TP/SL/TIME_STOP.',
+      ifRiskValidLow: 'RiskEngine of live risk shape is waarschijnlijk de bottleneck.',
+      ifAnalyzedRiskValidLow: 'Analyze/microfamily-filter bevestigt te weinig geldige risk rows.',
+      ifSymbolAlreadyOpenHigh: 'Eén open positie per symbol blokkeert extra entries, bewust kwaliteitsfilter.',
+      ifSnapshotAlreadyProcessedHigh: 'Trade-run verwerkt geen nieuwe entries totdat scanner een nieuwe snapshot levert.'
+    },
+
+    doNotChangeDuringFreeze: [
+      'microFamilies',
+      'riskEngine',
+      'positionEngine',
+      'scoring',
+      'scanner thresholds',
+      'time-stop',
+      'synthetic shadow layer'
+    ],
+
+    measurementPrinciple: 'Eén zuivere completed-meting lang genoeg volhouden; niet kunstmatig completed-volume toevoegen.'
   };
 }
 
@@ -2370,6 +2732,7 @@ async function saveRunMeta(result) {
     ...result,
 
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+    qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
 
     ...sideFlags(),
     ...virtualFlags(),
@@ -2389,7 +2752,8 @@ async function saveRunMeta(result) {
 
     completedAt,
     durationMs: completedAt - safeNumber(result.startedAt, completedAt),
-    actionCounts: result.actionCounts || buildRunActionCounts(result.actions || [], virtualExits)
+    actionCounts: result.actionCounts || buildRunActionCounts(result.actions || [], virtualExits),
+    qualityAudit: result.qualityAudit || null
   };
 
   await scopedSetJson(
@@ -2407,7 +2771,7 @@ export async function runTradeSystem(options = {}) {
 
   const durableRedis = getDurableRedis();
 
-  const runId = randomId('trade_run');
+  const runId = randomId('trade_run_short');
   const startedAt = now();
 
   const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
@@ -2436,6 +2800,9 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'MONITOR_ONLY',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      monitorOpenPositions: true,
+      monitorOpenPositionsFirst: true,
+      processScannerSnapshot: false,
       ...isolationFlags()
     });
   }
@@ -2456,8 +2823,11 @@ export async function runTradeSystem(options = {}) {
       waitRows: 0,
       virtualCreatedRows: 0,
       skippedNewEntries: true,
-      reason: 'NO_SCANNER_SNAPSHOT',
+      reason: 'NO_SHORT_SCANNER_SNAPSHOT',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      monitorOpenPositions: true,
+      monitorOpenPositionsFirst: true,
+      processScannerSnapshot: true,
       ...isolationFlags()
     });
   }
@@ -2465,8 +2835,8 @@ export async function runTradeSystem(options = {}) {
   const snapshotAgeSec = (now() - safeNumber(snapshot.createdAt, 0)) / 1000;
 
   if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
-    const actions = Array.isArray(snapshot.blockedNonLongCandidates)
-      ? snapshot.blockedNonLongCandidates
+    const actions = Array.isArray(snapshot.blockedNonShortCandidates)
+      ? snapshot.blockedNonShortCandidates
       : [];
 
     return saveRunMeta({
@@ -2477,7 +2847,10 @@ export async function runTradeSystem(options = {}) {
       selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
       selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
       selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
+      selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
       selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+      selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
       blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0,
       actions,
       realExits,
@@ -2489,6 +2862,9 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'SNAPSHOT_TOO_STALE',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      monitorOpenPositions: true,
+      monitorOpenPositionsFirst: true,
+      processScannerSnapshot: false,
       ...isolationFlags()
     });
   }
@@ -2502,8 +2878,8 @@ export async function runTradeSystem(options = {}) {
   const sameSnapshot = lastProcessed?.snapshotId === snapshot.snapshotId;
 
   if (sameSnapshot && !forceProcessSnapshot) {
-    const actions = Array.isArray(snapshot.blockedNonLongCandidates)
-      ? snapshot.blockedNonLongCandidates
+    const actions = Array.isArray(snapshot.blockedNonShortCandidates)
+      ? snapshot.blockedNonShortCandidates
       : [];
 
     return saveRunMeta({
@@ -2513,7 +2889,10 @@ export async function runTradeSystem(options = {}) {
       selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
       selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
       selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
+      selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
       selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+      selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
       blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0,
       actions,
       realExits,
@@ -2525,6 +2904,9 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'SNAPSHOT_ALREADY_PROCESSED',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      monitorOpenPositions: true,
+      monitorOpenPositionsFirst: true,
+      processScannerSnapshot: false,
       ...isolationFlags()
     });
   }
@@ -2532,8 +2914,8 @@ export async function runTradeSystem(options = {}) {
   const activeRotation = await getActiveRotation();
   const alertContext = buildSelectedAlertContext(activeRotation);
 
-  const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonLongCandidates)
-    ? snapshot.blockedNonLongCandidates
+  const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonShortCandidates)
+    ? snapshot.blockedNonShortCandidates
     : [];
 
   const candidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
@@ -2549,8 +2931,8 @@ export async function runTradeSystem(options = {}) {
       regime: snapshot.regime
     }));
 
-  const longCandidateCount = candidates.length;
-  const nonLongCandidateCount = snapshot.blockedNonLongCandidatesCount || 0;
+  const shortCandidateCount = candidates.length;
+  const nonShortCandidateCount = snapshot.blockedNonShortCandidatesCount || 0;
 
   const processed = await mapConcurrent(
     candidates,
@@ -2636,7 +3018,7 @@ export async function runTradeSystem(options = {}) {
         microFamilyId,
         trueMicroFamilyId: microFamilyId,
         action: 'WAIT',
-        reason: 'SHORT_DISABLED_LONG_ONLY_SYSTEM',
+        reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM',
         selectedRotationId: alertContext.rotationId,
         activeRotationId: alertContext.rotationId,
         virtualTracked: false,
@@ -2705,7 +3087,11 @@ export async function runTradeSystem(options = {}) {
     const sizingStats = selectedWeeklyStats || row;
 
     const riskFraction = sizing.enabled
-      ? riskFractionForEntry({ weeklyStats: sizingStats })
+      ? riskFractionForEntry({
+        weeklyStats: sizingStats,
+        side: TARGET_DASHBOARD_SIDE,
+        tradeSide: TARGET_TRADE_SIDE
+      })
       : sizing.baseRiskPct;
 
     const discordAlertEligible = rowMatchesSelectedAlertMicro(alertContext, row);
@@ -2774,6 +3160,27 @@ export async function runTradeSystem(options = {}) {
 
   const counts = buildRunActionCounts(actions, virtualExits);
 
+  const qualityAudit = buildQualityAudit({
+    snapshot,
+    candidates,
+    processed,
+    liveRows,
+    analyzedRowsRaw,
+    analyzedRows,
+    actions,
+    actionCountMap: counts,
+    virtualExits,
+    counts: {
+      riskValidRows,
+      analyzedRiskValidRows,
+      entryRows,
+      virtualCreatedRows,
+      waitRows
+    },
+    openPositionCountBeforeEntries,
+    openPositionCountAfterEntries: openPositions.length
+  });
+
   await scopedSetJson(
     durableRedis,
     KEYS.trade.lastProcessedSnapshot,
@@ -2785,10 +3192,14 @@ export async function runTradeSystem(options = {}) {
       selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
       selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
       selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
+      selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
       selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+      selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
       blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0,
 
       entryRelaxationProfile: cfg.entryRelaxationProfile,
+      qualityMeasurementProfile: cfg.qualityMeasurementProfile,
       minLiveCandles15m: cfg.minLiveCandles15m,
       allowSyntheticRiskFallback: cfg.allowSyntheticRiskFallback,
       allowSyntheticRiskVirtualEntries: cfg.allowSyntheticRiskVirtualEntries,
@@ -2804,8 +3215,9 @@ export async function runTradeSystem(options = {}) {
       ...isolationFlags(),
 
       candidates: candidates.length,
-      longCandidateCount,
-      nonLongCandidateCount,
+      shortCandidateCount,
+      longCandidateCount: 0,
+      nonShortCandidateCount,
 
       processed: processed.length,
       earlyActions: earlyActions.length,
@@ -2861,6 +3273,7 @@ export async function runTradeSystem(options = {}) {
 
       actions: actions.length,
       actionCounts: counts,
+      qualityAudit,
 
       selectedRotationId: alertContext.rotationId,
       activeRotationId: alertContext.rotationId,
@@ -2882,7 +3295,11 @@ export async function runTradeSystem(options = {}) {
       allowCoarseMicroAliasLiveEntries: false,
       allowCoarseMicroAliasForDiscord: false,
 
-      selectionPurpose: 'DISCORD_ALERT_ONLY'
+      selectionPurpose: 'DISCORD_ALERT_ONLY',
+
+      monitorOpenPositions: true,
+      monitorOpenPositionsFirst: true,
+      processScannerSnapshot: true
     }
   );
 
@@ -2897,10 +3314,14 @@ export async function runTradeSystem(options = {}) {
     selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
     selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
     selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
+    selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
     selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+    selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
+    blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
     blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0,
 
     entryRelaxationProfile: cfg.entryRelaxationProfile,
+    qualityMeasurementProfile: cfg.qualityMeasurementProfile,
     minLiveCandles15m: cfg.minLiveCandles15m,
     allowSyntheticRiskFallback: cfg.allowSyntheticRiskFallback,
     allowSyntheticRiskVirtualEntries: cfg.allowSyntheticRiskVirtualEntries,
@@ -2916,8 +3337,9 @@ export async function runTradeSystem(options = {}) {
     ...isolationFlags(),
 
     candidates: candidates.length,
-    longCandidateCount,
-    nonLongCandidateCount,
+    shortCandidateCount,
+    longCandidateCount: 0,
+    nonShortCandidateCount,
 
     processed: processed.length,
     earlyActions: earlyActions.length,
@@ -2973,6 +3395,7 @@ export async function runTradeSystem(options = {}) {
 
     actions,
     actionCounts: counts,
+    qualityAudit,
 
     selectedRotationId: alertContext.rotationId,
     activeRotationId: alertContext.rotationId,
@@ -3002,6 +3425,7 @@ export async function runTradeSystem(options = {}) {
       analyzeOnlyCandidatesCount: snapshot.analyzeOnlyCandidatesCount || null,
       filteredUniverse: snapshot.filteredUniverse || null,
       rawCount: snapshot.rawCount || null,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
       blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0
     },
 
@@ -3016,6 +3440,10 @@ export async function runTradeSystem(options = {}) {
     rotationPreserved: true,
     manualSelectionPreserved: true,
     discordSelectionPreserved: true,
+
+    monitorOpenPositions: true,
+    monitorOpenPositionsFirst: true,
+    processScannerSnapshot: true,
 
     skippedNewEntries: false
   });
