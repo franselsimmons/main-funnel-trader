@@ -11,7 +11,18 @@ import {
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
+const TARGET_SCANNER_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
+
+const SHORT_NAMESPACE = 'SHORT';
+const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
+
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
+const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
+const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const SOURCE_VIRTUAL = 'VIRTUAL';
 const SOURCE_REAL = 'REAL';
@@ -30,7 +41,8 @@ const SHORT_TOKENS = new Set([
   'BEARISH',
   'SELL',
   'DOWN',
-  'DOWNSIDE'
+  'DOWNSIDE',
+  'RED'
 ]);
 
 const LONG_TOKENS = new Set([
@@ -39,7 +51,8 @@ const LONG_TOKENS = new Set([
   'BULLISH',
   'BUY',
   'UP',
-  'UPSIDE'
+  'UPSIDE',
+  'GREEN'
 ]);
 
 const REAL_ORDER_SOURCES = new Set([
@@ -51,19 +64,69 @@ const REAL_ORDER_SOURCES = new Set([
   'BITGET'
 ]);
 
+const SETUP_ORDER = Object.freeze([
+  'BREAKOUT',
+  'RETEST',
+  'SWEEP_REVERSAL',
+  'CONTINUATION',
+  'COMPRESSION'
+]);
+
+const REGIME_ORDER = Object.freeze([
+  'TREND',
+  'CHOP',
+  'SQUEEZE'
+]);
+
+const CONFIRMATION_PROFILE_ORDER = Object.freeze([
+  'A_STRONG_ALIGN',
+  'B_FLOW_ALIGN',
+  'C_VOLUME_ALIGN',
+  'D_MIXED_OK',
+  'E_WEAK_CONTRA'
+]);
+
+const SHORT_FIXED_SETUP_TYPES = new Set(SETUP_ORDER);
+const SHORT_FIXED_REGIME_BUCKETS = new Set(REGIME_ORDER);
+const SHORT_CONFIRMATION_PROFILES = new Set(CONFIRMATION_PROFILE_ORDER);
+
+function namespacedShortKey(key, fallback) {
+  const raw = String(key || fallback || '').trim();
+  const safe = raw || String(fallback || '').trim();
+
+  if (!safe) return `${SHORT_KEY_PREFIX}DISCORD:LOGS`;
+  if (safe.startsWith(SHORT_KEY_PREFIX)) return safe;
+
+  return `${SHORT_KEY_PREFIX}${safe}`;
+}
+
+const SHORT_KEYS = {
+  discord: {
+    logList: namespacedShortKey(
+      KEYS.short?.discord?.logList ||
+        KEYS.discord?.shortLogList ||
+        KEYS.discordShort?.logList ||
+        KEYS.discord?.logList,
+      'DISCORD:LOGS'
+    )
+  }
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
 
 function discordConfig() {
-  return {
-    enabled: CONFIG.discord?.enabled !== false,
-    webhookUrl: CONFIG.discord?.webhookUrl || '',
-    timeoutMs: Math.max(500, safeNumber(CONFIG.discord?.timeoutMs, 2500)),
-    logLimit: Math.max(1, Math.floor(safeNumber(CONFIG.discord?.logLimit, 250))),
+  const cfg = CONFIG.short?.discord || CONFIG.discord?.short || CONFIG.discord || {};
 
-    sendRotationReports: CONFIG.discord?.sendRotationReports === true,
-    sendResetReports: CONFIG.discord?.sendResetReports !== false
+  return {
+    enabled: cfg.enabled !== false,
+    webhookUrl: cfg.webhookUrl || '',
+    timeoutMs: Math.max(500, safeNumber(cfg.timeoutMs, 2500)),
+    logLimit: Math.max(1, Math.floor(safeNumber(cfg.logLimit, 250))),
+
+    sendRotationReports: cfg.sendRotationReports === true,
+    sendResetReports: cfg.sendResetReports !== false
   };
 }
 
@@ -136,15 +199,23 @@ function upper(value, fallback = '') {
 
 function cleanSideText(value = '') {
   return upper(value)
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
-    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_DISABLED_FALSE', '')
+    .replaceAll('LONGDISABLED_FALSE', '')
+    .replaceAll('BLOCK_LONG_FALSE', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
-    .replaceAll('SHORT-ONLY', 'SHORT');
+    .replaceAll('SHORT-ONLY', 'SHORT')
+    .replaceAll('LONG_ONLY_MODE', 'LONG')
+    .replaceAll('LONG_ONLY', 'LONG')
+    .replaceAll('LONG-ONLY', 'LONG');
 }
 
 function normalizeSource(value) {
@@ -222,11 +293,11 @@ function normalizeSideToken(value) {
     normalized.includes(`_${pattern}_`)
   ));
 
-  const longHit = hit(longPatterns);
   const shortHit = hit(shortPatterns);
+  const longHit = hit(longPatterns);
 
-  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
 
   if (shortHit && longHit) {
     if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
@@ -236,6 +307,260 @@ function normalizeSideToken(value) {
   }
 
   return 'UNKNOWN';
+}
+
+function flattenValues(values = []) {
+  const stack = Array.isArray(values) ? [...values] : [values];
+  const out = [];
+
+  while (stack.length > 0) {
+    const value = stack.shift();
+
+    if (Array.isArray(value)) {
+      stack.unshift(...value);
+      continue;
+    }
+
+    out.push(value);
+  }
+
+  return out;
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(
+    flattenValues(values)
+      .flatMap((value) => {
+        if (typeof value === 'string') {
+          return value
+            .split(/[\s,;\n\r]+/g)
+            .map((part) => part.trim());
+        }
+
+        return [value];
+      })
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function isScannerFamilyId(id = '') {
+  const value = upper(id);
+
+  return (
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
+    value.startsWith('MICRO_SHORT_SCANNER__') ||
+    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('SHORT_SCANNER_') ||
+    value.includes('SHORT_SCANNER_') ||
+    value.includes('__SCANNER__') ||
+    value.includes('SCANNER_GATE_PASS') ||
+    value.includes('SCANNER_GATE_FAIL')
+  );
+}
+
+function isExecutionFingerprintId(id = '') {
+  const value = upper(id);
+
+  return (
+    value.includes('_XR_') ||
+    value.includes('__XR__') ||
+    value.includes('|XR|') ||
+    value.includes('EXECUTION_FINGERPRINT') ||
+    value.includes('EXECUTION_MICRO') ||
+    value.includes('EXECUTIONMICRO') ||
+    value.includes('REFINED_EXECUTION')
+  );
+}
+
+function parseShortTaxonomyMicroId(id = '') {
+  const rawId = String(id || '').trim();
+  const value = upper(rawId);
+
+  if (!value.startsWith('MICRO_SHORT_')) {
+    return {
+      valid: false,
+      selectable: false,
+      isParent: false,
+      isChild: false,
+      rawId
+    };
+  }
+
+  if (isScannerFamilyId(value) || isExecutionFingerprintId(value)) {
+    return {
+      valid: false,
+      selectable: false,
+      isParent: false,
+      isChild: false,
+      rawId
+    };
+  }
+
+  if (
+    value.includes('_MF_V1_') ||
+    value.includes('_MF_V2_') ||
+    value.includes('_MF_V3_')
+  ) {
+    return {
+      valid: false,
+      selectable: false,
+      isParent: false,
+      isChild: false,
+      rawId
+    };
+  }
+
+  let body = value.slice('MICRO_SHORT_'.length);
+  let confirmationProfile = null;
+
+  for (const profile of CONFIRMATION_PROFILE_ORDER) {
+    const suffix = `_${profile}`;
+
+    if (body.endsWith(suffix)) {
+      confirmationProfile = profile;
+      body = body.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  let setup = null;
+  let regime = null;
+
+  for (const candidateRegime of REGIME_ORDER) {
+    const suffix = `_${candidateRegime}`;
+
+    if (body.endsWith(suffix)) {
+      regime = candidateRegime;
+      setup = body.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  const parentId = setup && regime ? `MICRO_SHORT_${setup}_${regime}` : null;
+  const childId = parentId && confirmationProfile ? `${parentId}_${confirmationProfile}` : null;
+
+  const validParent =
+    Boolean(parentId) &&
+    SHORT_FIXED_SETUP_TYPES.has(setup) &&
+    SHORT_FIXED_REGIME_BUCKETS.has(regime);
+
+  const validChild =
+    validParent &&
+    Boolean(confirmationProfile) &&
+    SHORT_CONFIRMATION_PROFILES.has(confirmationProfile);
+
+  return {
+    valid: validParent || validChild,
+    selectable: validChild,
+    isParent: validParent && !validChild,
+    isChild: validChild,
+    rawId,
+    setup,
+    regime,
+    setupType: setup,
+    regimeBucket: regime,
+    confirmationProfile,
+    parentTrueMicroFamilyId: validParent ? parentId : null,
+    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+    childTrueMicroFamilyId: validChild ? childId : null,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    learningGranularity: LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY
+  };
+}
+
+function parseLongTaxonomyMicroId(id = '') {
+  const rawId = String(id || '').trim();
+  const value = upper(rawId);
+
+  if (!value.startsWith('MICRO_LONG_')) {
+    return {
+      valid: false,
+      selectable: false,
+      isParent: false,
+      isChild: false,
+      rawId
+    };
+  }
+
+  let body = value.slice('MICRO_LONG_'.length);
+  let confirmationProfile = null;
+
+  for (const profile of CONFIRMATION_PROFILE_ORDER) {
+    const suffix = `_${profile}`;
+
+    if (body.endsWith(suffix)) {
+      confirmationProfile = profile;
+      body = body.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  let setup = null;
+  let regime = null;
+
+  for (const candidateRegime of REGIME_ORDER) {
+    const suffix = `_${candidateRegime}`;
+
+    if (body.endsWith(suffix)) {
+      regime = candidateRegime;
+      setup = body.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  const parentId = setup && regime ? `MICRO_LONG_${setup}_${regime}` : null;
+  const childId = parentId && confirmationProfile ? `${parentId}_${confirmationProfile}` : null;
+
+  const validParent =
+    Boolean(parentId) &&
+    SHORT_FIXED_SETUP_TYPES.has(setup) &&
+    SHORT_FIXED_REGIME_BUCKETS.has(regime);
+
+  const validChild =
+    validParent &&
+    Boolean(confirmationProfile) &&
+    SHORT_CONFIRMATION_PROFILES.has(confirmationProfile);
+
+  return {
+    valid: validParent || validChild,
+    selectable: validChild,
+    isParent: validParent && !validChild,
+    isChild: validChild,
+    rawId,
+    setup,
+    regime,
+    setupType: setup,
+    regimeBucket: regime,
+    confirmationProfile,
+    parentTrueMicroFamilyId: validParent ? parentId : null,
+    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+    childTrueMicroFamilyId: validChild ? childId : null
+  };
+}
+
+function isSelectableTrueMicroFamilyId(id = '') {
+  return parseShortTaxonomyMicroId(id).isChild === true;
+}
+
+function isParentTrueMicroFamilyId(id = '') {
+  return parseShortTaxonomyMicroId(id).isParent === true;
+}
+
+function validLearningChildId(id = '') {
+  const value = String(id || '').trim();
+
+  if (!value) return false;
+  if (isScannerFamilyId(value)) return false;
+  if (isExecutionFingerprintId(value)) return false;
+
+  return isSelectableTrueMicroFamilyId(value);
 }
 
 function definitionParts(payload = {}) {
@@ -263,10 +588,12 @@ function idHaystack(payload = {}) {
 
     payload.microFamilyId,
     payload.trueMicroFamilyId,
+    payload.childTrueMicroFamilyId,
     payload.id,
     payload.key,
 
     payload.coarseMicroFamilyId,
+    payload.parentTrueMicroFamilyId,
     payload.baseMicroFamilyId,
     payload.legacyMicroFamilyId,
 
@@ -388,25 +715,29 @@ function inferTradeSide(payload = {}) {
   }
 
   const ids = idHaystack(payload);
-  const longId = hasLongIdSignal(ids);
   const shortId = hasShortIdSignal(ids);
+  const longId = hasLongIdSignal(ids);
 
-  if (longId && !shortId) return OPPOSITE_TRADE_SIDE;
   if (shortId && !longId) return TARGET_TRADE_SIDE;
+  if (longId && !shortId) return OPPOSITE_TRADE_SIDE;
   if (shortId) return TARGET_TRADE_SIDE;
   if (longId) return OPPOSITE_TRADE_SIDE;
 
   const parts = definitionParts(payload);
-  const longDefinition = hasLongDefinitionSignal(parts);
   const shortDefinition = hasShortDefinitionSignal(parts);
+  const longDefinition = hasLongDefinitionSignal(parts);
 
-  if (longDefinition && !shortDefinition) return OPPOSITE_TRADE_SIDE;
   if (shortDefinition && !longDefinition) return TARGET_TRADE_SIDE;
+  if (longDefinition && !shortDefinition) return OPPOSITE_TRADE_SIDE;
   if (shortDefinition) return TARGET_TRADE_SIDE;
   if (longDefinition) return OPPOSITE_TRADE_SIDE;
 
   if (payload.shortOnly === true || payload.longDisabled === true) {
     return TARGET_TRADE_SIDE;
+  }
+
+  if (payload.longOnly === true || payload.shortDisabled === true) {
+    return OPPOSITE_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
@@ -421,7 +752,7 @@ function normalizeSideLabel(payload = {}) {
 }
 
 function discordColorForSide(payload = {}) {
-  return isShortPayload(payload) ? 0xef4444 : 0x64748b;
+  return isShortPayload(payload) ? 0xdc2626 : 0x64748b;
 }
 
 function discordColorForResult(value) {
@@ -456,18 +787,62 @@ function extractResultR(outcome = {}) {
   );
 }
 
+function trueMicroFamilyId(payload = {}) {
+  const candidates = [
+    payload.trueMicroFamilyId,
+    payload.childTrueMicroFamilyId,
+    payload.microFamilyId,
+    payload.analyzeMicroFamilyId,
+    payload.learningMicroFamilyId
+  ];
+
+  for (const candidate of candidates) {
+    const value = upper(candidate);
+
+    if (validLearningChildId(value)) return value;
+  }
+
+  return null;
+}
+
+function childTrueMicroFamilyId(payload = {}) {
+  return trueMicroFamilyId(payload);
+}
+
+function parentTrueMicroFamilyId(payload = {}) {
+  const childId = trueMicroFamilyId(payload);
+  const parsedChild = parseShortTaxonomyMicroId(childId);
+
+  if (parsedChild.parentTrueMicroFamilyId) return parsedChild.parentTrueMicroFamilyId;
+
+  const candidates = [
+    payload.parentTrueMicroFamilyId,
+    payload.coarseMicroFamilyId,
+    payload.parentMacroFamilyId,
+    payload.parentMicroFamilyId,
+    payload.macroFamilyId,
+    payload.activeMacroFamilyId
+  ];
+
+  for (const candidate of candidates) {
+    const value = upper(candidate);
+
+    if (isParentTrueMicroFamilyId(value)) return value;
+
+    const parsed = parseShortTaxonomyMicroId(value);
+
+    if (parsed.parentTrueMicroFamilyId) return parsed.parentTrueMicroFamilyId;
+  }
+
+  return null;
+}
+
 function microFamilyId(payload = {}) {
-  return payload.microFamilyId || payload.trueMicroFamilyId || null;
+  return trueMicroFamilyId(payload);
 }
 
 function macroFamilyId(payload = {}) {
-  return (
-    payload.activeMacroFamilyId ||
-    payload.parentMacroFamilyId ||
-    payload.parentMicroFamilyId ||
-    payload.macroFamilyId ||
-    null
-  );
+  return parentTrueMicroFamilyId(payload);
 }
 
 function weeklyStats(payload = {}) {
@@ -487,12 +862,17 @@ function statValue(payload = {}, key, fallbackKey = null) {
 }
 
 function completedSample(payload = {}) {
+  const stats = weeklyStats(payload);
+
+  const virtualCompleted = safeNumber(stats.virtualCompleted ?? payload.virtualCompleted, 0);
+  const shadowCompleted = safeNumber(stats.shadowCompleted ?? payload.shadowCompleted, 0);
+  const closed = virtualCompleted + shadowCompleted;
+
+  if (closed > 0) return closed;
+
   return (
     statValue(payload, 'completed') ??
     statValue(payload, 'winrateSample') ??
-    statValue(payload, 'virtualCompleted') ??
-    statValue(payload, 'realCompleted') ??
-    statValue(payload, 'shadowCompleted') ??
     0
   );
 }
@@ -518,19 +898,42 @@ function fingerprint(payload = {}) {
 }
 
 function isRealOrderSource(payload = {}) {
-  const source = normalizeSource(payload.source);
+  const sources = [
+    payload.source,
+    payload.sourceMode,
+    payload.outcomeSource,
+    payload.positionSource,
+    payload.orderSource
+  ]
+    .map(normalizeSource)
+    .filter(Boolean);
 
-  return REAL_ORDER_SOURCES.has(source);
+  if (sources.some((source) => REAL_ORDER_SOURCES.has(source))) return true;
+
+  return Boolean(
+    payload.realTrade === true ||
+    payload.realOrder === true ||
+    payload.exchangeOrder === true ||
+    payload.bitgetOrderPlaced === true ||
+    payload.liveOrder === true ||
+    payload.orderPlaced === true
+  );
 }
 
 function isVirtualSource(payload = {}) {
-  const source = normalizeSource(payload.source);
+  const sources = [
+    payload.source,
+    payload.sourceMode,
+    payload.outcomeSource,
+    payload.positionSource
+  ].map(normalizeSource);
 
   return (
-    source === SOURCE_VIRTUAL ||
+    sources.includes(SOURCE_VIRTUAL) ||
     payload.virtualOnly === true ||
     payload.virtualTracked === true ||
-    payload.sourceMode === SOURCE_VIRTUAL
+    payload.paperTrade === true ||
+    payload.paperPosition === true
   );
 }
 
@@ -547,10 +950,6 @@ function isMirrorPayload(payload = {}) {
   );
 }
 
-function isShadowPayload(payload = {}) {
-  return isMirrorPayload(payload);
-}
-
 function isAnalysisOnlyPayload(payload = {}) {
   return Boolean(
     payload.observationOnly === true ||
@@ -558,7 +957,8 @@ function isAnalysisOnlyPayload(payload = {}) {
     payload.learningOnly === true ||
     payload.analyzeOnly === true ||
     payload.discoveryOnly === true ||
-    payload.tradeDiscoveryOnly === true
+    payload.tradeDiscoveryOnly === true ||
+    payload.scannerOnly === true
   );
 }
 
@@ -568,14 +968,34 @@ function hasValidShortTradeShape(entry = {}) {
   const tp = safeNumber(entry.tp ?? entry.takeProfit, 0);
 
   if (entryPrice <= 0) return false;
-  if (sl <= entryPrice) return false;
   if (tp <= 0 || tp >= entryPrice) return false;
+  if (sl <= entryPrice) return false;
 
   return true;
 }
 
-function matchTypeIsTrueMicro(entry = {}) {
-  const matchType = upper(entry.rotationMatchType || '');
+function selectedTrueMicroIdsFromPayload(payload = {}) {
+  return uniqueStrings([
+    payload.selectedTrueMicroFamilyId,
+    payload.selectedMicroFamilyId,
+    payload.activeTrueMicroFamilyId,
+    payload.activeMicroFamilyId,
+    payload.rotationTrueMicroFamilyId,
+    payload.rotationMicroFamilyId,
+
+    payload.selectedTrueMicroFamilyIds || [],
+    payload.selectedMicroFamilyIds || [],
+    payload.activeTrueMicroFamilyIds || [],
+    payload.activeMicroFamilyIds || [],
+    payload.trueMicroFamilyIds || [],
+    payload.microFamilyIds || []
+  ])
+    .map(upper)
+    .filter(validLearningChildId);
+}
+
+function matchTypeIsExactChildTrueMicro(entry = {}) {
+  const matchType = upper(entry.rotationMatchType || entry.matchType || '');
 
   if (!matchType) {
     return Boolean(
@@ -584,18 +1004,36 @@ function matchTypeIsTrueMicro(entry = {}) {
     );
   }
 
+  if (
+    matchType.includes('MACRO') ||
+    matchType.includes('PARENT') ||
+    matchType.includes('COARSE') ||
+    matchType.includes('SCANNER') ||
+    matchType.includes('EXECUTION') ||
+    matchType.includes('XR')
+  ) {
+    return false;
+  }
+
   return (
     matchType === 'TRUE_MICRO_EXACT' ||
-    matchType.includes('TRUE_MICRO') ||
-    matchType.includes('MICRO_EXACT')
+    matchType === 'EXACT_TRUE_MICRO' ||
+    matchType === 'EXACT_75_CHILD' ||
+    matchType === 'EXACT_75_CHILD_TRUE_MICRO' ||
+    matchType === 'SELECTED_TRUE_MICRO_EXACT' ||
+    matchType.includes('TRUE_MICRO_EXACT') ||
+    matchType.includes('EXACT_TRUE_MICRO') ||
+    matchType.includes('EXACT_75_CHILD') ||
+    matchType.includes('CHILD_TRUE_MICRO')
   );
 }
 
 function hasSelectedMicroRotationMatch(entry = {}) {
-  const microId = microFamilyId(entry);
+  const microId = trueMicroFamilyId(entry);
 
   if (!microId) return false;
-  if (!entry.activeRotationId) return false;
+  if (!validLearningChildId(microId)) return false;
+  if (!entry.activeRotationId && !entry.rotationId) return false;
 
   const selected = Boolean(
     entry.discordAlertEligible === true ||
@@ -604,8 +1042,15 @@ function hasSelectedMicroRotationMatch(entry = {}) {
   );
 
   if (!selected) return false;
+  if (!matchTypeIsExactChildTrueMicro(entry)) return false;
 
-  return matchTypeIsTrueMicro(entry);
+  const selectedIds = selectedTrueMicroIdsFromPayload(entry);
+
+  if (selectedIds.length > 0 && !selectedIds.includes(microId)) {
+    return false;
+  }
+
+  return true;
 }
 
 function shouldSendEntryAlert(entry = {}) {
@@ -630,7 +1075,10 @@ function shouldSendExitAlert(outcome = {}) {
   if (isRealOrderSource(outcome)) return false;
   if (!isVirtualSource(outcome)) return false;
 
-  if (!microFamilyId(outcome)) return false;
+  const microId = trueMicroFamilyId(outcome);
+
+  if (!microId) return false;
+  if (!validLearningChildId(microId)) return false;
   if (!hasSelectedMicroRotationMatch(outcome)) return false;
 
   return true;
@@ -638,6 +1086,9 @@ function shouldSendExitAlert(outcome = {}) {
 
 function compactPayload(payload = {}) {
   const tradeSide = inferTradeSide(payload);
+  const trueId = trueMicroFamilyId(payload);
+  const parentId = parentTrueMicroFamilyId(payload);
+  const parsed = parseShortTaxonomyMicroId(trueId);
 
   return {
     symbol: payload.symbol || null,
@@ -655,6 +1106,8 @@ function compactPayload(payload = {}) {
 
     source: normalizeSource(payload.source),
     sourceMode: payload.sourceMode || null,
+    outcomeSource: payload.outcomeSource || null,
+    positionSource: payload.positionSource || null,
 
     liveEligible: Boolean(payload.liveEligible),
     discordAlertEligible: Boolean(payload.discordAlertEligible),
@@ -670,13 +1123,24 @@ function compactPayload(payload = {}) {
 
     rotationMatchType: payload.rotationMatchType || null,
 
-    microFamilyId: microFamilyId(payload),
-    familyId: payload.familyId || null,
-    macroFamilyId: macroFamilyId(payload),
+    microFamilyId: trueId,
+    trueMicroFamilyId: trueId,
+    childTrueMicroFamilyId: trueId,
+    parentTrueMicroFamilyId: parentId,
+    coarseMicroFamilyId: parentId,
 
-    activeRotationId: payload.activeRotationId || null,
+    setupType: parsed.setupType || payload.setupType || null,
+    regimeBucket: parsed.regimeBucket || payload.regimeBucket || null,
+    confirmationProfile: parsed.confirmationProfile || payload.confirmationProfile || null,
+
+    familyId: payload.familyId || null,
+    macroFamilyId: parentId,
+
+    activeRotationId: payload.activeRotationId || payload.rotationId || null,
 
     executionFingerprintHash: payload.executionFingerprintHash || null,
+    executionFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintRole: payload.scannerFingerprintRole || 'METADATA_ONLY',
 
     entry: payload.entry ?? null,
     exit: extractExitPrice(payload),
@@ -684,11 +1148,21 @@ function compactPayload(payload = {}) {
     tp: payload.tp ?? null,
     rr: payload.rr ?? null,
 
+    currentPrice: payload.currentPrice ?? payload.lastPrice ?? null,
+    currentR: payload.currentR ?? null,
+    mfeR: payload.mfeR ?? null,
+    maeR: payload.maeR ?? null,
+
+    reachedHalfR: Boolean(payload.reachedHalfR),
+    reachedOneR: Boolean(payload.reachedOneR),
+    nearTpSeen: Boolean(payload.nearTpSeen),
+
     winrate: bestWinrate(payload),
     completed: completedSample(payload),
     avgR: statValue(payload, 'avgR'),
     totalR: statValue(payload, 'totalR'),
     profitFactor: statValue(payload, 'profitFactor'),
+    avgCostR: statValue(payload, 'avgCostR'),
 
     exitR: payload.exitR ?? null,
     netR: payload.netR ?? null,
@@ -700,6 +1174,38 @@ function compactPayload(payload = {}) {
     longDisabled: true,
     longOnly: false,
     shortDisabled: false,
+
+    validShortRiskShape: 'tp < entry < sl',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    shortExitRules: {
+      tp: 'price <= tp',
+      sl: 'price >= sl',
+      timeStop: 'TIME_STOP'
+    },
+
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsMetadataOnly: true,
+    executionFingerprintsUsedAsLearningFamily: false,
+
+    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
+    discordOnlyForExactTrueMicroMatch: true,
+    selectionGranularity: 'EXACT_75_CHILD',
+
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    learningGranularity: LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
 
     ts: Date.now()
   };
@@ -755,11 +1261,18 @@ async function logDiscord(type, payload, result) {
 
     await pushJsonLog(
       redis,
-      KEYS.discord.logList,
+      SHORT_KEYS.discord.logList,
       {
         type,
         payload: compactPayload(payload),
         result,
+        shortOnly: true,
+        longDisabled: true,
+        redisNamespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        redisKey: SHORT_KEYS.discord.logList,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        longRootTouched: false,
         ts: Date.now()
       },
       cfg.logLimit
@@ -779,7 +1292,16 @@ async function skipDiscord(type, payload = {}, reason = 'DISCORD_SKIPPED') {
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
-    shortDisabled: false
+    shortDisabled: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+    discordOnlyForExactTrueMicroMatch: true,
+    selectionGranularity: 'EXACT_75_CHILD',
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    longRootTouched: false
   };
 
   await logDiscord(type, payload, result);
@@ -794,8 +1316,10 @@ function entrySkipReason(entry = {}) {
   if (isRealOrderSource(entry)) return 'DISCORD_REAL_ORDER_SOURCE_BLOCKED';
   if (!isVirtualSource(entry)) return 'DISCORD_VIRTUAL_SOURCE_REQUIRED';
   if (entry.action && upper(entry.action) !== 'ENTRY') return 'DISCORD_SKIPPED_NOT_ENTRY_ACTION';
-  if (!hasSelectedMicroRotationMatch(entry)) return 'ENTRY_NOT_SELECTED_MANUAL_TRUE_MICRO_MATCH';
-  if (!hasValidShortTradeShape(entry)) return 'ENTRY_INVALID_SHORT_TRADE_SHAPE';
+  if (!trueMicroFamilyId(entry)) return 'ENTRY_EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_MISSING';
+  if (!validLearningChildId(trueMicroFamilyId(entry))) return 'ENTRY_ONLY_EXACT_SHORT_75_CHILD_TRUE_MICRO_ALLOWED';
+  if (!hasSelectedMicroRotationMatch(entry)) return 'ENTRY_NOT_SELECTED_MANUAL_SHORT_75_CHILD_TRUE_MICRO_MATCH';
+  if (!hasValidShortTradeShape(entry)) return 'ENTRY_INVALID_SHORT_TRADE_SHAPE_TP_ENTRY_SL_REQUIRED';
 
   return 'ENTRY_NOT_ELIGIBLE';
 }
@@ -806,8 +1330,9 @@ function exitSkipReason(outcome = {}) {
   if (isAnalysisOnlyPayload(outcome)) return 'DISCORD_SKIPPED_ANALYSIS_ONLY';
   if (isRealOrderSource(outcome)) return 'DISCORD_REAL_ORDER_SOURCE_BLOCKED';
   if (!isVirtualSource(outcome)) return 'DISCORD_VIRTUAL_SOURCE_REQUIRED';
-  if (!microFamilyId(outcome)) return 'EXIT_MICRO_FAMILY_ID_MISSING';
-  if (!hasSelectedMicroRotationMatch(outcome)) return 'EXIT_NOT_SELECTED_MANUAL_TRUE_MICRO_MATCH';
+  if (!trueMicroFamilyId(outcome)) return 'EXIT_EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_MISSING';
+  if (!validLearningChildId(trueMicroFamilyId(outcome))) return 'EXIT_ONLY_EXACT_SHORT_75_CHILD_TRUE_MICRO_ALLOWED';
+  if (!hasSelectedMicroRotationMatch(outcome)) return 'EXIT_NOT_SELECTED_MANUAL_SHORT_75_CHILD_TRUE_MICRO_MATCH';
 
   return 'EXIT_NOT_ELIGIBLE';
 }
@@ -817,14 +1342,16 @@ function entryReasonText(entry = {}) {
   const wr = bestWinrate(entry);
   const avgR = statValue(entry, 'avgR');
   const totalR = statValue(entry, 'totalR');
+  const avgCostR = statValue(entry, 'avgCostR');
 
   return [
-    'MANUAL_TRUE_MICRO_MATCH',
+    'MANUAL_SHORT_75_CHILD_TRUE_MICRO_MATCH',
     `SOURCE=${SOURCE_VIRTUAL}`,
     `WR=${fmtPctSmart(wr)}`,
     `SAMPLE=${fmtNumber(statsSample, 2)}`,
     `AVG_R=${fmtR(avgR)}`,
-    `TOTAL_R=${fmtR(totalR)}`
+    `TOTAL_R=${fmtR(totalR)}`,
+    `AVG_COST_R=${fmtR(avgCostR)}`
   ].join(' | ');
 }
 
@@ -848,6 +1375,8 @@ export async function sendEntryAlert(entry = {}) {
   const profitFactor = statValue(entry, 'profitFactor');
   const directSLPct = statValue(entry, 'directSLPct');
   const sampleReliability = statValue(entry, 'sampleReliability');
+  const avgCostR = statValue(entry, 'avgCostR');
+  const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId(entry));
 
   const content = {
     username: 'Micro-Family Trader',
@@ -865,17 +1394,26 @@ export async function sendEntryAlert(entry = {}) {
           field('Risk', fmtPct(entry.riskPct), true),
           field('Spread', fmtPct(entry.spreadPct ?? entry.liveSpreadPct), true),
 
-          field('Micro', microFamilyId(entry) || 'NA', false),
-          field('Macro', macroFamilyId(entry) || 'NA', false),
-          field('Fingerprint', fingerprint(entry), true),
-          field('Rotation', entry.activeRotationId || 'NA', true),
-          field('Match', entry.rotationMatchType || 'TRUE_MICRO_EXACT', true),
+          field('Short risk shape', 'tp < entry < sl', true),
+          field('TP rule', 'price <= tp', true),
+          field('SL rule', 'price >= sl', true),
 
-          field('Winrate', fmtPctSmart(wr), true),
-          field('Sample', fmtNumber(sample, 2), true),
+          field('True micro 75-child', trueMicroFamilyId(entry) || 'NA', false),
+          field('Parent 15', parentTrueMicroFamilyId(entry) || 'NA', false),
+          field('Setup', parsed.setupType || entry.setupType || 'NA', true),
+          field('Regime', parsed.regimeBucket || entry.regimeBucket || 'NA', true),
+          field('Confirmation', parsed.confirmationProfile || entry.confirmationProfile || 'NA', true),
+
+          field('Fingerprint metadata', fingerprint(entry), true),
+          field('Rotation', entry.activeRotationId || entry.rotationId || 'NA', true),
+          field('Match', entry.rotationMatchType || 'TRUE_MICRO_EXACT_75_CHILD', true),
+
+          field('Winrate fair', fmtPctSmart(wr), true),
+          field('Completed', fmtNumber(sample, 2), true),
           field('Reliability', fmtPctSmart(sampleReliability), true),
           field('Avg R', fmtR(avgR), true),
           field('Total R', fmtR(totalR), true),
+          field('Avg cost', fmtR(avgCostR), true),
           field('Profit factor', fmtNumber(profitFactor, 2), true),
           field('Direct SL', fmtPctSmart(directSLPct), true),
 
@@ -900,10 +1438,19 @@ export async function sendEntryAlert(entry = {}) {
   await logDiscord('ENTRY', {
     ...entry,
     source: SOURCE_VIRTUAL,
+    outcomeSource: SOURCE_VIRTUAL,
     virtualOnly: true,
     virtualTracked: true,
     shortOnly: true,
-    longDisabled: true
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA
   }, result);
 
   return result;
@@ -922,6 +1469,7 @@ export async function sendExitAlert(outcome = {}) {
   const side = normalizeSideLabel(outcome);
   const exitPrice = extractExitPrice(outcome);
   const resultR = extractResultR(outcome);
+  const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId(outcome));
 
   const content = {
     username: 'Micro-Family Trader',
@@ -939,10 +1487,17 @@ export async function sendExitAlert(outcome = {}) {
           field('Gross R', fmtR(outcome.grossR), true),
           field('MFE', fmtR(outcome.mfeR), true),
           field('MAE', fmtR(outcome.maeR), true),
-          field('Micro', microFamilyId(outcome) || 'NA', false),
-          field('Macro', macroFamilyId(outcome) || 'NA', false),
-          field('Fingerprint', fingerprint(outcome), true),
-          field('Rotation', outcome.activeRotationId || 'NA', true)
+
+          field('Short grossR', '(entry - exitPrice) / (initialSl - entry)', false),
+
+          field('True micro 75-child', trueMicroFamilyId(outcome) || 'NA', false),
+          field('Parent 15', parentTrueMicroFamilyId(outcome) || 'NA', false),
+          field('Setup', parsed.setupType || outcome.setupType || 'NA', true),
+          field('Regime', parsed.regimeBucket || outcome.regimeBucket || 'NA', true),
+          field('Confirmation', parsed.confirmationProfile || outcome.confirmationProfile || 'NA', true),
+
+          field('Fingerprint metadata', fingerprint(outcome), true),
+          field('Rotation', outcome.activeRotationId || outcome.rotationId || 'NA', true)
         ],
         timestamp: nowIso()
       }
@@ -953,24 +1508,54 @@ export async function sendExitAlert(outcome = {}) {
   await logDiscord('EXIT', {
     ...outcome,
     source: SOURCE_VIRTUAL,
+    outcomeSource: SOURCE_VIRTUAL,
     virtualOnly: true,
     virtualTracked: true,
     shortOnly: true,
-    longDisabled: true
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA
   }, result);
 
   return result;
 }
 
+function exactChildIdsFromRotation(rotation = {}) {
+  return uniqueStrings([
+    rotation.trueMicroFamilyIds || [],
+    rotation.childTrueMicroFamilyIds || [],
+    rotation.microFamilyIds || [],
+    rotation.activeMicroFamilyIds || [],
+    rotation.activeTrueMicroFamilyIds || [],
+    Array.isArray(rotation.microFamilies)
+      ? rotation.microFamilies.map((row) => trueMicroFamilyId(row))
+      : []
+  ])
+    .map(upper)
+    .filter(validLearningChildId);
+}
+
 function bestShortId(rotation = {}) {
-  return (
-    rotation.bestShort?.microFamilyId ||
-    rotation.selectedMicroFamilyId ||
-    rotation.microFamilyIds?.[0] ||
-    rotation.activeMicroFamilyIds?.[0] ||
-    rotation.trueMicroFamilyIds?.[0] ||
-    'NA'
-  );
+  const candidates = [
+    trueMicroFamilyId(rotation.bestShort || {}),
+    rotation.selectedTrueMicroFamilyId,
+    rotation.selectedMicroFamilyId,
+    ...exactChildIdsFromRotation(rotation)
+  ];
+
+  for (const candidate of candidates) {
+    const value = upper(candidate);
+
+    if (validLearningChildId(value)) return value;
+  }
+
+  return 'NA';
 }
 
 function shouldSendRotationReport(rotation = {}, label = '') {
@@ -983,6 +1568,10 @@ function shouldSendRotationReport(rotation = {}, label = '') {
   if (normalizedLabel.includes('NEXT_ROTATION_READY')) return false;
   if (rotation.autoRotation === true && rotation.liveSelectable !== true) return false;
   if (rotation.empty === true) return false;
+
+  const childIds = exactChildIdsFromRotation(rotation);
+
+  if (childIds.length === 0) return false;
 
   return Boolean(
     rotation.manualOnly === true ||
@@ -1009,43 +1598,41 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
         longOnly: false,
         shortDisabled: false
       },
-      'ROTATION_REPORT_DISABLED_OR_NOT_MANUAL_LIVE_SELECTABLE'
+      'ROTATION_REPORT_DISABLED_OR_NOT_MANUAL_LIVE_SELECTABLE_EXACT_SHORT_75_CHILD'
     );
   }
 
-  const microCount =
-    rotation.microFamilyIds?.length ||
-    rotation.activeMicroFamilyIds?.length ||
-    rotation.trueMicroFamilyIds?.length ||
-    rotation.microFamilies?.length ||
-    0;
-
-  const macroCount =
-    rotation.macroFamilyIds?.length ||
-    rotation.activeMacroFamilyIds?.length ||
-    0;
+  const childIds = exactChildIdsFromRotation(rotation);
+  const parentIds = uniqueStrings(
+    childIds
+      .map((id) => parseShortTaxonomyMicroId(id).parentTrueMicroFamilyId)
+      .filter(Boolean)
+  );
 
   const week =
     rotation.sourceWeekKey ||
     rotation.activeWeekKey ||
     rotation.weekKey ||
-    'NA';
+    PERSISTENT_LEARNING_KEY;
 
   const content = {
     username: 'Micro-Family Trader',
     embeds: [
       {
-        title: `${label} SHORT MANUAL MICRO SET`,
+        title: `${label} SHORT MANUAL 75-CHILD MICRO SET`,
         color: 0x7c3aed,
         fields: [
-          field('Micro count', String(microCount), true),
-          field('Macro count', String(macroCount), true),
+          field('75-child count', String(childIds.length), true),
+          field('Parent-15 count', String(parentIds.length), true),
           field('Mode', rotation.mode || 'NA', true),
           field('Week', week, true),
-          field('Best SHORT', bestShortId(rotation), false),
+          field('Best SHORT 75-child', bestShortId(rotation), false),
           field('Manual only', String(Boolean(rotation.manualOnly)), true),
           field('Live selectable', String(Boolean(rotation.liveSelectable)), true),
-          field('Long disabled', 'true', true)
+          field('Long disabled', 'true', true),
+          field('Schema', TRUE_MICRO_SCHEMA, true),
+          field('Learning key', PERSISTENT_LEARNING_KEY, true),
+          field('Redis namespace', SHORT_NAMESPACE, true)
         ],
         timestamp: nowIso()
       }
@@ -1056,10 +1643,20 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
   await logDiscord('WEEKLY_ROTATION', {
     ...rotation,
     bestLong: null,
+    trueMicroFamilyIds: childIds,
+    childTrueMicroFamilyIds: childIds,
+    parentTrueMicroFamilyIds: parentIds,
+    macroFamilyIds: parentIds,
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
-    shortDisabled: false
+    shortDisabled: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA
   }, result);
 
   return result;
@@ -1085,7 +1682,9 @@ export async function sendResetReport(report = {}) {
           field('Reason', report.reason || 'OK', true),
           field('Deleted', String(deletedCount), true),
           field('Short only', 'true', true),
-          field('Long disabled', 'true', true)
+          field('Long disabled', 'true', true),
+          field('Redis namespace', SHORT_NAMESPACE, true),
+          field('Learning key', PERSISTENT_LEARNING_KEY, true)
         ],
         timestamp: nowIso()
       }
@@ -1098,7 +1697,14 @@ export async function sendResetReport(report = {}) {
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
-    shortDisabled: false
+    shortDisabled: false,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    longRootTouched: false
   }, result);
 
   return result;
