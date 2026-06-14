@@ -18,24 +18,31 @@ const OPPOSITE_TRADE_SIDE = 'LONG';
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY';
+
 /*
-  BELANGRIJKE WIJZIGING (taxonomie i.p.v. hash):
+  SHORT-only Analyze micro-family taxonomy.
 
-  De echte Analyze learning-ID (trueMicroFamilyId) is NIET langer een hash
-  over ~25 buckets. Dat veroorzaakte families met 1 coin (astronomisch veel
-  unieke combinaties). In plaats daarvan vallen alle setups verplicht in een
-  klein, vast aantal families:
+  Learning identity:
+    MICRO_SHORT_{SETUP}_{REGIME}
 
-  MICRO_SHORT_{SETUP}_{REGIME}
+  SETUP:
+    BREAKDOWN
+    RETEST
+    SWEEP_REVERSAL
+    CONTINUATION
+    COMPRESSION
 
-  SETUP:  BREAKDOWN | RETEST | SWEEP_REVERSAL | CONTINUATION | COMPRESSION
-  REGIME: TREND | CHOP | SQUEEZE
+  REGIME:
+    TREND
+    CHOP
+    SQUEEZE
 
-  = 5 x 3 = 15 vaste families. Breed genoeg voor data, smal genoeg voor edge.
+  Totaal: 5 x 3 = 15 vaste SHORT microfamilies.
 
-  Alle oude buckets (rsi, flow, ob, spread, depth, funding, cost, etc.)
-  BLIJVEN behouden als metadata/debug in definitionParts en in de
-  execution-fingerprint. Ze bepalen alleen niet langer de IDENTITEIT.
+  Scanner fingerprints, execution fingerprints, symbol, spread, rsi, flow,
+  orderbook, btc-state, funding, rr, costs enzovoort blijven metadata/debug.
+  Ze worden NIET gebruikt als learning-ID.
 */
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
@@ -74,6 +81,38 @@ const LONG_TOKENS = new Set([
   'UPSIDE',
   'GREEN'
 ]);
+
+function fixedIdentityFlags() {
+  return {
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintOnlyMetadata: false,
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+
+    executionFingerprintRole: 'METADATA_ONLY',
+    executionFingerprintsMetadataOnly: true,
+    executionFingerprintsUsedAsLearningFamily: false,
+
+    analyzeMicroFamiliesOnly: true,
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    learningIdentity: 'ANALYZE_MICRO_FAMILY_FIXED_TAXONOMY',
+    exactTrueMicroFamilyRequired: true,
+    symbolExcludedFromFamilyId: true,
+
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fineMicroFamilyAsMetadataOnly: true,
+    fixedTaxonomyLearningId: true
+  };
+}
 
 function getMacroSchema() {
   return String(
@@ -122,6 +161,8 @@ function cleanSideText(value = '') {
   return String(value || '')
     .trim()
     .toUpperCase()
+    .replaceAll('LONG_DISABLED_TRUE', '')
+    .replaceAll('LONGDISABLED_TRUE', '')
     .replaceAll('LONG_DISABLED', '')
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
@@ -281,7 +322,6 @@ function inferSideFromScannerReason(metrics = {}) {
 function inferTradeSide(metrics = {}) {
   const directSide = inferSideFromValues([
     metrics.tradeSide,
-    metrics.side,
     metrics.positionSide,
     metrics.direction,
     metrics.signalSide,
@@ -291,7 +331,8 @@ function inferTradeSide(metrics = {}) {
     metrics.expectedSide,
     metrics.predictedSide,
     metrics.intentSide,
-    metrics.biasSide
+    metrics.biasSide,
+    metrics.side
   ]);
 
   if (directSide === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
@@ -311,6 +352,10 @@ function inferTradeSide(metrics = {}) {
     return TARGET_TRADE_SIDE;
   }
 
+  if (metrics.longOnly === true || metrics.shortDisabled === true) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
   return TARGET_TRADE_SIDE;
 }
 
@@ -326,16 +371,13 @@ function assertShortOnly(metrics = {}) {
 
   return {
     ...metrics,
-    side: TARGET_TRADE_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
+
+    ...fixedIdentityFlags()
   };
 }
 
@@ -384,7 +426,7 @@ function numericBps(value) {
 
   if (!Number.isFinite(bps)) return null;
 
-  return Number(formatBucketNumber(bps, 3));
+  return Number(bps.toFixed(3));
 }
 
 function threeTier(value, {
@@ -614,7 +656,7 @@ function coarseRegime(regime) {
 function coarseFlow(flow) {
   const f = toUpper(flow, 'NEUTRAL');
 
-  if (['TREND', 'IMPULSE', 'DUMP', 'SELL_IMPULSE'].includes(f)) return 'TREND';
+  if (['TREND', 'IMPULSE', 'DUMP', 'SELL_IMPULSE', 'SELL_TREND'].includes(f)) return 'TREND';
   if (f === 'BUILDING') return 'BUILDING';
 
   return 'NEUTRAL';
@@ -625,9 +667,12 @@ function coarseScannerReason(reason) {
 
   if (r.includes('RETEST')) return 'RETEST';
   if (r.includes('PULLBACK')) return 'PULLBACK';
+  if (r.includes('SWEEP')) return 'SWEEP';
+  if (r.includes('BREAKDOWN')) return 'BREAKDOWN';
   if (r.includes('BREAKOUT')) return 'BREAKOUT';
   if (r.includes('VOLUME')) return 'VOLUME';
   if (r.includes('MOMENTUM')) return 'MOMENTUM';
+  if (r.includes('COMPRESSION') || r.includes('SQUEEZE')) return 'COMPRESSION';
 
   return 'UNKNOWN';
 }
@@ -809,12 +854,6 @@ function getSpreadPct(metrics = {}) {
   return NaN;
 }
 
-/*
-  VASTE TAXONOMIE: SETUP-TYPE + REGIME-BUCKET
-
-  Dit zijn de twee bouwstenen van de echte learning-identiteit.
-  Geen hash. Elke coin valt deterministisch in 1 van 5 setups x 3 regimes.
-*/
 function classifySetupType(metrics = {}) {
   const reason = toUpper(metrics.scannerReason, '');
   const flow = coarseFlow(metrics.flow);
@@ -832,6 +871,14 @@ function classifySetupType(metrics = {}) {
     return 'RETEST';
   }
 
+  if (reason.includes('BREAKDOWN')) {
+    return 'BREAKDOWN';
+  }
+
+  if (reason.includes('COMPRESSION') || reason.includes('SQUEEZE')) {
+    return 'COMPRESSION';
+  }
+
   if (volBucket === 'VOL_LO' && flow !== 'TREND') {
     return 'COMPRESSION';
   }
@@ -844,13 +891,35 @@ function classifySetupType(metrics = {}) {
 }
 
 function classifyRegimeBucket(metrics = {}) {
-  const vol = coarseRegime(metrics.regime);
+  const explicit = toUpper(metrics.regimeBucket, '');
+
+  if (REGIME_BUCKETS.includes(explicit)) return explicit;
+
+  const regime = toUpper(metrics.regime, '');
+  const regimeCoarse = toUpper(metrics.regimeCoarse, '');
   const flow = coarseFlow(metrics.flow);
+  const vol = coarseRegime(metrics.regime);
+  const volBucket = volatilityTier(getVolatilityPct(metrics));
 
-  if (vol === 'LOW_VOL') return 'SQUEEZE';
+  if (
+    regime.includes('SQUEEZE') ||
+    regime.includes('COMPRESSION') ||
+    regimeCoarse.includes('SQUEEZE') ||
+    regimeCoarse.includes('COMPRESSION') ||
+    vol === 'LOW_VOL' ||
+    volBucket === 'VOL_LO'
+  ) {
+    return 'SQUEEZE';
+  }
 
-  if (flow === 'TREND') return 'TREND';
-  if (vol === 'HIGH_VOL') return 'TREND';
+  if (
+    flow === 'TREND' ||
+    vol === 'HIGH_VOL' ||
+    regime.includes('TREND') ||
+    regimeCoarse.includes('TREND')
+  ) {
+    return 'TREND';
+  }
 
   return 'CHOP';
 }
@@ -862,6 +931,8 @@ function buildTaxonomyFamilyId(metrics = {}) {
   return {
     setup,
     regime,
+    setupType: setup,
+    regimeBucket: regime,
     microFamilyId: `MICRO_${TARGET_TRADE_SIDE}_${setup}_${regime}`
   };
 }
@@ -873,10 +944,30 @@ function isScannerFamilyId(id = '') {
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
+    value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
   );
+}
+
+function isFixedTaxonomyMicroId(id = '') {
+  const value = String(id || '').toUpperCase();
+
+  if (!value || isScannerFamilyId(value)) return false;
+  if (!value.startsWith(`MICRO_${TARGET_TRADE_SIDE}_`)) return false;
+  if (value.includes('_XR_')) return false;
+  if (value.includes('_MF_V1_') || value.includes('_MF_V2_') || value.includes('_MF_V3_')) return false;
+
+  return SETUP_TYPES.some((setup) => (
+    REGIME_BUCKETS.some((regime) => (
+      value === `MICRO_${TARGET_TRADE_SIDE}_${setup}_${regime}`
+    ))
+  ));
 }
 
 function isAnalyzeFamilyId(id = '') {
@@ -884,6 +975,7 @@ function isAnalyzeFamilyId(id = '') {
 
   if (!value) return false;
   if (isScannerFamilyId(value)) return false;
+  if (isFixedTaxonomyMicroId(value)) return true;
 
   return (
     /^SHORT_F\d{2}$/u.test(value) ||
@@ -936,7 +1028,7 @@ function resolveAnalyzeFamilyId(metrics = {}) {
     metrics.familyId
   );
 
-  if (isAnalyzeFamilyId(candidate)) {
+  if (isAnalyzeFamilyId(candidate) && !isFixedTaxonomyMicroId(candidate)) {
     return String(candidate).toUpperCase();
   }
 
@@ -971,7 +1063,10 @@ function buildMacroDefinitionParts(metrics = {}, familyId) {
 
     `entryQuality=${entryQuality(metrics)}`,
     `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
-    `scannerReason=${scannerReason}`
+    `scannerReason=${scannerReason}`,
+
+    'symbolExcludedFromFamilyId=true',
+    'scannerFingerprintRole=METADATA_ONLY'
   ];
 }
 
@@ -988,6 +1083,7 @@ function buildMicroDefinitionParts(metrics = {}, parent, taxonomy) {
 
   return [
     `schema=${getMicroSchema()}`,
+    `trueMicroFamilySchema=${TRUE_MICRO_SCHEMA}`,
     `granularity=${LEARNING_GRANULARITY}`,
     `parent=${parent.microFamilyId}`,
     `side=${TARGET_DASHBOARD_SIDE}`,
@@ -997,6 +1093,7 @@ function buildMicroDefinitionParts(metrics = {}, parent, taxonomy) {
     `setupType=${taxonomy.setup}`,
     `regimeBucket=${taxonomy.regime}`,
     `learningFamily=${taxonomy.microFamilyId}`,
+    `trueMicroFamilyId=${taxonomy.microFamilyId}`,
 
     `assetClass=${assetClass(metrics)}`,
     `symbolClass=${symbolClassBucket(metrics)}`,
@@ -1053,11 +1150,16 @@ function buildMicroDefinitionParts(metrics = {}, parent, taxonomy) {
 
     `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
     `fakeBreakoutRisk=${boolToken(metrics.fakeBreakoutRisk)}`,
-    `scannerReason=${coarseScannerReason(metrics.scannerReason)}`
+    `scannerReason=${coarseScannerReason(metrics.scannerReason)}`,
+
+    'learningIdentity=ANALYZE_MICRO_FAMILY_FIXED_TAXONOMY',
+    'symbolExcludedFromFamilyId=true',
+    'scannerFingerprintRole=METADATA_ONLY',
+    'executionFingerprintRole=METADATA_ONLY'
   ];
 }
 
-function buildExecutionFingerprintParts(metrics = {}, parent) {
+function buildExecutionFingerprintParts(metrics = {}, parent, taxonomy = {}) {
   const spreadPct = getSpreadPct(metrics);
   const entryDistancePct = getEntryDistancePct(metrics);
   const slDistancePct = getSlDistancePct(metrics);
@@ -1079,9 +1181,14 @@ function buildExecutionFingerprintParts(metrics = {}, parent) {
 
   return [
     `xrSchema=${EXECUTION_MICRO_SUFFIX}`,
+    `role=METADATA_ONLY`,
     `tradeSide=${TARGET_TRADE_SIDE}`,
     `family=${normalizeToken(parent.familyId)}`,
     `macro=${normalizeToken(parent.microFamilyId)}`,
+    `trueMicro=${normalizeToken(taxonomy.microFamilyId || '')}`,
+
+    `setupType=${normalizeToken(taxonomy.setup || 'NA')}`,
+    `regimeBucket=${normalizeToken(taxonomy.regime || 'NA')}`,
 
     `assetClass=${normalizeToken(assetClass(metrics))}`,
     `symbolClass=${symbolClassBucket(metrics)}`,
@@ -1185,10 +1292,10 @@ export function buildMicroFamilyV1(metrics = {}) {
 
   const normalizedSide = TARGET_DASHBOARD_SIDE;
   const obRelation = normalizeObRelation(sideSafeMetrics);
-  const btcRel = btcRelation(tradeSide, metrics.btcState);
-  const regime = coarseRegime(metrics.regime);
-  const flow = coarseFlow(metrics.flow);
-  const scannerReason = coarseScannerReason(metrics.scannerReason);
+  const btcRel = btcRelation(tradeSide, sideSafeMetrics.btcState);
+  const regime = coarseRegime(sideSafeMetrics.regime);
+  const flow = coarseFlow(sideSafeMetrics.flow);
+  const scannerReason = coarseScannerReason(sideSafeMetrics.scannerReason);
   const definitionParts = buildMacroDefinitionParts(sideSafeMetrics, familyId);
   const hash = stableHash(definitionParts.join('|'), 8);
   const schema = getMacroSchema();
@@ -1213,21 +1320,15 @@ export function buildMicroFamilyV1(metrics = {}) {
     positionSide: tradeSide,
     direction: tradeSide,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
     obRelation,
     btcRelation: btcRel,
     regime,
     flow,
     scannerReason,
 
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    spreadBps: numericBps(getSpreadPct(sideSafeMetrics)),
 
-    spreadBps: Number((safeNumber(getSpreadPct(metrics), 0) * 10000).toFixed(3))
+    ...fixedIdentityFlags()
   };
 }
 
@@ -1246,7 +1347,7 @@ export function buildMicroFamilyV2(metrics = {}) {
   const schema = getMicroSchema();
 
   const executionFingerprintParts = shouldBuildExecutionFingerprintMetadata()
-    ? buildExecutionFingerprintParts(sideSafeMetrics, parent)
+    ? buildExecutionFingerprintParts(sideSafeMetrics, parent, taxonomy)
     : [];
 
   const executionFingerprintHash = executionFingerprintParts.length
@@ -1268,6 +1369,8 @@ export function buildMicroFamilyV2(metrics = {}) {
     `setupType=${taxonomy.setup}`,
     `regimeBucket=${taxonomy.regime}`,
     `analyzeMicroFamilyId=${analyzeMicroFamilyId}`,
+    `learningMicroFamilyId=${analyzeMicroFamilyId}`,
+    `trueMicroFamilyId=${analyzeMicroFamilyId}`,
     `coarseMicroFamilyId=${analyzeMicroFamilyId}`,
     `learningGranularity=${LEARNING_GRANULARITY}`,
     'learningIdentity=ANALYZE_MICRO_FAMILY_FIXED_TAXONOMY',
@@ -1290,6 +1393,7 @@ export function buildMicroFamilyV2(metrics = {}) {
 
     analyzeMicroFamilyId,
     learningMicroFamilyId: analyzeMicroFamilyId,
+    broadTrueMicroFamilyId: analyzeMicroFamilyId,
 
     setupType: taxonomy.setup,
     regimeBucket: taxonomy.regime,
@@ -1319,43 +1423,39 @@ export function buildMicroFamilyV2(metrics = {}) {
 
     definition: definitionParts.join(' | '),
     definitionParts,
+    microDefinition: definitionParts.join(' | '),
+    microDefinitionParts: definitionParts,
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
     assetClass: assetClass(sideSafeMetrics),
 
     obRelation: normalizeObRelation(sideSafeMetrics),
-    btcRelation: btcRelation(TARGET_TRADE_SIDE, metrics.btcState),
-    btcState: toUpper(metrics.btcState, 'NEUTRAL'),
+    btcRelation: btcRelation(TARGET_TRADE_SIDE, sideSafeMetrics.btcState),
+    btcState: toUpper(sideSafeMetrics.btcState, 'NEUTRAL'),
 
-    regime: coarseRegime(metrics.regime),
-    regimeCoarse: coarseRegime(metrics.regime),
+    regime: coarseRegime(sideSafeMetrics.regime),
+    regimeCoarse: coarseRegime(sideSafeMetrics.regime),
 
-    flow: coarseFlow(metrics.flow),
-    flowCoarse: coarseFlow(metrics.flow),
+    flow: coarseFlow(sideSafeMetrics.flow),
+    flowCoarse: coarseFlow(sideSafeMetrics.flow),
 
-    scannerReason: coarseScannerReason(metrics.scannerReason),
-    scannerReasonCoarse: coarseScannerReason(metrics.scannerReason),
+    scannerReason: coarseScannerReason(sideSafeMetrics.scannerReason),
+    scannerReasonCoarse: coarseScannerReason(sideSafeMetrics.scannerReason),
 
-    rsiZone: coarseRsi(metrics.rsiZone),
-    rsiCoarse: coarseRsi(metrics.rsiZone),
+    rsiZone: coarseRsi(sideSafeMetrics.rsiZone),
+    rsiCoarse: coarseRsi(sideSafeMetrics.rsiZone),
 
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    spreadBps: numericBps(getSpreadPct(sideSafeMetrics)),
+    entryDistanceBps: numericBps(getEntryDistancePct(sideSafeMetrics)),
+    slDistanceBps: numericBps(getSlDistancePct(sideSafeMetrics)),
+    tpDistanceBps: numericBps(getTpDistancePct(sideSafeMetrics)),
+    liqDistanceBps: numericBps(getLiquidationDistancePct(sideSafeMetrics)),
 
-    spreadBps: Number((safeNumber(getSpreadPct(metrics), 0) * 10000).toFixed(3)),
-    entryDistanceBps: numericBps(getEntryDistancePct(metrics)),
-    slDistanceBps: numericBps(getSlDistancePct(metrics)),
-    tpDistanceBps: numericBps(getTpDistancePct(metrics)),
-    liqDistanceBps: numericBps(getLiquidationDistancePct(metrics))
+    ...fixedIdentityFlags()
   };
 }
 
@@ -1380,16 +1480,13 @@ export function buildMicroFamilyForSide(metrics = {}, side = TARGET_TRADE_SIDE, 
   return buildMicroFamily(
     {
       ...metrics,
-      side: TARGET_TRADE_SIDE,
+
+      side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       positionSide: TARGET_TRADE_SIDE,
       direction: TARGET_TRADE_SIDE,
-      targetTradeSide: TARGET_TRADE_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-      shortOnly: true,
-      longDisabled: true,
-      longOnly: false,
-      shortDisabled: false
+
+      ...fixedIdentityFlags()
     },
     options
   );
@@ -1409,19 +1506,6 @@ export function getMicroFamilyId(metrics = {}, options = {}) {
 
 export function getParentMacroFamilyId(metrics = {}) {
   return buildMicroFamilyV1(metrics).microFamilyId;
-}
-
-function isFixedTaxonomyMicroId(id = '') {
-  const value = String(id || '').toUpperCase();
-
-  if (!value || isScannerFamilyId(value)) return false;
-  if (!value.startsWith(`MICRO_${TARGET_TRADE_SIDE}_`)) return false;
-
-  return SETUP_TYPES.some((setup) => (
-    REGIME_BUCKETS.some((regime) => (
-      value === `MICRO_${TARGET_TRADE_SIDE}_${setup}_${regime}`
-    ))
-  ));
 }
 
 export function isMicroFamilyV1Id(id) {
@@ -1476,13 +1560,7 @@ export function attachMicroFamilies(metrics = {}) {
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    ...fixedIdentityFlags(),
 
     familyId: micro.familyId,
 
@@ -1499,6 +1577,7 @@ export function attachMicroFamilies(metrics = {}) {
 
     analyzeMicroFamilyId: micro.analyzeMicroFamilyId,
     learningMicroFamilyId: micro.learningMicroFamilyId,
+    broadTrueMicroFamilyId: micro.broadTrueMicroFamilyId,
 
     setupType: micro.setupType,
     regimeBucket: micro.regimeBucket,
@@ -1519,32 +1598,34 @@ export function attachMicroFamilies(metrics = {}) {
     executionMicroFamilyId: micro.executionMicroFamilyId,
     executionFingerprintRole: 'METADATA_ONLY',
 
+    schema: micro.schema,
     microFamilySchema: micro.schema,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
 
     microFamilyDefinition: micro.definition,
     microFamilyDefinitionParts: micro.definitionParts,
+    microDefinition: micro.definition,
+    microDefinitionParts: micro.definitionParts,
 
     macroFamilyDefinition: macro.definition,
     macroFamilyDefinitionParts: macro.definitionParts,
 
-    scannerFingerprintRole: 'METADATA_ONLY',
-    learningIdentitySource: 'ANALYZE_MICRO_FAMILY'
+    definition: micro.definition,
+    definitionParts: micro.definitionParts
   };
 }
 
 export function attachMicroFamiliesForBothSides(metrics = {}) {
   const short = attachMicroFamilies({
     ...metrics,
-    side: TARGET_TRADE_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
     direction: TARGET_TRADE_SIDE,
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
+
+    ...fixedIdentityFlags()
   });
 
   return {
