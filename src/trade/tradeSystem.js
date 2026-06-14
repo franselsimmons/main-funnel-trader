@@ -58,28 +58,6 @@ const RUN_SCOPE = 'TRADE_ONLY';
 const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
 const READ_SCOPE = 'READ_SCANNER_LATEST_ONLY';
 
-/*
-  SHORT scanner-wide virtual learning variant:
-
-  Doel:
-  - scanner vindt coins
-  - tradeSystem opent op elke geldige SHORT scanner coin een virtual learning trade
-  - elke virtual learning trade krijgt entry / TP / SL
-  - Analyze koppelt elke trade aan de juiste trueMicroFamilyId
-  - PositionEngine sluit later TP / SL / TIME_STOP
-  - microFamilies krijgen veel outcome-data:
-      seen, trades, completed, TP, SL, netR, avgR, totalR
-  - Discord stuurt alleen als exact geselecteerde trueMicroFamilyId opnieuw verschijnt
-
-  Belangrijk:
-  - geen echte orders
-  - geen Bitget orders
-  - geen exchange orders
-  - RiskEngine blijft voorkeur
-  - als RiskEngine geen geldige risk shape geeft, gebruikt learning fallback TP/SL
-  - fallback is alleen virtual learning, niet premium riskEngine-signaal
-  - één open virtual positie per symbol blijft actief
-*/
 const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V1';
 const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_FAMILY_TP_SL_LEARNING_V1';
 
@@ -96,6 +74,8 @@ const FREEZE_MEASUREMENT_RECOMMENDED_DAYS = 14;
 const MIN_COMPLETED_EARLY_SIGNAL = 20;
 const MIN_COMPLETED_REASONABLE_SIGNAL = 50;
 const MIN_COMPLETED_STRONG_SIGNAL = 100;
+
+const FIXED_TAXONOMY_SCHEMA = 'FIXED_TAXONOMY';
 
 const KNOWN_TRADE_SIDES = new Set([
   TARGET_TRADE_SIDE,
@@ -122,6 +102,20 @@ const LONG_TOKENS = new Set([
   'UP',
   'UPSIDE',
   'GREEN'
+]);
+
+const FIXED_TAXONOMY_SETUP_TYPES = new Set([
+  'BREAKDOWN',
+  'RETEST',
+  'SWEEP_REVERSAL',
+  'CONTINUATION',
+  'COMPRESSION'
+]);
+
+const FIXED_TAXONOMY_REGIME_BUCKETS = new Set([
+  'TREND',
+  'CHOP',
+  'SQUEEZE'
 ]);
 
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
@@ -265,9 +259,11 @@ function virtualFlags() {
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
 
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
     exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
+    fixedTaxonomyPreferred: true,
+    trueMicroFamilySchema: FIXED_TAXONOMY_SCHEMA,
 
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
     entrySlightlyLoosened: true,
@@ -434,7 +430,6 @@ function tradeConfig() {
     allowStandardizedLearningRiskFallback,
     allowStandardizedLearningRiskVirtualEntries,
 
-    // Backward-compatible admin/config fields.
     allowSyntheticRiskFallback: allowStandardizedLearningRiskFallback,
     allowSyntheticRiskVirtualEntries: allowStandardizedLearningRiskVirtualEntries,
 
@@ -481,7 +476,7 @@ function schemaConfig() {
 
   const microSchema = String(
     CONFIG.analyze?.microSchema ||
-    'MF_V2'
+    FIXED_TAXONOMY_SCHEMA
   ).toUpperCase();
 
   const currentSchema = String(
@@ -567,6 +562,37 @@ function isScannerFamilyId(id = '') {
   );
 }
 
+function isFixedTaxonomyMicroId(id = '') {
+  const value = String(id || '').toUpperCase();
+
+  if (!value) return false;
+  if (isScannerFamilyId(value)) return false;
+  if (!value.startsWith(`MICRO_${TARGET_TRADE_SIDE}_`)) return false;
+
+  if (
+    value.includes('_MF_V1_') ||
+    value.includes('_MF_V2_') ||
+    value.includes('_MF_V3_') ||
+    value.includes('_XR_')
+  ) {
+    return false;
+  }
+
+  const rest = value.slice(`MICRO_${TARGET_TRADE_SIDE}_`.length);
+
+  for (const regime of FIXED_TAXONOMY_REGIME_BUCKETS) {
+    const suffix = `_${regime}`;
+
+    if (rest.endsWith(suffix)) {
+      const setup = rest.slice(0, rest.length - suffix.length);
+
+      if (FIXED_TAXONOMY_SETUP_TYPES.has(setup)) return true;
+    }
+  }
+
+  return false;
+}
+
 function normalizeSymbolToken(value = '') {
   return String(value || '')
     .toUpperCase()
@@ -590,6 +616,7 @@ function stripSymbolTokensFromFamilyId(id = '', row = {}) {
   const raw = String(id || '').trim();
 
   if (!raw) return raw;
+  if (isFixedTaxonomyMicroId(raw)) return raw.toUpperCase();
 
   const tokens = symbolTokensFromRow(row);
   if (!tokens.length) return raw;
@@ -682,8 +709,11 @@ function scannerMetadataFrom(...rows) {
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
 
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
-    symbolExcludedFromFamilyId: true
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    exactTrueMicroFamilyRequired: true,
+    symbolExcludedFromFamilyId: true,
+    fixedTaxonomyPreferred: true,
+    trueMicroFamilySchema: FIXED_TAXONOMY_SCHEMA
   };
 }
 
@@ -1120,7 +1150,9 @@ function buildVirtualExitAction(outcome = {}) {
     scannerFingerprintOnlyMetadata: false,
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    exactTrueMicroFamilyRequired: true,
+    symbolExcludedFromFamilyId: true,
 
     exitReason: outcome.exitReason || null,
     exitPrice: outcome.exitPrice ?? null,
@@ -1290,6 +1322,10 @@ function isTrueMicroFamilyRow(row = {}) {
   if (!isTargetRow(row) && !idLooksLikeTargetFamily(id)) return false;
   if (version.includes('MACRO')) return false;
 
+  if (isFixedTaxonomyMicroId(id)) return true;
+  if (row.fixedTaxonomyLearningId === true) return true;
+  if (schema === FIXED_TAXONOMY_SCHEMA) return true;
+
   if (row.isTrueMicro === true || row.trueMicro === true) return true;
   if (schema === microSchema) return true;
   if (idHasSchema(id, microSchema)) return true;
@@ -1310,6 +1346,8 @@ function isKnownTrueMicroFamilyId(id = '') {
   if (isScannerFamilyId(id)) return false;
   if (!idLooksLikeTargetFamily(id)) return false;
   if (idHasSchema(id, macroSchema)) return false;
+
+  if (isFixedTaxonomyMicroId(id)) return true;
 
   return (
     idHasSchema(id, microSchema) ||
@@ -1464,6 +1502,8 @@ function buildSelectedAlertContext(activeRotation) {
     shortDisabled: false,
 
     selectionPurpose: 'DISCORD_ALERT_ONLY',
+    fixedTaxonomyPreferred: true,
+    trueMicroFamilySchema: FIXED_TAXONOMY_SCHEMA,
 
     ...isolationFlags()
   };
@@ -1588,11 +1628,6 @@ async function cachedVolatile(key, ttlSec, fn) {
     return cached;
   }
 
-  /*
-    TradeSystem mag geen LIVE:* cache schrijven.
-    Dit voorkomt dat de Trade pagina de Live/Scanner pagina-state overschrijft.
-    De data wordt wel live opgehaald en gebruikt voor deze run.
-  */
   return fn();
 }
 
@@ -2497,25 +2532,34 @@ async function safeProcessCandidate(candidate) {
 
     const fallback = buildStandardizedShortLearningRiskMetrics({
       normalized,
+      data: {},
       reason: 'CANDIDATE_PROCESS_ERROR_STANDARDIZED_LEARNING_TP_SL'
     });
+
+    const fallbackWithErrorMeta = {
+      ...fallback,
+      candidateProcessError: true,
+      candidateProcessErrorMessage: error?.message || String(error),
+      candidateProcessErrorAt: now()
+    };
 
     const riskWait = buildActualRiskWaitIfNeeded({
       normalized,
       scannerSide: TARGET_TRADE_SIDE,
-      metricsRows: [fallback]
+      metricsRows: [fallbackWithErrorMeta]
     });
 
     return {
-      actions: [
-        waitAction(normalized, 'CANDIDATE_PROCESS_ERROR', {
-          error: error?.message || String(error),
-          learningFallbackAttempted: true,
-          learningFallbackValid: hasValidRiskShape(fallback)
-        }),
-        ...(riskWait ? [riskWait] : [])
-      ],
-      metrics: [fallback]
+      actions: riskWait
+        ? [
+          waitAction(normalized, 'CANDIDATE_PROCESS_ERROR_AND_LEARNING_FALLBACK_FAILED', {
+            error: error?.message || String(error),
+            learningFallbackAttempted: true,
+            learningFallbackValid: hasValidRiskShape(fallbackWithErrorMeta)
+          })
+        ]
+        : [],
+      metrics: [fallbackWithErrorMeta]
     };
   }
 }
@@ -2536,6 +2580,8 @@ function buildVirtualEntryAction({
     alertContext.microToMacroFamilyId[microFamilyId] ||
     null;
 
+  const fixedTaxonomyLearningId = isFixedTaxonomyMicroId(microFamilyId) || row.fixedTaxonomyLearningId === true;
+
   return {
     ...row,
 
@@ -2549,6 +2595,11 @@ function buildVirtualEntryAction({
     legacyMicroFamilyId: row.legacyMicroFamilyId && !isScannerFamilyId(row.legacyMicroFamilyId)
       ? cleanLearningFamilyId(row.legacyMicroFamilyId, row)
       : coarseMicroFamilyId,
+
+    fixedTaxonomyLearningId,
+    trueMicroFamilySchema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : row.trueMicroFamilySchema || row.microFamilySchema || null,
 
     ...scannerMetadataFrom(row),
     ...sideFlags(),
@@ -2590,7 +2641,7 @@ function buildVirtualEntryAction({
 
     outcomeIdentityLocked: true,
     outcomeIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
     symbolExcludedFromFamilyId: true,
 
     validShortRiskShape: true,
