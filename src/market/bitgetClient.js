@@ -14,6 +14,18 @@ const DEFAULT_RETRIES = 2;
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
+const TARGET_SCANNER_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
+
+const SHORT_NAMESPACE = 'SHORT';
+const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
+
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
+const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
+const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const DEFAULT_TIMEOUT_MS = 2500;
 const DEFAULT_MIN_REQUEST_INTERVAL_MS = 80;
@@ -37,16 +49,124 @@ function now() {
   return Date.now();
 }
 
-function bitgetConfig() {
+function shortMachineFlags() {
   return {
-    baseUrl: CONFIG.bitget?.baseUrl || 'https://api.bitget.com',
-    productType: CONFIG.bitget?.productType || 'USDT-FUTURES',
-    timeoutMs: Math.max(500, safeNumber(CONFIG.bitget?.timeoutMs, DEFAULT_TIMEOUT_MS)),
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    scannerSide: TARGET_SCANNER_SIDE,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    virtualLearning: true,
+    virtualOnly: true,
+    virtualTracked: true,
+    paperOnly: true,
+    shadowOnly: true,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+
+    marketDataOnly: true,
+    noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    exchangeTradeCallsDisabled: true,
+    orderPlacementDisabled: true,
+
+    scannerBearishOnly: true,
+    scannerSearchSide: TARGET_SCANNER_SIDE,
+    scannerFindsBearishCandidates: true,
+    scannerDoesNotTrade: true,
+    scannerDoesNotSelectMicroFamilies: true,
+    scannerDoesNotSendDiscord: true,
+    scannerDoesNotWriteLearningFamilies: true,
+
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    scannerBucketsMetadataOnly: true,
+    legacy25BucketsMetadataOnly: true,
+
+    executionFingerprintsMetadataOnly: true,
+    executionFingerprintsUsedAsLearningFamily: false,
+
+    analyzeMicroFamiliesOnly: true,
+    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+    symbolExcludedFromFamilyId: true,
+    coinNameExcludedFromFamilyId: true,
+    hashesExcludedFromFamilyId: true,
+
+    trueMicroOnly: true,
+    exactTrueMicroOnly: true,
+    exactTrueMicroFamilyRequired: true,
+    fixedTaxonomyPreferred: true,
+
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    parentLearningEnabled: true,
+    childLearningEnabled: true,
+    learningGranularity: LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    selectionGranularity: 'EXACT_75_CHILD',
+    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
+
+    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    scoringRSource: 'netR',
+    winsLossesFlatsSource: 'netR',
+    winrateDefinition: 'netR > 0',
+    avgRSource: 'netR',
+    totalRSource: 'netR',
+    avgCostRShown: true,
+
+    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+    rankingUsesBalancedScore: true,
+    rankingUsesFairWinrate: true,
+    rankingUsesTotalR: true,
+    rankingUsesAvgR: true,
+    rankingUsesAvgCostR: true,
+    bareWinrateRankingDisabled: true,
+
+    validShortRiskShape: 'tp < entry < sl',
+    shortRiskShape: 'tp < entry < sl',
+    shortTpRule: 'price <= tp',
+    shortSlRule: 'price >= sl',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
+    discordOnlyForExactTrueMicroMatch: true,
+    discordOnlyForSelectedMicroFamilies: true,
+    discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
+
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    longRootTouched: false
+  };
+}
+
+function bitgetConfig() {
+  const cfg = CONFIG.short?.bitget || CONFIG.bitget || {};
+
+  return {
+    baseUrl: cfg.baseUrl || 'https://api.bitget.com',
+    productType: cfg.productType || 'USDT-FUTURES',
+    timeoutMs: Math.max(500, safeNumber(cfg.timeoutMs, DEFAULT_TIMEOUT_MS)),
     minRequestIntervalMs: Math.max(
       0,
-      safeNumber(CONFIG.bitget?.minRequestIntervalMs, DEFAULT_MIN_REQUEST_INTERVAL_MS)
+      safeNumber(cfg.minRequestIntervalMs, DEFAULT_MIN_REQUEST_INTERVAL_MS)
     ),
-    cacheEnabled: CONFIG.bitget?.cacheEnabled !== false
+    cacheEnabled: cfg.cacheEnabled !== false,
+
+    ...shortMachineFlags()
   };
 }
 
@@ -78,6 +198,9 @@ function stableParams(params = {}) {
 
 function cacheKey(path, params = {}) {
   return JSON.stringify({
+    namespace: SHORT_NAMESPACE,
+    keyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
     path,
     params: stableParams(params)
   });
@@ -148,7 +271,14 @@ function parseJsonText(text) {
 }
 
 function bitgetErrorMessage(prefix, details = {}) {
-  return `${prefix}_${JSON.stringify(details).slice(0, 500)}`;
+  return `${prefix}_${JSON.stringify({
+    ...details,
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    marketDataOnly: true,
+    noRealOrders: true,
+    redisNamespace: SHORT_NAMESPACE
+  }).slice(0, 500)}`;
 }
 
 function isLikelyNetworkError(error) {
@@ -193,7 +323,7 @@ async function fetchJsonOnce(path, params = {}, timeoutMs = bitgetConfig().timeo
       method: 'GET',
       headers: {
         accept: 'application/json',
-        'user-agent': CONFIG.strategyVersion || 'SHORT_ONLY_VIRTUAL_MF_TS_V1'
+        'user-agent': CONFIG.strategyVersion || 'SHORT_ONLY_VIRTUAL_75_TRUE_MICRO_MARKET_DATA_V1'
       },
       signal: controller.signal
     });
@@ -306,20 +436,30 @@ function shortCandidateMeta(change24h) {
   return {
     side: falling ? TARGET_DASHBOARD_SIDE : 'rejected',
     tradeSide: falling ? TARGET_TRADE_SIDE : 'UNKNOWN',
-    scannerSide: falling ? TARGET_TRADE_SIDE : 'UNKNOWN',
+    scannerSide: falling ? TARGET_SCANNER_SIDE : 'UNKNOWN',
+    actualScannerSide: falling ? TARGET_SCANNER_SIDE : 'UNKNOWN',
+    positionSide: falling ? TARGET_TRADE_SIDE : 'UNKNOWN',
     direction: falling ? TARGET_TRADE_SIDE : 'UNKNOWN',
 
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    isFalling: falling,
+    bearishScannerCandidate: falling,
     eligibleShortCandidate: falling,
-    rejectReason: falling ? null : 'NOT_FALLING_SHORT_ONLY'
+    isFalling: falling,
+    rejectReason: falling ? null : 'NOT_BEARISH_SHORT_SCANNER_ONLY',
+
+    scannerBucket: falling ? 'BEARISH_FALLING' : 'REJECTED_NOT_FALLING',
+    legacyScannerBucket: null,
+    scannerBucketRole: 'DEBUG_METADATA_ONLY',
+    legacy25BucketRole: 'DEBUG_METADATA_ONLY',
+
+    scannerMicroFamilyId: null,
+    scannerFamilyId: null,
+    trueMicroFamilyId: null,
+    microFamilyId: null,
+    childTrueMicroFamilyId: null,
+    parentTrueMicroFamilyId: null,
+    coarseMicroFamilyId: null,
+
+    ...shortMachineFlags()
   };
 }
 
@@ -400,11 +540,10 @@ export function parseTicker(row = {}) {
     volume24h: quoteVolume,
     change24h,
 
-    ...shortCandidateMeta(change24h),
-
     source: 'BITGET_MARKET_DATA',
     marketDataOnly: true,
-    realOrdersDisabled: true,
+
+    ...shortCandidateMeta(change24h),
 
     raw: row
   };
@@ -486,6 +625,7 @@ export async function fetchCandles(symbol, timeframe = '15m', limit = 100) {
       console.warn('BITGET_CANDLES_FAILED', JSON.stringify({
         symbol: contractSymbol,
         timeframe,
+        ...shortMachineFlags(),
         error: lastError?.message || 'EMPTY'
       }));
 
@@ -545,6 +685,7 @@ export async function fetchOrderBook(symbol) {
 
       console.warn('BITGET_ORDERBOOK_FAILED', JSON.stringify({
         symbol: contractSymbol,
+        ...shortMachineFlags(),
         error: lastError?.message || 'EMPTY'
       }));
 
@@ -602,15 +743,10 @@ function emptyOrderBookAnalysis() {
     obBias: 'NEUTRAL',
     tradeSide: 'UNKNOWN',
     scannerSide: 'UNKNOWN',
+    actualScannerSide: 'UNKNOWN',
     side: 'unknown',
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    positionSide: 'UNKNOWN',
+    direction: 'UNKNOWN',
 
     spreadPct: CONFIG.cost?.fallbackSpreadPct ?? 0.0008,
     spreadBps: safeNumber(CONFIG.cost?.fallbackSpreadPct ?? 0.0008, 0) * 10_000,
@@ -621,15 +757,29 @@ function emptyOrderBookAnalysis() {
 
     imbalance: 0,
     orderbookImbalance: 0,
+    longPressure: 0,
     shortPressure: 0,
 
     mid: 0,
     bestBid: 0,
     bestAsk: 0,
 
+    bearishOrderBookCandidate: false,
+    eligibleShortCandidate: false,
+    rejectReason: 'ORDERBOOK_UNAVAILABLE_OR_INVALID',
+
     fetchFailed: true,
-    marketDataOnly: true,
-    realOrdersDisabled: true
+
+    scannerBucket: 'ORDERBOOK_INVALID',
+    scannerBucketRole: 'DEBUG_METADATA_ONLY',
+
+    trueMicroFamilyId: null,
+    microFamilyId: null,
+    childTrueMicroFamilyId: null,
+    parentTrueMicroFamilyId: null,
+    coarseMicroFamilyId: null,
+
+    ...shortMachineFlags()
   };
 }
 
@@ -672,6 +822,10 @@ export function analyzeOrderBook(raw) {
     ? (bidDepth - askDepth) / depthTotal
     : 0;
 
+  const longPressure = depthTotal > 0
+    ? (bidDepth - askDepth) / depthTotal
+    : 0;
+
   const shortPressure = depthTotal > 0
     ? (askDepth - bidDepth) / depthTotal
     : 0;
@@ -688,16 +842,11 @@ export function analyzeOrderBook(raw) {
     obBias: bias,
 
     tradeSide: shortAligned ? TARGET_TRADE_SIDE : 'UNKNOWN',
-    scannerSide: shortAligned ? TARGET_TRADE_SIDE : 'UNKNOWN',
+    scannerSide: shortAligned ? TARGET_SCANNER_SIDE : 'UNKNOWN',
+    actualScannerSide: shortAligned ? TARGET_SCANNER_SIDE : 'UNKNOWN',
     side: shortAligned ? TARGET_DASHBOARD_SIDE : 'unknown',
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    positionSide: shortAligned ? TARGET_TRADE_SIDE : 'UNKNOWN',
+    direction: shortAligned ? TARGET_TRADE_SIDE : 'UNKNOWN',
 
     spreadPct,
     spreadBps,
@@ -708,15 +857,29 @@ export function analyzeOrderBook(raw) {
 
     imbalance,
     orderbookImbalance: imbalance,
+    longPressure,
     shortPressure,
 
     mid,
     bestBid,
     bestAsk,
 
+    bearishOrderBookCandidate: shortAligned,
+    eligibleShortCandidate: shortAligned,
+    rejectReason: shortAligned ? null : 'ORDERBOOK_NOT_BEARISH_SHORT_ONLY',
+
     fetchFailed: false,
-    marketDataOnly: true,
-    realOrdersDisabled: true
+
+    scannerBucket: shortAligned ? 'ORDERBOOK_ASK_HEAVY' : 'ORDERBOOK_NOT_BEARISH',
+    scannerBucketRole: 'DEBUG_METADATA_ONLY',
+
+    trueMicroFamilyId: null,
+    microFamilyId: null,
+    childTrueMicroFamilyId: null,
+    parentTrueMicroFamilyId: null,
+    coarseMicroFamilyId: null,
+
+    ...shortMachineFlags()
   };
 }
 
@@ -727,17 +890,14 @@ export async function fetchFunding(symbol) {
     return {
       rate: 0,
       fetchFailed: true,
-
-      targetTradeSide: TARGET_TRADE_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-
-      shortOnly: true,
-      longDisabled: true,
-      longOnly: false,
-      shortDisabled: false,
-
-      marketDataOnly: true,
-      realOrdersDisabled: true
+      fundingBucket: 'FUNDING_SYMBOL_INVALID',
+      fundingBucketRole: 'DEBUG_METADATA_ONLY',
+      trueMicroFamilyId: null,
+      microFamilyId: null,
+      childTrueMicroFamilyId: null,
+      parentTrueMicroFamilyId: null,
+      coarseMicroFamilyId: null,
+      ...shortMachineFlags()
     };
   }
 
@@ -756,47 +916,46 @@ export async function fetchFunding(symbol) {
         });
 
         const row = Array.isArray(data) ? data[0] : data;
+        const rate = safeNumber(
+          row?.fundingRate ??
+          row?.fundRate ??
+          row?.rate,
+          0
+        );
 
         return {
-          rate: safeNumber(
-            row?.fundingRate ??
-            row?.fundRate ??
-            row?.rate,
-            0
-          ),
+          rate,
           fetchFailed: false,
-
-          targetTradeSide: TARGET_TRADE_SIDE,
-          dashboardSide: TARGET_DASHBOARD_SIDE,
-
-          shortOnly: true,
-          longDisabled: true,
-          longOnly: false,
-          shortDisabled: false,
-
-          marketDataOnly: true,
-          realOrdersDisabled: true
+          fundingBucket:
+            rate < -0.0001 ? 'FUNDING_NEG' :
+            rate > 0.0001 ? 'FUNDING_POS' :
+            'FUNDING_FLAT',
+          fundingBucketRole: 'DEBUG_METADATA_ONLY',
+          trueMicroFamilyId: null,
+          microFamilyId: null,
+          childTrueMicroFamilyId: null,
+          parentTrueMicroFamilyId: null,
+          coarseMicroFamilyId: null,
+          ...shortMachineFlags()
         };
       } catch (error) {
         console.warn('BITGET_FUNDING_FAILED', JSON.stringify({
           symbol: contractSymbol,
+          ...shortMachineFlags(),
           error: error?.message || String(error)
         }));
 
         return {
           rate: 0,
           fetchFailed: true,
-
-          targetTradeSide: TARGET_TRADE_SIDE,
-          dashboardSide: TARGET_DASHBOARD_SIDE,
-
-          shortOnly: true,
-          longDisabled: true,
-          longOnly: false,
-          shortDisabled: false,
-
-          marketDataOnly: true,
-          realOrdersDisabled: true
+          fundingBucket: 'FUNDING_FETCH_FAILED',
+          fundingBucketRole: 'DEBUG_METADATA_ONLY',
+          trueMicroFamilyId: null,
+          microFamilyId: null,
+          childTrueMicroFamilyId: null,
+          parentTrueMicroFamilyId: null,
+          coarseMicroFamilyId: null,
+          ...shortMachineFlags()
         };
       }
     }
