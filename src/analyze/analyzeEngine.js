@@ -38,8 +38,6 @@ const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
-// Vaste leer-sleutel: micro-families resetten NIET meer per week.
-// Observaties + outcomes tellen oneindig door tot een handmatige factory-reset.
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const OBSERVATION_SOURCE = 'VIRTUAL';
@@ -48,25 +46,14 @@ const OUTCOME_SOURCE = 'VIRTUAL';
 const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
-// Nieuwe bredere true-microfamilies.
-// MF_V2 blijft metadata/fine-id; echte learning key wordt MF_V3.
-const TRUE_MICRO_SCHEMA = 'MF_V3';
+const FIXED_TAXONOMY_SCHEMA = 'FIXED_TAXONOMY';
+const FALLBACK_TRUE_MICRO_SCHEMA = 'MF_V3';
+const TRUE_MICRO_SCHEMA = FIXED_TAXONOMY_SCHEMA;
 const TRUE_MICRO_HASH_LEN = 8;
 
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
 
-/*
-  =========================================================================
-  === TAXONOMY FIX (1/4): herkenning van de vaste-taxonomie learning-ID ===
-  =========================================================================
-  microFamilies.js levert nu een vaste learning-ID van de vorm
-  MICRO_SHORT_{SETUP}_{REGIME}, bijvoorbeeld MICRO_SHORT_BREAKDOWN_TREND.
-
-  Deze ID heeft GEEN _MF_V2_ / _MF_V3_ hash-segment. Hieronder staan de
-  vaste setup- en regime-tokens zodat we de ID betrouwbaar kunnen herkennen
-  en NIET per ongeluk over-hashen of afkeuren.
-*/
 const FIXED_TAXONOMY_SETUP_TYPES = new Set([
   'BREAKDOWN',
   'RETEST',
@@ -86,12 +73,25 @@ function isFixedTaxonomyMicroId(id = '') {
 
   if (!value) return false;
   if (!value.startsWith(`MICRO_${TARGET_TRADE_SIDE}_`)) return false;
-  if (value.includes('_MF_V1_') || value.includes('_MF_V2_') || value.includes('_MF_V3_')) {
+
+  if (
+    value.includes('_MF_V1_') ||
+    value.includes('_MF_V2_') ||
+    value.includes('_MF_V3_') ||
+    value.includes('_XR_')
+  ) {
     return false;
   }
-  if (value.includes('__SCANNER__') || value.includes('SCANNER_')) return false;
 
-  // MICRO_SHORT_{SETUP}_{REGIME}
+  if (
+    value.includes('__SCANNER__') ||
+    value.includes('SCANNER_') ||
+    value.includes('SCANNER_GATE_PASS') ||
+    value.includes('SCANNER_GATE_FAIL')
+  ) {
+    return false;
+  }
+
   const rest = value.slice(`MICRO_${TARGET_TRADE_SIDE}_`.length);
 
   for (const regime of FIXED_TAXONOMY_REGIME_BUCKETS) {
@@ -107,12 +107,6 @@ function isFixedTaxonomyMicroId(id = '') {
   return false;
 }
 
-/*
-  Haal (indien aanwezig) de vaste-taxonomie learning-ID uit een classified/row.
-  Deze kijkt eerst naar expliciete setupType/regimeBucket velden die
-  microFamilies.js meelevert, en valt anders terug op een al aanwezige
-  vaste-vorm trueMicroFamilyId/microFamilyId.
-*/
 function extractFixedTaxonomyMicroId(source = {}) {
   const setup = String(source.setupType || '').trim().toUpperCase();
   const regime = String(source.regimeBucket || '').trim().toUpperCase();
@@ -129,7 +123,8 @@ function extractFixedTaxonomyMicroId(source = {}) {
     source.microFamilyId,
     source.analyzeMicroFamilyId,
     source.learningMicroFamilyId,
-    source.coarseMicroFamilyId
+    source.coarseMicroFamilyId,
+    source.broadTrueMicroFamilyId
   ];
 
   for (const candidate of candidates) {
@@ -177,6 +172,8 @@ function cleanSideText(value = '') {
   return String(value || '')
     .trim()
     .toUpperCase()
+    .replaceAll('LONG_DISABLED_TRUE', '')
+    .replaceAll('LONGDISABLED_TRUE', '')
     .replaceAll('LONG_DISABLED', '')
     .replaceAll('LONGDISABLED', '')
     .replaceAll('BLOCK_LONG', '')
@@ -198,23 +195,21 @@ function sideTextToTradeSide(value) {
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
   if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
 
-  if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'ASK', 'DOWN', 'DOWNSIDE', 'RED'].includes(raw)) {
-    return TARGET_TRADE_SIDE;
-  }
-
-  if (['LONG', 'BULL', 'BULLISH', 'BUY', 'BID', 'UP', 'UPSIDE', 'GREEN'].includes(raw)) {
-    return OPPOSITE_TRADE_SIDE;
-  }
-
   const normalized = raw
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+
+  if (!normalized) return 'UNKNOWN';
 
   const shortPatterns = [
     'SHORT',
     'BEAR',
     'BEARISH',
     'SELL',
+    'ASK',
+    'DOWN',
+    'DOWNSIDE',
+    'RED',
     'SIDE_SHORT',
     'TRADE_SIDE_SHORT',
     'TRADESIDE_SHORT',
@@ -235,6 +230,10 @@ function sideTextToTradeSide(value) {
     'BULL',
     'BULLISH',
     'BUY',
+    'BID',
+    'UP',
+    'UPSIDE',
+    'GREEN',
     'SIDE_LONG',
     'TRADE_SIDE_LONG',
     'TRADESIDE_LONG',
@@ -257,8 +256,11 @@ function sideTextToTradeSide(value) {
     normalized.includes(`_${pattern}_`)
   ));
 
-  if (hit(longPatterns)) return OPPOSITE_TRADE_SIDE;
-  if (hit(shortPatterns)) return TARGET_TRADE_SIDE;
+  const shortHit = hit(shortPatterns);
+  const longHit = hit(longPatterns);
+
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
 
   return 'UNKNOWN';
 }
@@ -287,10 +289,7 @@ function removeSymbolTokensFromFamilyId(id = '', row = {}) {
 
   if (!raw) return raw;
 
-  // === TAXONOMY FIX (2/4): raak de vaste-taxonomie-ID NIET aan ===
-  // De vaste ID (MICRO_SHORT_BREAKDOWN_TREND) bevat geen symbol-tokens en mag
-  // niet door symbol-stripping vervormd worden (anders breekt de identiteit).
-  if (isFixedTaxonomyMicroId(raw)) return raw;
+  if (isFixedTaxonomyMicroId(raw)) return raw.toUpperCase();
 
   const tokens = symbolTokensFromRow(row);
   if (!tokens.length) return raw;
@@ -319,6 +318,11 @@ function isScannerFamilyId(id = '') {
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
+    value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -339,7 +343,7 @@ function isMicroFamilyV3Id(id = '') {
 
   return (
     value.startsWith('MICRO_SHORT_') &&
-    value.includes('_MF_V3_')
+    value.includes(`_${FALLBACK_TRUE_MICRO_SCHEMA}_`)
   );
 }
 
@@ -348,10 +352,6 @@ function isAnalyzeMicroFamilyId(id = '') {
 
   if (!value) return false;
   if (isScannerFamilyId(value)) return false;
-
-  // === TAXONOMY FIX (3/4): accepteer de vaste-taxonomie learning-ID ===
-  // Deze ID heeft geen _MF_Vx_ segment; expliciet toelaten zodat observaties
-  // en outcomes niet stilletjes worden afgekeurd.
   if (isFixedTaxonomyMicroId(value)) return true;
 
   return (
@@ -379,18 +379,26 @@ function analyzeIdentityFlags() {
 
     analyzeMicroFamiliesOnly: true,
     learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    learningIdentity: 'ANALYZE_MICRO_FAMILY_FIXED_TAXONOMY',
+    exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
 
     broadTrueMicroFamilies: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    fineMicroFamilyAsMetadataOnly: true
+    broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fixedTaxonomyPreferred: true,
+    fineMicroFamilyAsMetadataOnly: true,
+
+    executionFingerprintRole: 'METADATA_ONLY',
+    executionFingerprintsMetadataOnly: true,
+    executionFingerprintsUsedAsLearningFamily: false
   };
 }
 
 function withAnalyzeIdentityFlags(row = {}) {
   return {
-    ...row,
-    ...analyzeIdentityFlags()
+    ...analyzeIdentityFlags(),
+    ...row
   };
 }
 
@@ -546,6 +554,10 @@ function inferTradeSide(row = {}, classified = {}) {
     return TARGET_TRADE_SIDE;
   }
 
+  if (row.longOnly === true || row.shortDisabled === true) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
   return 'UNKNOWN';
 }
 
@@ -616,7 +628,7 @@ function getAnalyzeSchemaMeta() {
   return {
     schema: CONFIG?.analyze?.schema,
     macroSchema: CONFIG?.analyze?.macroSchema || CONFIG?.analyze?.schema || 'MF_V1',
-    microSchema: CONFIG?.analyze?.microSchema || (shouldUseBroadTrueMicroFamilies() ? TRUE_MICRO_SCHEMA : 'MF_V2'),
+    microSchema: CONFIG?.analyze?.microSchema || TRUE_MICRO_SCHEMA,
     strategyVersion: CONFIG.strategyVersion
   };
 }
@@ -812,8 +824,6 @@ function shouldReclassifyAsTrueMicro(row = {}) {
     return true;
   }
 
-  // === TAXONOMY FIX (4/4): vaste-taxonomie-ID is een geldige true-micro ===
-  // Niet herclassificeren als de ID al de vaste taxonomie-vorm heeft.
   if (isFixedTaxonomyMicroId(row.microFamilyId) || isFixedTaxonomyMicroId(row.trueMicroFamilyId)) {
     return false;
   }
@@ -916,6 +926,7 @@ function compactExample(example, maxStringLength = 480) {
 
     setupType: example.setupType || null,
     regimeBucket: example.regimeBucket || null,
+    fixedTaxonomyLearningId: Boolean(example.fixedTaxonomyLearningId),
 
     observationOnly: Boolean(example.observationOnly),
     analysisInputOnly: Boolean(example.analysisInputOnly),
@@ -1215,6 +1226,18 @@ function buildBroadTrueMicroDefinitionParts(row = {}, classified = {}, macro = {
     'NO_MACRO'
   );
 
+  const setup = normalizeBucketText(
+    classified.setupType ||
+    row.setupType ||
+    'NA'
+  );
+
+  const regimeBucket = normalizeBucketText(
+    classified.regimeBucket ||
+    row.regimeBucket ||
+    'NA'
+  );
+
   const rsi = normalizeBroadBucketText(
     classified.rsiCoarse ||
     row.rsiCoarse ||
@@ -1255,31 +1278,20 @@ function buildBroadTrueMicroDefinitionParts(row = {}, classified = {}, macro = {
     `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
     `FAMILY=${familyId}`,
     `MACRO=${macroId}`,
+    `SETUP=${setup}`,
+    `REGIME_BUCKET=${regimeBucket}`,
     `RSI=${rsi}`,
     `FLOW=${flow}`,
     `OB_REL=${obRelation}`,
     `BTC_STATE=${btcState}`,
-    `REGIME=${regime}`
+    `REGIME=${regime}`,
+    'LEARNING_IDENTITY=FIXED_TAXONOMY_IF_AVAILABLE'
   ]);
 }
 
-/*
-  === TAXONOMY FIX (kern): learning-ID = vaste taxonomie indien aanwezig ===
-
-  Voorheen bouwde deze functie ALTIJD een MF_V3 hash-ID. Dat overschreef de
-  vaste taxonomie (MICRO_SHORT_BREAKDOWN_TREND) uit microFamilies.js, waardoor
-  je opnieuw honderden 1-coin families kreeg.
-
-  Nu: als de classified/row een vaste-taxonomie-identiteit heeft
-  (setupType+regimeBucket, of een al-vaste trueMicroFamilyId), gebruiken we
-  DIE als learning-ID. De MF_V3-hash blijft alleen als fallback voor oude
-  rijen zonder taxonomie (backward-compat). De definitionParts blijven
-  behouden als debug/metadata.
-*/
 function buildBroadTrueMicroFamilyId(row = {}, classified = {}, macro = {}) {
   const parts = buildBroadTrueMicroDefinitionParts(row, classified, macro);
 
-  // Probeer eerst de vaste taxonomie te gebruiken.
   const fixedTaxonomyId =
     extractFixedTaxonomyMicroId(classified) ||
     extractFixedTaxonomyMicroId(row);
@@ -1288,11 +1300,11 @@ function buildBroadTrueMicroFamilyId(row = {}, classified = {}, macro = {}) {
     return {
       trueMicroFamilyId: fixedTaxonomyId,
       definitionParts: parts,
-      fixedTaxonomy: true
+      fixedTaxonomy: true,
+      schema: FIXED_TAXONOMY_SCHEMA
     };
   }
 
-  // Fallback: oude MF_V3 hash (alleen voor rijen zonder taxonomie).
   const familyId = normalizeBucketText(
     classified.familyId ||
     row.familyId ||
@@ -1307,9 +1319,10 @@ function buildBroadTrueMicroFamilyId(row = {}, classified = {}, macro = {}) {
   const hash = hashText(parts.join('|'), TRUE_MICRO_HASH_LEN);
 
   return {
-    trueMicroFamilyId: `MICRO_SHORT_${safeFamilyId}_${TRUE_MICRO_SCHEMA}_${hash}`,
+    trueMicroFamilyId: `MICRO_SHORT_${safeFamilyId}_${FALLBACK_TRUE_MICRO_SCHEMA}_${hash}`,
     definitionParts: parts,
-    fixedTaxonomy: false
+    fixedTaxonomy: false,
+    schema: FALLBACK_TRUE_MICRO_SCHEMA
   };
 }
 
@@ -1334,15 +1347,20 @@ function applyBroadTrueMicroFamily(classified = {}, row = {}, macro = {}) {
 
   const broad = buildBroadTrueMicroFamilyId(row, normalized, macro);
   const broadTrueMicroFamilyId = normalizeAnalyzeFamilyId(broad.trueMicroFamilyId, row);
+  const schema = broad.fixedTaxonomy ? FIXED_TAXONOMY_SCHEMA : FALLBACK_TRUE_MICRO_SCHEMA;
 
   const coarseMicroFamilyId = normalizeAnalyzeFamilyId(
-    normalized.coarseMicroFamilyId ||
-    normalized.baseMicroFamilyId ||
-    normalized.legacyMicroFamilyId ||
-    normalized.macroFamilyId ||
-    normalized.parentMacroFamilyId ||
-    macro.microFamilyId ||
-    broadTrueMicroFamilyId,
+    broad.fixedTaxonomy
+      ? broadTrueMicroFamilyId
+      : (
+        normalized.coarseMicroFamilyId ||
+        normalized.baseMicroFamilyId ||
+        normalized.legacyMicroFamilyId ||
+        normalized.macroFamilyId ||
+        normalized.parentMacroFamilyId ||
+        macro.microFamilyId ||
+        broadTrueMicroFamilyId
+      ),
     row
   );
 
@@ -1356,7 +1374,6 @@ function applyBroadTrueMicroFamily(classified = {}, row = {}, macro = {}) {
     baseMicroFamilyId: normalizeAnalyzeFamilyId(normalized.baseMicroFamilyId || coarseMicroFamilyId, row),
     legacyMicroFamilyId: normalizeAnalyzeFamilyId(normalized.legacyMicroFamilyId || coarseMicroFamilyId, row),
 
-    // De fijne hash-ID (MF_V2) blijft als metadata bewaard.
     fineMicroFamilyId: fineMicroFamilyId || null,
     narrowMicroFamilyId: fineMicroFamilyId || null,
     mfV2MicroFamilyId: fineMicroFamilyId || null,
@@ -1364,15 +1381,14 @@ function applyBroadTrueMicroFamily(classified = {}, row = {}, macro = {}) {
     fineDefinitionParts,
     narrowDefinitionParts: fineDefinitionParts,
 
-    // Vaste taxonomie-velden expliciet doorgeven voor dashboard/debug.
     setupType: normalized.setupType || null,
     regimeBucket: normalized.regimeBucket || null,
     fixedTaxonomyLearningId: Boolean(broad.fixedTaxonomy),
 
     broadTrueMicroFamilyId,
     broadTrueDefinitionParts: broad.definitionParts,
-    broadTrueMicroFamilySchema: broad.fixedTaxonomy ? 'FIXED_TAXONOMY' : TRUE_MICRO_SCHEMA,
-    trueMicroFamilySchema: broad.fixedTaxonomy ? 'FIXED_TAXONOMY' : TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: schema,
+    trueMicroFamilySchema: schema,
     fineMicroFamilyAsMetadataOnly: true,
 
     definitionParts: broad.definitionParts,
@@ -1380,9 +1396,9 @@ function applyBroadTrueMicroFamily(classified = {}, row = {}, macro = {}) {
     definition: broad.definitionParts.join(' | '),
     microDefinition: broad.definitionParts.join(' | '),
 
-    schema: broad.fixedTaxonomy ? 'FIXED_TAXONOMY' : TRUE_MICRO_SCHEMA,
-    microFamilySchema: broad.fixedTaxonomy ? 'FIXED_TAXONOMY' : TRUE_MICRO_SCHEMA,
-    version: 'broad-micro'
+    schema,
+    microFamilySchema: schema,
+    version: broad.fixedTaxonomy ? 'fixed-taxonomy-micro' : 'broad-micro'
   });
 }
 
@@ -1465,6 +1481,7 @@ function buildExecutionFingerprintParts(row = {}, classified = {}, macro = {}) {
 
   return mergeDefinitionParts([
     `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
+    'ROLE=METADATA_ONLY',
 
     `FAMILY=${normalizeBucketText(classified.familyId || row.familyId || 'NO_FAMILY')}`,
     `MACRO=${normalizeBucketText(
@@ -1733,6 +1750,7 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
 
     broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
     trueMicroFamilySchema: classified.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: classified.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
     fineMicroFamilyAsMetadataOnly: true
   });
 
@@ -1775,7 +1793,7 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
 
       schema: classified.schema || TRUE_MICRO_SCHEMA,
       microFamilySchema: classified.microFamilySchema || classified.schema || TRUE_MICRO_SCHEMA,
-      version: classified.version || 'broad-micro',
+      version: classified.version || 'fixed-taxonomy-micro',
 
       ...common,
 
@@ -1846,7 +1864,7 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
 
     schema: row.schema || classified.schema || TRUE_MICRO_SCHEMA,
     microFamilySchema: row.microFamilySchema || row.schema || classified.schema || TRUE_MICRO_SCHEMA,
-    version: row.version || classified.version || 'broad-micro',
+    version: row.version || classified.version || 'fixed-taxonomy-micro',
 
     ...common,
 
@@ -1892,15 +1910,20 @@ function compactMicroForStorage(row = {}, aggressive = false) {
     maxStringLength
   );
 
+  const microFamilyId = normalizeAnalyzeFamilyId(
+    refreshed.trueMicroFamilyId || refreshed.microFamilyId,
+    refreshed
+  );
+
   return withAnalyzeIdentityFlags({
     ...refreshed,
 
-    microFamilyId: normalizeAnalyzeFamilyId(refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
-    trueMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
-    coarseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.coarseMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
+    microFamilyId,
+    trueMicroFamilyId: microFamilyId,
+    coarseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.coarseMicroFamilyId || microFamilyId, refreshed),
 
-    baseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.baseMicroFamilyId || refreshed.coarseMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
-    legacyMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.legacyMicroFamilyId || refreshed.coarseMicroFamilyId || refreshed.trueMicroFamilyId || refreshed.microFamilyId, refreshed),
+    baseMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.baseMicroFamilyId || refreshed.coarseMicroFamilyId || microFamilyId, refreshed),
+    legacyMicroFamilyId: normalizeAnalyzeFamilyId(refreshed.legacyMicroFamilyId || refreshed.coarseMicroFamilyId || microFamilyId, refreshed),
 
     fineMicroFamilyId: refreshed.fineMicroFamilyId || refreshed.narrowMicroFamilyId || refreshed.mfV2MicroFamilyId || null,
     narrowMicroFamilyId: refreshed.narrowMicroFamilyId || refreshed.fineMicroFamilyId || refreshed.mfV2MicroFamilyId || null,
@@ -1913,6 +1936,7 @@ function compactMicroForStorage(row = {}, aggressive = false) {
 
     setupType: refreshed.setupType || null,
     regimeBucket: refreshed.regimeBucket || null,
+    fixedTaxonomyLearningId: Boolean(refreshed.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(microFamilyId)),
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -1989,6 +2013,7 @@ function getMinimalMicroForStorage(row = {}) {
 
     setupType: refreshed.setupType || null,
     regimeBucket: refreshed.regimeBucket || null,
+    fixedTaxonomyLearningId: Boolean(refreshed.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(microFamilyId)),
 
     executionFingerprintHash: refreshed.executionFingerprintHash || null,
     executionFingerprintParts: refreshed.executionFingerprintParts || [],
@@ -2022,7 +2047,7 @@ function getMinimalMicroForStorage(row = {}) {
 
     schema: refreshed.schema || TRUE_MICRO_SCHEMA,
     microFamilySchema: refreshed.microFamilySchema || TRUE_MICRO_SCHEMA,
-    version: refreshed.version || 'broad-micro',
+    version: refreshed.version || 'fixed-taxonomy-micro',
 
     macroFamilyId: refreshed.macroFamilyId,
     parentMacroFamilyId: refreshed.parentMacroFamilyId,
@@ -2187,6 +2212,11 @@ function getOrCreateMicro(micros, classified, side) {
 
   micro.setupType ||= classified.setupType || null;
   micro.regimeBucket ||= classified.regimeBucket || null;
+  micro.fixedTaxonomyLearningId = Boolean(
+    micro.fixedTaxonomyLearningId ||
+    classified.fixedTaxonomyLearningId ||
+    isFixedTaxonomyMicroId(microFamilyId)
+  );
 
   micro.executionFingerprintHash ||= classified.executionFingerprintHash || null;
   micro.executionFingerprintParts ||= classified.executionFingerprintParts || [];
@@ -2199,7 +2229,11 @@ function getOrCreateMicro(micros, classified, side) {
   micro.scannerDefinition ||= classified.scannerDefinition || null;
   micro.scannerDefinitionParts ||= classified.scannerDefinitionParts || [];
 
-  Object.assign(micro, analyzeIdentityFlags());
+  Object.assign(micro, analyzeIdentityFlags(), {
+    trueMicroFamilySchema: micro.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: micro.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    fixedTaxonomyLearningId: micro.fixedTaxonomyLearningId
+  });
 
   micro.side = TARGET_DASHBOARD_SIDE;
   micro.tradeSide = TARGET_TRADE_SIDE;
@@ -2216,7 +2250,7 @@ function getOrCreateMicro(micros, classified, side) {
 
   micro.schema ||= classified.schema || classified.microFamilySchema || getAnalyzeSchemaMeta().microSchema;
   micro.microFamilySchema ||= classified.microFamilySchema || classified.schema || getAnalyzeSchemaMeta().microSchema;
-  micro.version ||= classified.version || 'broad-micro';
+  micro.version ||= classified.version || 'fixed-taxonomy-micro';
 
   micro.macroFamilyId ||= classified.macroFamilyId || classified.parentMacroFamilyId || null;
   micro.parentMacroFamilyId ||= classified.parentMacroFamilyId || classified.macroFamilyId || null;
@@ -2295,6 +2329,7 @@ function normalizeMicros(micros = {}) {
             longDisabled: true,
             longOnly: false,
             shortDisabled: false,
+            fixedTaxonomyLearningId: Boolean(row.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(microFamilyId)),
             ...analyzeIdentityFlags()
           })
         ];
@@ -2411,6 +2446,8 @@ function encodeStoragePayload(value = {}, {
     analyzeMicroFamiliesOnly: true,
     broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    fixedTaxonomyPreferred: true,
     fineMicroFamilyAsMetadataOnly: true,
 
     schema: schemaMeta.schema,
@@ -2464,6 +2501,8 @@ function encodeMicroRowPayload(row = {}) {
       count: 1,
       extraMeta: {
         microFamilyId: row.microFamilyId || null,
+        trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || null,
+        fixedTaxonomyLearningId: Boolean(row.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(row.trueMicroFamilyId || row.microFamilyId)),
         rowMode: 'compact'
       }
     });
@@ -2477,6 +2516,8 @@ function encodeMicroRowPayload(row = {}) {
         count: 1,
         extraMeta: {
           microFamilyId: row.microFamilyId || null,
+          trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || null,
+          fixedTaxonomyLearningId: Boolean(row.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(row.trueMicroFamilyId || row.microFamilyId)),
           rowMode: 'aggressive'
         }
       });
@@ -2489,6 +2530,8 @@ function encodeMicroRowPayload(row = {}) {
         count: 1,
         extraMeta: {
           microFamilyId: row.microFamilyId || null,
+          trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || null,
+          fixedTaxonomyLearningId: Boolean(row.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(row.trueMicroFamilyId || row.microFamilyId)),
           rowMode: 'minimal',
           previousError: firstError?.message || null
         }
@@ -2737,6 +2780,8 @@ async function saveWeekMicrosTopSnapshot(redis, weekKey, micros = {}, {
       analyzeMicroFamiliesOnly: true,
       broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
       trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      fixedTaxonomyPreferred: true,
       fineMicroFamilyAsMetadataOnly: true,
 
       executionMicroRefined: false,
@@ -2978,7 +3023,8 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
         shortOnly: true,
         longDisabled: true,
         longOnly: false,
-        shortDisabled: false
+        shortDisabled: false,
+        fixedTaxonomyLearningId: Boolean(micros[id]?.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(rowId))
       });
 
       const encoded = encodeMicroRowPayload(row);
@@ -3046,6 +3092,8 @@ async function saveWeekMicrosSharded(redis, weekKey, micros, {
         analyzeMicroFamiliesOnly: true,
         broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
         trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+        broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+        fixedTaxonomyPreferred: true,
         fineMicroFamilyAsMetadataOnly: true,
 
         executionMicroRefined: false,
@@ -3292,6 +3340,8 @@ export async function saveWeekMicros(
 
       broadTrueMicroFamilies: shouldUseBroadTrueMicroFamilies(),
       trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      fixedTaxonomyPreferred: true,
       fineMicroFamilyAsMetadataOnly: true,
 
       executionMicroRefined: false,
@@ -3492,7 +3542,9 @@ export async function analyzeCandidatesBatch(
         createdAt: batch.metrics.createdAt || now()
       }));
 
-      Object.assign(micro, analyzeIdentityFlags());
+      Object.assign(micro, analyzeIdentityFlags(), {
+        fixedTaxonomyLearningId: Boolean(micro.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(microFamilyId))
+      });
 
       actuallyTouchedIds.add(microFamilyId);
 
@@ -3599,6 +3651,8 @@ function buildLockedOutcomeRow(outcome = {}) {
     'SHORT_VIRTUAL_OUTCOME'
   ).trim();
 
+  const fixedTaxonomyLearningId = isFixedTaxonomyMicroId(microFamilyId);
+
   const definitionParts = mergeDefinitionParts(
     outcome.definitionParts || [],
     outcome.broadTrueDefinitionParts || [],
@@ -3608,6 +3662,7 @@ function buildLockedOutcomeRow(outcome = {}) {
       `LOCKED_TRUE_MICRO=${trueMicroFamilyId}`,
       `LOCKED_COARSE_MICRO=${coarseMicroFamilyId}`,
       `LOCKED_MACRO=${parentMacroFamilyId}`,
+      `FIXED_TAXONOMY=${fixedTaxonomyLearningId ? 'YES' : 'NO'}`,
       'OUTCOME_IDENTITY=POSITION_LOCKED'
     ]
   );
@@ -3638,9 +3693,14 @@ function buildLockedOutcomeRow(outcome = {}) {
     mfV2MicroFamilyId: outcome.mfV2MicroFamilyId || outcome.fineMicroFamilyId || outcome.narrowMicroFamilyId || null,
     broadTrueMicroFamilyId: outcome.broadTrueMicroFamilyId || trueMicroFamilyId,
     broadTrueDefinitionParts: outcome.broadTrueDefinitionParts || [],
-    broadTrueMicroFamilySchema: outcome.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
-    trueMicroFamilySchema: outcome.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : outcome.broadTrueMicroFamilySchema || FALLBACK_TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : outcome.trueMicroFamilySchema || FALLBACK_TRUE_MICRO_SCHEMA,
     fineMicroFamilyAsMetadataOnly: true,
+    fixedTaxonomyLearningId,
 
     setupType: outcome.setupType || null,
     regimeBucket: outcome.regimeBucket || null,
@@ -3978,7 +4038,9 @@ export async function recordOutcome(
     outcomeIdentitySource: row.outcomeIdentitySource || 'POSITION_MICRO_IDENTITY'
   }), src);
 
-  Object.assign(micro, analyzeIdentityFlags());
+  Object.assign(micro, analyzeIdentityFlags(), {
+    fixedTaxonomyLearningId: Boolean(micro.fixedTaxonomyLearningId || isFixedTaxonomyMicroId(microFamilyId))
+  });
 
   await saveWeekMicros(
     weekKey,
@@ -4053,6 +4115,8 @@ function copyMicroClassificationFields(position = {}) {
     position
   );
 
+  const fixedTaxonomyLearningId = isFixedTaxonomyMicroId(microFamilyId);
+
   return withAnalyzeIdentityFlags({
     familyId: position.familyId,
     microFamilyId,
@@ -4067,9 +4131,14 @@ function copyMicroClassificationFields(position = {}) {
     mfV2MicroFamilyId: position.mfV2MicroFamilyId || position.fineMicroFamilyId || position.narrowMicroFamilyId || null,
     broadTrueMicroFamilyId: position.broadTrueMicroFamilyId || microFamilyId,
     broadTrueDefinitionParts: position.broadTrueDefinitionParts || [],
-    broadTrueMicroFamilySchema: position.broadTrueMicroFamilySchema || TRUE_MICRO_SCHEMA,
-    trueMicroFamilySchema: position.trueMicroFamilySchema || TRUE_MICRO_SCHEMA,
+    broadTrueMicroFamilySchema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : position.broadTrueMicroFamilySchema || FALLBACK_TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : position.trueMicroFamilySchema || FALLBACK_TRUE_MICRO_SCHEMA,
     fineMicroFamilyAsMetadataOnly: true,
+    fixedTaxonomyLearningId,
 
     setupType: position.setupType || null,
     regimeBucket: position.regimeBucket || null,
@@ -4096,9 +4165,13 @@ function copyMicroClassificationFields(position = {}) {
     parentDefinition: position.parentDefinition || null,
     parentDefinitionParts: position.parentDefinitionParts || [],
 
-    schema: position.schema || position.microFamilySchema || TRUE_MICRO_SCHEMA,
-    microFamilySchema: position.microFamilySchema || position.schema || TRUE_MICRO_SCHEMA,
-    version: position.version || 'broad-micro',
+    schema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : position.schema || position.microFamilySchema || FALLBACK_TRUE_MICRO_SCHEMA,
+    microFamilySchema: fixedTaxonomyLearningId
+      ? FIXED_TAXONOMY_SCHEMA
+      : position.microFamilySchema || position.schema || FALLBACK_TRUE_MICRO_SCHEMA,
+    version: position.version || (fixedTaxonomyLearningId ? 'fixed-taxonomy-micro' : 'broad-micro'),
 
     assetClass: position.assetClass || null,
 
