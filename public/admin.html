@@ -363,7 +363,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1280px;
+      min-width: 1480px;
       background: white;
     }
 
@@ -513,7 +513,7 @@
       background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96));
       box-shadow: var(--shadow);
       padding: 16px;
-      max-width: 920px;
+      max-width: 980px;
     }
 
     .manual-card::before {
@@ -650,6 +650,29 @@
     const OPPOSITE_SIDE = "LONG";
     const DASHBOARD_SIDE = "bear";
     const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+
+    const FIXED_TAXONOMY_SETUP_TYPES = new Set([
+      "BREAKDOWN",
+      "RETEST",
+      "SWEEP_REVERSAL",
+      "CONTINUATION",
+      "COMPRESSION",
+      "COMPRESSION_EXPANSION"
+    ]);
+
+    const FIXED_TAXONOMY_REGIME_BUCKETS = new Set([
+      "TREND",
+      "CHOP",
+      "SQUEEZE"
+    ]);
+
+    const FIXED_TAXONOMY_CONFIRMATION_PROFILES = new Set([
+      "A_STRONG_ALIGN",
+      "B_FLOW_ALIGN",
+      "C_VOLUME_ALIGN",
+      "D_MIXED_OK",
+      "E_WEAK_CONTRA"
+    ]);
 
     const state = {
       activeTab: "overview",
@@ -819,7 +842,10 @@
         value.startsWith("SHORT_SCANNER_") ||
         value.includes("__SCANNER__") ||
         value.includes("SCANNER_GATE_PASS") ||
-        value.includes("SCANNER_GATE_FAIL")
+        value.includes("SCANNER_GATE_FAIL") ||
+        value.startsWith("MICRO_LONG_SCANNER__") ||
+        value.includes("MICRO_LONG_SCANNER__") ||
+        value.startsWith("LONG_SCANNER_")
       );
     }
 
@@ -965,21 +991,89 @@
       return String(row.familyId || row.family || row.baseFamilyId || "").trim();
     }
 
-    function isAnalyzeMicroFamilyId(id = "") {
-      const value = String(id || "").trim();
+    function parseTaxonomyMicroId(id = "") {
+      const value = upper(id);
+      const prefix = `MICRO_${ONLY_SIDE}_`;
+
+      if (!value || !value.startsWith(prefix)) return null;
+      if (isScannerMicroFamilyId(value)) return null;
+      if (value.includes("_XR_")) return null;
+      if (value.includes("_MF_V1_") || value.includes("_MF_V2_") || value.includes("_MF_V3_")) return null;
+      if (value.includes("*MF_V1*") || value.includes("*MF_V2*") || value.includes("*MF_V3*")) return null;
+
+      let rest = value.slice(prefix.length);
+      let confirmationProfile = null;
+
+      const profiles = [...FIXED_TAXONOMY_CONFIRMATION_PROFILES]
+        .sort((a, b) => b.length - a.length);
+
+      for (const profile of profiles) {
+        const suffix = `_${profile}`;
+
+        if (rest.endsWith(suffix)) {
+          confirmationProfile = profile;
+          rest = rest.slice(0, rest.length - suffix.length);
+          break;
+        }
+      }
+
+      const regimes = [...FIXED_TAXONOMY_REGIME_BUCKETS]
+        .sort((a, b) => b.length - a.length);
+
+      for (const regime of regimes) {
+        const suffix = `_${regime}`;
+
+        if (rest.endsWith(suffix)) {
+          const setupType = rest.slice(0, rest.length - suffix.length);
+
+          if (!FIXED_TAXONOMY_SETUP_TYPES.has(setupType)) return null;
+
+          return {
+            id: value,
+            setupType,
+            regimeBucket: regime,
+            confirmationProfile,
+            taxonomyFamilyCount: confirmationProfile ? 75 : 15
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function isFixedTaxonomyMicroId(id = "") {
+      return Boolean(parseTaxonomyMicroId(id));
+    }
+
+    function isLegacyHashTrueMicroId(id = "") {
+      const value = upper(id);
 
       if (!value) return false;
       if (isScannerMicroFamilyId(value)) return false;
-
-      const side = inferSide(value);
-
-      if (side === OPPOSITE_SIDE) return false;
+      if (value.includes("_XR_")) return false;
+      if (!value.startsWith(`MICRO_${ONLY_SIDE}_`)) return false;
+      if (value.startsWith(`MICRO_${OPPOSITE_SIDE}_`)) return false;
 
       return (
-        side === ONLY_SIDE ||
-        upper(value).includes("MICRO_SHORT_") ||
-        upper(value).startsWith("SHORT_")
+        value.includes("_MF_V1_") ||
+        value.includes("_MF_V2_") ||
+        value.includes("_MF_V3_") ||
+        value.includes("*MF_V1*") ||
+        value.includes("*MF_V2*") ||
+        value.includes("*MF_V3*")
       );
+    }
+
+    function isAnalyzeMicroFamilyId(id = "") {
+      const value = upper(id);
+
+      if (!value) return false;
+      if (isScannerMicroFamilyId(value)) return false;
+      if (value.includes("_XR_")) return false;
+      if (!value.startsWith(`MICRO_${ONLY_SIDE}_`)) return false;
+      if (value.startsWith(`MICRO_${OPPOSITE_SIDE}_`)) return false;
+
+      return isFixedTaxonomyMicroId(value) || isLegacyHashTrueMicroId(value);
     }
 
     function isRealAnalyzeMicroRow(row = {}) {
@@ -1001,6 +1095,16 @@
 
     function idAllowedInShortOnly(id = "") {
       return isAnalyzeMicroFamilyId(id);
+    }
+
+    function taxonomyValue(row = {}, key = "") {
+      const parsed = parseTaxonomyMicroId(microId(row));
+
+      if (key === "setupType") return row.setupType || parsed?.setupType || "-";
+      if (key === "regimeBucket") return row.regimeBucket || parsed?.regimeBucket || "-";
+      if (key === "confirmationProfile") return row.confirmationProfile || row.confirmationBucket || parsed?.confirmationProfile || "-";
+
+      return "-";
     }
 
     function uniqueStrings(values = []) {
@@ -1581,12 +1685,20 @@
       const obs = observationSample(row);
       const status = learningStatus(row);
       const rowTier = tier(row);
+      const taxonomy = parseTaxonomyMicroId(id);
 
       return {
         ...row,
         microFamilyId: id,
         trueMicroFamilyId: id,
         coarseMicroFamilyId: coarseId,
+
+        setupType: row.setupType || taxonomy?.setupType || null,
+        regimeBucket: row.regimeBucket || taxonomy?.regimeBucket || null,
+        confirmationProfile: row.confirmationProfile || row.confirmationBucket || taxonomy?.confirmationProfile || null,
+        fixedTaxonomyLearningId: Boolean(row.fixedTaxonomyLearningId || taxonomy),
+        taxonomyFamilyCount: taxonomy?.taxonomyFamilyCount || null,
+
         side: DASHBOARD_SIDE,
         dashboardSide: DASHBOARD_SIDE,
         tradeSide: ONLY_SIDE,
@@ -1616,7 +1728,7 @@
         scannerFingerprintOnlyMetadata: false,
         legacyScannerFamilyFallback: false,
         scannerFingerprintLegacy: false,
-        learningIdentitySource: row.learningIdentitySource || "ANALYZE_MICRO_FAMILY",
+        learningIdentitySource: row.learningIdentitySource || "ANALYZE_TRUE_MICRO_FAMILY",
         symbolExcludedFromFamilyId: row.symbolExcludedFromFamilyId !== false
       };
     }
@@ -1671,11 +1783,14 @@
         state.rotation?.activeMicroFamilyIds || [],
         state.rotation?.activeRotation?.activeMicroFamilyIds || [],
         state.rotation?.activeRotation?.microFamilyIds || [],
+        state.rotation?.activeRotation?.trueMicroFamilyIds || [],
         state.rotation?.active?.activeMicroFamilyIds || [],
         state.rotation?.active?.microFamilyIds || [],
+        state.rotation?.active?.trueMicroFamilyIds || [],
         state.micros?.activeMicroFamilyIds || [],
         state.micros?.activeRotation?.activeMicroFamilyIds || [],
         state.micros?.activeRotation?.microFamilyIds || [],
+        state.micros?.activeRotation?.trueMicroFamilyIds || [],
         state.overview?.activeMicroFamilyIds || [],
         state.trade?.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly);
@@ -1693,7 +1808,15 @@
         state.micros?.activeRotation?.macroFamilyIds || [],
         state.overview?.activeMacroFamilyIds || [],
         state.trade?.activeMacroFamilyIds || []
-      ]).filter(idAllowedInShortOnly);
+      ]).filter((id) => {
+        const value = upper(id);
+
+        if (!value) return false;
+        if (isScannerMicroFamilyId(value)) return false;
+        if (value.includes("_XR_")) return false;
+
+        return hasShortSignal(value) && !hasLongSignal(value);
+      });
     }
 
     function shortRows(rows = []) {
@@ -1781,15 +1904,17 @@
 
     function microTable(rows = []) {
       const activeSet = new Set(activeMicroIds());
-      const activeMacroSet = new Set(activeMacroIds());
 
       return table(rows, [
         { label: "Rank", render: (row, index) => escapeHtml(row.rank ?? index + 1) },
         { label: "Discord", render: (row) => {
-          const active = activeSet.has(microId(row)) || activeMacroSet.has(macroId(row)) || row.active === true;
+          const active = activeSet.has(microId(row)) || row.active === true;
           return `<span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span>`;
         }},
         { label: "True micro", render: (row) => `<button class="small" type="button" data-open-micro="${escapeAttr(microId(row))}"><code>${escapeHtml(microId(row) || "NO_MICRO")}</code></button>` },
+        { label: "Setup", render: (row) => `<span class="pill info">${escapeHtml(taxonomyValue(row, "setupType"))}</span>` },
+        { label: "Regime", render: (row) => `<span class="pill purple">${escapeHtml(taxonomyValue(row, "regimeBucket"))}</span>` },
+        { label: "Confirm", render: (row) => `<span class="pill soft">${escapeHtml(taxonomyValue(row, "confirmationProfile"))}</span>` },
         { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row) || "NO_MACRO")}</code>` },
         { label: "Family", render: (row) => `<code>${escapeHtml(familyId(row) || "NO_FAMILY")}</code>` },
         { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
@@ -1886,7 +2011,10 @@
           data.selectedMacroFamilyIds || [],
           data.activeRotation?.activeMacroFamilyIds || [],
           data.activeRotation?.macroFamilyIds || []
-        ]).filter(idAllowedInShortOnly)
+        ]).filter((id) => {
+          const value = upper(id);
+          return value && hasShortSignal(value) && !hasLongSignal(value) && !isScannerMicroFamilyId(value);
+        })
       };
     }
 
@@ -1931,21 +2059,23 @@
         data.activeMicroFamilyIds || [],
         data.activeRotation?.activeMicroFamilyIds || [],
         data.activeRotation?.microFamilyIds || [],
+        data.activeRotation?.trueMicroFamilyIds || [],
         microData?.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly).length;
 
       const observing = microRows.filter((row) => learningStatus(row) === "OBSERVING").length;
       const completedCount = microRows.filter((row) => completed(row) > 0).length;
+      const has75ReadyRows = microRows.some((row) => taxonomyValue(row, "confirmationProfile") !== "-");
 
       $("overview").innerHTML = `
         <div class="grid">
           ${metricCard("Current week", data.weekKey || data.currentWeekKey || microData?.weekKey || "-")}
           ${metricCard("Previous week", data.previousWeekKey || microData?.previousWeekKey || "-")}
-          ${metricCard("Discord selected micros", fmtInt(activeCount))}
+          ${metricCard("Discord selected micros", fmtInt(activeCount), "exact trueMicroFamilyId only")}
           ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
           ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
           ${metricCard("Current micro families", fmtInt(microRows.length || data.currentWeekMicroFamilies))}
-          ${metricCard("Observing families", fmtInt(observing || data.observingMicroFamilies))}
+          ${metricCard("Taxonomy mode", has75ReadyRows ? "75-ready" : "15 active", "display ondersteunt beide")}
           ${metricCard("Completed families", fmtInt(completedCount || data.completedMicroFamilies))}
         </div>
 
@@ -1957,9 +2087,10 @@
               <span class="pill purple">VIRTUAL</span>
               <span class="pill info">NET OUTCOMES</span>
               <span class="pill dark">MANUAL DISCORD</span>
+              <span class="pill info">fixed taxonomy trueMicroFamilyId</span>
             </div>
             <div class="metric-extra">
-              Scanner fingerprint is metadata-only. Dashboard telt alleen echte Analyze micro-family IDs.
+              Scanner fingerprint is metadata-only. Discord active-check matcht alleen exact op trueMicroFamilyId, niet op macro.
             </div>
           </div>
 
@@ -2100,8 +2231,8 @@
           ${metricCard("Scanner/trade sync", data.scannerAndTradeInSync ? "YES" : "NO")}
           ${metricCard("Last processed", data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || "-")}
           ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
-          ${metricCard("Active micro IDs", fmtInt((data.activeMicroFamilyIds || []).length))}
-          ${metricCard("Active macro IDs", fmtInt((data.activeMacroFamilyIds || []).length))}
+          ${metricCard("Active micro IDs", fmtInt((data.activeMicroFamilyIds || []).filter(idAllowedInShortOnly).length))}
+          ${metricCard("Active macro IDs", fmtInt(activeMacroIds().length), "niet gebruikt voor Discord match")}
           ${metricCard("Last run", fmtTs(runMeta.completedAt || runMeta.startedAt))}
           ${metricCard("Orders", "0", "exchange disabled")}
         </div>
@@ -2129,6 +2260,8 @@
           { label: "MFE", render: (row) => fmt(row.mfeR, 3) },
           { label: "MAE", render: (row) => fmt(row.maeR, 3) },
           { label: "True micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_MICRO")}</code>` },
+          { label: "Setup", render: (row) => `<span class="pill info">${escapeHtml(taxonomyValue(row, "setupType"))}</span>` },
+          { label: "Regime", render: (row) => `<span class="pill purple">${escapeHtml(taxonomyValue(row, "regimeBucket"))}</span>` },
           { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row) || "NO_MACRO")}</code>` },
           { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
         ], "Geen open virtual SHORT posities.")}
@@ -2218,6 +2351,9 @@
             ${isActive ? '<span class="pill active">DISCORD ACTIVE</span>' : '<span class="pill info">NOT SELECTED</span>'}
             ${tierPill(tier(row))}
             ${statusPill(row)}
+            <span class="pill info">${escapeHtml(taxonomyValue(row, "setupType"))}</span>
+            <span class="pill purple">${escapeHtml(taxonomyValue(row, "regimeBucket"))}</span>
+            <span class="pill soft">${escapeHtml(taxonomyValue(row, "confirmationProfile"))}</span>
             ${tooEarly(row) ? `<span class="pill warn">te vroeg ${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
           </div>
 
@@ -2244,7 +2380,7 @@
 
           <div class="metric-extra">
             Ranking gebruikt beste data eerst: balanced score, netR, avgR, sample reliability en fair winrate.
-            Discord wordt alleen actief voor deze exacte true micro. Virtual learning blijft alle risk-valide SHORT candidates volgen.
+            Discord wordt alleen actief voor deze exacte true micro. Macro-ID activeert geen Discord match.
           </div>
 
           <div class="toolbar">
@@ -2276,6 +2412,7 @@
       const earlyRows = rows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES");
       const activeRows = rows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING");
       const tooEarlyRows = rows.filter(tooEarly);
+      const has75ReadyRows = rows.some((row) => taxonomyValue(row, "confirmationProfile") !== "-");
 
       $("micros").innerHTML = `
         <div class="toolbar">
@@ -2285,7 +2422,7 @@
             `).join("")}
           </select>
 
-          <input id="microSearch" type="search" placeholder="Zoek true micro, macro, family, bucket..." value="${escapeAttr(state.microSearch)}" />
+          <input id="microSearch" type="search" placeholder="Zoek true micro, setup, regime, confirm, macro, family..." value="${escapeAttr(state.microSearch)}" />
 
           <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible micro IDs</button>
           <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible IDs for Discord</button>
@@ -2300,10 +2437,12 @@
             <span class="pill observation">OBSERVING = completed 0</span>
             <span class="pill soft">EARLY_OUTCOMES = completed 1-19 · te vroeg</span>
             <span class="pill active">ACTIVE_LEARNING = completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}</span>
+            <span class="pill info">fixed taxonomy trueMicroFamilyId</span>
             <span class="pill short">scanner fingerprints hidden</span>
           </div>
           <div class="metric-extra">
-            Dashboard toont alleen echte Analyze micro-family IDs. Scanner fingerprint IDs zoals MICRO_SHORT_SCANNER__... blijven metadata en worden niet als aparte dashboard families getoond.
+            Dashboard toont alleen echte Analyze trueMicroFamilyId's. Scanner fingerprints en execution fingerprints blijven metadata.
+            Discord ACTIVE is exact micro-only; macro matches worden niet als actief beschouwd.
           </div>
         </div>
 
@@ -2322,8 +2461,8 @@
           ${metricCard("EARLY_OUTCOMES", fmtInt(earlyRows.length), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1} · te vroeg`)}
           ${metricCard("ACTIVE_LEARNING", fmtInt(activeRows.length), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
           ${metricCard("Te vroeg", fmtInt(tooEarlyRows.length), `completed < ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
-          ${metricCard("Discord active micros", fmtInt(activeMicroIds().length))}
-          ${metricCard("Mode", state.microMode, "default best data first")}
+          ${metricCard("Discord active micros", fmtInt(activeMicroIds().length), "exact true micro only")}
+          ${metricCard("Taxonomy", has75ReadyRows ? "75-ready" : "15 active", "display ondersteunt beide")}
           ${metricCard("Outcomes", "NET R", "virtual/shadow closed outcomes")}
         </div>
 
@@ -2341,6 +2480,7 @@
             primaryWeekRows: state.micros?.primaryWeekRows ?? null,
             rawScannerFingerprintRowsHidden: state.micros?.rawScannerFingerprintRowsHidden ?? null,
             rankingPolicy: state.micros?.rankingPolicy ?? null,
+            taxonomyMode: has75ReadyRows ? "75_READY_DISPLAY" : "15_ACTIVE_DISPLAY",
             warnings: state.micros?.warnings || [],
             error: state.micros?.error || null
           })}
@@ -2402,7 +2542,10 @@
         active.activeMacroFamilyIds || [],
         active.macroFamilyIds || [],
         data.activeMacroFamilyIds || []
-      ]).filter(idAllowedInShortOnly);
+      ]).filter((id) => {
+        const value = upper(id);
+        return value && hasShortSignal(value) && !hasLongSignal(value) && !isScannerMicroFamilyId(value);
+      });
 
       const rows = rankMicroRows(data.activeRows || active.microFamilies || [])
         .concat(
@@ -2429,7 +2572,7 @@
 
         <div class="grid">
           ${metricCard("Active true micro IDs", fmtInt(activeIds.length))}
-          ${metricCard("Active macro IDs", fmtInt(activeMacros.length))}
+          ${metricCard("Active macro IDs", fmtInt(activeMacros.length), "informatief, niet voor matching")}
           ${metricCard("Rotation ID", active.rotationId || "-")}
           ${metricCard("Mode", active.mode || "manual")}
           ${metricCard("Source", active.source || "-")}
@@ -2441,10 +2584,10 @@
         <div class="card">
           <h3>Manual exact micro IDs</h3>
           <p class="metric-extra">
-            Plak één of meer true microFamilyIds. Deze selectie activeert alleen Discord alerts.
+            Plak één of meer trueMicroFamilyIds. Deze selectie activeert alleen Discord alerts voor exacte matches.
           </p>
 
-          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_...">${escapeHtml(activeIds.join("\n"))}</textarea>
+          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_BREAKDOWN_TREND">${escapeHtml(activeIds.join("\n"))}</textarea>
 
           <div class="toolbar">
             <button type="button" class="short-action" id="activateManualBtn">Save manual Discord selection</button>
@@ -2493,7 +2636,7 @@
       const microFamilyIds = uniqueStrings(ids).filter(idAllowedInShortOnly);
 
       if (!microFamilyIds.length) {
-        setMessage("Geen geldige SHORT Analyze true microFamilyId geselecteerd.", "warn");
+        setMessage("Geen geldige SHORT Analyze trueMicroFamilyId geselecteerd. Alleen MICRO_SHORT_{SETUP}_{REGIME} of future MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRM} is toegestaan.", "warn");
         return;
       }
 
@@ -2589,7 +2732,9 @@
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="metric-extra">true micro=${escapeHtml(microId(row))} · macro=${escapeHtml(macroId(row))}</div>
+              <div class="metric-extra">
+                true micro=${escapeHtml(microId(row))} · setup=${escapeHtml(taxonomyValue(row, "setupType"))} · regime=${escapeHtml(taxonomyValue(row, "regimeBucket"))}
+              </div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
@@ -2597,6 +2742,9 @@
           <div class="toolbar">
             <span class="pill short">SHORT</span>
             ${statusPill(row)}
+            <span class="pill info">${escapeHtml(taxonomyValue(row, "setupType"))}</span>
+            <span class="pill purple">${escapeHtml(taxonomyValue(row, "regimeBucket"))}</span>
+            <span class="pill soft">${escapeHtml(taxonomyValue(row, "confirmationProfile"))}</span>
             ${tooEarly(row) ? `<span class="pill warn">te vroeg ${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
             <button type="button" class="short-action" id="activateDrawerBtn">Select exact</button>
             <button type="button" id="copyDrawerBtn">Copy</button>
@@ -2675,10 +2823,13 @@
           { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
           { label: "Selected", render: (row) => {
             const payload = row.payload || row;
-            const selected = Boolean(payload.discordAlertEligible || payload.selectedForDiscord || payload.wasSelected || row.selectedOnly);
+            const id = microId(payload);
+            const selected = Boolean(payload.discordAlertEligible || payload.selectedForDiscord || payload.wasSelected || row.selectedOnly || activeMicroIds().includes(id));
             return `<span class="pill ${selected ? "active" : ""}">${selected ? "YES" : "NO"}</span>`;
           }},
           { label: "True micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
+          { label: "Setup", render: (row) => `<span class="pill info">${escapeHtml(taxonomyValue(row.payload || row, "setupType"))}</span>` },
+          { label: "Regime", render: (row) => `<span class="pill purple">${escapeHtml(taxonomyValue(row.payload || row, "regimeBucket"))}</span>` },
           { label: "Macro", render: (row) => `<code>${escapeHtml(macroId(row.payload || row) || "-")}</code>` },
           { label: "Message", render: (row) => escapeHtml(row.message || row.content || row.result || "") }
         ], "Geen Discord logs.")}
