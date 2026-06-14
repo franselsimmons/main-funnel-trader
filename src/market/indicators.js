@@ -6,19 +6,19 @@ import {
 } from '../utils.js';
 
 const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_SCANNER_SIDE = 'bear';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const OPPOSITE_TRADE_SIDE = 'LONG';
 
-const SHORT_TOKENS = new Set([
-  'SHORT',
-  'BEAR',
-  'BEARISH',
-  'SELL',
-  'ASK',
-  'DOWN',
-  'DOWNSIDE',
-  'RED'
-]);
+const SHORT_NAMESPACE = 'SHORT';
+const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
+
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
+const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
+const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const LONG_TOKENS = new Set([
   'LONG',
@@ -31,49 +31,166 @@ const LONG_TOKENS = new Set([
   'GREEN'
 ]);
 
+const SHORT_TOKENS = new Set([
+  'SHORT',
+  'BEAR',
+  'BEARISH',
+  'SELL',
+  'ASK',
+  'DOWN',
+  'DOWNSIDE',
+  'RED'
+]);
+
 function upper(value) {
   return String(value || '').trim().toUpperCase();
 }
 
-function cleanSideText(value = '') {
-  return upper(value)
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_ENABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
-    .replaceAll('SHORT_ONLY', 'SHORT')
-    .replaceAll('SHORT-ONLY', 'SHORT');
+function shortIndicatorFlags() {
+  return {
+    targetTradeSide: TARGET_TRADE_SIDE,
+    targetScannerSide: TARGET_SCANNER_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    virtualLearning: true,
+    virtualOnly: true,
+    virtualTracked: true,
+    paperOnly: true,
+    shadowOnly: true,
+
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+
+    noRealOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+
+    scannerBearishOnly: true,
+    scannerFindsBearishCandidates: true,
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    scannerBucketsMetadataOnly: true,
+    legacy25BucketsMetadataOnly: true,
+
+    executionFingerprintRole: 'METADATA_ONLY',
+    executionFingerprintsMetadataOnly: true,
+    executionFingerprintsUsedAsLearningFamily: false,
+
+    analyzeMicroFamiliesOnly: true,
+    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+    symbolExcludedFromFamilyId: true,
+    coinNameExcludedFromFamilyId: true,
+    hashesExcludedFromFamilyId: true,
+
+    trueMicroOnly: true,
+    exactTrueMicroOnly: true,
+    exactTrueMicroFamilyRequired: true,
+    fixedTaxonomyPreferred: true,
+
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+
+    parentLearningEnabled: true,
+    childLearningEnabled: true,
+    learningGranularity: LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    selectionGranularity: 'EXACT_75_CHILD',
+    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
+
+    validShortRiskShape: 'tp < entry < sl',
+    shortRiskShape: 'tp < entry < sl',
+    shortTpRule: 'price <= tp',
+    shortSlRule: 'price >= sl',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    scoringRSource: 'netR',
+    winsLossesFlatsSource: 'netR',
+    winrateDefinition: 'netR > 0',
+    avgRSource: 'netR',
+    totalRSource: 'netR',
+    avgCostRShown: true,
+
+    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+    rankingUsesBalancedScore: true,
+    rankingUsesFairWinrate: true,
+    rankingUsesTotalR: true,
+    rankingUsesAvgR: true,
+    rankingUsesAvgCostR: true,
+    bareWinrateRankingDisabled: true,
+
+    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
+    discordOnlyForExactTrueMicroMatch: true,
+    discordOnlyForSelectedMicroFamilies: true,
+    discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
+
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    longRootTouched: false
+  };
 }
 
-function hasShortSignal(value = '') {
-  const raw = cleanSideText(value);
+function cleanSideText(value = '') {
+  return upper(value)
+    .replaceAll('LONG_DISABLED_TRUE', '')
+    .replaceAll('LONGDISABLED_TRUE', '')
+    .replaceAll('BLOCK_LONG_TRUE', '')
+    .replaceAll('LONG_DISABLED_FALSE', '')
+    .replaceAll('LONGDISABLED_FALSE', '')
+    .replaceAll('BLOCK_LONG_FALSE', '')
+    .replaceAll('LONG_ENABLED_FALSE', '')
+    .replaceAll('LONG_ONLY_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
+    .replaceAll('BLOCK_LONG', '')
+    .replaceAll('LONG_DISABLED', '')
+    .replaceAll('LONGDISABLED', '')
+    .replaceAll('SHORT_DISABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT')
+    .replaceAll('LONG_ONLY_MODE', 'LONG')
+    .replaceAll('LONG_ONLY', 'LONG')
+    .replaceAll('LONG-ONLY', 'LONG');
+}
 
-  if (!raw) return false;
-  if (SHORT_TOKENS.has(raw)) return true;
+function normalizedSignalText(value = '') {
+  return cleanSideText(value)
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
 
-  return (
-    raw.includes('MICRO_SHORT_') ||
-    raw.includes('TRADE_SIDE=SHORT') ||
-    raw.includes('TRADESIDE=SHORT') ||
-    raw.includes('POSITION_SIDE=SHORT') ||
-    raw.includes('POSITIONSIDE=SHORT') ||
-    raw.includes('SIDE=SHORT') ||
-    raw.includes('SIDE=BEAR') ||
-    raw.includes('DIRECTION=SHORT') ||
-    raw.includes('DIRECTION=BEAR') ||
-    raw.includes('SIDE=SELL') ||
-    raw.includes('DIRECTION=SELL') ||
-    raw.startsWith('SHORT_') ||
-    raw.includes('_SHORT_') ||
-    raw.endsWith('_SHORT') ||
-    raw.startsWith('BEAR_') ||
-    raw.includes('_BEAR_') ||
-    raw.endsWith('_BEAR') ||
-    raw.startsWith('SELL_') ||
-    raw.includes('_SELL_') ||
-    raw.endsWith('_SELL')
-  );
+function hasSignalPattern(value = '', patterns = []) {
+  const text = normalizedSignalText(value);
+
+  if (!text) return false;
+
+  return patterns.some((pattern) => (
+    text === pattern ||
+    text.startsWith(`${pattern}_`) ||
+    text.endsWith(`_${pattern}`) ||
+    text.includes(`_${pattern}_`)
+  ));
 }
 
 function hasLongSignal(value = '') {
@@ -82,28 +199,52 @@ function hasLongSignal(value = '') {
   if (!raw) return false;
   if (LONG_TOKENS.has(raw)) return true;
 
-  return (
-    raw.includes('MICRO_LONG_') ||
-    raw.includes('TRADE_SIDE=LONG') ||
-    raw.includes('TRADESIDE=LONG') ||
-    raw.includes('POSITION_SIDE=LONG') ||
-    raw.includes('POSITIONSIDE=LONG') ||
-    raw.includes('SIDE=LONG') ||
-    raw.includes('SIDE=BULL') ||
-    raw.includes('DIRECTION=LONG') ||
-    raw.includes('DIRECTION=BULL') ||
-    raw.includes('SIDE=BUY') ||
-    raw.includes('DIRECTION=BUY') ||
-    raw.startsWith('LONG_') ||
-    raw.includes('_LONG_') ||
-    raw.endsWith('_LONG') ||
-    raw.startsWith('BULL_') ||
-    raw.includes('_BULL_') ||
-    raw.endsWith('_BULL') ||
-    raw.startsWith('BUY_') ||
-    raw.includes('_BUY_') ||
-    raw.endsWith('_BUY')
-  );
+  return hasSignalPattern(raw, [
+    'LONG',
+    'BULL',
+    'BULLISH',
+    'BUY',
+    'SIDE_LONG',
+    'TRADE_SIDE_LONG',
+    'TRADESIDE_LONG',
+    'POSITION_SIDE_LONG',
+    'POSITIONSIDE_LONG',
+    'DIRECTION_LONG',
+    'SIDE_BULL',
+    'TRADE_SIDE_BULL',
+    'DIRECTION_BULL',
+    'SIDE_BUY',
+    'DIRECTION_BUY',
+    'MICRO_LONG',
+    'FAMILY_LONG'
+  ]);
+}
+
+function hasShortSignal(value = '') {
+  const raw = cleanSideText(value);
+
+  if (!raw) return false;
+  if (SHORT_TOKENS.has(raw)) return true;
+
+  return hasSignalPattern(raw, [
+    'SHORT',
+    'BEAR',
+    'BEARISH',
+    'SELL',
+    'SIDE_SHORT',
+    'TRADE_SIDE_SHORT',
+    'TRADESIDE_SHORT',
+    'POSITION_SIDE_SHORT',
+    'POSITIONSIDE_SHORT',
+    'DIRECTION_SHORT',
+    'SIDE_BEAR',
+    'TRADE_SIDE_BEAR',
+    'DIRECTION_BEAR',
+    'SIDE_SELL',
+    'DIRECTION_SELL',
+    'MICRO_SHORT',
+    'FAMILY_SHORT'
+  ]);
 }
 
 function normalizeTradeSide(value) {
@@ -119,11 +260,15 @@ function normalizeTradeSide(value) {
   const shortHit = hasShortSignal(raw);
   const longHit = hasLongSignal(raw);
 
-  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
 
-  if (shortHit) return TARGET_TRADE_SIDE;
-  if (longHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && longHit) {
+    if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
+    if (raw.includes('TRADE_SIDE=LONG') || raw.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
+    if (raw.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (raw.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+  }
 
   if (raw === TARGET_DASHBOARD_SIDE.toUpperCase()) return TARGET_TRADE_SIDE;
 
@@ -144,7 +289,6 @@ function normalizeCandleTs(value) {
 
   if (ts <= 0) return 0;
 
-  // Bitget geeft meestal milliseconds terug. Als het seconds zijn: omzetten.
   return ts < 10_000_000_000 ? ts * 1000 : ts;
 }
 
@@ -171,14 +315,23 @@ function normalizeCandle(row = {}) {
     low,
     close,
     volume,
-    quoteVolume
+    quoteVolume,
+
+    candleSide: close > open
+      ? 'BULL'
+      : close < open
+        ? 'BEAR'
+        : 'DOJI',
+
+    marketDataOnly: true
   };
 }
 
 function normalizeCandles(candles) {
   return (Array.isArray(candles) ? candles : [])
     .map(normalizeCandle)
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => safeNumber(a.ts, 0) - safeNumber(b.ts, 0));
 }
 
 export function parseBitgetCandle(row) {
@@ -203,7 +356,8 @@ export function parseBitgetCandle(row) {
     low,
     close,
     volume,
-    quoteVolume
+    quoteVolume,
+    marketDataOnly: true
   };
 }
 
@@ -365,7 +519,8 @@ export function getRecentRange(candles, lookback = 24) {
       recentHigh: 0,
       recentLow: 0,
       rangePct: 0,
-      mid: 0
+      mid: 0,
+      marketDataOnly: true
     };
   }
 
@@ -382,7 +537,8 @@ export function getRecentRange(candles, lookback = 24) {
       recentHigh: 0,
       recentLow: 0,
       rangePct: 0,
-      mid: 0
+      mid: 0,
+      marketDataOnly: true
     };
   }
 
@@ -394,7 +550,8 @@ export function getRecentRange(candles, lookback = 24) {
     recentHigh,
     recentLow,
     rangePct: recentHigh > 0 ? (recentHigh - recentLow) / recentHigh : 0,
-    mid
+    mid,
+    marketDataOnly: true
   };
 }
 
@@ -444,10 +601,6 @@ function inferShortSideFromMomentum({
   const ch24 = safeNumber(change24h, 0);
   const shortMovePct = calcMovePct(candles15m, 8);
 
-  if (ch1 > 0 || shortMovePct > 0 || ch24 > 0) {
-    return OPPOSITE_TRADE_SIDE;
-  }
-
   if (ch1 < 0 || shortMovePct < 0 || ch24 < 0) {
     return TARGET_TRADE_SIDE;
   }
@@ -474,10 +627,6 @@ export function classifyFlow({
       change24h,
       candles15m
     });
-
-  if (inferredSide === OPPOSITE_TRADE_SIDE) {
-    return 'LONG_DISABLED_SHORT_ONLY';
-  }
 
   if (inferredSide !== TARGET_TRADE_SIDE) {
     return 'NEUTRAL';
@@ -520,7 +669,9 @@ export function calcCandleStructure(candles) {
       direction: 'NA',
       bodyPct: 0,
       upperWickPct: 0,
-      lowerWickPct: 0
+      lowerWickPct: 0,
+      marketDataOnly: true,
+      ...shortIndicatorFlags()
     };
   }
 
@@ -528,6 +679,25 @@ export function calcCandleStructure(candles) {
     direction: candleDirection(last),
     bodyPct: candleBodyPct(last),
     upperWickPct: upperWickPct(last),
-    lowerWickPct: lowerWickPct(last)
+    lowerWickPct: lowerWickPct(last),
+    marketDataOnly: true,
+    ...shortIndicatorFlags()
+  };
+}
+
+export function buildShortIndicatorMeta(extra = {}) {
+  return {
+    ...shortIndicatorFlags(),
+    ...extra
+  };
+}
+
+export function buildLongIndicatorMeta(extra = {}) {
+  return {
+    ...shortIndicatorFlags(),
+    compatibilityAlias: 'buildLongIndicatorMeta',
+    compatibilityAliasTarget: 'buildShortIndicatorMeta',
+    longRootTouched: false,
+    ...extra
   };
 }
