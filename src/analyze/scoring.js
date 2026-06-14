@@ -20,6 +20,20 @@ const SOURCE_VIRTUAL = 'VIRTUAL';
 const SOURCE_REAL = 'REAL';
 const SOURCE_SHADOW = 'SHADOW';
 
+const FIXED_TAXONOMY_SETUP_TYPES = new Set([
+  'BREAKDOWN',
+  'RETEST',
+  'SWEEP_REVERSAL',
+  'CONTINUATION',
+  'COMPRESSION'
+]);
+
+const FIXED_TAXONOMY_REGIME_BUCKETS = new Set([
+  'TREND',
+  'CHOP',
+  'SQUEEZE'
+]);
+
 function now() {
   return Date.now();
 }
@@ -38,6 +52,10 @@ function analyzeNumber(key, fallback) {
 
 function shadowWeight() {
   return clamp(analyzeNumber('shadowWeight', 0.35), 0, 1);
+}
+
+function allowLegacyCompletedFallback() {
+  return CONFIG.analyze?.allowLegacyCompletedFallback === true;
 }
 
 function priorTrades() {
@@ -174,8 +192,46 @@ function isScannerFamilyId(id = '') {
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
-    value.includes('__SCANNER__')
+    value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
+    value.includes('__SCANNER__') ||
+    value.includes('SCANNER_GATE_PASS') ||
+    value.includes('SCANNER_GATE_FAIL')
   );
+}
+
+function isFixedTaxonomyMicroId(id = '') {
+  const value = String(id || '').toUpperCase();
+
+  if (!value) return false;
+  if (isScannerFamilyId(value)) return false;
+  if (!value.startsWith(`MICRO_${TARGET_TRADE_SIDE}_`)) return false;
+
+  if (
+    value.includes('_MF_V1_') ||
+    value.includes('_MF_V2_') ||
+    value.includes('_MF_V3_') ||
+    value.includes('_XR_')
+  ) {
+    return false;
+  }
+
+  const rest = value.slice(`MICRO_${TARGET_TRADE_SIDE}_`.length);
+
+  for (const regime of FIXED_TAXONOMY_REGIME_BUCKETS) {
+    const suffix = `_${regime}`;
+
+    if (rest.endsWith(suffix)) {
+      const setup = rest.slice(0, rest.length - suffix.length);
+
+      if (FIXED_TAXONOMY_SETUP_TYPES.has(setup)) return true;
+    }
+  }
+
+  return false;
 }
 
 function normalizeTradeSide(value) {
@@ -199,8 +255,8 @@ function normalizeTradeSide(value) {
   const shortHit = hasShortSignal(raw);
   const longHit = hasLongSignal(raw);
 
-  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
 
   if (shortHit && longHit) {
     if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
@@ -279,8 +335,8 @@ function definitionSide(row = {}) {
     if (side === OPPOSITE_TRADE_SIDE) longHit = true;
   }
 
-  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
+  if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
 
   if (shortHit && longHit) {
     const text = values
@@ -391,7 +447,9 @@ function hasSourceBuckets(stats = {}) {
     safeNumber(stats.virtualFlats, 0) > 0 ||
     safeNumber(stats.shadowWins, 0) > 0 ||
     safeNumber(stats.shadowLosses, 0) > 0 ||
-    safeNumber(stats.shadowFlats, 0) > 0
+    safeNumber(stats.shadowFlats, 0) > 0 ||
+    safeNumber(stats.virtualTotalR, 0) !== 0 ||
+    safeNumber(stats.shadowTotalR, 0) !== 0
   );
 }
 
@@ -402,11 +460,20 @@ function closedCompletedCount(stats = {}) {
   );
 }
 
-function actualOutcomeCounts(stats = {}) {
-  const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
-  const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
+function zeroOutcomeCounts() {
+  return {
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    completed: 0
+  };
+}
 
+function actualOutcomeCounts(stats = {}) {
   if (hasSourceBuckets(stats)) {
+    const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
+    const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
+
     const virtualWins = safeNumber(stats.virtualWins, 0);
     const virtualLosses = safeNumber(stats.virtualLosses, 0);
     const virtualFlats = safeNumber(stats.virtualFlats, 0);
@@ -434,6 +501,10 @@ function actualOutcomeCounts(stats = {}) {
     };
   }
 
+  if (!allowLegacyCompletedFallback()) {
+    return zeroOutcomeCounts();
+  }
+
   const completedFallback = safeNumber(stats.completed, 0);
   const winsFallback = safeNumber(stats.wins, 0);
   const lossesFallback = safeNumber(stats.losses, 0);
@@ -449,9 +520,33 @@ function actualOutcomeCounts(stats = {}) {
     };
   }
 
-  const winrateFallback = clamp(safeNumber(stats.winrate, 0), 0, 1);
-
   if (completedFallback <= 0) {
+    return zeroOutcomeCounts();
+  }
+
+  return {
+    wins: 0,
+    losses: 0,
+    flats: completedFallback,
+    completed: completedFallback
+  };
+}
+
+function weightedCompletedCount(stats = {}) {
+  if (hasSourceBuckets(stats)) {
+    return (
+      safeNumber(stats.virtualCompleted, 0) +
+      safeNumber(stats.shadowCompleted, 0) * shadowWeight()
+    );
+  }
+
+  return allowLegacyCompletedFallback()
+    ? safeNumber(stats.completed, 0)
+    : 0;
+}
+
+function weightedSourceCounts(stats = {}) {
+  if (!hasSourceBuckets(stats)) {
     return {
       wins: 0,
       losses: 0,
@@ -460,28 +555,6 @@ function actualOutcomeCounts(stats = {}) {
     };
   }
 
-  return {
-    wins: completedFallback * winrateFallback,
-    losses: completedFallback * (1 - winrateFallback),
-    flats: 0,
-    completed: completedFallback
-  };
-}
-
-function weightedCompletedCount(stats = {}) {
-  const virtualCompleted = safeNumber(stats.virtualCompleted, 0);
-  const shadowCompleted = safeNumber(stats.shadowCompleted, 0);
-
-  const sourceCompleted =
-    virtualCompleted +
-    shadowCompleted * shadowWeight();
-
-  if (sourceCompleted > 0) return sourceCompleted;
-
-  return safeNumber(stats.completed, 0);
-}
-
-function weightedSourceCounts(stats = {}) {
   const w = shadowWeight();
 
   const wins =
@@ -505,6 +578,16 @@ function weightedSourceCounts(stats = {}) {
 }
 
 function weightedSourceTotals(stats = {}) {
+  if (!hasSourceBuckets(stats)) {
+    return {
+      totalR: 0,
+      totalPnlPct: 0,
+      totalCostR: 0,
+      grossWinR: 0,
+      grossLossR: 0
+    };
+  }
+
   const w = shadowWeight();
 
   return {
@@ -545,7 +628,7 @@ function aggregateRecentOutcomes(stats = {}) {
 
       const weight = sourceWeight(src);
 
-      const exitR = safeNumber(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0);
+      const exitR = safeNumber(row.netR ?? row.exitR ?? row.realizedNetR ?? row.realizedR ?? row.r, 0);
       const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
       const costR = safeNumber(row.costR ?? row.avgCostR, 0);
 
@@ -577,6 +660,16 @@ function aggregateRecentOutcomes(stats = {}) {
       acc.totalPnlPct += pnlPct * weight;
       acc.totalCostR += costR * weight;
 
+      if (row.directToSL) acc.directSLCount += weight;
+      if (row.nearTpSeen) acc.nearTpCount += weight;
+      if (row.reachedHalfR) acc.reachedHalfRCount += weight;
+      if (row.reachedOneR) acc.reachedOneRCount += weight;
+
+      if (row.beWouldExit) acc.beWouldExitCount += weight;
+      if (row.gaveBackAfterHalfR) acc.gaveBackAfterHalfRCount += weight;
+      if (row.gaveBackAfterOneR) acc.gaveBackAfterOneRCount += weight;
+      if (row.nearTpThenLoss) acc.nearTpThenLossCount += weight;
+
       return acc;
     },
     {
@@ -594,25 +687,34 @@ function aggregateRecentOutcomes(stats = {}) {
       totalPnlPct: 0,
       totalCostR: 0,
       grossWinR: 0,
-      grossLossR: 0
+      grossLossR: 0,
+
+      directSLCount: 0,
+      nearTpCount: 0,
+      reachedHalfRCount: 0,
+      reachedOneRCount: 0,
+
+      beWouldExitCount: 0,
+      gaveBackAfterHalfRCount: 0,
+      gaveBackAfterOneRCount: 0,
+      nearTpThenLossCount: 0
     }
   );
 }
 
-function maxPositive(...values) {
-  return Math.max(0, ...values.map((value) => positive(value)));
-}
+function pickWeightedValue({
+  stats,
+  sourceValue,
+  recentValue,
+  legacyValue = 0,
+  recentCompleted = 0
+}) {
+  if (hasSourceBuckets(stats)) return safeNumber(sourceValue, 0);
+  if (safeNumber(recentCompleted, 0) > 0) return safeNumber(recentValue, 0);
 
-function preferLegacyNonZero(legacy, source, fallback = 0) {
-  const legacyValue = safeNumber(legacy, 0);
-
-  if (legacyValue !== 0) return legacyValue;
-
-  const sourceValue = safeNumber(source, 0);
-
-  if (sourceValue !== 0) return sourceValue;
-
-  return safeNumber(fallback, 0);
+  return allowLegacyCompletedFallback()
+    ? safeNumber(legacyValue, 0)
+    : 0;
 }
 
 function sampleReliability(completed) {
@@ -669,6 +771,7 @@ export function createMicroStats({
     : normalizeTradeSide(tradeSide || side);
 
   const isShort = cleanTradeSide === TARGET_TRADE_SIDE;
+  const fixedTaxonomyLearningId = isFixedTaxonomyMicroId(microFamilyId);
 
   return {
     microFamilyId,
@@ -689,6 +792,13 @@ export function createMicroStats({
     shortDisabled: false,
 
     source: SOURCE_VIRTUAL,
+
+    fixedTaxonomyLearningId,
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    symbolExcludedFromFamilyId: true,
 
     definitionParts,
     definition: definitionParts.join(' | '),
@@ -831,6 +941,16 @@ function ensureStatsShape(stats = {}) {
   stats.shortDisabled = false;
   stats.source ||= SOURCE_VIRTUAL;
 
+  stats.learningIdentitySource ||= 'ANALYZE_MICRO_FAMILY';
+  stats.scannerFingerprintRole ||= 'METADATA_ONLY';
+  stats.scannerFingerprintsMetadataOnly = true;
+  stats.scannerFingerprintsUsedAsLearningFamily = false;
+  stats.symbolExcludedFromFamilyId = true;
+
+  stats.fixedTaxonomyLearningId =
+    Boolean(stats.fixedTaxonomyLearningId) ||
+    isFixedTaxonomyMicroId(stats.trueMicroFamilyId || stats.microFamilyId);
+
   stats.minCompletedForActiveLearning = MIN_COMPLETED_ACTIVE;
 
   applySideIdentity(stats);
@@ -936,6 +1056,16 @@ function ensureStatsShape(stats = {}) {
     stats[field] = safeNumber(stats[field], 0);
   }
 
+  stats.realCompleted = 0;
+  stats.realWins = 0;
+  stats.realLosses = 0;
+  stats.realFlats = 0;
+  stats.realTotalR = 0;
+  stats.realTotalPnlPct = 0;
+  stats.realTotalCostR = 0;
+  stats.realGrossWinR = 0;
+  stats.realGrossLossR = 0;
+
   stats.createdAt ||= now();
   stats.updatedAt ||= now();
 
@@ -967,6 +1097,13 @@ export function updateObservation(stats, row = {}) {
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       source: row.source || SOURCE_VIRTUAL,
+
+      microFamilyId: row.microFamilyId || row.trueMicroFamilyId || null,
+      trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || null,
+      coarseMicroFamilyId: row.coarseMicroFamilyId || null,
+
+      setupType: row.setupType || null,
+      regimeBucket: row.regimeBucket || null,
 
       scannerMicroFamilyId: row.scannerMicroFamilyId || null,
       scannerFingerprintRole: row.scannerFingerprintRole || 'METADATA_ONLY',
@@ -1093,6 +1230,13 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
 
+    microFamilyId: row.microFamilyId || row.trueMicroFamilyId || stats.microFamilyId || null,
+    trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || stats.trueMicroFamilyId || null,
+    coarseMicroFamilyId: row.coarseMicroFamilyId || stats.coarseMicroFamilyId || null,
+
+    setupType: row.setupType || stats.setupType || null,
+    regimeBucket: row.regimeBucket || stats.regimeBucket || null,
+
     exitReason: row.exitReason || null,
 
     exitR,
@@ -1123,6 +1267,10 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     gaveBackAfterHalfR: Boolean(row.gaveBackAfterHalfR),
     gaveBackAfterOneR: Boolean(row.gaveBackAfterOneR),
     nearTpThenLoss: Boolean(row.nearTpThenLoss),
+
+    costModelApplied: Boolean(row.costModelApplied),
+    netCostModelApplied: Boolean(row.netCostModelApplied),
+    costModel: row.costModel || null,
 
     isMirrorMicroFamily: false,
     outcomeMirror: false,
@@ -1233,87 +1381,177 @@ function buildAvgRScore({
 export function refreshStats(stats) {
   ensureStatsShape(stats);
 
+  const sourceBucketsPresent = hasSourceBuckets(stats);
   const sourceCounts = weightedSourceCounts(stats);
   const sourceTotals = weightedSourceTotals(stats);
   const recent = aggregateRecentOutcomes(stats);
 
-  const actualCounts = actualOutcomeCounts(stats);
+  const actualCounts = sourceBucketsPresent
+    ? actualOutcomeCounts(stats)
+    : recent.actualCompleted > 0
+      ? {
+        wins: recent.actualWins,
+        losses: recent.actualLosses,
+        flats: recent.actualFlats,
+        completed: recent.actualCompleted
+      }
+      : actualOutcomeCounts(stats);
 
-  const closedCompleted = Math.max(
-    closedCompletedCount(stats),
-    safeNumber(stats.completed, 0),
-    actualCounts.completed,
-    recent.actualCompleted
-  );
+  const sourceClosedCompleted = closedCompletedCount(stats);
 
-  const weightedCompletedForR = Math.max(
-    weightedCompletedCount(stats),
-    sourceCounts.completed,
-    recent.completed,
-    closedCompleted > 0 ? closedCompleted : 0
-  );
+  const closedCompleted = sourceBucketsPresent
+    ? sourceClosedCompleted
+    : recent.actualCompleted > 0
+      ? recent.actualCompleted
+      : allowLegacyCompletedFallback()
+        ? safeNumber(actualCounts.completed, 0)
+        : 0;
 
-  const weightedWins = Math.max(
-    safeNumber(stats.wins, 0),
-    sourceCounts.wins,
-    recent.wins
-  );
+  const weightedCompletedForR = sourceBucketsPresent
+    ? weightedCompletedCount(stats)
+    : recent.completed > 0
+      ? recent.completed
+      : allowLegacyCompletedFallback()
+        ? safeNumber(actualCounts.completed, 0)
+        : 0;
 
-  const weightedLosses = Math.max(
-    safeNumber(stats.losses, 0),
-    sourceCounts.losses,
-    recent.losses
-  );
+  const weightedWins = pickWeightedValue({
+    stats,
+    sourceValue: sourceCounts.wins,
+    recentValue: recent.wins,
+    legacyValue: stats.wins,
+    recentCompleted: recent.completed
+  });
 
-  const weightedFlats = Math.max(
-    safeNumber(stats.flats, 0),
-    sourceCounts.flats,
-    recent.flats
-  );
+  const weightedLosses = pickWeightedValue({
+    stats,
+    sourceValue: sourceCounts.losses,
+    recentValue: recent.losses,
+    legacyValue: stats.losses,
+    recentCompleted: recent.completed
+  });
 
-  const totalR = preferLegacyNonZero(
-    stats.totalR,
-    sourceTotals.totalR,
-    recent.totalR
-  );
+  const weightedFlats = pickWeightedValue({
+    stats,
+    sourceValue: sourceCounts.flats,
+    recentValue: recent.flats,
+    legacyValue: stats.flats,
+    recentCompleted: recent.completed
+  });
 
-  const totalPnlPct = preferLegacyNonZero(
-    stats.totalPnlPct,
-    sourceTotals.totalPnlPct,
-    recent.totalPnlPct
-  );
+  const totalR = pickWeightedValue({
+    stats,
+    sourceValue: sourceTotals.totalR,
+    recentValue: recent.totalR,
+    legacyValue: stats.totalR,
+    recentCompleted: recent.completed
+  });
 
-  const totalCostR = preferLegacyNonZero(
-    stats.totalCostR,
-    sourceTotals.totalCostR,
-    recent.totalCostR
-  );
+  const totalPnlPct = pickWeightedValue({
+    stats,
+    sourceValue: sourceTotals.totalPnlPct,
+    recentValue: recent.totalPnlPct,
+    legacyValue: stats.totalPnlPct,
+    recentCompleted: recent.completed
+  });
 
-  const grossWinR = maxPositive(
-    stats.grossWinR,
-    sourceTotals.grossWinR,
-    recent.grossWinR,
-    totalR > 0 && weightedLosses <= 0 ? totalR : 0
-  );
+  const totalCostR = pickWeightedValue({
+    stats,
+    sourceValue: sourceTotals.totalCostR,
+    recentValue: recent.totalCostR,
+    legacyValue: stats.totalCostR,
+    recentCompleted: recent.completed
+  });
 
-  const grossLossR = maxPositive(
-    stats.grossLossR,
-    sourceTotals.grossLossR,
-    recent.grossLossR,
-    totalR < 0 && weightedWins <= 0 ? Math.abs(totalR) : 0
-  );
+  const grossWinR = pickWeightedValue({
+    stats,
+    sourceValue: sourceTotals.grossWinR,
+    recentValue: recent.grossWinR,
+    legacyValue: stats.grossWinR,
+    recentCompleted: recent.completed
+  });
+
+  const grossLossR = pickWeightedValue({
+    stats,
+    sourceValue: sourceTotals.grossLossR,
+    recentValue: recent.grossLossR,
+    legacyValue: stats.grossLossR,
+    recentCompleted: recent.completed
+  });
+
+  const directSLCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.directSLCount,
+    recentValue: recent.directSLCount,
+    legacyValue: stats.directSLCount,
+    recentCompleted: recent.completed
+  });
+
+  const nearTpCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.nearTpCount,
+    recentValue: recent.nearTpCount,
+    legacyValue: stats.nearTpCount,
+    recentCompleted: recent.completed
+  });
+
+  const reachedHalfRCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.reachedHalfRCount,
+    recentValue: recent.reachedHalfRCount,
+    legacyValue: stats.reachedHalfRCount,
+    recentCompleted: recent.completed
+  });
+
+  const reachedOneRCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.reachedOneRCount,
+    recentValue: recent.reachedOneRCount,
+    legacyValue: stats.reachedOneRCount,
+    recentCompleted: recent.completed
+  });
+
+  const beWouldExitCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.beWouldExitCount,
+    recentValue: recent.beWouldExitCount,
+    legacyValue: stats.beWouldExitCount,
+    recentCompleted: recent.completed
+  });
+
+  const gaveBackAfterHalfRCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.gaveBackAfterHalfRCount,
+    recentValue: recent.gaveBackAfterHalfRCount,
+    legacyValue: stats.gaveBackAfterHalfRCount,
+    recentCompleted: recent.completed
+  });
+
+  const gaveBackAfterOneRCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.gaveBackAfterOneRCount,
+    recentValue: recent.gaveBackAfterOneRCount,
+    legacyValue: stats.gaveBackAfterOneRCount,
+    recentCompleted: recent.completed
+  });
+
+  const nearTpThenLossCount = pickWeightedValue({
+    stats,
+    sourceValue: stats.nearTpThenLossCount,
+    recentValue: recent.nearTpThenLossCount,
+    legacyValue: stats.nearTpThenLossCount,
+    recentCompleted: recent.completed
+  });
 
   const winrateSample = safeNumber(actualCounts.completed, 0);
   const winrateWins = safeNumber(actualCounts.wins, 0);
-  const winrateFlats = safeNumber(actualCounts.flats, 0);
-  const winrateSuccesses = winrateWins + winrateFlats * 0.5;
 
   const rawWinrate = winrateSample > 0
-    ? winrateSuccesses / winrateSample
+    ? winrateWins / winrateSample
     : 0;
 
-  const bayes = bayesianWinrate(winrateSuccesses, winrateSample);
-  const wilson = wilsonLowerBound(winrateSuccesses, winrateSample);
+  const bayes = bayesianWinrate(winrateWins, winrateSample);
+  const wilson = wilsonLowerBound(winrateWins, winrateSample);
 
   const fair = winrateSample > 0
     ? wilson * 0.8 + bayes * 0.15 + rawWinrate * 0.05
@@ -1343,35 +1581,35 @@ export function refreshStats(stats) {
     0;
 
   const directSLPct = weightedCompletedForR > 0
-    ? safeNumber(stats.directSLCount, 0) / weightedCompletedForR
+    ? directSLCount / weightedCompletedForR
     : 0;
 
   const nearTpPct = weightedCompletedForR > 0
-    ? safeNumber(stats.nearTpCount, 0) / weightedCompletedForR
+    ? nearTpCount / weightedCompletedForR
     : 0;
 
   const reachedHalfRPct = weightedCompletedForR > 0
-    ? safeNumber(stats.reachedHalfRCount, 0) / weightedCompletedForR
+    ? reachedHalfRCount / weightedCompletedForR
     : 0;
 
   const reachedOneRPct = weightedCompletedForR > 0
-    ? safeNumber(stats.reachedOneRCount, 0) / weightedCompletedForR
+    ? reachedOneRCount / weightedCompletedForR
     : 0;
 
   const beWouldExitPct = weightedCompletedForR > 0
-    ? safeNumber(stats.beWouldExitCount, 0) / weightedCompletedForR
+    ? beWouldExitCount / weightedCompletedForR
     : 0;
 
   const gaveBackAfterHalfRPct = weightedCompletedForR > 0
-    ? safeNumber(stats.gaveBackAfterHalfRCount, 0) / weightedCompletedForR
+    ? gaveBackAfterHalfRCount / weightedCompletedForR
     : 0;
 
   const gaveBackAfterOneRPct = weightedCompletedForR > 0
-    ? safeNumber(stats.gaveBackAfterOneRCount, 0) / weightedCompletedForR
+    ? gaveBackAfterOneRCount / weightedCompletedForR
     : 0;
 
   const nearTpThenLossPct = weightedCompletedForR > 0
-    ? safeNumber(stats.nearTpThenLossCount, 0) / weightedCompletedForR
+    ? nearTpThenLossCount / weightedCompletedForR
     : 0;
 
   const avgCostR = weightedCompletedForR > 0
@@ -1428,23 +1666,28 @@ export function refreshStats(stats) {
     totalCostR: round4(totalCostR),
 
     virtualTotalR: round4(stats.virtualTotalR),
-    realTotalR: round4(stats.realTotalR),
+    realTotalR: 0,
     shadowTotalR: round4(stats.shadowTotalR),
 
     virtualTotalPnlPct: round4(stats.virtualTotalPnlPct),
-    realTotalPnlPct: round4(stats.realTotalPnlPct),
+    realTotalPnlPct: 0,
     shadowTotalPnlPct: round4(stats.shadowTotalPnlPct),
 
     virtualTotalCostR: round4(stats.virtualTotalCostR),
-    realTotalCostR: round4(stats.realTotalCostR),
+    realTotalCostR: 0,
     shadowTotalCostR: round4(stats.shadowTotalCostR),
 
     virtualGrossWinR: round4(stats.virtualGrossWinR),
     virtualGrossLossR: round4(stats.virtualGrossLossR),
-    realGrossWinR: round4(stats.realGrossWinR),
-    realGrossLossR: round4(stats.realGrossLossR),
+    realGrossWinR: 0,
+    realGrossLossR: 0,
     shadowGrossWinR: round4(stats.shadowGrossWinR),
     shadowGrossLossR: round4(stats.shadowGrossLossR),
+
+    realCompleted: 0,
+    realWins: 0,
+    realLosses: 0,
+    realFlats: 0,
 
     grossWinR: round4(grossWinR),
     grossLossR: round4(grossLossR),
@@ -1471,6 +1714,16 @@ export function refreshStats(stats) {
 
     profitFactor: round4(profitFactor),
 
+    directSLCount: round4(directSLCount),
+    nearTpCount: round4(nearTpCount),
+    reachedHalfRCount: round4(reachedHalfRCount),
+    reachedOneRCount: round4(reachedOneRCount),
+
+    beWouldExitCount: round4(beWouldExitCount),
+    gaveBackAfterHalfRCount: round4(gaveBackAfterHalfRCount),
+    gaveBackAfterOneRCount: round4(gaveBackAfterOneRCount),
+    nearTpThenLossCount: round4(nearTpThenLossCount),
+
     directSLPct: round4(directSLPct),
     nearTpPct: round4(nearTpPct),
     reachedHalfRPct: round4(reachedHalfRPct),
@@ -1487,6 +1740,16 @@ export function refreshStats(stats) {
 
     tooEarly: closedCompleted < MIN_COMPLETED_ACTIVE,
     minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE,
+
+    learningIdentitySource: 'ANALYZE_MICRO_FAMILY',
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    symbolExcludedFromFamilyId: true,
+
+    fixedTaxonomyLearningId:
+      Boolean(stats.fixedTaxonomyLearningId) ||
+      isFixedTaxonomyMicroId(stats.trueMicroFamilyId || stats.microFamilyId),
 
     updatedAt: now()
   });
