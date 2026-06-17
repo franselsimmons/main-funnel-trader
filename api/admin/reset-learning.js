@@ -27,11 +27,8 @@ const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
-const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY';
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
@@ -112,7 +109,6 @@ const SHORT_KEYS = {
     logList: namespacedShortKey(
       KEYS.short?.reset?.logList ||
         KEYS.reset?.shortLogList ||
-        KEYS.resetShort?.logList ||
         KEYS.reset?.logList,
       'RESET:LOGS'
     )
@@ -122,7 +118,6 @@ const SHORT_KEYS = {
     lock: namespacedShortKey(
       KEYS.short?.trade?.lock ||
         KEYS.trade?.shortLock ||
-        KEYS.tradeShort?.lock ||
         KEYS.trade?.lock,
       'TRADE:LOCK'
     )
@@ -134,7 +129,6 @@ const SHORT_KEYS = {
     freezeLock: namespacedShortKey(
       KEYS.short?.analyze?.freezeLock ||
         KEYS.analyze?.shortFreezeLock ||
-        KEYS.analyzeShort?.freezeLock ||
         KEYS.analyze?.freezeLock,
       'ANALYZE:WEEKLY_FREEZE_LOCK'
     ),
@@ -142,7 +136,6 @@ const SHORT_KEYS = {
     activateLock: namespacedShortKey(
       KEYS.short?.analyze?.activateLock ||
         KEYS.analyze?.shortActivateLock ||
-        KEYS.analyzeShort?.activateLock ||
         KEYS.analyze?.activateLock,
       'ANALYZE:ROTATION_ACTIVATE_LOCK'
     ),
@@ -150,7 +143,6 @@ const SHORT_KEYS = {
     nextRotation: namespacedShortKey(
       KEYS.short?.analyze?.nextRotation ||
         KEYS.analyze?.shortNextRotation ||
-        KEYS.analyzeShort?.nextRotation ||
         KEYS.analyze?.nextRotation,
       'ANALYZE:NEXT_ROTATION'
     ),
@@ -158,7 +150,6 @@ const SHORT_KEYS = {
     rotationValidFrom: namespacedShortKey(
       KEYS.short?.analyze?.rotationValidFrom ||
         KEYS.analyze?.shortRotationValidFrom ||
-        KEYS.analyzeShort?.rotationValidFrom ||
         KEYS.analyze?.rotationValidFrom,
       'ANALYZE:ROTATION_VALID_FROM'
     ),
@@ -166,57 +157,49 @@ const SHORT_KEYS = {
     activeRotation: namespacedShortKey(
       KEYS.short?.analyze?.activeRotation ||
         KEYS.analyze?.shortActiveRotation ||
-        KEYS.analyzeShort?.activeRotation ||
         KEYS.analyze?.activeRotation,
       'ANALYZE:ACTIVE_ROTATION'
     ),
 
     obsLastPattern: namespacedShortPattern(
       KEYS.short?.analyze?.obsLastPattern ||
-        KEYS.analyze?.shortObsLastPattern ||
-        KEYS.analyzeShort?.obsLastPattern,
+        KEYS.analyze?.shortObsLastPattern,
       'ANALYZE:OBS:LAST:*'
     ),
 
     outcomePattern: namespacedShortPattern(
       KEYS.short?.analyze?.outcomePattern ||
-        KEYS.analyze?.shortOutcomePattern ||
-        KEYS.analyzeShort?.outcomePattern,
+        KEYS.analyze?.shortOutcomePattern,
       'ANALYZE:OUTCOME:*'
     ),
 
     shadowPattern: namespacedShortPattern(
       KEYS.short?.analyze?.shadowPattern ||
-        KEYS.analyze?.shortShadowPattern ||
-        KEYS.analyzeShort?.shadowPattern,
+        KEYS.analyze?.shortShadowPattern,
       'ANALYZE:SHADOW:*'
     ),
 
     microPattern: namespacedShortPattern(
       KEYS.short?.analyze?.microPattern ||
-        KEYS.analyze?.shortMicroPattern ||
-        KEYS.analyzeShort?.microPattern,
+        KEYS.analyze?.shortMicroPattern,
       'ANALYZE:MICRO:*'
     ),
 
     weekPattern: namespacedShortPattern(
       KEYS.short?.analyze?.weekPattern ||
-        KEYS.analyze?.shortWeekPattern ||
-        KEYS.analyzeShort?.weekPattern,
+        KEYS.analyze?.shortWeekPattern,
       'ANALYZE:WEEK:*'
     ),
 
     scannerFingerprintPattern: namespacedShortPattern(
       KEYS.short?.analyze?.scannerFingerprintPattern ||
-        KEYS.analyze?.shortScannerFingerprintPattern ||
-        KEYS.analyzeShort?.scannerFingerprintPattern,
+        KEYS.analyze?.shortScannerFingerprintPattern,
       'ANALYZE:*SCANNER*'
     ),
 
     executionFingerprintPattern: namespacedShortPattern(
       KEYS.short?.analyze?.executionFingerprintPattern ||
-        KEYS.analyze?.shortExecutionFingerprintPattern ||
-        KEYS.analyzeShort?.executionFingerprintPattern,
+        KEYS.analyze?.shortExecutionFingerprintPattern,
       'ANALYZE:*EXECUTION*'
     )
   }
@@ -272,13 +255,6 @@ function modeFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    bareWinrateRankingDisabled: true,
-
     noRealOrders: true,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
@@ -291,12 +267,22 @@ function modeFlags() {
 
     positionTimeStopMinDefault: DEFAULT_POSITION_TIME_STOP_MIN,
     shortRiskShape: 'tp < entry < sl',
-    validShortRiskShape: 'tp < entry && entry < sl',
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
     tpRule: 'price <= tp',
     slRule: 'price >= sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     timeStopEnabled: true,
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
 
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsMetadataOnly: true,
@@ -318,12 +304,9 @@ function modeFlags() {
     exactTrueMicroOnly: true,
     exactTrueMicroFamilyRequired: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
     parentMicroFamilyCount: 15,
     selectableChildMicroFamilyCount: 75,
@@ -600,10 +583,6 @@ function baseWeekMicrosKey(weekKey) {
     return KEYS.analyze.shortWeekMicros(weekKey);
   }
 
-  if (typeof KEYS.analyzeShort?.weekMicros === 'function') {
-    return KEYS.analyzeShort.weekMicros(weekKey);
-  }
-
   if (typeof KEYS.analyze?.weekMicros === 'function') {
     return KEYS.analyze.weekMicros(weekKey);
   }
@@ -618,10 +597,6 @@ function baseWeekMetaKey(weekKey) {
 
   if (typeof KEYS.analyze?.shortWeekMeta === 'function') {
     return KEYS.analyze.shortWeekMeta(weekKey);
-  }
-
-  if (typeof KEYS.analyzeShort?.weekMeta === 'function') {
-    return KEYS.analyzeShort.weekMeta(weekKey);
   }
 
   if (typeof KEYS.analyze?.weekMeta === 'function') {
@@ -689,10 +664,7 @@ async function deletePatterns(redis, patterns = []) {
 function buildTaxonomyMeta() {
   return {
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
     parentMicroFamilyCount: 15,
     selectableChildMicroFamilyCount: 75,
@@ -785,8 +757,6 @@ export default async function handler(req, res) {
   res.setHeader('X-Virtual-Learning-Forced', 'true');
   res.setHeader('X-Net-Outcomes-Only', 'true');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Child-True-Micro-Family-Schema', CHILD_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
   res.setHeader('X-Selectable-Child-Micro-Families', '75');
   res.setHeader('X-Parent-Micro-Families', '15');
