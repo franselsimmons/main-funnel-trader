@@ -25,11 +25,8 @@ const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
-const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY';
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
@@ -107,7 +104,6 @@ const SHORT_KEYS = {
     latest: namespacedShortKey(
       KEYS.short?.scan?.latest ||
         KEYS.scan?.shortLatest ||
-        KEYS.scanShort?.latest ||
         KEYS.scan?.latest,
       'SCAN:LATEST'
     )
@@ -117,7 +113,6 @@ const SHORT_KEYS = {
     runMeta: namespacedShortKey(
       KEYS.short?.trade?.runMeta ||
         KEYS.trade?.shortRunMeta ||
-        KEYS.tradeShort?.runMeta ||
         KEYS.trade?.runMeta,
       'TRADE:RUN_META'
     )
@@ -187,13 +182,6 @@ function modeFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    bareWinrateRankingDisabled: true,
-
     noRealOrders: true,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
@@ -206,12 +194,22 @@ function modeFlags() {
 
     tradePositionTimeStopMinDefault: 720,
     shortRiskShape: 'tp < entry < sl',
-    validShortRiskShape: 'tp < entry && entry < sl',
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
     tpRule: 'price <= tp',
     slRule: 'price >= sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     timeStopEnabled: true,
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
 
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsMetadataOnly: true,
@@ -233,12 +231,9 @@ function modeFlags() {
     exactTrueMicroOnly: true,
     exactTrueMicroFamilyRequired: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
     parentMicroFamilyCount: 15,
     selectableChildMicroFamilyCount: 75,
@@ -287,7 +282,6 @@ function sourceEntries(value = {}) {
       row?.trueMicroFamilyId ||
         row?.learningMicroFamilyId ||
         row?.analyzeMicroFamilyId ||
-        row?.childTrueMicroFamilyId ||
         row?.microFamilyId ||
         row?.id ||
         row?.key ||
@@ -330,6 +324,36 @@ function round(value, decimals = 4) {
   return Number(num(value, 0).toFixed(decimals));
 }
 
+function flattenValues(values = []) {
+  const stack = Array.isArray(values) ? [...values] : [values];
+  const output = [];
+
+  while (stack.length > 0) {
+    const value = stack.shift();
+
+    if (Array.isArray(value)) {
+      stack.unshift(...value);
+      continue;
+    }
+
+    output.push(value);
+  }
+
+  return output;
+}
+
+function firstFiniteNumber(values = []) {
+  for (const value of flattenValues(values)) {
+    if (value === undefined || value === null || value === '') continue;
+
+    const n = Number(value);
+
+    if (Number.isFinite(n)) return n;
+  }
+
+  return null;
+}
+
 function cleanSideText(value = '') {
   return upper(value)
     .replaceAll('LONG_DISABLED_FALSE', '')
@@ -339,19 +363,19 @@ function cleanSideText(value = '') {
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORTDISABLED_FALSE', '')
+    .replaceAll('BLOCK_SHORT_FALSE', '')
     .replaceAll('SHORT_ENABLED_FALSE', '')
     .replaceAll('SHORT_ONLY_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
-    .replaceAll('SHORT_DISABLED_LONG_ONLY', '')
-    .replaceAll('SHORTDISABLED_LONG_ONLY', '')
-    .replaceAll('BLOCK_SHORT_FALSE', '')
-    .replaceAll('BLOCK_SHORT', '')
-    .replaceAll('SHORT_DISABLED', '')
-    .replaceAll('SHORTDISABLED', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
+    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('BLOCK_SHORT', 'LONG')
+    .replaceAll('SHORT_DISABLED', 'LONG')
+    .replaceAll('SHORTDISABLED', 'LONG')
     .replaceAll('LONG_ONLY_MODE', 'LONG')
     .replaceAll('LONG_ONLY', 'LONG')
     .replaceAll('LONG-ONLY', 'LONG')
@@ -530,10 +554,7 @@ function parseShortTaxonomyMicroId(id = '') {
     trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
     childTrueMicroFamilyId: validChild ? childId : null,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY
+    learningGranularity: LEARNING_GRANULARITY
   };
 }
 
@@ -553,14 +574,14 @@ function isScannerFingerprintId(id = '') {
   const value = upper(id);
 
   return (
-    value.startsWith('MICRO_LONG_SCANNER__') ||
-    value.includes('MICRO_LONG_SCANNER__') ||
-    value.startsWith('LONG_SCANNER_') ||
-    value.includes('LONG_SCANNER_') ||
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
     value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -731,7 +752,6 @@ function isShortRow(row = {}) {
     row.trueMicroFamilyId ||
       row.learningMicroFamilyId ||
       row.analyzeMicroFamilyId ||
-      row.childTrueMicroFamilyId ||
       row.microFamilyId ||
       row.coarseMicroFamilyId ||
       row.id ||
@@ -776,7 +796,6 @@ function getAnyMicroFamilyId(row = {}, key = '') {
     row.trueMicroFamilyId ||
     row.learningMicroFamilyId ||
     row.analyzeMicroFamilyId ||
-    row.childTrueMicroFamilyId ||
     row.microFamilyId ||
     row.id ||
     row.key ||
@@ -882,6 +901,147 @@ function shadowKeyFromReal(realKey = '') {
   return `shadow${String(realKey).slice(4)}`;
 }
 
+function isLearningOutcomeSource(source = '') {
+  const value = upper(source || 'VIRTUAL');
+
+  return value === 'VIRTUAL' || value === 'SHADOW' || value === 'PAPER' || value === '';
+}
+
+function getShortRiskGeometry(row = {}) {
+  const entry = firstFiniteNumber([
+    row.entryPrice,
+    row.entry,
+    row.avgEntryPrice,
+    row.averageEntryPrice,
+    row.averageEntry,
+    row.openPrice
+  ]);
+
+  const initialSl = firstFiniteNumber([
+    row.initialSl,
+    row.initialSL,
+    row.initialStopLoss,
+    row.initialStopLossPrice,
+    row.stopLoss,
+    row.stopLossPrice,
+    row.sl,
+    row.slPrice
+  ]);
+
+  const tp = firstFiniteNumber([
+    row.tp,
+    row.takeProfit,
+    row.takeProfitPrice,
+    row.targetPrice,
+    row.finalTp,
+    row.finalTakeProfit
+  ]);
+
+  const exitPrice = firstFiniteNumber([
+    row.exitPrice,
+    row.closePrice,
+    row.closedPrice,
+    row.outcomePrice,
+    row.fillExitPrice,
+    row.exit
+  ]);
+
+  const currentPrice = firstFiniteNumber([
+    row.currentPrice,
+    row.markPrice,
+    row.lastPrice,
+    row.price
+  ]);
+
+  const denominator =
+    Number.isFinite(entry) && Number.isFinite(initialSl)
+      ? initialSl - entry
+      : 0;
+
+  const validGeometry =
+    Number.isFinite(entry) &&
+    Number.isFinite(initialSl) &&
+    Number.isFinite(tp) &&
+    denominator > 0 &&
+    tp < entry &&
+    entry < initialSl;
+
+  const shortGrossR =
+    validGeometry && Number.isFinite(exitPrice)
+      ? (entry - exitPrice) / denominator
+      : null;
+
+  const shortCurrentR =
+    validGeometry && Number.isFinite(currentPrice)
+      ? (entry - currentPrice) / denominator
+      : null;
+
+  const shortTpHit =
+    validGeometry &&
+    (
+      row.shortTpHit === true ||
+      row.tpHit === true ||
+      (Number.isFinite(exitPrice) && exitPrice <= tp) ||
+      (Number.isFinite(currentPrice) && currentPrice <= tp)
+    );
+
+  const shortSlHit =
+    validGeometry &&
+    (
+      row.shortSlHit === true ||
+      row.slHit === true ||
+      (Number.isFinite(exitPrice) && exitPrice >= initialSl) ||
+      (Number.isFinite(currentPrice) && currentPrice >= initialSl)
+    );
+
+  return {
+    entry,
+    initialSl,
+    tp,
+    exitPrice,
+    currentPrice,
+    denominator,
+    validGeometry,
+    shortTpHit: Boolean(shortTpHit),
+    shortSlHit: Boolean(shortSlHit),
+    shortGrossR,
+    shortCurrentR,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+  };
+}
+
+function outcomeNetR(row = {}) {
+  const explicitShortR = firstFiniteNumber([
+    row.shortNetR,
+    row.netShortR,
+    row.shortExitR,
+    row.shortRealizedNetR,
+    row.shortRealizedR
+  ]);
+
+  if (explicitShortR !== null) return explicitShortR;
+
+  const geometry = getShortRiskGeometry(row);
+  const costR = num(row.costR ?? row.avgCostR, 0);
+
+  if (geometry.validGeometry && geometry.shortGrossR !== null) {
+    return geometry.shortGrossR - costR;
+  }
+
+  return num(
+    row.netR ??
+      row.exitR ??
+      row.realizedNetR ??
+      row.realizedR ??
+      row.r,
+    0
+  );
+}
+
 function getLearningCount(row = {}, aggregateKey, realKey = null, shadowKey = null) {
   const virtualKey = virtualKeyFromReal(realKey);
   const resolvedShadowKey = shadowKey || shadowKeyFromReal(realKey);
@@ -901,7 +1061,44 @@ function getLearningCount(row = {}, aggregateKey, realKey = null, shadowKey = nu
   return 0;
 }
 
+function aggregateRecentOutcomes(row = {}) {
+  const outcomes = Array.isArray(row.recentOutcomes)
+    ? row.recentOutcomes
+    : [];
+
+  return outcomes.reduce(
+    (acc, outcome) => {
+      if (!outcome || typeof outcome !== 'object') return acc;
+      if (!isLearningOutcomeSource(outcome.source || outcome.outcomeSource || 'VIRTUAL')) return acc;
+      if (!isShortRow({ ...row, ...outcome })) return acc;
+
+      const netR = outcomeNetR(outcome);
+      const costR = num(outcome.costR ?? outcome.avgCostR, 0);
+
+      acc.completed += 1;
+      acc.totalR += netR;
+      acc.totalCostR += costR;
+
+      if (netR > 0) acc.wins += 1;
+      else if (netR < 0) acc.losses += 1;
+      else acc.flats += 1;
+
+      return acc;
+    },
+    {
+      completed: 0,
+      wins: 0,
+      losses: 0,
+      flats: 0,
+      totalR: 0,
+      totalCostR: 0
+    }
+  );
+}
+
 function getOutcomeCounts(row = {}) {
+  const recent = aggregateRecentOutcomes(row);
+
   const wins = getLearningCount(row, 'wins', 'realWins', 'shadowWins');
   const losses = getLearningCount(row, 'losses', 'realLosses', 'shadowLosses');
   const flats = getLearningCount(row, 'flats', 'realFlats', 'shadowFlats');
@@ -918,11 +1115,26 @@ function getOutcomeCounts(row = {}) {
       0
     );
 
+  if (
+    wins + losses + flats <= 0 &&
+    virtualShadowCompleted <= 0 &&
+    aggregateCompleted <= 0 &&
+    recent.completed > 0
+  ) {
+    return {
+      wins: recent.wins,
+      losses: recent.losses,
+      flats: recent.flats,
+      total: recent.completed
+    };
+  }
+
   const countedTotal = wins + losses + flats;
   const total = Math.max(
     countedTotal,
     virtualShadowCompleted,
     aggregateCompleted,
+    recent.completed,
     0
   );
 
@@ -951,6 +1163,7 @@ function getObservationSample(row = {}) {
 
 function getTotalR(row = {}) {
   const completed = getOutcomeSample(row);
+  const recent = aggregateRecentOutcomes(row);
 
   if (completed <= 0) return 0;
 
@@ -962,6 +1175,10 @@ function getTotalR(row = {}) {
     return virtualShadowTotalR;
   }
 
+  if (recent.completed > 0) return recent.totalR;
+
+  if (hasValue(row.shortNetTotalR)) return num(row.shortNetTotalR, 0);
+  if (hasValue(row.netShortTotalR)) return num(row.netShortTotalR, 0);
   if (hasValue(row.netTotalR)) return num(row.netTotalR, 0);
   if (hasValue(row.totalNetR)) return num(row.totalNetR, 0);
   if (hasValue(row.totalR)) return num(row.totalR, 0);
@@ -971,6 +1188,7 @@ function getTotalR(row = {}) {
 
 function getTotalCostR(row = {}) {
   const completed = getOutcomeSample(row);
+  const recent = aggregateRecentOutcomes(row);
 
   if (completed <= 0) return 0;
 
@@ -979,6 +1197,8 @@ function getTotalCostR(row = {}) {
     num(row.shadowTotalCostR, 0);
 
   if (virtualShadowCost > 0 || hasVirtualShadowOutcomeFields(row)) return virtualShadowCost;
+
+  if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
 
   if (hasValue(row.totalCostR)) return num(row.totalCostR, 0);
   if (hasValue(row.avgCostR)) return num(row.avgCostR, 0) * completed;
@@ -1032,7 +1252,6 @@ function summarizeMicros(micros = {}) {
         ...(row || {}),
         trueMicroFamilyId,
         microFamilyId: trueMicroFamilyId,
-        childTrueMicroFamilyId: trueMicroFamilyId,
         learningMicroFamilyId: trueMicroFamilyId,
         analyzeMicroFamilyId: trueMicroFamilyId,
         parentTrueMicroFamilyId,
@@ -1202,7 +1421,6 @@ function normalizeRotation(rotation) {
         ...row,
         trueMicroFamilyId,
         microFamilyId: trueMicroFamilyId,
-        childTrueMicroFamilyId: trueMicroFamilyId,
         learningMicroFamilyId: trueMicroFamilyId,
         analyzeMicroFamilyId: trueMicroFamilyId,
         parentTrueMicroFamilyId,
@@ -1220,7 +1438,6 @@ function normalizeRotation(rotation) {
     ...(Array.isArray(rotation.microFamilyIds) ? rotation.microFamilyIds : []),
     ...(Array.isArray(rotation.activeMicroFamilyIds) ? rotation.activeMicroFamilyIds : []),
     ...(Array.isArray(rotation.trueMicroFamilyIds) ? rotation.trueMicroFamilyIds : []),
-    ...(Array.isArray(rotation.childTrueMicroFamilyIds) ? rotation.childTrueMicroFamilyIds : []),
     ...(Array.isArray(rotation.ids) ? rotation.ids : [])
   ]).filter(isSelectableTrueMicroId);
 
@@ -1232,7 +1449,6 @@ function normalizeRotation(rotation) {
   const macroFamilyIds = uniqueStrings([
     ...(Array.isArray(rotation.macroFamilyIds) ? rotation.macroFamilyIds : []),
     ...(Array.isArray(rotation.activeMacroFamilyIds) ? rotation.activeMacroFamilyIds : []),
-    ...(Array.isArray(rotation.parentTrueMicroFamilyIds) ? rotation.parentTrueMicroFamilyIds : []),
     ...(Array.isArray(rotation.macroIds) ? rotation.macroIds : []),
     ...microFamilies.map((row) => row.parentTrueMicroFamilyId || row.coarseMicroFamilyId)
   ])
@@ -1271,11 +1487,9 @@ function normalizeRotation(rotation) {
     microFamilyIds,
     activeMicroFamilyIds: microFamilyIds,
     trueMicroFamilyIds: microFamilyIds,
-    childTrueMicroFamilyIds: microFamilyIds,
 
     macroFamilyIds,
     activeMacroFamilyIds: macroFamilyIds,
-    parentTrueMicroFamilyIds: macroFamilyIds,
 
     microFamilies,
 
@@ -1309,6 +1523,7 @@ function actionIsLearningVirtual(action = {}) {
 function normalizeTradeAction(action = {}) {
   const trueMicroFamilyId = getTrueMicroFamilyId(action);
   const parentTrueMicroFamilyId = getParentTrueMicroFamilyId(action);
+  const riskGeometry = getShortRiskGeometry(action);
 
   return normalizeShortSide({
     ...action,
@@ -1317,7 +1532,6 @@ function normalizeTradeAction(action = {}) {
 
     trueMicroFamilyId,
     microFamilyId: trueMicroFamilyId,
-    childTrueMicroFamilyId: trueMicroFamilyId,
     learningMicroFamilyId: trueMicroFamilyId,
     analyzeMicroFamilyId: trueMicroFamilyId,
     parentTrueMicroFamilyId,
@@ -1333,6 +1547,16 @@ function normalizeTradeAction(action = {}) {
     bitgetOrderPlaced: false,
 
     scannerScore: action.scannerScore ?? action.moveScore ?? null,
+
+    validShortRiskShape: Boolean(riskGeometry.validGeometry),
+    validShortGeometry: Boolean(riskGeometry.validGeometry),
+    shortTpHit: riskGeometry.shortTpHit,
+    shortSlHit: riskGeometry.shortSlHit,
+    tpHit: riskGeometry.shortTpHit,
+    slHit: riskGeometry.shortSlHit,
+    shortGrossR: riskGeometry.shortGrossR,
+    shortCurrentR: riskGeometry.shortCurrentR,
+    currentR: riskGeometry.shortCurrentR ?? action.currentR ?? null,
 
     learningAction: actionIsLearningVirtual(action),
     discordAlertEligible: Boolean(action.discordAlertEligible),
@@ -1402,34 +1626,54 @@ function buildTradeSummary(tradeMeta) {
     ...(Array.isArray(tradeMeta.outcomes) ? tradeMeta.outcomes : [])
   ];
 
-  const virtualExits = filterShortRows(exitArrays).map((row) => normalizeShortSide({
-    ...row,
-    source: row.source || 'VIRTUAL',
-    outcomeSource: row.outcomeSource || 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    learningOnly: true,
-    realOrderPlaced: false,
-    exchangeOrder: false,
-    bitgetOrderPlaced: false,
-    trueMicroFamilyId: getTrueMicroFamilyId(row),
-    childTrueMicroFamilyId: getTrueMicroFamilyId(row),
-    parentTrueMicroFamilyId: getParentTrueMicroFamilyId(row),
-    netR: hasValue(row.netR) ? round(row.netR, 4) : round(row.r, 4)
-  }));
+  const virtualExits = filterShortRows(exitArrays).map((row) => {
+    const riskGeometry = getShortRiskGeometry(row);
+
+    return normalizeShortSide({
+      ...row,
+      source: row.source || 'VIRTUAL',
+      outcomeSource: row.outcomeSource || 'VIRTUAL',
+      virtualOnly: true,
+      virtualTracked: true,
+      learningOnly: true,
+      realOrderPlaced: false,
+      exchangeOrder: false,
+      bitgetOrderPlaced: false,
+      trueMicroFamilyId: getTrueMicroFamilyId(row),
+      parentTrueMicroFamilyId: getParentTrueMicroFamilyId(row),
+      validShortRiskShape: Boolean(riskGeometry.validGeometry),
+      validShortGeometry: Boolean(riskGeometry.validGeometry),
+      shortTpHit: riskGeometry.shortTpHit,
+      shortSlHit: riskGeometry.shortSlHit,
+      tpHit: riskGeometry.shortTpHit,
+      slHit: riskGeometry.shortSlHit,
+      shortGrossR: riskGeometry.shortGrossR,
+      shortCurrentR: riskGeometry.shortCurrentR,
+      netR: round(outcomeNetR(row), 4)
+    });
+  });
 
   const shadowExits = filterShortRows(
     Array.isArray(tradeMeta.shadowExits) ? tradeMeta.shadowExits : []
-  ).map((row) => normalizeShortSide({
-    ...row,
-    source: row.source || 'VIRTUAL',
-    shadowOnly: true,
-    virtualOnly: true,
-    trueMicroFamilyId: getTrueMicroFamilyId(row),
-    childTrueMicroFamilyId: getTrueMicroFamilyId(row),
-    parentTrueMicroFamilyId: getParentTrueMicroFamilyId(row),
-    netR: hasValue(row.netR) ? round(row.netR, 4) : round(row.r, 4)
-  }));
+  ).map((row) => {
+    const riskGeometry = getShortRiskGeometry(row);
+
+    return normalizeShortSide({
+      ...row,
+      source: row.source || 'VIRTUAL',
+      shadowOnly: true,
+      virtualOnly: true,
+      trueMicroFamilyId: getTrueMicroFamilyId(row),
+      parentTrueMicroFamilyId: getParentTrueMicroFamilyId(row),
+      validShortRiskShape: Boolean(riskGeometry.validGeometry),
+      validShortGeometry: Boolean(riskGeometry.validGeometry),
+      shortTpHit: riskGeometry.shortTpHit,
+      shortSlHit: riskGeometry.shortSlHit,
+      shortGrossR: riskGeometry.shortGrossR,
+      shortCurrentR: riskGeometry.shortCurrentR,
+      netR: round(outcomeNetR(row), 4)
+    });
+  });
 
   const discordEligibleActions = allShortActions.filter((row) => row.discordAlertEligible);
   const selectedMicroFamilyActions = allShortActions.filter((row) => row.selectedMicroFamilyAlert);
@@ -1555,18 +1799,13 @@ function compactRotationDashboard(rotationDashboard = {}) {
 }
 
 function normalizePosition(position = {}) {
-  const entry = num(position.entry ?? position.entryPrice, 0);
-  const sl = num(position.sl ?? position.stopLoss ?? position.initialSl, 0);
-  const tp = num(position.tp ?? position.takeProfit, 0);
-  const initialSl = num(position.initialSl ?? position.sl ?? position.stopLoss, sl);
-  const currentPrice = num(position.currentPrice ?? position.lastPrice, 0);
-  const risk = entry > 0 && initialSl > entry
-    ? initialSl - entry
-    : 0;
+  const riskGeometry = getShortRiskGeometry(position);
 
-  const currentR = risk > 0 && currentPrice > 0
-    ? (entry - currentPrice) / risk
-    : null;
+  const entry = riskGeometry.entry ?? num(position.entry ?? position.entryPrice, 0);
+  const sl = riskGeometry.initialSl ?? num(position.sl ?? position.stopLoss ?? position.initialSl, 0);
+  const tp = riskGeometry.tp ?? num(position.tp ?? position.takeProfit, 0);
+  const initialSl = riskGeometry.initialSl ?? sl;
+  const currentPrice = riskGeometry.currentPrice ?? num(position.currentPrice ?? position.lastPrice, 0);
 
   const trueMicroFamilyId = getTrueMicroFamilyId(position);
   const parentTrueMicroFamilyId = getParentTrueMicroFamilyId(position);
@@ -1578,7 +1817,6 @@ function normalizePosition(position = {}) {
 
     trueMicroFamilyId,
     microFamilyId: trueMicroFamilyId,
-    childTrueMicroFamilyId: trueMicroFamilyId,
     learningMicroFamilyId: trueMicroFamilyId,
     analyzeMicroFamilyId: trueMicroFamilyId,
     parentTrueMicroFamilyId,
@@ -1594,17 +1832,21 @@ function normalizePosition(position = {}) {
     bitgetOrderPlaced: false,
 
     entry,
+    entryPrice: entry,
     sl,
     tp,
     initialSl,
 
-    validShortRiskShape: entry > 0 && tp < entry && entry < sl,
+    validShortRiskShape: Boolean(riskGeometry.validGeometry),
+    validShortGeometry: Boolean(riskGeometry.validGeometry),
 
     currentPrice: currentPrice || null,
     lastPrice: currentPrice || null,
 
     ageSec: position.ageSec ?? null,
-    currentR: position.currentR ?? currentR,
+    currentR: position.currentR ?? riskGeometry.shortCurrentR,
+    shortCurrentR: riskGeometry.shortCurrentR,
+    shortGrossR: riskGeometry.shortGrossR,
     mfeR: position.mfeR ?? null,
     maeR: position.maeR ?? null,
 
@@ -1612,8 +1854,13 @@ function normalizePosition(position = {}) {
     reachedOneR: Boolean(position.reachedOneR),
     nearTpSeen: Boolean(position.nearTpSeen),
 
-    tpExitArmed: currentPrice > 0 && tp > 0 && currentPrice <= tp,
-    slExitArmed: currentPrice > 0 && sl > 0 && currentPrice >= sl,
+    tpHit: riskGeometry.shortTpHit,
+    slHit: riskGeometry.shortSlHit,
+    shortTpHit: riskGeometry.shortTpHit,
+    shortSlHit: riskGeometry.shortSlHit,
+
+    tpExitArmed: Boolean(currentPrice > 0 && tp > 0 && currentPrice <= tp),
+    slExitArmed: Boolean(currentPrice > 0 && initialSl > 0 && currentPrice >= initialSl),
     timeStopExitArmed: Boolean(position.timeStopExitArmed),
 
     selectedMicroFamily: Boolean(
@@ -1680,7 +1927,6 @@ function normalizeDiscordLog(row = {}) {
     ...result,
     trueMicroFamilyId,
     microFamilyId: trueMicroFamilyId,
-    childTrueMicroFamilyId: trueMicroFamilyId,
     parentTrueMicroFamilyId,
     coarseMicroFamilyId: parentTrueMicroFamilyId
   });
@@ -1734,7 +1980,6 @@ function normalizeDiscordLog(row = {}) {
 
     microFamilyId: trueMicroFamilyId,
     trueMicroFamilyId,
-    childTrueMicroFamilyId: trueMicroFamilyId,
     learningMicroFamilyId: trueMicroFamilyId,
     analyzeMicroFamilyId: trueMicroFamilyId,
     parentTrueMicroFamilyId,
@@ -1922,8 +2167,6 @@ export default async function handler(req, res) {
   res.setHeader('X-Manual-Selection-Match-Mode', 'EXACT_TRUE_MICRO_FAMILY_ID');
   res.setHeader('X-Discord-Selection-Rule', 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Child-True-Micro-Family-Schema', CHILD_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
   res.setHeader('X-Real-Orders-Disabled', 'true');
   res.setHeader('X-Bitget-Orders-Disabled', 'true');
@@ -2082,7 +2325,6 @@ export default async function handler(req, res) {
           row?.trueMicroFamilyId ||
             row?.learningMicroFamilyId ||
             row?.analyzeMicroFamilyId ||
-            row?.childTrueMicroFamilyId ||
             row?.microFamilyId ||
             key ||
             ''
@@ -2098,7 +2340,6 @@ export default async function handler(req, res) {
           row?.trueMicroFamilyId ||
             row?.learningMicroFamilyId ||
             row?.analyzeMicroFamilyId ||
-            row?.childTrueMicroFamilyId ||
             row?.microFamilyId ||
             key ||
             ''
@@ -2118,7 +2359,6 @@ export default async function handler(req, res) {
           row?.trueMicroFamilyId ||
             row?.learningMicroFamilyId ||
             row?.analyzeMicroFamilyId ||
-            row?.childTrueMicroFamilyId ||
             row?.microFamilyId ||
             key ||
             ''
