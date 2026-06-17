@@ -34,7 +34,8 @@ const CACHE_TTL_MS = {
   tickers: 20_000,
   candles: 45_000,
   orderBook: 4_000,
-  funding: 60_000
+  funding: 60_000,
+  contracts: 10 * 60_000
 };
 
 const MARKET_PATH_PREFIXES = [
@@ -64,7 +65,6 @@ function shortMachineFlags() {
     virtualLearning: true,
     virtualOnly: true,
     virtualTracked: true,
-    paperOnly: true,
     shadowOnly: true,
 
     realTrade: false,
@@ -82,7 +82,6 @@ function shortMachineFlags() {
 
     scannerBearishOnly: true,
     scannerSearchSide: TARGET_SCANNER_SIDE,
-    scannerFindsBearishCandidates: true,
     scannerDoesNotTrade: true,
     scannerDoesNotSelectMicroFamilies: true,
     scannerDoesNotSendDiscord: true,
@@ -90,9 +89,6 @@ function shortMachineFlags() {
 
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
-    scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true,
-
     executionFingerprintsMetadataOnly: true,
     executionFingerprintsUsedAsLearningFamily: false,
 
@@ -126,29 +122,27 @@ function shortMachineFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    bareWinrateRankingDisabled: true,
+    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
+    discordOnlyForExactTrueMicroMatch: true,
 
-    validShortRiskShape: 'tp < entry < sl',
+    validShortRiskShape: 'entry > 0 && tp < entry && entry < sl',
     shortRiskShape: 'tp < entry < sl',
-    shortTpRule: 'price <= tp',
-    shortSlRule: 'price >= sl',
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
-    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
-    discordOnlyForExactTrueMicroMatch: true,
-    discordOnlyForSelectedMicroFamilies: true,
-    discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
     longRootTouched: false
   };
 }
@@ -170,6 +164,10 @@ function bitgetConfig() {
   };
 }
 
+function shouldLogSkippedSymbols() {
+  return (CONFIG.short?.bitget || CONFIG.bitget || {})?.logSkippedSymbols === true;
+}
+
 function normalizeProductType(value = bitgetConfig().productType) {
   return String(value || 'USDT-FUTURES')
     .trim()
@@ -179,7 +177,6 @@ function normalizeProductType(value = bitgetConfig().productType) {
 
 function assertMarketDataPath(path) {
   const value = String(path || '');
-
   const allowed = MARKET_PATH_PREFIXES.some((prefix) => value.startsWith(prefix));
 
   if (!allowed) {
@@ -415,7 +412,7 @@ async function fetchJson(path, params = {}, options = {}) {
 
       if (!retryable || attempt >= retries) break;
 
-      const baseDelayMs = safeNumber(CONFIG.bitget?.retryDelayMs, 250);
+      const baseDelayMs = safeNumber((CONFIG.short?.bitget || CONFIG.bitget || {})?.retryDelayMs, 250);
       const jitterMs = Math.floor(Math.random() * 80);
       const delayMs = baseDelayMs * (attempt + 1) + jitterMs;
 
@@ -426,12 +423,170 @@ async function fetchJson(path, params = {}, options = {}) {
   throw lastError;
 }
 
+export async function fetchBitgetContracts() {
+  const params = {
+    productType: normalizeProductType()
+  };
+
+  return withCache(
+    cacheKey('/api/v2/mix/market/contracts', params),
+    CACHE_TTL_MS.contracts,
+    async () => {
+      const data = await fetchJson('/api/v2/mix/market/contracts', params, {
+        retries: 1,
+        timeoutMs: Math.max(1500, bitgetConfig().timeoutMs)
+      });
+
+      return Array.isArray(data) ? data : [];
+    }
+  );
+}
+
+function isTradableBitgetContract(row = {}) {
+  const status = String(
+    row.status ||
+    row.symbolStatus ||
+    row.state ||
+    row.tradeStatus ||
+    ''
+  ).trim().toLowerCase();
+
+  if (!status) return true;
+
+  return !(
+    status.includes('off') ||
+    status.includes('delist') ||
+    status.includes('suspend') ||
+    status.includes('close') ||
+    status.includes('disabled')
+  );
+}
+
+function contractSymbolValue(row = {}) {
+  return normalizeContractSymbol(
+    row.symbol ||
+    row.instId ||
+    row.contractCode ||
+    row.symbolName ||
+    ''
+  );
+}
+
+function contractBaseSymbol(row = {}) {
+  const directBase = normalizeBaseSymbol(
+    row.baseCoin ||
+    row.baseSymbol ||
+    row.coin ||
+    ''
+  );
+
+  if (directBase) return directBase;
+
+  return normalizeBaseSymbol(contractSymbolValue(row));
+}
+
+function buildContractIndexes(contracts = []) {
+  const validSymbols = new Set();
+  const byBase = new Map();
+
+  for (const row of contracts) {
+    if (!row || typeof row !== 'object') continue;
+    if (!isTradableBitgetContract(row)) continue;
+
+    const contractSymbol = contractSymbolValue(row);
+    const base = contractBaseSymbol(row);
+
+    if (!contractSymbol) continue;
+
+    validSymbols.add(contractSymbol);
+
+    if (base && !byBase.has(base)) {
+      byBase.set(base, contractSymbol);
+    }
+  }
+
+  return {
+    validSymbols,
+    byBase
+  };
+}
+
+async function fetchContractIndexes() {
+  const contracts = await fetchBitgetContracts();
+  return buildContractIndexes(contracts);
+}
+
+export async function resolveBitgetContractSymbol(symbol) {
+  const requested = normalizeContractSymbol(symbol);
+
+  if (!requested) {
+    return {
+      ok: false,
+      requestedSymbol: symbol,
+      contractSymbol: '',
+      reason: 'EMPTY_SYMBOL'
+    };
+  }
+
+  let indexes;
+
+  try {
+    indexes = await fetchContractIndexes();
+  } catch (error) {
+    console.warn('BITGET_CONTRACTS_FAILED', JSON.stringify({
+      symbol: requested,
+      ...shortMachineFlags(),
+      error: error?.message || String(error)
+    }));
+
+    return {
+      ok: false,
+      requestedSymbol: requested,
+      contractSymbol: '',
+      reason: 'CONTRACT_LIST_UNAVAILABLE'
+    };
+  }
+
+  const requestedBase = normalizeBaseSymbol(requested);
+
+  if (indexes.validSymbols.has(requested)) {
+    return {
+      ok: true,
+      requestedSymbol: requested,
+      contractSymbol: requested,
+      reason: 'DIRECT_MATCH'
+    };
+  }
+
+  if (requestedBase && indexes.byBase.has(requestedBase)) {
+    return {
+      ok: true,
+      requestedSymbol: requested,
+      contractSymbol: indexes.byBase.get(requestedBase),
+      reason: 'BASE_MATCH'
+    };
+  }
+
+  return {
+    ok: false,
+    requestedSymbol: requested,
+    contractSymbol: '',
+    reason: 'BITGET_SYMBOL_NOT_USDT_FUTURES'
+  };
+}
+
+export async function isBitgetUsdtFuturesSymbol(symbol) {
+  const resolved = await resolveBitgetContractSymbol(symbol);
+  return Boolean(resolved.ok && resolved.contractSymbol);
+}
+
 function isFallingTicker(change24h) {
   return safeNumber(change24h, 0) < 0;
 }
 
 function shortCandidateMeta(change24h) {
   const falling = isFallingTicker(change24h);
+  const currentFit = falling ? Math.min(100, Math.abs(safeNumber(change24h, 0))) : -Math.min(100, Math.abs(safeNumber(change24h, 0)));
 
   return {
     side: falling ? TARGET_DASHBOARD_SIDE : 'rejected',
@@ -451,6 +606,13 @@ function shortCandidateMeta(change24h) {
     scannerBucketRole: 'DEBUG_METADATA_ONLY',
     legacy25BucketRole: 'DEBUG_METADATA_ONLY',
 
+    currentFit,
+    shortCurrentFit: currentFit,
+    bearCurrentFit: currentFit,
+    bullishCurrentFit: -Math.abs(currentFit),
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
     scannerMicroFamilyId: null,
     scannerFamilyId: null,
     trueMicroFamilyId: null,
@@ -463,6 +625,31 @@ function shortCandidateMeta(change24h) {
   };
 }
 
+async function filterTickersToKnownContracts(tickers = []) {
+  let indexes;
+
+  try {
+    indexes = await fetchContractIndexes();
+  } catch (error) {
+    if (shouldLogSkippedSymbols()) {
+      console.warn('BITGET_TICKER_CONTRACT_FILTER_SKIPPED', JSON.stringify({
+        ...shortMachineFlags(),
+        error: error?.message || String(error)
+      }));
+    }
+
+    return tickers;
+  }
+
+  return tickers.filter((row) => {
+    const symbol = contractSymbolValue(row);
+
+    if (!symbol) return false;
+
+    return indexes.validSymbols.has(symbol);
+  });
+}
+
 export async function fetchBitgetTickers() {
   const params = {
     productType: normalizeProductType()
@@ -473,8 +660,9 @@ export async function fetchBitgetTickers() {
     CACHE_TTL_MS.tickers,
     async () => {
       const data = await fetchJson('/api/v2/mix/market/tickers', params);
+      const tickers = Array.isArray(data) ? data : [];
 
-      return Array.isArray(data) ? data : [];
+      return filterTickersToKnownContracts(tickers);
     }
   );
 }
@@ -568,11 +756,25 @@ export function normalizeGranularity(timeframe) {
 }
 
 export async function fetchCandles(symbol, timeframe = '15m', limit = 100) {
-  const contractSymbol = normalizeContractSymbol(symbol);
+  const resolved = await resolveBitgetContractSymbol(symbol);
+
+  if (!resolved.ok || !resolved.contractSymbol) {
+    if (shouldLogSkippedSymbols()) {
+      console.warn('BITGET_CANDLES_SKIPPED', JSON.stringify({
+        symbol,
+        requestedSymbol: resolved.requestedSymbol,
+        reason: resolved.reason,
+        productType: normalizeProductType(),
+        ...shortMachineFlags()
+      }));
+    }
+
+    return [];
+  }
+
+  const contractSymbol = resolved.contractSymbol;
   const granularity = normalizeGranularity(timeframe);
   const safeLimit = Math.max(1, Math.min(Number(limit || 100), 1000));
-
-  if (!contractSymbol) return [];
 
   const params = {
     symbol: contractSymbol,
@@ -624,6 +826,7 @@ export async function fetchCandles(symbol, timeframe = '15m', limit = 100) {
 
       console.warn('BITGET_CANDLES_FAILED', JSON.stringify({
         symbol: contractSymbol,
+        requestedSymbol: resolved.requestedSymbol,
         timeframe,
         ...shortMachineFlags(),
         error: lastError?.message || 'EMPTY'
@@ -635,9 +838,23 @@ export async function fetchCandles(symbol, timeframe = '15m', limit = 100) {
 }
 
 export async function fetchOrderBook(symbol) {
-  const contractSymbol = normalizeContractSymbol(symbol);
+  const resolved = await resolveBitgetContractSymbol(symbol);
 
-  if (!contractSymbol) return null;
+  if (!resolved.ok || !resolved.contractSymbol) {
+    if (shouldLogSkippedSymbols()) {
+      console.warn('BITGET_ORDERBOOK_SKIPPED', JSON.stringify({
+        symbol,
+        requestedSymbol: resolved.requestedSymbol,
+        reason: resolved.reason,
+        productType: normalizeProductType(),
+        ...shortMachineFlags()
+      }));
+    }
+
+    return null;
+  }
+
+  const contractSymbol = resolved.contractSymbol;
 
   const cacheParams = {
     symbol: contractSymbol,
@@ -685,6 +902,8 @@ export async function fetchOrderBook(symbol) {
 
       console.warn('BITGET_ORDERBOOK_FAILED', JSON.stringify({
         symbol: contractSymbol,
+        requestedSymbol: resolved.requestedSymbol,
+        resolveReason: resolved.reason,
         ...shortMachineFlags(),
         error: lastError?.message || 'EMPTY'
       }));
@@ -768,6 +987,13 @@ function emptyOrderBookAnalysis() {
     eligibleShortCandidate: false,
     rejectReason: 'ORDERBOOK_UNAVAILABLE_OR_INVALID',
 
+    currentFit: 0,
+    shortCurrentFit: 0,
+    bearCurrentFit: 0,
+    bullishCurrentFit: 0,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
     fetchFailed: true,
 
     scannerBucket: 'ORDERBOOK_INVALID',
@@ -836,6 +1062,9 @@ export function analyzeOrderBook(raw) {
     'NEUTRAL';
 
   const shortAligned = shortPressure > 0.12;
+  const currentFit = shortAligned
+    ? Math.min(100, shortPressure * 100)
+    : -Math.min(100, Math.abs(longPressure) * 100);
 
   return {
     bias,
@@ -868,6 +1097,13 @@ export function analyzeOrderBook(raw) {
     eligibleShortCandidate: shortAligned,
     rejectReason: shortAligned ? null : 'ORDERBOOK_NOT_BEARISH_SHORT_ONLY',
 
+    currentFit,
+    shortCurrentFit: currentFit,
+    bearCurrentFit: currentFit,
+    bullishCurrentFit: -Math.abs(currentFit),
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
     fetchFailed: false,
 
     scannerBucket: shortAligned ? 'ORDERBOOK_ASK_HEAVY' : 'ORDERBOOK_NOT_BEARISH',
@@ -884,14 +1120,17 @@ export function analyzeOrderBook(raw) {
 }
 
 export async function fetchFunding(symbol) {
-  const contractSymbol = normalizeContractSymbol(symbol);
+  const resolved = await resolveBitgetContractSymbol(symbol);
 
-  if (!contractSymbol) {
+  if (!resolved.ok || !resolved.contractSymbol) {
     return {
       rate: 0,
       fetchFailed: true,
-      fundingBucket: 'FUNDING_SYMBOL_INVALID',
+      fundingBucket: 'FUNDING_SYMBOL_NOT_USDT_FUTURES',
       fundingBucketRole: 'DEBUG_METADATA_ONLY',
+      requestedSymbol: resolved.requestedSymbol || symbol,
+      resolvedSymbol: null,
+      reason: resolved.reason,
       trueMicroFamilyId: null,
       microFamilyId: null,
       childTrueMicroFamilyId: null,
@@ -900,6 +1139,8 @@ export async function fetchFunding(symbol) {
       ...shortMachineFlags()
     };
   }
+
+  const contractSymbol = resolved.contractSymbol;
 
   const params = {
     symbol: contractSymbol,
@@ -923,6 +1164,11 @@ export async function fetchFunding(symbol) {
           0
         );
 
+        const bearishFundingFit =
+          rate > 0.0001 ? 8 :
+          rate < -0.0001 ? -8 :
+          0;
+
         return {
           rate,
           fetchFailed: false,
@@ -931,6 +1177,16 @@ export async function fetchFunding(symbol) {
             rate > 0.0001 ? 'FUNDING_POS' :
             'FUNDING_FLAT',
           fundingBucketRole: 'DEBUG_METADATA_ONLY',
+          requestedSymbol: resolved.requestedSymbol,
+          resolvedSymbol: contractSymbol,
+
+          currentFit: bearishFundingFit,
+          shortCurrentFit: bearishFundingFit,
+          bearCurrentFit: bearishFundingFit,
+          bullishCurrentFit: -Math.abs(bearishFundingFit),
+          currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+          currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
           trueMicroFamilyId: null,
           microFamilyId: null,
           childTrueMicroFamilyId: null,
@@ -941,6 +1197,7 @@ export async function fetchFunding(symbol) {
       } catch (error) {
         console.warn('BITGET_FUNDING_FAILED', JSON.stringify({
           symbol: contractSymbol,
+          requestedSymbol: resolved.requestedSymbol,
           ...shortMachineFlags(),
           error: error?.message || String(error)
         }));
@@ -950,6 +1207,16 @@ export async function fetchFunding(symbol) {
           fetchFailed: true,
           fundingBucket: 'FUNDING_FETCH_FAILED',
           fundingBucketRole: 'DEBUG_METADATA_ONLY',
+          requestedSymbol: resolved.requestedSymbol,
+          resolvedSymbol: contractSymbol,
+
+          currentFit: 0,
+          shortCurrentFit: 0,
+          bearCurrentFit: 0,
+          bullishCurrentFit: 0,
+          currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+          currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
           trueMicroFamilyId: null,
           microFamilyId: null,
           childTrueMicroFamilyId: null,
