@@ -79,6 +79,13 @@ const DEFAULT_TRADE_EVERY_SCANNER_CANDIDATE_VIRTUAL = true;
 const DEFAULT_ALLOW_STANDARDIZED_LEARNING_RISK_FALLBACK = true;
 const DEFAULT_ALLOW_STANDARDIZED_LEARNING_RISK_VIRTUAL_ENTRIES = true;
 
+const DEFAULT_DISCORD_REQUIRE_CURRENT_FIT = true;
+const DEFAULT_DISCORD_MIN_CURRENT_FIT_CONFIDENCE = 35;
+const DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC = 15 * 60;
+
+const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
+const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
+
 const FREEZE_MEASUREMENT_RECOMMENDED_DAYS = 14;
 const MIN_COMPLETED_EARLY_SIGNAL = 20;
 const MIN_COMPLETED_REASONABLE_SIGNAL = 50;
@@ -156,6 +163,7 @@ function namespacedShortKey(key, fallback = 'UNKNOWN') {
 
   if (!raw) return `${SHORT_KEY_PREFIX}${fallback}`;
   if (raw.startsWith(SHORT_KEY_PREFIX)) return raw;
+  if (raw.startsWith('LONG:')) return `${SHORT_KEY_PREFIX}${raw.slice('LONG:'.length)}`;
 
   return `${SHORT_KEY_PREFIX}${raw}`;
 }
@@ -263,6 +271,7 @@ function isolationFlags() {
     keyPrefix: SHORT_KEY_PREFIX,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
 
     adminPageIsolation: true,
     doesNotOverwriteOtherAdminPages: true,
@@ -360,88 +369,6 @@ function sideFlags() {
   };
 }
 
-function parseShortTaxonomyMicroId(id = '') {
-  const value = upper(id);
-
-  if (!value.startsWith('MICRO_SHORT_')) {
-    return {
-      valid: false,
-      selectable: false,
-      isParent: false,
-      isChild: false,
-      rawId: String(id || '').trim()
-    };
-  }
-
-  if (isScannerFingerprintId(value) || isExecutionFingerprintId(value)) {
-    return {
-      valid: false,
-      selectable: false,
-      isParent: false,
-      isChild: false,
-      rawId: String(id || '').trim()
-    };
-  }
-
-  let body = value.slice('MICRO_SHORT_'.length);
-  let confirmationProfile = null;
-
-  for (const profile of CONFIRMATION_PROFILE_ORDER) {
-    const suffix = `_${profile}`;
-
-    if (body.endsWith(suffix)) {
-      confirmationProfile = profile;
-      body = body.slice(0, -suffix.length);
-      break;
-    }
-  }
-
-  let setup = null;
-  let regime = null;
-
-  for (const candidateRegime of REGIME_ORDER) {
-    const suffix = `_${candidateRegime}`;
-
-    if (body.endsWith(suffix)) {
-      regime = candidateRegime;
-      setup = body.slice(0, -suffix.length);
-      break;
-    }
-  }
-
-  const parentId = setup && regime ? `MICRO_SHORT_${setup}_${regime}` : null;
-  const childId = parentId && confirmationProfile ? `${parentId}_${confirmationProfile}` : null;
-
-  const validParent =
-    Boolean(parentId) &&
-    SHORT_FIXED_SETUP_TYPES.has(setup) &&
-    SHORT_FIXED_REGIME_BUCKETS.has(regime);
-
-  const validChild =
-    validParent &&
-    Boolean(confirmationProfile) &&
-    SHORT_CONFIRMATION_PROFILES.has(confirmationProfile);
-
-  return {
-    valid: validParent || validChild,
-    selectable: validChild,
-    isParent: validParent && !validChild,
-    isChild: validChild,
-    rawId: String(id || '').trim(),
-    setup,
-    regime,
-    confirmationProfile,
-    parentTrueMicroFamilyId: validParent ? parentId : null,
-    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
-    childTrueMicroFamilyId: validChild ? childId : null,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY
-  };
-}
-
 function taxonomyFlags(row = {}) {
   const taxonomy = parseShortTaxonomyMicroId(
     row.childTrueMicroFamilyId ||
@@ -489,8 +416,6 @@ function taxonomyFlags(row = {}) {
 function virtualFlags(row = {}) {
   return {
     virtualOnly: true,
-    paperOnly: true,
-    shadowOnly: true,
     virtualTracked: true,
     virtualLearning: true,
     source: 'VIRTUAL',
@@ -518,7 +443,12 @@ function virtualFlags(row = {}) {
 
     observationFirst: true,
     observationFirstLearning: true,
-    everyAnalyzeRowCountsSeen: true,
+    everyAnalyzeRowCountsSeen: false,
+    observationAlwaysCounted: false,
+    observationDedupeRequired: true,
+    observationDedupeEnabled: true,
+    seenDefinition: 'UNIQUE_SNAPSHOT_SYMBOL_TRUE_MICRO_OBSERVATION_ONLY',
+    observationDedupeKeySource: 'snapshotId|symbol|trueMicroFamilyId|entry',
 
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintOnlyMetadata: true,
@@ -526,7 +456,6 @@ function virtualFlags(row = {}) {
     scannerFingerprintsUsedAsLearningFamily: false,
     scannerBucketsMetadataOnly: true,
     legacy25BucketsMetadataOnly: true,
-    oldBucketsMetadataOnly: true,
 
     executionFingerprintRole: 'METADATA_ONLY',
     executionFingerprintOnlyMetadata: true,
@@ -539,26 +468,42 @@ function virtualFlags(row = {}) {
     hashesExcludedFromFamilyId: true,
 
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+    entrySlightlyLoosened: true,
+
     qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
     noSyntheticShadowLayer: true,
     disciplinedMeasurement: true,
     recommendedFreezeDays: FREEZE_MEASUREMENT_RECOMMENDED_DAYS,
 
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    learningRemainsBroad: true,
+    selectionIsAdaptive: true,
+    discordWillBeStrict: true,
+
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForExactTrueMicroMatch: true,
+    discordRequiresCurrentFit: discordRequiresCurrentFit(),
     manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    completedOnlyClosedVirtualOrShadow: true,
     scoringRSource: 'netR',
     winsLossesFlatsSource: 'netR',
     winrateDefinition: 'netR > 0',
     avgRSource: 'netR',
     totalRSource: 'netR',
     avgCostRShown: true,
+    avgCostRSource: 'costR',
 
-    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+    defaultRanking: 'adaptiveScore|dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
     defaultRankingNeverBareWinrate: true,
     noBareWinrateRanking: true,
+    rawWinrateRankingDisabled: true,
 
     minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING,
 
@@ -573,6 +518,17 @@ function virtualFlags(row = {}) {
       reasonableSignal: MIN_COMPLETED_REASONABLE_SIGNAL,
       strongSignal: MIN_COMPLETED_STRONG_SIGNAL
     },
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    validShortRiskShape: 'tp < entry < sl',
+    shortRiskShape: 'tp < entry < sl',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     ...taxonomyFlags(row)
   };
@@ -834,6 +790,36 @@ function sizingConfig() {
   };
 }
 
+function discordRequiresCurrentFit() {
+  return cfgBoolean(
+    CONFIG.short?.trade?.discordRequiresCurrentFit ??
+      CONFIG.trade?.shortDiscordRequiresCurrentFit ??
+      CONFIG.trade?.discordRequiresCurrentFit,
+    DEFAULT_DISCORD_REQUIRE_CURRENT_FIT
+  );
+}
+
+function discordMinCurrentFitConfidence() {
+  return clampNumber(
+    CONFIG.short?.trade?.discordMinCurrentFitConfidence ??
+      CONFIG.trade?.shortDiscordMinCurrentFitConfidence ??
+      CONFIG.trade?.discordMinCurrentFitConfidence,
+    0,
+    100
+  ) || DEFAULT_DISCORD_MIN_CURRENT_FIT_CONFIDENCE;
+}
+
+function currentFitMaxWeatherAgeSec() {
+  return positiveInt(
+    CONFIG.short?.trade?.currentFitMaxWeatherAgeSec ??
+      CONFIG.trade?.shortCurrentFitMaxWeatherAgeSec ??
+      CONFIG.trade?.currentFitMaxWeatherAgeSec,
+    DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC,
+    30,
+    24 * 3600
+  );
+}
+
 function actionCounts(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
@@ -901,17 +887,24 @@ function uniqueStrings(values = []) {
 
 function cleanSideText(value = '') {
   return upper(value, '')
+    .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
+    .replaceAll('LONGDISABLED_TRUE', 'SHORT')
+    .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
     .replaceAll('LONG_DISABLED_FALSE', '')
     .replaceAll('LONGDISABLED_FALSE', '')
     .replaceAll('BLOCK_LONG_FALSE', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
+    .replaceAll('SHORTDISABLED_FALSE', '')
+    .replaceAll('BLOCK_SHORT_FALSE', '')
+    .replaceAll('SHORT_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT')
@@ -997,14 +990,14 @@ function isScannerFingerprintId(id = '') {
   const value = upper(id);
 
   return (
-    value.startsWith('MICRO_LONG_SCANNER__') ||
-    value.includes('MICRO_LONG_SCANNER__') ||
-    value.startsWith('LONG_SCANNER_') ||
-    value.includes('LONG_SCANNER_') ||
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
     value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -1034,6 +1027,78 @@ function validLearningId(id = '') {
   return true;
 }
 
+function parseShortTaxonomyMicroId(id = '') {
+  const value = upper(id);
+
+  if (!value.startsWith('MICRO_SHORT_')) {
+    return {
+      valid: false,
+      selectable: false,
+      isParent: false,
+      isChild: false,
+      rawId: String(id || '').trim()
+    };
+  }
+
+  let body = value.slice('MICRO_SHORT_'.length);
+  let confirmationProfile = null;
+
+  for (const profile of CONFIRMATION_PROFILE_ORDER) {
+    const suffix = `_${profile}`;
+
+    if (body.endsWith(suffix)) {
+      confirmationProfile = profile;
+      body = body.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  let setup = null;
+  let regime = null;
+
+  for (const candidateRegime of REGIME_ORDER) {
+    const suffix = `_${candidateRegime}`;
+
+    if (body.endsWith(suffix)) {
+      regime = candidateRegime;
+      setup = body.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  const parentId = setup && regime ? `MICRO_SHORT_${setup}_${regime}` : null;
+  const childId = parentId && confirmationProfile ? `${parentId}_${confirmationProfile}` : null;
+
+  const validParent =
+    Boolean(parentId) &&
+    SHORT_FIXED_SETUP_TYPES.has(setup) &&
+    SHORT_FIXED_REGIME_BUCKETS.has(regime);
+
+  const validChild =
+    validParent &&
+    Boolean(confirmationProfile) &&
+    SHORT_CONFIRMATION_PROFILES.has(confirmationProfile);
+
+  return {
+    valid: validParent || validChild,
+    selectable: validChild,
+    isParent: validParent && !validChild,
+    isChild: validChild,
+    rawId: String(id || '').trim(),
+    setup,
+    regime,
+    confirmationProfile,
+    parentTrueMicroFamilyId: validParent ? parentId : null,
+    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+    childTrueMicroFamilyId: validChild ? childId : null,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    learningGranularity: LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY
+  };
+}
+
 function isSelectableTrueMicroId(id = '') {
   const parsed = parseShortTaxonomyMicroId(id);
 
@@ -1044,6 +1109,12 @@ function isParentTrueMicroId(id = '') {
   const parsed = parseShortTaxonomyMicroId(id);
 
   return Boolean(parsed.isParent && !parsed.selectable);
+}
+
+function exactChildId(id = '') {
+  const parsed = parseShortTaxonomyMicroId(id);
+
+  return parsed.selectable ? parsed.childTrueMicroFamilyId : '';
 }
 
 function parentIdFromChild(id = '') {
@@ -1228,7 +1299,6 @@ function scannerMetadataFrom(...rows) {
 
     scannerBucketsMetadataOnly: true,
     legacy25BucketsMetadataOnly: true,
-    oldBucketsMetadataOnly: true,
 
     learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
     exactTrueMicroFamilyRequired: true,
@@ -1256,8 +1326,8 @@ function normalizeTradeSide(side) {
   const shortHit = hasShortSignal(raw);
   const longHit = hasLongSignal(raw);
 
-  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
   if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
 
   if (shortHit && longHit) {
     if (raw.includes('TRADESIDE=SHORT') || raw.includes('TRADE_SIDE=SHORT')) return TARGET_TRADE_SIDE;
@@ -1465,6 +1535,367 @@ function normalizeExactTrueMicroRow(row = {}) {
   };
 }
 
+function normalizeMarketRegime(value = '') {
+  const text = upper(value);
+
+  if (!text) return 'UNKNOWN';
+  if (text.includes('SQUEEZE') || text.includes('COMPRESS')) return 'SQUEEZE';
+  if (text.includes('CHOP') || text.includes('RANGE') || text.includes('SIDEWAY')) return 'CHOP';
+  if (text.includes('TREND') || text.includes('MOMENTUM') || text.includes('DIRECTION')) return 'TREND';
+
+  return 'UNKNOWN';
+}
+
+function normalizeMarketTrendSide(value = '') {
+  const side = normalizeTradeSide(value);
+
+  if (side === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
+  if (side === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
+
+  const text = upper(value);
+
+  if (!text) return 'UNKNOWN';
+  if (text.includes('NEUTRAL') || text.includes('MIXED') || text.includes('FLAT')) return 'NEUTRAL';
+  if (text.includes('RISK_OFF')) return TARGET_TRADE_SIDE;
+  if (text.includes('RISK_ON')) return OPPOSITE_TRADE_SIDE;
+
+  return 'UNKNOWN';
+}
+
+function firstFinite(...values) {
+  for (const value of values) {
+    const n = Number(value);
+
+    if (Number.isFinite(n)) return n;
+  }
+
+  return null;
+}
+
+function extractMarketWeatherShape(weather = {}, universe = {}) {
+  const source = weather && typeof weather === 'object' ? weather : {};
+  const universeSource = universe && typeof universe === 'object' ? universe : {};
+
+  const createdAt = safeNumber(
+    source.createdAt ??
+      source.completedAt ??
+      source.updatedAt ??
+      source.ts ??
+      universeSource.createdAt ??
+      universeSource.completedAt ??
+      universeSource.updatedAt ??
+      universeSource.ts,
+    0
+  );
+
+  const regime = normalizeMarketRegime(
+    source.currentRegime ??
+      source.regime ??
+      source.marketRegime ??
+      source.breadthRegime ??
+      source.volatilityRegime ??
+      universeSource.currentRegime ??
+      universeSource.regime
+  );
+
+  const trendSide = normalizeMarketTrendSide(
+    source.currentTrendSide ??
+      source.trendSide ??
+      source.marketSide ??
+      source.side ??
+      source.direction ??
+      source.breadthSide ??
+      source.btcTrendSide ??
+      universeSource.currentTrendSide ??
+      universeSource.trendSide ??
+      universeSource.marketSide
+  );
+
+  const bullishPct = firstFinite(
+    source.bullishPct,
+    source.longPct,
+    source.upPct,
+    source.breadthBullishPct,
+    source.universeBullishPct,
+    universeSource.bullishPct,
+    universeSource.longPct,
+    universeSource.upPct
+  );
+
+  const bearishPct = firstFinite(
+    source.bearishPct,
+    source.shortPct,
+    source.downPct,
+    source.breadthBearishPct,
+    source.universeBearishPct,
+    universeSource.bearishPct,
+    universeSource.shortPct,
+    universeSource.downPct
+  );
+
+  const squeezePct = firstFinite(
+    source.squeezePct,
+    source.compressionPct,
+    source.breadthSqueezePct,
+    universeSource.squeezePct,
+    universeSource.compressionPct
+  );
+
+  const confidence = clampNumber(
+    firstFinite(
+      source.confidence,
+      source.weatherConfidence,
+      source.currentTrendConfidence,
+      source.breadthConfidence,
+      universeSource.confidence
+    ) ?? 50,
+    0,
+    100
+  );
+
+  const stale = createdAt > 0
+    ? (now() - createdAt) / 1000 > currentFitMaxWeatherAgeSec()
+    : true;
+
+  return {
+    ok: Boolean(source && Object.keys(source).length),
+    source,
+    universe: universeSource,
+    createdAt,
+    ageSec: createdAt > 0 ? Math.round((now() - createdAt) / 1000) : null,
+    stale,
+    regime,
+    trendSide,
+    bullishPct,
+    bearishPct,
+    squeezePct,
+    confidence,
+    key: MARKET_WEATHER_KEY,
+    universeKey: MARKET_UNIVERSE_KEY
+  };
+}
+
+async function loadMarketContext() {
+  const redis = getVolatileRedis();
+
+  const [weather, universe] = await Promise.all([
+    getJson(redis, MARKET_WEATHER_KEY, null).catch(() => null),
+    getJson(redis, MARKET_UNIVERSE_KEY, null).catch(() => null)
+  ]);
+
+  return extractMarketWeatherShape(weather || {}, universe || {});
+}
+
+function scoreMarketFit(row = {}, marketContext = {}) {
+  if (!marketContext?.ok) {
+    return {
+      currentFit: 'UNKNOWN',
+      currentFitScore: 0,
+      currentFitConfidence: 0,
+      currentFitReason: 'MARKET_WEATHER_UNAVAILABLE',
+      currentFitSoftOnly: true,
+      currentFitBlocksLearning: false,
+      currentFitBlocksVirtualLearning: false,
+      currentFitBlocksShadowLearning: false,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
+    };
+  }
+
+  if (marketContext.stale) {
+    return {
+      currentFit: 'UNKNOWN',
+      currentFitScore: 0,
+      currentFitConfidence: 0,
+      currentFitReason: 'MARKET_WEATHER_STALE',
+      currentFitSoftOnly: true,
+      currentFitBlocksLearning: false,
+      currentFitBlocksVirtualLearning: false,
+      currentFitBlocksShadowLearning: false,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
+    };
+  }
+
+  const familyRegime = normalizeMarketRegime(row.regimeBucket || row.regime || row.regimeCoarse);
+  const confirmation = upper(row.confirmationProfile);
+  const marketRegime = marketContext.regime;
+  const trendSide = marketContext.trendSide;
+
+  let score = 0;
+  const reasons = [];
+
+  if (trendSide === TARGET_TRADE_SIDE) {
+    score += 30;
+    reasons.push('MARKET_TREND_SHORT');
+  } else if (trendSide === 'NEUTRAL' || trendSide === 'UNKNOWN') {
+    score += 4;
+    reasons.push('MARKET_TREND_NEUTRAL_OR_UNKNOWN');
+  } else {
+    score -= 45;
+    reasons.push('MARKET_TREND_AGAINST_SHORT');
+  }
+
+  if (familyRegime !== 'UNKNOWN' && marketRegime !== 'UNKNOWN') {
+    if (familyRegime === marketRegime) {
+      score += 25;
+      reasons.push('FAMILY_REGIME_MATCH');
+    } else if (
+      (familyRegime === 'TREND' && marketRegime === 'SQUEEZE') ||
+      (familyRegime === 'SQUEEZE' && marketRegime === 'TREND')
+    ) {
+      score += 8;
+      reasons.push('FAMILY_REGIME_ADJACENT');
+    } else {
+      score -= 15;
+      reasons.push('FAMILY_REGIME_MISMATCH');
+    }
+  } else {
+    reasons.push('FAMILY_OR_MARKET_REGIME_UNKNOWN');
+  }
+
+  const bullishPct = marketContext.bullishPct;
+  const bearishPct = marketContext.bearishPct;
+  const squeezePct = marketContext.squeezePct;
+
+  if (Number.isFinite(bearishPct)) {
+    if (bearishPct >= 60) {
+      score += 15;
+      reasons.push('BEARISH_BREADTH_STRONG');
+    } else if (bearishPct >= 50) {
+      score += 8;
+      reasons.push('BEARISH_BREADTH_OK');
+    } else if (bearishPct < 40) {
+      score -= 12;
+      reasons.push('BEARISH_BREADTH_WEAK');
+    }
+  }
+
+  if (Number.isFinite(bullishPct) && bullishPct >= 60) {
+    score -= 20;
+    reasons.push('BULLISH_BREADTH_STRONG');
+  }
+
+  if (familyRegime === 'SQUEEZE' && Number.isFinite(squeezePct) && squeezePct >= 40) {
+    score += 10;
+    reasons.push('SQUEEZE_BREADTH_SUPPORTS_SETUP');
+  }
+
+  if (confirmation === 'A_STRONG_ALIGN') score += 8;
+  if (confirmation === 'B_FLOW_ALIGN') score += 5;
+  if (confirmation === 'C_VOLUME_ALIGN') score += 3;
+  if (confirmation === 'E_WEAK_CONTRA') {
+    score -= 18;
+    reasons.push('WEAK_CONTRA_CONFIRMATION');
+  }
+
+  const confidence = clampNumber(
+    marketContext.confidence + Math.min(20, Math.abs(score) / 2),
+    0,
+    100
+  );
+
+  const finalScore = clampNumber(score, -100, 100);
+
+  let currentFit = 'NEUTRAL';
+
+  if (finalScore >= 45) currentFit = 'MATCH';
+  else if (finalScore >= 18) currentFit = 'WEAK_MATCH';
+  else if (finalScore <= -25) currentFit = 'MISFIT';
+
+  return {
+    currentFit,
+    currentFitScore: Number(finalScore.toFixed(4)),
+    currentFitConfidence: Number(confidence.toFixed(2)),
+    currentFitReason: reasons.join('|') || 'NO_CURRENT_FIT_REASON',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
+  };
+}
+
+function attachCurrentFitContext(row = {}, marketContext = {}) {
+  const fit = scoreMarketFit(row, marketContext);
+
+  return {
+    ...row,
+
+    currentMarketWeather: marketContext?.source || null,
+    currentMarketUniverse: marketContext?.universe || null,
+    currentMarketWeatherKey: MARKET_WEATHER_KEY,
+    currentMarketUniverseKey: MARKET_UNIVERSE_KEY,
+    currentMarketWeatherAgeSec: marketContext?.ageSec ?? null,
+    currentMarketWeatherStale: Boolean(marketContext?.stale),
+
+    currentRegime: marketContext?.regime || 'UNKNOWN',
+    currentTrendSide: marketContext?.trendSide || 'UNKNOWN',
+    currentBullishPct: marketContext?.bullishPct ?? null,
+    currentBearishPct: marketContext?.bearishPct ?? null,
+    currentSqueezePct: marketContext?.squeezePct ?? null,
+
+    entryMarketWeather: marketContext?.source || null,
+    entryCurrentRegime: marketContext?.regime || 'UNKNOWN',
+    entryCurrentTrendSide: marketContext?.trendSide || 'UNKNOWN',
+    entryCurrentFit: fit.currentFit,
+    entryCurrentFitConfidence: fit.currentFitConfidence,
+    entryWeatherFitMatchedFamily: fit.currentFit === 'MATCH' || fit.currentFit === 'WEAK_MATCH',
+
+    ...fit
+  };
+}
+
+function discordCurrentFitGate(row = {}) {
+  if (!discordRequiresCurrentFit()) {
+    return {
+      ok: true,
+      reason: 'CURRENT_FIT_NOT_REQUIRED_BY_CONFIG',
+      currentFit: row.currentFit || row.entryCurrentFit || 'NOT_REQUIRED',
+      currentFitConfidence: safeNumber(row.currentFitConfidence ?? row.entryCurrentFitConfidence, 0)
+    };
+  }
+
+  const fit = upper(row.currentFit || row.entryCurrentFit);
+  const confidence = safeNumber(row.currentFitConfidence ?? row.entryCurrentFitConfidence, 0);
+
+  if (!fit || fit === 'UNKNOWN') {
+    return {
+      ok: false,
+      reason: 'DISCORD_BLOCKED_CURRENT_FIT_UNKNOWN',
+      currentFit: fit || 'UNKNOWN',
+      currentFitConfidence: confidence
+    };
+  }
+
+  if (confidence < discordMinCurrentFitConfidence()) {
+    return {
+      ok: false,
+      reason: 'DISCORD_BLOCKED_CURRENT_FIT_CONFIDENCE_TOO_LOW',
+      currentFit: fit,
+      currentFitConfidence: confidence,
+      minCurrentFitConfidence: discordMinCurrentFitConfidence()
+    };
+  }
+
+  if (fit === 'MATCH' || fit === 'WEAK_MATCH') {
+    return {
+      ok: true,
+      reason: 'DISCORD_CURRENT_FIT_OK',
+      currentFit: fit,
+      currentFitConfidence: confidence
+    };
+  }
+
+  return {
+    ok: false,
+    reason: `DISCORD_BLOCKED_CURRENT_FIT_${fit}`,
+    currentFit: fit,
+    currentFitConfidence: confidence
+  };
+}
+
 function buildAnalysisVariant(candidate = {}, side, scannerSide) {
   const tradeSide = normalizeTradeSide(side);
   const actualScannerSide = normalizeTradeSide(scannerSide);
@@ -1508,6 +1939,14 @@ function waitAction(candidate, reason, extra = {}) {
     liveEligible: false,
     discordAlertEligible: false,
 
+    currentFit: candidate?.currentFit || candidate?.entryCurrentFit || null,
+    currentFitScore: candidate?.currentFitScore ?? null,
+    currentFitConfidence: candidate?.currentFitConfidence ?? candidate?.entryCurrentFitConfidence ?? null,
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
     ...sideFlags(),
     ...virtualFlags(candidate),
     ...isolationFlags(),
@@ -1528,7 +1967,6 @@ function buildVirtualExitAction(outcome = {}) {
     source: 'VIRTUAL',
     outcomeSource: 'VIRTUAL',
     virtualOnly: true,
-    paperOnly: true,
     virtualTracked: true,
     shadowOnly: false,
 
@@ -1572,7 +2010,7 @@ function buildVirtualExitAction(outcome = {}) {
 
     exitReason: outcome.exitReason || null,
     exitPrice: outcome.exitPrice ?? null,
-    grossR: outcome.grossR ?? outcome.realizedGrossR ?? null,
+    grossR: outcome.grossR ?? outcome.realizedGrossR ?? outcome.shortGrossR ?? null,
     netR: outcome.netR ?? outcome.realizedR ?? outcome.r ?? null,
     realizedR: outcome.realizedR ?? outcome.netR ?? outcome.r ?? null,
     costR: outcome.costR ?? null,
@@ -1584,21 +2022,36 @@ function buildVirtualExitAction(outcome = {}) {
     sl: outcome.sl ?? null,
     tp: outcome.tp ?? null,
     ageSec: outcome.ageSec ?? null,
-    currentR: outcome.currentR ?? null,
+    currentR: outcome.currentR ?? outcome.shortCurrentR ?? null,
     mfeR: outcome.mfeR ?? null,
     maeR: outcome.maeR ?? null,
     reachedHalfR: Boolean(outcome.reachedHalfR),
     reachedOneR: Boolean(outcome.reachedOneR),
     nearTpSeen: Boolean(outcome.nearTpSeen),
 
-    tpHitNow: Boolean(outcome.tpHitNow || outcome.exitReason === 'TP'),
-    slHitNow: Boolean(outcome.slHitNow || outcome.exitReason === 'SL'),
+    directToSL: Boolean(outcome.directToSL || outcome.directSL),
+    directSL: Boolean(outcome.directSL || outcome.directToSL),
+
+    tpHitNow: Boolean(outcome.tpHitNow || outcome.shortTpHit || outcome.exitReason === 'TP'),
+    slHitNow: Boolean(outcome.slHitNow || outcome.shortSlHit || outcome.exitReason === 'SL'),
     timeStopHitNow: Boolean(outcome.timeStopHitNow || outcome.exitReason === 'TIME_STOP'),
 
-    shortTpExitRule: 'price <= tp',
-    shortSlExitRule: 'price >= sl',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    entryMarketWeather: outcome.entryMarketWeather || null,
+    entryCurrentRegime: outcome.entryCurrentRegime || outcome.currentRegime || null,
+    entryCurrentTrendSide: outcome.entryCurrentTrendSide || outcome.currentTrendSide || null,
+    entryCurrentFit: outcome.entryCurrentFit || outcome.currentFit || null,
+    entryCurrentFitConfidence: outcome.entryCurrentFitConfidence ?? outcome.currentFitConfidence ?? null,
+    entryWeatherFitMatchedFamily: outcome.entryWeatherFitMatchedFamily ?? null,
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     discordExitAlertSent: Boolean(outcome.discordExitAlertSent),
 
@@ -1628,6 +2081,18 @@ function buildRunActionCounts(actions = [], virtualExits = []) {
     ...(Array.isArray(actions) ? actions : []),
     ...buildVirtualExitActions(virtualExits)
   ]);
+}
+
+function rowMicroAliasIds(row = {}) {
+  return uniqueStrings([
+    row.childTrueMicroFamilyId,
+    row.trueMicroFamilyId,
+    row.learningMicroFamilyId,
+    row.analyzeMicroFamilyId,
+    row.microFamilyId
+  ])
+    .map((id) => cleanLearningFamilyId(id, row))
+    .filter((id) => isSelectableTrueMicroId(id));
 }
 
 function parentContextIds(row = {}) {
@@ -1736,6 +2201,7 @@ function buildSelectedAlertContext(activeRotation) {
     selectionPurpose: 'DISCORD_ALERT_ONLY',
     manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
     discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
+    discordRequiresCurrentFit: discordRequiresCurrentFit(),
 
     ...taxonomyFlags(),
     ...isolationFlags()
@@ -2212,6 +2678,13 @@ function enrichMetricsWithScannerAndLiveGates({
     riskEnginePreferredButNotRequiredForLearning: true,
     standardizedLearningRiskFallbackEnabled: cfg.allowStandardizedLearningRiskFallback,
 
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
     minLiveCandles15m: cfg.minLiveCandles15m,
 
     snapshotId: normalized.snapshotId || metrics.snapshotId || null,
@@ -2286,6 +2759,11 @@ function enrichMetricsWithScannerAndLiveGates({
     shortTimeStopExitRule: 'TIME_STOP',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     positionTimeStopMin: cfg.positionTimeStopMin,
 
@@ -2763,12 +3241,15 @@ function buildVirtualEntryAction({
   selectedWeeklyStats,
   riskFraction,
   virtualGate,
+  selectedExactMicroMatch,
   discordAlertEligible
 }) {
   const normalized = normalizeExactTrueMicroRow(row);
   const trueMicroFamilyId = getTrueMicroFamilyId(normalized);
   const parentTrueMicroFamilyId = getParentTrueMicroFamilyId(normalized);
   const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
+  const currentFitGate = discordCurrentFitGate(row);
+  const finalDiscordAlertEligible = Boolean(discordAlertEligible && currentFitGate.ok);
 
   return {
     ...normalized,
@@ -2810,13 +3291,17 @@ function buildVirtualEntryAction({
     selectedRotationId: alertContext.rotationId,
     activeRotationId: alertContext.rotationId,
 
-    selectedMicroFamilyAlert: Boolean(discordAlertEligible),
-    discordAlertEligible: Boolean(discordAlertEligible),
-    discordAlertReason: discordAlertEligible
-      ? 'SELECTED_SHORT_TRUE_MICRO_FAMILY_EXACT_75_CHILD_MATCH'
-      : alertContext.empty
-        ? 'NO_MANUAL_75_CHILD_TRUE_MICRO_FAMILY_SELECTED'
-        : 'TRUE_MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT',
+    selectedMicroFamilyAlert: Boolean(finalDiscordAlertEligible),
+    selectedExactMicroMatch: Boolean(selectedExactMicroMatch),
+    discordAlertEligible: Boolean(finalDiscordAlertEligible),
+    discordCurrentFitGate: currentFitGate,
+    discordAlertReason: finalDiscordAlertEligible
+      ? 'SELECTED_SHORT_TRUE_MICRO_FAMILY_EXACT_75_CHILD_MATCH_AND_CURRENT_FIT_OK'
+      : !selectedExactMicroMatch
+        ? alertContext.empty
+          ? 'NO_MANUAL_75_CHILD_TRUE_MICRO_FAMILY_SELECTED'
+          : 'TRUE_MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT'
+        : currentFitGate.reason || 'CURRENT_FIT_BLOCKED_DISCORD_ALERT',
 
     selectedMacroFamilyId: null,
     activeMacroFamilyId: null,
@@ -2831,7 +3316,7 @@ function buildVirtualEntryAction({
 
     btcRelation: row.btcRelation,
 
-    liveEligible: Boolean(discordAlertEligible),
+    liveEligible: Boolean(finalDiscordAlertEligible),
 
     outcomeIdentityLocked: true,
     outcomeIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
@@ -2849,6 +3334,11 @@ function buildVirtualEntryAction({
     shortTimeStopExitRule: 'TIME_STOP',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     positionTimeStopMin: tradeConfig().positionTimeStopMin,
 
     scannerWideVirtualLearning: true,
@@ -2860,6 +3350,30 @@ function buildVirtualEntryAction({
     ),
     riskEngineRisk: Boolean(row.riskEngineRisk),
     standardizedLearningRisk: Boolean(row.standardizedLearningRisk),
+
+    entryMarketWeather: row.entryMarketWeather || row.currentMarketWeather || null,
+    entryCurrentRegime: row.entryCurrentRegime || row.currentRegime || null,
+    entryCurrentTrendSide: row.entryCurrentTrendSide || row.currentTrendSide || null,
+    entryCurrentFit: row.entryCurrentFit || row.currentFit || null,
+    entryCurrentFitConfidence: row.entryCurrentFitConfidence ?? row.currentFitConfidence ?? null,
+    entryWeatherFitMatchedFamily: row.entryWeatherFitMatchedFamily ?? (
+      row.currentFit === 'MATCH' ||
+      row.currentFit === 'WEAK_MATCH'
+    ),
+
+    currentMarketWeather: row.currentMarketWeather || null,
+    currentMarketWeatherAgeSec: row.currentMarketWeatherAgeSec ?? null,
+    currentMarketWeatherStale: Boolean(row.currentMarketWeatherStale),
+    currentFit: row.currentFit || row.entryCurrentFit || null,
+    currentFitScore: row.currentFitScore ?? null,
+    currentFitConfidence: row.currentFitConfidence ?? row.entryCurrentFitConfidence ?? null,
+    currentFitReason: row.currentFitReason || null,
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
     qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
@@ -2874,7 +3388,7 @@ function maybeSendDiscordEntryAlert(entry = {}) {
       sent: false,
       skipped: true,
       queued: false,
-      reason: entry.discordAlertReason || 'TRUE_MICRO_FAMILY_NOT_SELECTED_FOR_DISCORD_ALERT'
+      reason: entry.discordAlertReason || 'TRUE_MICRO_FAMILY_NOT_SELECTED_OR_CURRENT_FIT_BLOCKED'
     };
   }
 
@@ -2947,7 +3461,8 @@ function buildQualityAudit({
   virtualExits,
   counts,
   openPositionCountBeforeEntries,
-  openPositionCountAfterEntries
+  openPositionCountAfterEntries,
+  marketContext
 }) {
   const candidateCount = candidates.length;
   const processedCount = processed.length;
@@ -2996,13 +3511,30 @@ function buildQualityAudit({
     riskEnginePreferredButNotRequiredForLearning: true,
     standardizedLearningRiskFallbackEnabled: true,
 
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    selectionIsAdaptive: true,
+    discordWillBeStrict: true,
+
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForExactTrueMicroMatch: true,
     discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
+    discordRequiresCurrentFit: discordRequiresCurrentFit(),
+    discordMinCurrentFitConfidence: discordMinCurrentFitConfidence(),
 
     completedIsPureClosedVirtualOutcome: true,
     completedComesOnlyFrom: 'TP_SL_OR_TIME_STOP',
     scoringRSource: 'netR',
+
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     recommendedFreezeDays: FREEZE_MEASUREMENT_RECOMMENDED_DAYS,
 
@@ -3011,6 +3543,20 @@ function buildQualityAudit({
       reasonableSignal: MIN_COMPLETED_REASONABLE_SIGNAL,
       strongSignal: MIN_COMPLETED_STRONG_SIGNAL,
       activeLearning: MIN_COMPLETED_ACTIVE_LEARNING
+    },
+
+    marketWeather: {
+      available: Boolean(marketContext?.ok),
+      key: MARKET_WEATHER_KEY,
+      universeKey: MARKET_UNIVERSE_KEY,
+      ageSec: marketContext?.ageSec ?? null,
+      stale: Boolean(marketContext?.stale),
+      regime: marketContext?.regime || 'UNKNOWN',
+      trendSide: marketContext?.trendSide || 'UNKNOWN',
+      bullishPct: marketContext?.bullishPct ?? null,
+      bearishPct: marketContext?.bearishPct ?? null,
+      squeezePct: marketContext?.squeezePct ?? null,
+      confidence: marketContext?.confidence ?? null
     },
 
     snapshot: {
@@ -3038,6 +3584,7 @@ function buildQualityAudit({
       waitRows,
       skippedByExistingSymbol: counts.skippedByExistingSymbol || 0,
       selectedAlertMicroMatches: counts.selectedAlertMicroMatches || 0,
+      discordCurrentFitBlockedRows: counts.discordCurrentFitBlockedRows || 0,
       openPositionCountBeforeEntries,
       openPositionCountAfterEntries
     },
@@ -3057,16 +3604,18 @@ function buildQualityAudit({
     topWaitReasons: topReasonCounts(actions, 12),
 
     interpretation: {
-      healthy: 'Scanner coins worden breed virtueel SHORT getraded, Analyze zet risk-valid rows exact in een 75-child trueMicroFamilyId, completed komt later via TP/SL/TIME_STOP.',
+      healthy: 'Scanner coins worden breed virtueel getraded. Analyze zet risk-valid rows exact in een 75-child trueMicroFamilyId. completed komt later via TP/SL/TIME_STOP.',
+      currentFit: 'CurrentFit blokkeert geen virtual learning. Het beïnvloedt alleen Discord-eligibility en downstream adaptive selection.',
       ifVirtualCreatedLow: 'Meestal symbol-lock, geen exact 75-child trueMicroFamilyId, of geen geldige TP/SL fallback.',
       ifVirtualCreatedHighAndExitLow: 'Posities lopen nog; completed komt later.',
       ifRiskValidLow: 'Er is geen TP/SL beschikbaar, ook fallback kon geen prijs vinden.',
       ifAnalyzedExact75Low: 'Analyze gaf geen exact selecteerbare 75-child trueMicroFamilyId terug.',
       ifSymbolAlreadyOpenHigh: 'Eén open positie per symbol blokkeert extra entries. Dit voorkomt dubbele vervuiling.',
-      ifSnapshotAlreadyProcessedHigh: 'Geen nieuwe entries totdat scanner een nieuwe snapshot levert.'
+      ifSnapshotAlreadyProcessedHigh: 'Geen nieuwe entries totdat scanner een nieuwe snapshot levert.',
+      ifDiscordCurrentFitBlockedHigh: 'Discord is streng. Virtual learning loopt door, maar alerts wachten op betere huidige markt-fit.'
     },
 
-    measurementPrinciple: 'Alles bearish van scanner virtueel laten leren; Discord alleen voor exact geselecteerde bewezen 75-child SHORT trueMicroFamilyIds.'
+    measurementPrinciple: 'Alles bearish van scanner virtueel laten leren; Discord alleen voor exact geselecteerde bewezen 75-child trueMicroFamilyIds met geldige CurrentFit.'
   };
 }
 
@@ -3113,7 +3662,9 @@ async function saveRunMeta(result) {
       scanLatest: SHORT_KEYS.scan.latest,
       tradeRunMeta: SHORT_KEYS.trade.runMeta,
       tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
-      scanSnapshotPattern: SHORT_KEYS.scan.snapshotPattern()
+      scanSnapshotPattern: SHORT_KEYS.scan.snapshotPattern(),
+      marketWeather: MARKET_WEATHER_KEY,
+      marketUniverse: MARKET_UNIVERSE_KEY
     },
 
     virtualExits,
@@ -3155,6 +3706,8 @@ export async function runTradeSystem(options = {}) {
   const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
   const monitorOnly = Boolean(options.monitorOnly);
 
+  const marketContext = await loadMarketContext().catch(() => extractMarketWeatherShape({}, {}));
+
   const priceFetcher = async (symbol) => fetchMidPrice(symbol);
 
   const realExits = [];
@@ -3168,8 +3721,6 @@ export async function runTradeSystem(options = {}) {
     weekKey: PERSISTENT_LEARNING_KEY,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
     virtualOnly: true,
-    paperOnly: true,
-    shadowOnly: true,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
     exchangeCallsDisabled: true
@@ -3193,6 +3744,7 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'MONITOR_ONLY',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      marketContext,
       monitorOpenPositions: true,
       monitorOpenPositionsFirst: true,
       processScannerSnapshot: false,
@@ -3218,6 +3770,7 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'NO_SHORT_SCANNER_SNAPSHOT',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      marketContext,
       monitorOpenPositions: true,
       monitorOpenPositionsFirst: true,
       processScannerSnapshot: true,
@@ -3255,6 +3808,7 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'SNAPSHOT_TOO_STALE',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      marketContext,
       monitorOpenPositions: true,
       monitorOpenPositionsFirst: true,
       processScannerSnapshot: false,
@@ -3297,6 +3851,7 @@ export async function runTradeSystem(options = {}) {
       skippedNewEntries: true,
       reason: 'SNAPSHOT_ALREADY_PROCESSED',
       actionCounts: buildRunActionCounts(actions, virtualExits),
+      marketContext,
       monitorOpenPositions: true,
       monitorOpenPositionsFirst: true,
       processScannerSnapshot: false,
@@ -3333,7 +3888,7 @@ export async function runTradeSystem(options = {}) {
   const candidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
     .filter((candidate) => candidateTradeSide(candidate) === TARGET_TRADE_SIDE)
     .slice(0, cfg.maxCandidatesPerSnapshot)
-    .map((candidate) => ({
+    .map((candidate) => attachCurrentFitContext({
       ...candidate,
       ...scannerMetadataFrom(candidate),
       ...sideFlags(),
@@ -3342,7 +3897,7 @@ export async function runTradeSystem(options = {}) {
 
       btcState: snapshot.btcState,
       regime: snapshot.regime
-    }));
+    }, marketContext));
 
   const shortCandidateCount = candidates.length;
   const nonShortCandidateCount = snapshot.blockedNonShortCandidatesCount || 0;
@@ -3364,12 +3919,12 @@ export async function runTradeSystem(options = {}) {
     .flatMap((row) => Array.isArray(row?.metrics) ? row.metrics : [])
     .filter(Boolean)
     .filter(isTargetRow)
-    .map((row) => ({
+    .map((row) => attachCurrentFitContext({
       ...row,
       ...sideFlags(),
       ...isolationFlags(),
       ...virtualFlags(row)
-    }));
+    }, marketContext));
 
   const actualLiveRows = liveRows.filter(isLiveScannerRow).length;
   const mirrorRows = liveRows.filter(isMirrorAnalysisRow).length;
@@ -3402,12 +3957,15 @@ export async function runTradeSystem(options = {}) {
       shortDisabled: false,
 
       virtualOnly: true,
-      paperOnly: true,
-      shadowOnly: true,
       virtualLearning: true,
       realOrdersDisabled: true,
       bitgetOrdersDisabled: true,
       exchangeCallsDisabled: true,
+
+      observationAlwaysCounted: false,
+      observationDedupeRequired: true,
+      observationDedupeEnabled: true,
+      seenDefinition: 'UNIQUE_SNAPSHOT_SYMBOL_TRUE_MICRO_OBSERVATION_ONLY',
 
       scannerFingerprintsMetadataOnly: true,
       scannerFingerprintsUsedAsLearningFamily: false,
@@ -3438,11 +3996,22 @@ export async function runTradeSystem(options = {}) {
       selectionGranularity: 'EXACT_75_CHILD',
       fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
 
-      shortRiskRule: 'tp < entry < sl',
-      shortTpExitRule: 'price <= tp',
-      shortSlExitRule: 'price >= sl',
-      shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-      shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+      currentMarketWeather: marketContext.source || null,
+      currentMarketUniverse: marketContext.universe || null,
+      currentMarketWeatherKey: MARKET_WEATHER_KEY,
+      currentMarketUniverseKey: MARKET_UNIVERSE_KEY,
+      currentRegime: marketContext.regime,
+      currentTrendSide: marketContext.trendSide,
+      currentFitSoftOnly: true,
+      currentFitBlocksLearning: false,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
+      riskGeometryRule: 'SHORT: tp < entry < sl',
+      tpHitRule: 'SHORT: price <= tp',
+      slHitRule: 'SHORT: price >= sl',
+      grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+      currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
     });
   } catch (error) {
     analyzeError = error?.message || String(error);
@@ -3453,13 +4022,13 @@ export async function runTradeSystem(options = {}) {
     .filter(Boolean)
     .filter(isTargetRow)
     .filter((row) => !isMirrorAnalysisRow(row))
-    .map((row) => ({
+    .map((row) => attachCurrentFitContext({
       ...normalizeExactTrueMicroRow(row),
       ...scannerMetadataFrom(row),
       ...sideFlags(),
       ...virtualFlags(row),
       ...isolationFlags()
-    }));
+    }, marketContext));
 
   const analyzedActualRows = analyzedRows.filter(isLiveScannerRow).length;
   const analyzedMirrorRows = analyzedRows.filter(isMirrorAnalysisRow).length;
@@ -3492,6 +4061,7 @@ export async function runTradeSystem(options = {}) {
   let discordAlertEligibleRows = 0;
   let discordAlertsQueued = 0;
   let discordAlertsSkippedNoSelectedMicro = 0;
+  let discordAlertsSkippedCurrentFit = 0;
 
   let selectedMicroMatchRows = 0;
   let unselectedMicroEntryRows = 0;
@@ -3534,6 +4104,10 @@ export async function runTradeSystem(options = {}) {
         virtualGate,
         virtualTracked: false,
         liveEligible: false,
+        currentFitSoftOnly: true,
+        currentFitBlocksLearning: false,
+        currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+        currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
         ...sideFlags(),
         ...isolationFlags()
       });
@@ -3558,6 +4132,10 @@ export async function runTradeSystem(options = {}) {
         liveEligible: false,
         oneOpenPositionPerSymbol: true,
         globalMaxOpenPositionsBlockDisabled: true,
+        currentFitSoftOnly: true,
+        currentFitBlocksLearning: false,
+        currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+        currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
         ...sideFlags(),
         ...isolationFlags()
       });
@@ -3581,14 +4159,23 @@ export async function runTradeSystem(options = {}) {
       })
       : sizing.baseRiskPct;
 
-    const discordAlertEligible = rowMatchesSelectedAlertMicro(alertContext, row);
+    const selectedExactMicroMatch = rowMatchesSelectedAlertMicro(alertContext, row);
+    const currentFitGate = discordCurrentFitGate(row);
+    const discordAlertEligible = selectedExactMicroMatch && currentFitGate.ok;
 
-    if (discordAlertEligible) {
-      discordAlertEligibleRows += 1;
+    if (selectedExactMicroMatch) {
       selectedMicroMatchRows += 1;
     } else {
       discordAlertsSkippedNoSelectedMicro += 1;
       unselectedMicroEntryRows += 1;
+    }
+
+    if (selectedExactMicroMatch && !currentFitGate.ok) {
+      discordAlertsSkippedCurrentFit += 1;
+    }
+
+    if (discordAlertEligible) {
+      discordAlertEligibleRows += 1;
     }
 
     const entry = buildVirtualEntryAction({
@@ -3597,6 +4184,7 @@ export async function runTradeSystem(options = {}) {
       selectedWeeklyStats,
       riskFraction,
       virtualGate,
+      selectedExactMicroMatch,
       discordAlertEligible
     });
 
@@ -3637,6 +4225,10 @@ export async function runTradeSystem(options = {}) {
         activeRotationId: alertContext.rotationId,
         virtualTracked: false,
         liveEligible: false,
+        currentFitSoftOnly: true,
+        currentFitBlocksLearning: false,
+        currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+        currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
         ...sideFlags(),
         ...isolationFlags()
       });
@@ -3662,10 +4254,12 @@ export async function runTradeSystem(options = {}) {
       virtualCreatedRows,
       waitRows,
       skippedByExistingSymbol,
-      selectedAlertMicroMatches: selectedMicroMatchRows
+      selectedAlertMicroMatches: selectedMicroMatchRows,
+      discordCurrentFitBlockedRows: discordAlertsSkippedCurrentFit
     },
     openPositionCountBeforeEntries,
-    openPositionCountAfterEntries: openPositions.length
+    openPositionCountAfterEntries: openPositions.length,
+    marketContext
   });
 
   const lastProcessedRow = {
@@ -3700,6 +4294,18 @@ export async function runTradeSystem(options = {}) {
     ...sideFlags(),
     ...virtualFlags(),
     ...isolationFlags(),
+
+    currentMarketWeather: marketContext.source || null,
+    currentMarketUniverse: marketContext.universe || null,
+    currentMarketWeatherKey: MARKET_WEATHER_KEY,
+    currentMarketUniverseKey: MARKET_UNIVERSE_KEY,
+    currentMarketWeatherAgeSec: marketContext.ageSec,
+    currentMarketWeatherStale: marketContext.stale,
+    currentRegime: marketContext.regime,
+    currentTrendSide: marketContext.trendSide,
+    currentBullishPct: marketContext.bullishPct,
+    currentBearishPct: marketContext.bearishPct,
+    currentSqueezePct: marketContext.squeezePct,
 
     candidates: candidates.length,
     shortCandidateCount,
@@ -3753,10 +4359,13 @@ export async function runTradeSystem(options = {}) {
     shadowExitRows: shadowExits.length,
     realExitRows: 0,
 
+    discordRequiresCurrentFit: discordRequiresCurrentFit(),
+    discordMinCurrentFitConfidence: discordMinCurrentFitConfidence(),
     discordAlertEligibleRows,
     discordAlertsQueued,
     discordAlertsSent: 0,
     discordAlertsSkippedNoSelectedMicro,
+    discordAlertsSkippedCurrentFit,
 
     selectedMicroMatchRows,
     selectedAlertMicroMatches: selectedMicroMatchRows,
@@ -3849,6 +4458,18 @@ export async function runTradeSystem(options = {}) {
     ...virtualFlags(),
     ...isolationFlags(),
 
+    currentMarketWeather: marketContext.source || null,
+    currentMarketUniverse: marketContext.universe || null,
+    currentMarketWeatherKey: MARKET_WEATHER_KEY,
+    currentMarketUniverseKey: MARKET_UNIVERSE_KEY,
+    currentMarketWeatherAgeSec: marketContext.ageSec,
+    currentMarketWeatherStale: marketContext.stale,
+    currentRegime: marketContext.regime,
+    currentTrendSide: marketContext.trendSide,
+    currentBullishPct: marketContext.bullishPct,
+    currentBearishPct: marketContext.bearishPct,
+    currentSqueezePct: marketContext.squeezePct,
+
     candidates: candidates.length,
     shortCandidateCount,
     longCandidateCount: 0,
@@ -3901,10 +4522,13 @@ export async function runTradeSystem(options = {}) {
     shadowExitRows: shadowExits.length,
     realExitRows: 0,
 
+    discordRequiresCurrentFit: discordRequiresCurrentFit(),
+    discordMinCurrentFitConfidence: discordMinCurrentFitConfidence(),
     discordAlertEligibleRows,
     discordAlertsQueued,
     discordAlertsSent: 0,
     discordAlertsSkippedNoSelectedMicro,
+    discordAlertsSkippedCurrentFit,
 
     selectedMicroMatchRows,
     selectedAlertMicroMatches: selectedMicroMatchRows,
