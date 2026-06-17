@@ -23,11 +23,8 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
-const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY';
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -87,10 +84,10 @@ const BLOCKED_AUTO_ACTIONS = new Set([
   'activateBestLongMicroFamily',
   'activateBestBearMicroFamily',
   'activateBestBullMicroFamily',
-  'activateBestShort',
-  'activateShort',
   'activateBestLong',
   'activateLong',
+  'activateBestShort',
+  'activateShort',
   'activateNextRotation',
   'autoActivate',
   'autoBootstrap'
@@ -155,13 +152,6 @@ function modeFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    bareWinrateRankingDisabled: true,
-
     noRealOrders: true,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
@@ -172,12 +162,22 @@ function modeFlags() {
 
     positionTimeStopMinDefault: DEFAULT_POSITION_TIME_STOP_MIN,
     shortRiskShape: 'tp < entry < sl',
-    validShortRiskShape: 'tp < entry && entry < sl',
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
     tpRule: 'price <= tp',
     slRule: 'price >= sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     timeStopEnabled: true,
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
 
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsMetadataOnly: true,
@@ -199,12 +199,9 @@ function modeFlags() {
     exactTrueMicroOnly: true,
     exactTrueMicroFamilyRequired: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
     parentMicroFamilyCount: 15,
     selectableChildMicroFamilyCount: 75,
@@ -249,10 +246,7 @@ function modeFlags() {
 function taxonomyMeta() {
   return {
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
     parentMicroFamilyCount: 15,
     selectableChildMicroFamilyCount: 75,
@@ -377,12 +371,25 @@ function cleanSideText(value = '') {
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORTDISABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
-    .replaceAll('SHORT_ONLY', 'SHORT')
-    .replaceAll('SHORT-ONLY', 'SHORT')
+    .replaceAll('BLOCK_SHORT_FALSE', '')
+    .replaceAll('SHORT_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
+    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('BLOCK_SHORT', 'LONG')
+    .replaceAll('SHORT_DISABLED', 'LONG')
+    .replaceAll('SHORTDISABLED', 'LONG')
     .replaceAll('LONG_ONLY_MODE', 'LONG')
     .replaceAll('LONG_ONLY', 'LONG')
-    .replaceAll('LONG-ONLY', 'LONG');
+    .replaceAll('LONG-ONLY', 'LONG')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
 function flattenValues(values = []) {
@@ -418,6 +425,18 @@ function uniqueStrings(values = []) {
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
+}
+
+function firstFiniteNumber(values = []) {
+  for (const value of flattenValues(values)) {
+    if (value === undefined || value === null || value === '') continue;
+
+    const n = Number(value);
+
+    if (Number.isFinite(n)) return n;
+  }
+
+  return null;
 }
 
 function getArray(value) {
@@ -508,10 +527,7 @@ function parseShortTaxonomyMicroId(id = '') {
     trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
     childTrueMicroFamilyId: validChild ? childId : null,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY
+    learningGranularity: LEARNING_GRANULARITY
   };
 }
 
@@ -582,7 +598,6 @@ function getMicroFamilyId(row = {}, fallback = null) {
     row.trueMicroFamilyId,
     row.learningMicroFamilyId,
     row.analyzeMicroFamilyId,
-    row.childTrueMicroFamilyId,
     row.microFamilyId,
     row.id,
     row.key,
@@ -595,7 +610,6 @@ function getTrueMicroFamilyId(row = {}, fallback = null) {
     row.trueMicroFamilyId,
     row.learningMicroFamilyId,
     row.analyzeMicroFamilyId,
-    row.childTrueMicroFamilyId,
     row.microFamilyId,
     row.id,
     row.key,
@@ -692,10 +706,10 @@ function inferTradeSide(input = {}) {
 
     const value = cleanSideText(input);
 
-    if (value.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
     if (value.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
-    if (value.includes('SHORT') || value.includes('BEAR') || value.includes('SELL')) return TARGET_TRADE_SIDE;
+    if (value.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
     if (value.includes('LONG') || value.includes('BULL') || value.includes('BUY')) return OPPOSITE_TRADE_SIDE;
+    if (value.includes('SHORT') || value.includes('BEAR') || value.includes('SELL')) return TARGET_TRADE_SIDE;
 
     return 'UNKNOWN';
   }
@@ -840,6 +854,141 @@ function getLearningCount(row = {}, aggregateKey, realKey = null, shadowKey = nu
   return 0;
 }
 
+function getShortRiskGeometry(row = {}) {
+  const entry = firstFiniteNumber([
+    row.entryPrice,
+    row.entry,
+    row.avgEntryPrice,
+    row.averageEntryPrice,
+    row.averageEntry,
+    row.openPrice
+  ]);
+
+  const initialSl = firstFiniteNumber([
+    row.initialSl,
+    row.initialSL,
+    row.initialStopLoss,
+    row.initialStopLossPrice,
+    row.stopLoss,
+    row.stopLossPrice,
+    row.sl,
+    row.slPrice
+  ]);
+
+  const tp = firstFiniteNumber([
+    row.tp,
+    row.takeProfit,
+    row.takeProfitPrice,
+    row.targetPrice,
+    row.finalTp,
+    row.finalTakeProfit
+  ]);
+
+  const exitPrice = firstFiniteNumber([
+    row.exitPrice,
+    row.closePrice,
+    row.closedPrice,
+    row.outcomePrice,
+    row.fillExitPrice,
+    row.exit
+  ]);
+
+  const currentPrice = firstFiniteNumber([
+    row.currentPrice,
+    row.markPrice,
+    row.lastPrice,
+    row.price
+  ]);
+
+  const denominator =
+    Number.isFinite(entry) && Number.isFinite(initialSl)
+      ? initialSl - entry
+      : 0;
+
+  const validGeometry =
+    Number.isFinite(entry) &&
+    Number.isFinite(initialSl) &&
+    Number.isFinite(tp) &&
+    denominator > 0 &&
+    tp < entry &&
+    entry < initialSl;
+
+  const shortGrossR =
+    validGeometry && Number.isFinite(exitPrice)
+      ? (entry - exitPrice) / denominator
+      : null;
+
+  const shortCurrentR =
+    validGeometry && Number.isFinite(currentPrice)
+      ? (entry - currentPrice) / denominator
+      : null;
+
+  const shortTpHit =
+    validGeometry &&
+    (
+      row.shortTpHit === true ||
+      row.tpHit === true ||
+      (Number.isFinite(exitPrice) && exitPrice <= tp) ||
+      (Number.isFinite(currentPrice) && currentPrice <= tp)
+    );
+
+  const shortSlHit =
+    validGeometry &&
+    (
+      row.shortSlHit === true ||
+      row.slHit === true ||
+      (Number.isFinite(exitPrice) && exitPrice >= initialSl) ||
+      (Number.isFinite(currentPrice) && currentPrice >= initialSl)
+    );
+
+  return {
+    entry,
+    initialSl,
+    tp,
+    exitPrice,
+    currentPrice,
+    denominator,
+    validGeometry,
+    shortTpHit: Boolean(shortTpHit),
+    shortSlHit: Boolean(shortSlHit),
+    shortGrossR,
+    shortCurrentR,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+  };
+}
+
+function outcomeNetR(row = {}) {
+  const explicitShortR = firstFiniteNumber([
+    row.shortNetR,
+    row.netShortR,
+    row.shortExitR,
+    row.shortRealizedNetR,
+    row.shortRealizedR
+  ]);
+
+  if (explicitShortR !== null) return explicitShortR;
+
+  const geometry = getShortRiskGeometry(row);
+  const costR = num(row.costR ?? row.avgCostR, 0);
+
+  if (geometry.validGeometry && geometry.shortGrossR !== null) {
+    return geometry.shortGrossR - costR;
+  }
+
+  return num(
+    row.netR ??
+      row.exitR ??
+      row.realizedNetR ??
+      row.realizedR ??
+      row.r,
+    0
+  );
+}
+
 function outcomeCounts(row = {}) {
   const wins = getLearningCount(row, 'wins', 'realWins', 'shadowWins');
   const losses = getLearningCount(row, 'losses', 'realLosses', 'shadowLosses');
@@ -895,9 +1044,18 @@ function totalR(row = {}) {
     return virtualShadowTotalR;
   }
 
+  if (hasValue(row.shortNetTotalR)) return num(row.shortNetTotalR, 0);
+  if (hasValue(row.netShortTotalR)) return num(row.netShortTotalR, 0);
   if (hasValue(row.netTotalR)) return num(row.netTotalR, 0);
   if (hasValue(row.totalNetR)) return num(row.totalNetR, 0);
   if (hasValue(row.totalR)) return num(row.totalR, 0);
+
+  if (Array.isArray(row.recentOutcomes)) {
+    return row.recentOutcomes
+      .filter(Boolean)
+      .filter((outcome) => inferTradeSide({ ...row, ...outcome }) !== OPPOSITE_TRADE_SIDE)
+      .reduce((sum, outcome) => sum + outcomeNetR(outcome), 0);
+  }
 
   return 0;
 }
@@ -933,6 +1091,119 @@ function avgCostR(row = {}) {
   if (completed <= 0) return 0;
 
   return totalCostR(row) / completed;
+}
+
+function marketBiasHaystack(row = {}) {
+  return [
+    row.currentMarketTrendSide,
+    row.marketTrendSide,
+    row.trendSide,
+    row.dashboardSide,
+    row.marketSide,
+    row.marketBias,
+    row.bias,
+    row.direction,
+    row.currentRegime,
+    row.marketRegime,
+    row.regime,
+    row.currentFitReason,
+    ...(Array.isArray(row.currentFitReasons) ? row.currentFitReasons : [])
+  ]
+    .map((value) => upper(value))
+    .join(' | ');
+}
+
+function currentFitLabel(score = 0, fallback = 'UNKNOWN') {
+  if (!Number.isFinite(score)) return fallback || 'UNKNOWN';
+  if (score >= 45) return 'FIT';
+  if (score >= 20) return 'OK';
+  if (score <= -20) return 'MISFIT';
+
+  return 'NEUTRAL';
+}
+
+function getShortCurrentFit(row = {}) {
+  const explicitShort = firstFiniteNumber([
+    row.shortCurrentFit,
+    row.bearCurrentFit,
+    row.currentFitShort,
+    row.currentFitBear,
+    row.shortFitScore,
+    row.bearFitScore
+  ]);
+
+  if (explicitShort !== null) {
+    return {
+      score: explicitShort,
+      label: currentFitLabel(explicitShort, row.currentFit || 'UNKNOWN'),
+      source: 'EXPLICIT_SHORT_OR_BEAR_CURRENT_FIT'
+    };
+  }
+
+  const explicitLong = firstFiniteNumber([
+    row.longCurrentFit,
+    row.bullCurrentFit,
+    row.bullishCurrentFit,
+    row.currentFitLong,
+    row.currentFitBull,
+    row.longFitScore,
+    row.bullFitScore
+  ]);
+
+  if (explicitLong !== null) {
+    const score = -Math.abs(explicitLong);
+
+    return {
+      score,
+      label: currentFitLabel(score, row.currentFit || 'UNKNOWN'),
+      source: 'INVERTED_LONG_OR_BULL_CURRENT_FIT'
+    };
+  }
+
+  const rawFit = firstFiniteNumber([
+    row.currentFitScore,
+    row.fitScore,
+    row.marketFitScore,
+    row.marketFit,
+    row.currentFitNumeric
+  ]);
+
+  if (rawFit === null) {
+    return {
+      score: 0,
+      label: row.currentFit || row.currentFitLabel || 'UNKNOWN',
+      source: 'NO_NUMERIC_CURRENT_FIT'
+    };
+  }
+
+  const haystack = marketBiasHaystack(row);
+  let score;
+
+  if (
+    haystack.includes('BEAR') ||
+    haystack.includes('BEARISH') ||
+    haystack.includes('SHORT') ||
+    haystack.includes('SELL') ||
+    haystack.includes('DOWNSIDE')
+  ) {
+    score = Math.abs(rawFit);
+  } else if (
+    haystack.includes('BULL') ||
+    haystack.includes('BULLISH') ||
+    haystack.includes('LONG') ||
+    haystack.includes('BUY') ||
+    haystack.includes('UPSIDE')
+  ) {
+    score = -Math.abs(rawFit);
+  } else {
+    score = -rawFit;
+  }
+
+  return {
+    score,
+    label: currentFitLabel(score, row.currentFit || row.currentFitLabel || 'UNKNOWN'),
+    source: 'SHORT_MIRRORED_GENERIC_CURRENT_FIT'
+  };
 }
 
 function learningStatus(row = {}) {
@@ -985,6 +1256,8 @@ function normalizeRotationRow(row = {}, index = 0) {
   const completed = completedSample(row);
   const observed = observationSample(row);
   const tier = row.selectedTier || row.rotationEligibilityTier || eligibilityTier(row);
+  const risk = getShortRiskGeometry(row);
+  const fit = getShortCurrentFit(row);
 
   return {
     rank: index + 1,
@@ -1015,8 +1288,6 @@ function normalizeRotationRow(row = {}, index = 0) {
     fixedTaxonomyLearningId: true,
     selectableTrueMicroFamily: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
 
     inferredTradeSide: rawSide === 'UNKNOWN' ? TARGET_TRADE_SIDE : rawSide,
@@ -1102,6 +1373,37 @@ function normalizeRotationRow(row = {}, index = 0) {
     balancedScore: round(row.balancedScore, 4),
     dashboardBalancedScore: round(row.dashboardBalancedScore ?? row.balancedScore, 4),
 
+    currentFit: fit.label,
+    currentFitLabel: fit.label,
+    currentFitScore: round(fit.score, 4),
+    fitScore: round(fit.score, 4),
+    currentFitSource: fit.source,
+    shortCurrentFit: round(fit.score, 4),
+    bearCurrentFit: round(fit.score, 4),
+    bullishCurrentFit: round(-Math.abs(fit.score), 4),
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
+    entry: risk.entry ?? row.entry ?? null,
+    entryPrice: risk.entry ?? row.entryPrice ?? null,
+    sl: risk.initialSl ?? row.sl ?? null,
+    initialSl: risk.initialSl ?? row.initialSl ?? null,
+    tp: risk.tp ?? row.tp ?? null,
+    validShortRiskShape: Boolean(risk.validGeometry),
+    validShortGeometry: Boolean(risk.validGeometry),
+    shortTpHit: risk.shortTpHit,
+    shortSlHit: risk.shortSlHit,
+    tpHit: risk.shortTpHit,
+    slHit: risk.shortSlHit,
+    shortGrossR: risk.shortGrossR === null ? null : round(risk.shortGrossR, 4),
+    shortCurrentR: risk.shortCurrentR === null ? null : round(risk.shortCurrentR, 4),
+    currentR: risk.shortCurrentR === null ? row.currentR ?? null : round(risk.shortCurrentR, 4),
+    riskGeometryRule: risk.riskGeometryRule,
+    tpHitRule: risk.tpHitRule,
+    slHitRule: risk.slHitRule,
+    grossRFormula: risk.grossRFormula,
+    currentRFormula: risk.currentRFormula,
+
     selectedTier: tier,
     rotationEligibilityTier: tier,
 
@@ -1169,6 +1471,7 @@ function compareRows(a = {}, b = {}) {
     num(b.fairWinrate, 0) - num(a.fairWinrate, 0) ||
     num(b.totalR, 0) - num(a.totalR, 0) ||
     num(b.avgR, 0) - num(a.avgR, 0) ||
+    num(b.currentFitScore, 0) - num(a.currentFitScore, 0) ||
     num(b.observationSample, 0) - num(a.observationSample, 0) ||
     String(a.trueMicroFamilyId || a.microFamilyId || '').localeCompare(String(b.trueMicroFamilyId || b.microFamilyId || ''))
   );
@@ -1226,7 +1529,6 @@ async function loadAvailableRows({
         trueMicroFamilyId: rowId,
         analyzeMicroFamilyId: rowId,
         learningMicroFamilyId: rowId,
-        childTrueMicroFamilyId: rowId,
         sourceWeekKey: row?.sourceWeekKey || PERSISTENT_LEARNING_KEY,
         sourceWeekPrimary: currentHasKey || !previousHasKey,
         sourceWeekFallback: Boolean(!currentHasKey && previousHasKey)
@@ -1297,8 +1599,6 @@ function manualActiveRowFromId(id, index = 0) {
     active: true,
     fixedTaxonomyLearningId: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     selectedTier: 'RAW',
     rotationEligibilityTier: 'RAW',
@@ -1543,8 +1843,6 @@ async function handleGet(req, res) {
       trueMicroOnly: true,
       exactTrueMicroOnly: true,
       trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-      parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-      childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
       learningGranularity: LEARNING_GRANULARITY
     }).catch(() => null),
 
@@ -1557,8 +1855,6 @@ async function handleGet(req, res) {
       trueMicroOnly: true,
       exactTrueMicroOnly: true,
       trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-      parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-      childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
       learningGranularity: LEARNING_GRANULARITY
     }).catch(() => null),
 
@@ -1780,11 +2076,8 @@ async function handlePost(req, res) {
     selectableChildOnly: true,
     selectableIdsAreChildrenOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
@@ -1876,8 +2169,6 @@ export default async function handler(req, res) {
   res.setHeader('X-True-Micro-Only', 'true');
   res.setHeader('X-Exact-True-Micro-Only', 'true');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Child-True-Micro-Family-Schema', CHILD_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
   res.setHeader('X-Selectable-Child-Micro-Families', '75');
   res.setHeader('X-Parent-Micro-Families', '15');
