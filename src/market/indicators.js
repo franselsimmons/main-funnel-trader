@@ -66,7 +66,6 @@ function shortIndicatorFlags() {
     virtualLearning: true,
     virtualOnly: true,
     virtualTracked: true,
-    paperOnly: true,
     shadowOnly: true,
 
     realTrade: false,
@@ -81,12 +80,9 @@ function shortIndicatorFlags() {
     exchangeCallsDisabled: true,
 
     scannerBearishOnly: true,
-    scannerFindsBearishCandidates: true,
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
-    scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true,
 
     executionFingerprintRole: 'METADATA_ONLY',
     executionFingerprintsMetadataOnly: true,
@@ -101,26 +97,12 @@ function shortIndicatorFlags() {
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
     exactTrueMicroFamilyRequired: true,
-    fixedTaxonomyPreferred: true,
-
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-
-    parentLearningEnabled: true,
-    childLearningEnabled: true,
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     selectionGranularity: 'EXACT_75_CHILD',
-    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
-
-    validShortRiskShape: 'tp < entry < sl',
-    shortRiskShape: 'tp < entry < sl',
-    shortTpRule: 'price <= tp',
-    shortSlRule: 'price >= sl',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -130,42 +112,68 @@ function shortIndicatorFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    bareWinrateRankingDisabled: true,
-
     manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
     discordOnlyForExactTrueMicroMatch: true,
-    discordOnlyForSelectedMicroFamilies: true,
-    discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    shortRiskShape: 'tp < entry < sl',
+    validShortRiskShape: 'entry > 0 && tp < entry && sl > entry',
+    validShortGeometry: 'tp < entry < sl',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    shortExitRules: {
+      tp: 'price <= tp',
+      sl: 'price >= sl',
+      timeStop: 'TIME_STOP'
+    },
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    learningRemainsBroad: true,
 
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
     longRootTouched: false
   };
 }
 
 function cleanSideText(value = '') {
   return upper(value)
-    .replaceAll('LONG_DISABLED_TRUE', '')
-    .replaceAll('LONGDISABLED_TRUE', '')
-    .replaceAll('BLOCK_LONG_TRUE', '')
     .replaceAll('LONG_DISABLED_FALSE', '')
     .replaceAll('LONGDISABLED_FALSE', '')
     .replaceAll('BLOCK_LONG_FALSE', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
+    .replaceAll('SHORTDISABLED_FALSE', '')
+    .replaceAll('BLOCK_SHORT_FALSE', '')
+    .replaceAll('SHORT_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
+    .replaceAll('LONGDISABLED_TRUE', 'SHORT')
+    .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
+    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('SHORT_DISABLED_TRUE', 'LONG')
+    .replaceAll('SHORTDISABLED_TRUE', 'LONG')
+    .replaceAll('BLOCK_SHORT_TRUE', 'LONG')
+    .replaceAll('BLOCK_SHORT', 'LONG')
+    .replaceAll('SHORT_DISABLED', 'LONG')
+    .replaceAll('SHORTDISABLED', 'LONG')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT')
@@ -257,16 +265,16 @@ function normalizeTradeSide(value) {
   if (direct === TARGET_TRADE_SIDE) return TARGET_TRADE_SIDE;
   if (direct === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
 
-  const shortHit = hasShortSignal(raw);
   const longHit = hasLongSignal(raw);
+  const shortHit = hasShortSignal(raw);
 
   if (shortHit && !longHit) return TARGET_TRADE_SIDE;
   if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
 
-  if (shortHit && longHit) {
+  if (longHit && shortHit) {
     if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
-    if (raw.includes('TRADE_SIDE=LONG') || raw.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
     if (raw.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
+    if (raw.includes('TRADE_SIDE=LONG') || raw.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
     if (raw.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
   }
 
@@ -685,19 +693,9 @@ export function calcCandleStructure(candles) {
   };
 }
 
-export function buildShortIndicatorMeta(extra = {}) {
-  return {
-    ...shortIndicatorFlags(),
-    ...extra
-  };
-}
-
 export function buildLongIndicatorMeta(extra = {}) {
   return {
     ...shortIndicatorFlags(),
-    compatibilityAlias: 'buildLongIndicatorMeta',
-    compatibilityAliasTarget: 'buildShortIndicatorMeta',
-    longRootTouched: false,
     ...extra
   };
 }
