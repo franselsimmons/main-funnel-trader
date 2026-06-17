@@ -163,17 +163,24 @@ function upper(value, fallback = 'UNKNOWN') {
 
 function cleanSideText(value = '') {
   return upper(value, '')
+    .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
+    .replaceAll('LONGDISABLED_TRUE', 'SHORT')
+    .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
     .replaceAll('LONG_DISABLED_FALSE', '')
     .replaceAll('LONGDISABLED_FALSE', '')
     .replaceAll('BLOCK_LONG_FALSE', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
+    .replaceAll('SHORTDISABLED_FALSE', '')
+    .replaceAll('BLOCK_SHORT_FALSE', '')
+    .replaceAll('SHORT_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT')
@@ -268,8 +275,8 @@ function normalizeTradeSideValue(value) {
   const shortHit = hasShortSignal(raw);
   const longHit = hasLongSignal(raw);
 
-  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
   if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
 
   if (shortHit && longHit) {
     if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
@@ -288,14 +295,14 @@ function isScannerFingerprintId(id = '') {
   const value = upper(id, '');
 
   return (
-    value.startsWith('MICRO_LONG_SCANNER__') ||
-    value.includes('MICRO_LONG_SCANNER__') ||
-    value.startsWith('LONG_SCANNER_') ||
-    value.includes('LONG_SCANNER_') ||
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
     value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -664,7 +671,6 @@ function modeFlags(row = {}) {
 
     virtualLearning: true,
     virtualOnly: true,
-    paperOnly: true,
     virtualTracked: true,
     shadowOnly: true,
     outcomeSource: 'VIRTUAL',
@@ -745,12 +751,31 @@ function modeFlags(row = {}) {
     earlyOutcomesStatusRule: 'completed > 0 && completed < 20',
     activeLearningStatusRule: 'completed >= 20',
 
-    defaultRanking: 'dashboardBalancedScore/balancedScore/fairWinrate/totalR/avgR/avgCostR',
+    defaultRanking: 'dashboardBalancedScore/balancedScore/fairWinrate',
     noBareWinrateRanking: true,
+
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    validShortRiskShape: 'tp < entry < sl',
+    shortRiskShape: 'tp < entry < sl',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
     longRootTouched: false
   };
 }
@@ -1017,7 +1042,6 @@ function scannerReason(candidate = {}) {
 
   if (reason.includes('RETEST')) return 'RETEST';
   if (reason.includes('PULLBACK')) return 'PULLBACK';
-  if (reason.includes('BREAKDOWN')) return 'BREAKDOWN';
   if (reason.includes('BREAKOUT')) return 'BREAKOUT';
   if (reason.includes('VOLUME')) return 'VOLUME';
   if (reason.includes('MOMENTUM')) return 'MOMENTUM';
@@ -1043,16 +1067,13 @@ function inferEntryFlags(candidate = {}) {
 
   const fakeBreakout =
     bool(candidate.fakeBreakout) ||
-    bool(candidate.fakeBreakoutRisk) ||
-    bool(candidate.fakeBreakdown) ||
-    bool(candidate.fakeBreakdownRisk);
+    bool(candidate.fakeBreakoutRisk);
 
   let entryQuality = 'RAW';
 
   if (retestConfirmed) entryQuality = 'RETEST';
   else if (pullbackConfirmed) entryQuality = 'PULLBACK';
   else if (sweepConfirmed) entryQuality = 'SWEEP';
-  else if (reason.includes('BREAKDOWN')) entryQuality = 'BREAKDOWN';
   else if (reason.includes('BREAKOUT')) entryQuality = 'BREAKOUT';
   else if (reason.includes('MOMENTUM')) entryQuality = 'MOMENTUM';
 
@@ -1084,7 +1105,7 @@ function directionalMoveScore({
   if (zone.startsWith('UPPER')) score += 10;
   if (zone === 'MID') score += 5;
   if (slope < 0) score += 5;
-  if (htf >= 32 && htf <= 55) score += 5;
+  if (htf <= 55 && htf >= 32) score += 5;
   if (htf < 26) score -= 6;
 
   if (rsiAlign === 'RSI_WITH') score += 4;
@@ -1224,8 +1245,8 @@ function buildMicroSignalParts({
     `side=${TARGET_DASHBOARD_SIDE}`,
     `positionSide=${TARGET_TRADE_SIDE}`,
     `direction=${TARGET_TRADE_SIDE}`,
-    'shortOnly=true',
-    'longDisabled=true',
+    `shortOnly=true`,
+    `longDisabled=true`,
 
     `rsiZone=${rsiZone}`,
     `rsiBucket=${rsiLocalBucket}`,
@@ -1254,13 +1275,14 @@ function buildMicroSignalParts({
     `fakeBreakout=${Boolean(fakeBreakout)}`,
 
     'scannerFingerprintRole=METADATA_ONLY',
-    'scannerFingerprintsUsedAsLearningFamily=false',
     'executionFingerprintRole=METADATA_ONLY',
-    'executionFingerprintsUsedAsLearningFamily=false',
     'learningIdentitySource=ANALYZE_TRUE_MICRO_FAMILY',
     'symbolExcludedFromFamilyId=true',
     'coinNameExcludedFromFamilyId=true',
-    'hashesExcludedFromFamilyId=true'
+    'hashesExcludedFromFamilyId=true',
+    'currentFitPolarity=BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    'currentFitDefinition=SHORT_MIRRORED_CURRENT_FIT',
+    'riskGeometry=SHORT:tp<entry<sl'
   ];
 }
 
@@ -1423,6 +1445,11 @@ export function buildRiskGeometry({
     shortTimeStopExitRule: 'TIME_STOP',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     riskEngineAssignedTrueMicroFamily: false,
     analyzeAssignsTrueMicroFamily: true,
@@ -1678,6 +1705,14 @@ export function buildLiveMetrics({
     shortTimeStopExitRule: 'TIME_STOP',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     riskEngineAssignedTrueMicroFamily: false,
     analyzeAssignsTrueMicroFamily: true,
