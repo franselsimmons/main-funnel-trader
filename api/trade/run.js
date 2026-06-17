@@ -22,7 +22,7 @@ const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
-const DEFAULT_LOCK_TTL_SEC = 55;
+const DEFAULT_LOCK_TTL_SEC = 75;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
@@ -31,14 +31,16 @@ const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const RUN_SCOPE = 'TRADE_WITH_SCANNER_PRELOAD';
-const WRITE_SCOPE = 'SCANNER_MARKET_WEATHER_TRADE_AND_ANALYZE_PARTIAL';
+const RUN_SCOPE = 'TRADE_FAST_SCANNER_PRELOAD_OPTIONAL';
+const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
 const READ_SCOPE = 'READ_SHORT_SCANNER_AND_MARKET_WEATHER';
 
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 const SHORT_MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 const SHORT_MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
+
+const MAX_DEBUG_ROWS = 75;
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -131,6 +133,7 @@ const SHORT_KEYS = {
 
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
+
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -165,7 +168,7 @@ function getLockTtlSec() {
 
   if (!Number.isFinite(ttl) || ttl <= 0) return DEFAULT_LOCK_TTL_SEC;
 
-  return Math.min(55, Math.floor(ttl));
+  return Math.max(10, Math.floor(ttl));
 }
 
 function isolationFlags() {
@@ -177,28 +180,31 @@ function isolationFlags() {
     adminPageIsolation: true,
     doesNotOverwriteOtherAdminPages: true,
 
-    scannerPreloadBeforeTrade: true,
-    scannerPreloadRequiredForMarketWeather: true,
+    scannerPreloadOptional: true,
+    scannerPreloadDefaultDisabled: true,
+    scannerPreloadBeforeTrade: false,
+    scannerPreloadRequiredForMarketWeather: false,
 
     readsScannerLatest: true,
     scannerLatestReadOnlyInsideTradeSystem: true,
-    preserveScannerLatest: false,
-    preserveScannerSnapshot: false,
+    preserveScannerLatest: true,
+    preserveScannerSnapshot: true,
     preserveScannerHistory: true,
 
-    scannerRunAllowed: true,
-    scannerRunBeforeTrade: true,
+    scannerRunAllowed: false,
+    scannerRunAllowedByExplicitFlag: true,
+    scannerRunBeforeTrade: false,
     scannerRunDisabledInsideTradeSystem: true,
     noInternalScannerRunInsideTradeSystem: true,
 
-    writesScanner: true,
-    writesScannerLatest: true,
-    writesScannerSnapshot: true,
+    writesScanner: false,
+    writesScannerLatest: false,
+    writesScannerSnapshot: false,
     writesScannerHistory: false,
 
-    writesMarketUniverse: true,
-    writesMarketWeather: true,
-    writesMarketWeatherInput: true,
+    writesMarketUniverse: false,
+    writesMarketWeather: false,
+    writesMarketWeatherInput: false,
 
     writesTrade: true,
     writesTradeRunMeta: true,
@@ -454,6 +460,30 @@ function shouldMonitorOnly(req, body = {}) {
   );
 }
 
+function shouldDebug(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.debug, false)) ||
+    isTrue(firstValue(req.query?.details, false)) ||
+    isTrue(firstValue(req.query?.full, false)) ||
+    isTrue(body.debug) ||
+    isTrue(body.details) ||
+    isTrue(body.full)
+  );
+}
+
+function shouldRunScannerPreload(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.scannerPreload, false)) ||
+    isTrue(firstValue(req.query?.scanner_preload, false)) ||
+    isTrue(firstValue(req.query?.preloadScanner, false)) ||
+    isTrue(firstValue(req.query?.runScanner, false)) ||
+    isTrue(body.scannerPreload) ||
+    isTrue(body.scanner_preload) ||
+    isTrue(body.preloadScanner) ||
+    isTrue(body.runScanner)
+  );
+}
+
 function getRunSource(req, body = {}) {
   const manual = (
     isTrue(firstValue(req.query?.manual, false)) ||
@@ -469,8 +499,8 @@ function getRunSource(req, body = {}) {
   );
 
   return manual
-    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_WITH_SCANNER_PRELOAD'
-    : 'CRON_OR_API_SHORT_TRADE_RUN_WITH_SCANNER_PRELOAD';
+    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_FAST'
+    : 'CRON_OR_API_SHORT_TRADE_RUN_FAST';
 }
 
 function cleanSideText(value = '') {
@@ -1450,7 +1480,8 @@ function buildLockSkippedResponse({
   lockKey,
   lockTtlSec,
   rawResult = null,
-  error = null
+  error = null,
+  debug = false
 }) {
   const reason = 'TRADE_RUN_LOCK_ACTIVE';
 
@@ -1519,7 +1550,9 @@ function buildLockSkippedResponse({
     selectedMicroFamilyIds: [],
     selectedMacroFamilyIds: [],
 
-    scannerPreloadBeforeTrade: true,
+    scannerPreloadBeforeTrade: false,
+    scannerPreloadOptional: true,
+    scannerPreloadDefaultDisabled: true,
     scannerLatestPreserved: true,
     scannerSnapshotPreserved: true,
     scannerHistoryPreserved: true,
@@ -1551,8 +1584,8 @@ function buildLockSkippedResponse({
       'PREVIOUS_RUN_PROBABLY_STILL_ACTIVE_OR_LOCK_TTL_NOT_EXPIRED'
     ],
 
-    rawLockResult: rawResult || undefined,
-    rawError: error
+    rawLockResult: debug ? rawResult || undefined : undefined,
+    rawError: debug && error
       ? {
           message: error?.message || String(error),
           reason: error?.reason || null,
@@ -1563,23 +1596,27 @@ function buildLockSkippedResponse({
     durationMs: now() - startedAt,
     completedAt: now(),
 
-    run: {
-      ok: true,
-      skipped: true,
-      reason,
-      actions: [],
-      virtualExits: [],
-      shadowExits: [],
-      realExits: [],
-      ...baseFlags()
-    },
+    run: debug
+      ? {
+          ok: true,
+          skipped: true,
+          reason,
+          actions: [],
+          virtualExits: [],
+          shadowExits: [],
+          realExits: [],
+          ...baseFlags()
+        }
+      : undefined,
 
-    result: {
-      ok: true,
-      skipped: true,
-      reason,
-      ...baseFlags()
-    }
+    result: debug
+      ? {
+          ok: true,
+          skipped: true,
+          reason,
+          ...baseFlags()
+        }
+      : undefined
   };
 }
 
@@ -1626,10 +1663,12 @@ function responseSnapshotId(lockResult) {
   return payload?.snapshotId || null;
 }
 
-function sanitizeArray(rows = []) {
-  return (Array.isArray(rows) ? rows : [])
+function sanitizeArray(rows = [], limit = MAX_DEBUG_ROWS) {
+  const sliced = (Array.isArray(rows) ? rows : [])
     .filter(isShortAction)
-    .map(forceShortVirtualRow);
+    .slice(0, limit);
+
+  return sliced.map(forceShortVirtualRow);
 }
 
 function sanitizeParentIds(ids = []) {
@@ -1755,8 +1794,8 @@ function buildExitAction(exit = {}) {
   });
 }
 
-function sanitizeExitRows(rows = []) {
-  return sanitizeArray(rows).map((row) => ({
+function sanitizeExitRows(rows = [], limit = MAX_DEBUG_ROWS) {
+  return sanitizeArray(rows, limit).map((row) => ({
     ...row,
     ...normalizeExitMath(row),
     action: 'VIRTUAL_EXIT',
@@ -1777,30 +1816,43 @@ function sanitizeExitRows(rows = []) {
   }));
 }
 
+function countExitActions(rows = []) {
+  const shortRows = (Array.isArray(rows) ? rows : []).filter(isShortAction);
+
+  return shortRows.length > 0
+    ? { VIRTUAL_EXIT: shortRows.length }
+    : {};
+}
+
 function buildMergedActionCounts(actions = [], virtualExits = [], payloadActionCounts = {}) {
-  const exitActions = virtualExits.map(buildExitAction);
+  const shortActions = (Array.isArray(actions) ? actions : []).filter(isShortAction);
 
   return mergeActionCounts(
     payloadActionCounts || {},
-    countActionsByType([
-      ...actions,
-      ...exitActions
-    ])
+    countActionsByType(shortActions),
+    countExitActions(virtualExits)
   );
 }
 
-function sanitizeRunPayload(payload) {
+function sanitizedCount(rows = []) {
+  return (Array.isArray(rows) ? rows : []).filter(isShortAction).length;
+}
+
+function sanitizeRunPayload(payload, { debug = false } = {}) {
   if (!payload || typeof payload !== 'object') return payload;
 
   const rawActions = Array.isArray(payload.actions) ? payload.actions : [];
   const rawExitRows = selectRawExitRows(payload);
 
-  const actions = sanitizeArray(rawActions);
-  const virtualExits = sanitizeExitRows(rawExitRows);
+  const actions = debug ? sanitizeArray(rawActions) : [];
+  const virtualExits = debug ? sanitizeExitRows(rawExitRows) : [];
   const shadowExits = virtualExits;
 
-  const entryRowsList = sanitizeArray(selectRawEntryRows(payload, actions));
-  const waitRowsList = sanitizeArray(selectRawWaitRows(payload, actions));
+  const rawEntryRows = selectRawEntryRows(payload, rawActions);
+  const rawWaitRows = selectRawWaitRows(payload, rawActions);
+
+  const entryRowsList = debug ? sanitizeArray(rawEntryRows) : [];
+  const waitRowsList = debug ? sanitizeArray(rawWaitRows) : [];
 
   const ignoredLongActions = rawActions.filter(isLongAction).length;
   const ignoredUnknownSideActions = rawActions.filter((row) => inferActionTradeSide(row) === 'UNKNOWN').length;
@@ -1869,34 +1921,41 @@ function sanitizeRunPayload(payload) {
   );
 
   const actionCounts = buildMergedActionCounts(
-    actions,
-    virtualExits,
+    rawActions,
+    rawExitRows,
     payload.actionCounts
   );
 
   const entryRows = safeNumber(
     Array.isArray(payload.entryRows)
-      ? entryRowsList.length
+      ? sanitizedCount(rawEntryRows)
       : payload.entryRows ??
-        entryRowsList.length,
-    entryRowsList.length
+        sanitizedCount(rawEntryRows),
+    sanitizedCount(rawEntryRows)
   );
 
   const waitRows = safeNumber(
     Array.isArray(payload.waitRows)
-      ? waitRowsList.length
+      ? sanitizedCount(rawWaitRows)
       : payload.waitRows ??
-        waitRowsList.length,
-    waitRowsList.length
+        sanitizedCount(rawWaitRows),
+    sanitizedCount(rawWaitRows)
   );
 
   const virtualCreatedRows = safeNumber(
     Array.isArray(payload.virtualCreatedRows)
-      ? sanitizeArray(payload.virtualCreatedRows).length
+      ? sanitizedCount(payload.virtualCreatedRows)
       : payload.virtualCreatedRows ??
         payload.shadowCreatedRows ??
         entryRows,
     entryRows
+  );
+
+  const virtualExitRows = safeNumber(
+    payload.virtualExitRows ??
+      payload.shadowExitRows ??
+      sanitizedCount(rawExitRows),
+    sanitizedCount(rawExitRows)
   );
 
   return {
@@ -1916,12 +1975,12 @@ function sanitizeRunPayload(payload) {
 
     entryRowsList,
     waitRowsList,
-    virtualCreatedRowsList: entryRowsList,
+    virtualCreatedRowsList: debug ? entryRowsList : [],
 
     actionCounts,
 
-    actionsCount: actions.length,
-    virtualActionsCount: actions.length,
+    actionsCount: safeNumber(payload.actionsCount, sanitizedCount(rawActions)),
+    virtualActionsCount: safeNumber(payload.virtualActionsCount, sanitizedCount(rawActions)),
 
     virtualSkippedRows: safeNumber(payload.virtualSkippedRows ?? payload.shadowSkippedRows, 0),
     virtualFailedRows: safeNumber(payload.virtualFailedRows ?? payload.shadowFailedRows, 0),
@@ -1935,15 +1994,15 @@ function sanitizeRunPayload(payload) {
     realExitRows: 0,
 
     shadowExits,
-    shadowExitsCount: shadowExits.length,
-    shadowExitRows: shadowExits.length,
+    shadowExitsCount: virtualExitRows,
+    shadowExitRows: virtualExitRows,
 
     virtualExits,
-    virtualExitsCount: virtualExits.length,
-    virtualExitRows: virtualExits.length,
+    virtualExitsCount: virtualExitRows,
+    virtualExitRows,
 
-    exits: virtualExits,
-    exitsCount: virtualExits.length,
+    exits: debug ? virtualExits : [],
+    exitsCount: virtualExitRows,
 
     rawActionsCount: rawActions.length,
     rawExitRowsCount: rawExitRows.length,
@@ -1987,9 +2046,9 @@ function sanitizeRunPayload(payload) {
     virtualLearningOnly: true,
     shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED',
 
-    scannerPreloadBeforeTrade: true,
-    scannerSnapshotPreserved: false,
-    scannerLatestPreserved: false,
+    scannerPreloadBeforeTrade: Boolean(payload.scannerPreloadBeforeTrade),
+    scannerSnapshotPreserved: true,
+    scannerLatestPreserved: true,
     microFamiliesAppendOnly: true,
     analyzePartialOnly: true,
 
@@ -2007,38 +2066,34 @@ function sanitizeRunPayload(payload) {
   };
 }
 
-function sanitizeLockResult(lockResult) {
+function sanitizeLockResult(lockResult, payload = null) {
   if (!lockResult || typeof lockResult !== 'object') {
     return lockResult;
   }
 
-  const payload = sanitizeRunPayload(unwrapLockResult(lockResult));
+  const sanitizedPayload = payload || sanitizeRunPayload(unwrapLockResult(lockResult));
 
   return {
-    ok: lockResult.ok !== false && payload?.ok !== false,
-    skipped: Boolean(lockResult.skipped || payload?.skipped || payload?.skippedNewEntries),
-    reason: lockResult.reason || payload?.reason || payload?.skipReason || null,
+    ok: lockResult.ok !== false && sanitizedPayload?.ok !== false,
+    skipped: Boolean(lockResult.skipped || sanitizedPayload?.skipped || sanitizedPayload?.skippedNewEntries),
+    reason: lockResult.reason || sanitizedPayload?.reason || sanitizedPayload?.skipReason || null,
 
     ...baseFlags(),
 
-    result: payload
+    result: sanitizedPayload
   };
 }
 
-function responseActionCounts(lockResult) {
-  const payload = sanitizeRunPayload(unwrapLockResult(lockResult));
-
+function responseActionCountsFromPayload(payload = {}) {
   return {
     ...baseFlags(),
     ...(payload?.actionCounts || {})
   };
 }
 
-function responseCounts(lockResult) {
-  const payload = sanitizeRunPayload(unwrapLockResult(lockResult)) || {};
-
-  const actions = Array.isArray(payload.actions) ? payload.actions : [];
-  const virtualExits = Array.isArray(payload.virtualExits) ? payload.virtualExits : [];
+function responseCountsFromPayload(payload = {}) {
+  const actionsCount = safeNumber(payload.actionsCount, 0);
+  const virtualExitRows = safeNumber(payload.virtualExitRows, 0);
 
   return {
     ...baseFlags(),
@@ -2086,36 +2141,21 @@ function responseCounts(lockResult) {
     shadowSkippedRows: safeNumber(payload.shadowSkippedRows, 0),
     shadowFailedRows: safeNumber(payload.shadowFailedRows, 0),
 
-    actions: actions.length || safeNumber(payload.actionsCount, 0),
-    shortActions: actions.length,
+    actions: actionsCount,
+    shortActions: actionsCount,
 
-    entries: safeNumber(
-      payload.entryRows ||
-        actions.filter((row) => row?.action === 'VIRTUAL_ENTRY' || row?.action === 'ENTRY').length,
-      0
-    ),
-
-    waits: safeNumber(
-      payload.waitRows ||
-        actions.filter((row) => row?.action === 'WAIT').length,
-      0
-    ),
-
-    observations: actions.filter((row) => (
-      row?.action === 'OBSERVATION' ||
-      row?.observationWritten ||
-      row?.analysisInputOnly ||
-      row?.observationOnly
-    )).length,
+    entries: safeNumber(payload.entryRows, 0),
+    waits: safeNumber(payload.waitRows, 0),
+    observations: safeNumber(payload.observationOnlyRows, 0),
 
     realExits: 0,
     realExitRows: 0,
 
-    shadowExits: virtualExits.length,
-    shadowExitRows: virtualExits.length,
+    shadowExits: virtualExitRows,
+    shadowExitRows: virtualExitRows,
 
-    virtualExits: virtualExits.length,
-    virtualExitRows: virtualExits.length,
+    virtualExits: virtualExitRows,
+    virtualExitRows,
 
     activeMicroFamilies: safeNumber(payload.activeMicroFamilies, 0),
     activeMacroFamilies: safeNumber(payload.activeMacroFamilies, 0),
@@ -2151,8 +2191,8 @@ function responseCounts(lockResult) {
     executionFingerprintExitRows: safeNumber(payload.executionFingerprintExitRows, 0),
     executionFingerprintsUsedAsLearningFamily: 0,
 
-    scannerPreloadBeforeTrade: true,
-    scannerSnapshotPreserved: false,
+    scannerPreloadBeforeTrade: Boolean(payload.scannerPreloadBeforeTrade),
+    scannerSnapshotPreserved: true,
     microFamiliesAppendOnly: true
   };
 }
@@ -2319,8 +2359,8 @@ function buildRunOptions(req, body = {}) {
       shortMarketWeatherLatest: SHORT_MARKET_WEATHER_KEY
     },
 
-    scannerPreloadBeforeTrade: true,
-    marketWeatherPreloadBeforeTrade: true,
+    scannerPreloadBeforeTrade: false,
+    marketWeatherPreloadBeforeTrade: false,
 
     scannerRunAllowed: false,
     scannerRunDisabledInsideTradeSystem: true,
@@ -2356,7 +2396,7 @@ function buildScannerPreloadOptions(req, body = {}) {
     force: true,
     forced: true,
 
-    source: 'TRADE_RUN_SCANNER_PRELOAD',
+    source: 'TRADE_RUN_SCANNER_PRELOAD_EXPLICIT',
     trigger: 'api/trade/run.js',
     runSource: getRunSource(req, body),
 
@@ -2432,7 +2472,7 @@ function summarizeScannerPreload(scannerResult = null) {
     regime: scannerResult.regime || null,
 
     topSymbols: Array.isArray(scannerResult.topSymbols)
-      ? scannerResult.topSymbols
+      ? scannerResult.topSymbols.slice(0, 20)
       : [],
 
     scannerPreloadBeforeTrade: true
@@ -2491,9 +2531,10 @@ async function mirrorMarketCacheFromVolatileToDurable({
     SHORT_MARKET_WEATHER_KEY
   ];
 
+  const uniqueKeys = [...new Set(keys)];
   const results = [];
 
-  for (const key of keys) {
+  for (const key of uniqueKeys) {
     results.push(await mirrorOneMarketKey({
       volatileRedis,
       durableRedis,
@@ -2532,18 +2573,72 @@ async function runScannerPreload({
 
     return {
       ok: scannerResult?.ok !== false,
+      skipped: false,
       scanner: summarizeScannerPreload(scannerResult),
       mirror,
-      durationMs: now() - startedAt
+      durationMs: now() - startedAt,
+      scannerPreloadBeforeTrade: true
     };
   } catch (error) {
     return {
       ok: false,
+      skipped: false,
       error: error?.message || String(error),
       durationMs: now() - startedAt,
       scannerPreloadBeforeTrade: true
     };
   }
+}
+
+function skippedScannerPreload() {
+  return {
+    ok: true,
+    skipped: true,
+    reason: 'SCANNER_PRELOAD_DISABLED_FOR_FAST_TRADE_RUN',
+    scannerPreloadBeforeTrade: false,
+    scannerPreloadOptional: true,
+    scannerPreloadDefaultDisabled: true,
+    mirror: {
+      ok: false,
+      skipped: true,
+      marketWeatherMirrored: false,
+      marketUniverseMirrored: false
+    }
+  };
+}
+
+function compactRunMetaPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const {
+    actions,
+    virtualActions,
+    entryRowsList,
+    waitRowsList,
+    virtualCreatedRowsList,
+    virtualExits,
+    shadowExits,
+    exits,
+    realExits,
+    ...rest
+  } = payload;
+
+  return {
+    ...rest,
+
+    actions: [],
+    virtualActions: [],
+    entryRowsList: [],
+    waitRowsList: [],
+    virtualCreatedRowsList: [],
+    virtualExits: [],
+    shadowExits: [],
+    exits: [],
+    realExits: [],
+
+    compactedForVercelRuntime: true,
+    detailsAvailableWithDebugParam: true
+  };
 }
 
 async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPreload = null) {
@@ -2555,8 +2650,10 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
     };
   }
 
+  const compactPayload = compactRunMetaPayload(payload);
+
   const runMeta = {
-    ...payload,
+    ...compactPayload,
 
     ...baseFlags(),
 
@@ -2601,7 +2698,8 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
     persistedShortRunMeta: true,
     persistedShortLastProcessedSnapshot: Boolean(payload.snapshotId),
     tradeRunMeta: SHORT_KEYS.trade.runMeta,
-    tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot
+    tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
+    compactedForVercelRuntime: true
   };
 }
 
@@ -2628,10 +2726,11 @@ export default async function handler(req, res) {
   res.setHeader('X-Manual-Selection-Match-Mode', 'EXACT_TRUE_MICRO_FAMILY_ID');
   res.setHeader('X-Run-Scope', RUN_SCOPE);
   res.setHeader('X-Write-Scope', WRITE_SCOPE);
-  res.setHeader('X-Scanner-Write', 'true');
-  res.setHeader('X-Scanner-Run-Allowed', 'true');
-  res.setHeader('X-Scanner-Preload-Before-Trade', 'true');
-  res.setHeader('X-MarketWeather-Preload-Before-Trade', 'true');
+  res.setHeader('X-Scanner-Write', 'false');
+  res.setHeader('X-Scanner-Run-Allowed', 'explicit-only');
+  res.setHeader('X-Scanner-Preload-Before-Trade', 'optional');
+  res.setHeader('X-Scanner-Preload-Default', 'disabled');
+  res.setHeader('X-MarketWeather-Preload-Before-Trade', 'optional');
   res.setHeader('X-MicroFamilies-Append-Only', 'true');
   res.setHeader('X-Admin-Page-Isolation', 'true');
   res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
@@ -2647,10 +2746,12 @@ export default async function handler(req, res) {
     }
 
     body = await readBody(req);
+
+    const debug = shouldDebug(req, body);
+    const scannerPreloadEnabled = shouldRunScannerPreload(req, body);
     const runOptions = buildRunOptions(req, body);
 
     const durableRedis = getDurableRedis();
-    const volatileRedis = getVolatileRedis();
 
     const lockKey = SHORT_KEYS.trade.lock;
     const lockTtlSec = getLockTtlSec();
@@ -2662,18 +2763,24 @@ export default async function handler(req, res) {
       lockKey,
       lockTtlSec,
       async () => {
-        scannerPreload = await runScannerPreload({
-          req,
-          body,
-          volatileRedis,
-          durableRedis
-        });
+        if (scannerPreloadEnabled && !runOptions.monitorOnly) {
+          const volatileRedis = getVolatileRedis();
+
+          scannerPreload = await runScannerPreload({
+            req,
+            body,
+            volatileRedis,
+            durableRedis
+          });
+        } else {
+          scannerPreload = skippedScannerPreload();
+        }
 
         return runTradeSystem({
           ...runOptions,
-          scannerPreloadBeforeTrade: true,
-          marketWeatherPreloadBeforeTrade: true,
-          scannerPreloadOk: scannerPreload?.ok === true,
+          scannerPreloadBeforeTrade: scannerPreloadEnabled,
+          marketWeatherPreloadBeforeTrade: scannerPreloadEnabled,
+          scannerPreloadOk: scannerPreload?.ok !== false,
           marketWeatherMirroredToDurable: scannerPreload?.mirror?.marketWeatherMirrored === true,
           marketUniverseMirroredToDurable: scannerPreload?.mirror?.marketUniverseMirrored === true
         });
@@ -2687,12 +2794,13 @@ export default async function handler(req, res) {
         startedAt,
         lockKey,
         lockTtlSec,
-        rawResult
+        rawResult,
+        debug
       }));
     }
 
-    const payload = sanitizeRunPayload(unwrapLockResult(rawResult));
-    const result = sanitizeLockResult(rawResult);
+    const payload = sanitizeRunPayload(unwrapLockResult(rawResult), { debug });
+    const result = sanitizeLockResult(rawResult, payload);
 
     const persistence = await persistShortRunMeta(
       durableRedis,
@@ -2701,16 +2809,19 @@ export default async function handler(req, res) {
       scannerPreload
     );
 
-    const actionCounts = responseActionCounts(rawResult);
-    const counts = responseCounts(rawResult);
+    const actionCounts = responseActionCountsFromPayload(payload);
+    const counts = responseCountsFromPayload(payload);
 
-    const scannerOk = scannerPreload?.ok === true;
+    const scannerOk = scannerPreload?.ok !== false;
+    const scannerSkipped = scannerPreload?.skipped === true;
     const tradeOk = responseOk(rawResult);
 
     return res.status(200).json({
       ok: tradeOk && scannerOk,
       tradeOk,
       scannerPreloadOk: scannerOk,
+      scannerPreloadSkipped: scannerSkipped,
+      scannerPreloadEnabled,
 
       skipped: responseSkipped(rawResult),
       reason: !scannerOk
@@ -2729,7 +2840,22 @@ export default async function handler(req, res) {
       monitorOpenPositions: runOptions.monitorOpenPositions,
       processScannerSnapshot: runOptions.processScannerSnapshot,
 
-      scannerPreload,
+      scannerPreload: debug
+        ? scannerPreload
+        : {
+            ok: scannerPreload?.ok !== false,
+            skipped: scannerSkipped,
+            reason: scannerPreload?.reason || null,
+            durationMs: scannerPreload?.durationMs || null,
+            scanner: scannerPreload?.scanner || null,
+            mirror: scannerPreload?.mirror
+              ? {
+                  ok: scannerPreload.mirror.ok,
+                  marketWeatherMirrored: scannerPreload.mirror.marketWeatherMirrored,
+                  marketUniverseMirrored: scannerPreload.mirror.marketUniverseMirrored
+                }
+              : null
+          },
 
       marketWeatherAvailableAfterRun: scannerPreload?.mirror?.marketWeatherMirrored === true,
       marketUniverseAvailableAfterRun: scannerPreload?.mirror?.marketUniverseMirrored === true,
@@ -2741,26 +2867,26 @@ export default async function handler(req, res) {
       waitRows: safeNumber(payload?.waitRows, 0),
       virtualCreatedRows: safeNumber(payload?.virtualCreatedRows, 0),
 
-      entryRowsList: Array.isArray(payload?.entryRowsList)
+      entryRowsList: debug && Array.isArray(payload?.entryRowsList)
         ? payload.entryRowsList
         : [],
 
-      waitRowsList: Array.isArray(payload?.waitRowsList)
+      waitRowsList: debug && Array.isArray(payload?.waitRowsList)
         ? payload.waitRowsList
         : [],
 
-      virtualCreatedRowsList: Array.isArray(payload?.virtualCreatedRowsList)
+      virtualCreatedRowsList: debug && Array.isArray(payload?.virtualCreatedRowsList)
         ? payload.virtualCreatedRowsList
         : [],
 
       virtualExitRows: safeNumber(payload?.virtualExitRows, 0),
       shadowExitRows: safeNumber(payload?.shadowExitRows, 0),
 
-      virtualExits: Array.isArray(payload?.virtualExits)
+      virtualExits: debug && Array.isArray(payload?.virtualExits)
         ? payload.virtualExits
         : [],
 
-      shadowExits: Array.isArray(payload?.shadowExits)
+      shadowExits: debug && Array.isArray(payload?.shadowExits)
         ? payload.shadowExits
         : [],
 
@@ -2796,11 +2922,11 @@ export default async function handler(req, res) {
       selectedTargetCandidateCount: safeNumber(payload?.selectedTargetCandidateCount, 0),
       selectedOppositeCandidateCount: 0,
 
-      scannerPreloadBeforeTrade: true,
-      scannerLatestPreserved: false,
-      scannerSnapshotPreserved: false,
+      scannerPreloadBeforeTrade: scannerPreloadEnabled,
+      scannerLatestPreserved: true,
+      scannerSnapshotPreserved: true,
       scannerHistoryPreserved: true,
-      scannerRunBlockedInsideTradeRun: false,
+      scannerRunBlockedInsideTradeRun: true,
       scannerRunDisabledInsideTradeSystem: true,
 
       microFamiliesAppendOnly: true,
@@ -2827,10 +2953,13 @@ export default async function handler(req, res) {
       },
 
       warnings: [
+        !scannerPreloadEnabled
+          ? 'SCANNER_PRELOAD_DISABLED_FAST_TRADE_RUN_USE_API_SCANNER_RUN_SEPARATELY_OR_QUERY_SCANNERPRELOAD_TRUE'
+          : null,
         scannerPreload?.ok === false
           ? `SCANNER_PRELOAD_FAILED:${scannerPreload.error || 'UNKNOWN'}`
           : null,
-        scannerPreload?.mirror?.marketWeatherMirrored !== true
+        scannerPreloadEnabled && scannerPreload?.mirror?.marketWeatherMirrored !== true
           ? 'MARKET_WEATHER_NOT_MIRRORED_TO_DURABLE'
           : null,
         payload?.ignoredLongActions > 0
@@ -2864,12 +2993,14 @@ export default async function handler(req, res) {
 
       durationMs: now() - startedAt,
 
-      run: payload,
-      result
+      debug,
+      run: debug ? payload : undefined,
+      result: debug ? result : undefined
     });
   } catch (error) {
     const lockKey = SHORT_KEYS.trade.lock;
     const lockTtlSec = getLockTtlSec();
+    const debug = shouldDebug(req, body);
 
     if (isLockNotAcquiredSignal(error)) {
       return res.status(200).json(buildLockSkippedResponse({
@@ -2878,7 +3009,8 @@ export default async function handler(req, res) {
         startedAt,
         lockKey,
         lockTtlSec,
-        error
+        error,
+        debug
       }));
     }
 
