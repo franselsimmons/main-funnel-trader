@@ -4,9 +4,12 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import {
   getDurableRedis,
+  getVolatileRedis,
+  getJson,
   setJson
 } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
+import { runScanner } from '../../src/market/scanner.js';
 import { runTradeSystem } from '../../src/trade/tradeSystem.js';
 import { sideToTradeSide } from '../../src/utils.js';
 
@@ -17,22 +20,25 @@ const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
-const LONG_KEY_PREFIX = 'LONG:';
 
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
-const DEFAULT_LOCK_TTL_SEC = 180;
+const DEFAULT_LOCK_TTL_SEC = 55;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const RUN_SCOPE = 'TRADE_ONLY';
-const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
-const READ_SCOPE = 'READ_SHORT_SCANNER_LATEST_ONLY';
+const RUN_SCOPE = 'TRADE_WITH_SCANNER_PRELOAD';
+const WRITE_SCOPE = 'SCANNER_MARKET_WEATHER_TRADE_AND_ANALYZE_PARTIAL';
+const READ_SCOPE = 'READ_SHORT_SCANNER_AND_MARKET_WEATHER';
+
+const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
+const SHORT_MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
+const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
+const SHORT_MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -72,19 +78,12 @@ function callMaybeKey(value, fallback = null) {
   return value || fallback;
 }
 
-function stripKnownNamespace(key = '') {
-  const raw = String(callMaybeKey(key, '') || '').trim();
-
-  if (raw.startsWith(SHORT_KEY_PREFIX)) return raw.slice(SHORT_KEY_PREFIX.length);
-  if (raw.startsWith(LONG_KEY_PREFIX)) return raw.slice(LONG_KEY_PREFIX.length);
-
-  return raw;
-}
-
 function namespacedShortKey(key, fallback = null) {
-  const raw = stripKnownNamespace(callMaybeKey(key, fallback));
+  let raw = String(callMaybeKey(key, fallback) || '').trim();
 
   if (!raw) return null;
+  if (raw.startsWith(SHORT_KEY_PREFIX)) return raw;
+  if (raw.startsWith('LONG:')) raw = raw.slice('LONG:'.length);
 
   return `${SHORT_KEY_PREFIX}${raw}`;
 }
@@ -120,6 +119,13 @@ const SHORT_KEYS = {
         KEYS.trade?.lastProcessedSnapshot,
       'TRADE:LAST_PROCESSED_SNAPSHOT'
     )
+  },
+
+  market: {
+    universeLatest: MARKET_UNIVERSE_KEY,
+    shortUniverseLatest: SHORT_MARKET_UNIVERSE_KEY,
+    weatherLatest: MARKET_WEATHER_KEY,
+    shortWeatherLatest: SHORT_MARKET_WEATHER_KEY
   }
 };
 
@@ -159,7 +165,7 @@ function getLockTtlSec() {
 
   if (!Number.isFinite(ttl) || ttl <= 0) return DEFAULT_LOCK_TTL_SEC;
 
-  return Math.floor(ttl);
+  return Math.min(55, Math.floor(ttl));
 }
 
 function isolationFlags() {
@@ -171,23 +177,28 @@ function isolationFlags() {
     adminPageIsolation: true,
     doesNotOverwriteOtherAdminPages: true,
 
+    scannerPreloadBeforeTrade: true,
+    scannerPreloadRequiredForMarketWeather: true,
+
     readsScannerLatest: true,
-    scannerLatestReadOnly: true,
-    preserveScannerLatest: true,
-    preserveScannerSnapshot: true,
+    scannerLatestReadOnlyInsideTradeSystem: true,
+    preserveScannerLatest: false,
+    preserveScannerSnapshot: false,
     preserveScannerHistory: true,
 
-    scannerRunAllowed: false,
-    scannerRunDisabledInsideTradeRun: true,
-    noScannerRun: true,
-    noScannerRefresh: true,
-    noScannerLatestWrite: true,
-    noScannerSnapshotWrite: true,
+    scannerRunAllowed: true,
+    scannerRunBeforeTrade: true,
+    scannerRunDisabledInsideTradeSystem: true,
+    noInternalScannerRunInsideTradeSystem: true,
 
-    writesScanner: false,
-    writesScannerLatest: false,
-    writesScannerSnapshot: false,
+    writesScanner: true,
+    writesScannerLatest: true,
+    writesScannerSnapshot: true,
     writesScannerHistory: false,
+
+    writesMarketUniverse: true,
+    writesMarketWeather: true,
+    writesMarketWeatherInput: true,
 
     writesTrade: true,
     writesTradeRunMeta: true,
@@ -246,7 +257,6 @@ function baseFlags() {
     shortDisabled: false,
 
     virtualOnly: true,
-    paperOnly: true,
     virtualLearning: true,
     virtualLearningForced: true,
     virtualTracked: true,
@@ -279,13 +289,6 @@ function baseFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    rawWinrateRankingDisabled: true,
-
     statusRules: {
       OBSERVING: 'completed == 0',
       EARLY_OUTCOMES: `completed > 0 && completed < ${MIN_COMPLETED_ACTIVE_LEARNING}`,
@@ -299,10 +302,6 @@ function baseFlags() {
     scannerFingerprintsUsedAsLearningFamily: false,
     scannerBucketsMetadataOnly: true,
     legacy25BucketsMetadataOnly: true,
-    scannerBucketsAreNotSelectable: true,
-    coinNameMetadataOnly: true,
-    symbolMetadataOnly: true,
-    hashesMetadataOnly: true,
 
     executionFingerprintRole: 'METADATA_ONLY',
     executionFingerprintOnlyMetadata: true,
@@ -315,36 +314,38 @@ function baseFlags() {
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: true,
     selectableMicroFamilyCount: 75,
-    selectableChildMicroFamilyCount: 75,
     parentMicroFamilyCount: 15,
     selectionGranularity: 'EXACT_75_CHILD',
-    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
-
     parentFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}',
     selectableFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}',
-    parentIdsAreMetadataOnly: true,
-    parentIdsAreNotSelectable: true,
-    selectableIdsAreChildrenOnly: true,
 
     positionTimeStopMinDefault: DEFAULT_POSITION_TIME_STOP_MIN,
     positionTimeStopMin: getPositionTimeStopMin(),
 
     shortRiskShape: 'tp < entry < sl',
-    validShortRiskShape: 'entry > 0 && tp < entry && sl > entry',
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
     tpRule: 'price <= tp',
     slRule: 'price >= sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    learningRemainsBroad: true,
 
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForManualSelection: true,
@@ -352,9 +353,7 @@ function baseFlags() {
     manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
     manualSelectionRequires75ChildTrueMicroFamilyId: true,
     parentMacroMatchDoesNotTriggerDiscord: true,
-    parentMatchDoesNotTriggerDiscord: true,
     macroMatchDoesNotTriggerDiscord: true,
-    discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
 
     autoRotationActivationDisabled: true,
     activateFreezeCronDisabled: true,
@@ -470,8 +469,8 @@ function getRunSource(req, body = {}) {
   );
 
   return manual
-    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN'
-    : 'CRON_OR_API_SHORT_TRADE_RUN';
+    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_WITH_SCANNER_PRELOAD'
+    : 'CRON_OR_API_SHORT_TRADE_RUN_WITH_SCANNER_PRELOAD';
 }
 
 function cleanSideText(value = '') {
@@ -483,18 +482,25 @@ function cleanSideText(value = '') {
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
     .replaceAll('SHORTDISABLED_FALSE', '')
+    .replaceAll('BLOCK_SHORT_FALSE', '')
+    .replaceAll('SHORT_ENABLED_FALSE', '')
     .replaceAll('SHORT_ONLY_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
-    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
-    .replaceAll('SHORT_ONLY', 'SHORT')
-    .replaceAll('SHORT-ONLY', 'SHORT')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
+    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('BLOCK_SHORT', 'LONG')
+    .replaceAll('SHORT_DISABLED', 'LONG')
+    .replaceAll('SHORTDISABLED', 'LONG')
     .replaceAll('LONG_ONLY_MODE', 'LONG')
     .replaceAll('LONG_ONLY', 'LONG')
-    .replaceAll('LONG-ONLY', 'LONG');
+    .replaceAll('LONG-ONLY', 'LONG')
+    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
+    .replaceAll('SHORT_ONLY', 'SHORT')
+    .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
 function normalizeSignalText(value = '') {
@@ -601,10 +607,6 @@ function isFixedShortTaxonomyChildId(id = '') {
   return parseShortFixedTaxonomyId(id)?.isChild === true;
 }
 
-function isFixedShortTaxonomyMicroId(id = '') {
-  return isFixedShortTaxonomyChildId(id);
-}
-
 function parentFromChildTrueMicroFamilyId(id = '') {
   const parsed = parseShortFixedTaxonomyId(id);
 
@@ -617,14 +619,14 @@ function isScannerFingerprintId(id = '') {
   const value = upper(id);
 
   return (
-    value.startsWith('MICRO_LONG_SCANNER__') ||
-    value.includes('MICRO_LONG_SCANNER__') ||
-    value.startsWith('LONG_SCANNER_') ||
-    value.includes('LONG_SCANNER_') ||
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
     value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -657,7 +659,6 @@ function idLooksLikeShortFamily(id = '') {
   const value = String(id || '').trim();
 
   if (!validLearningId(value)) return false;
-  if (isFixedShortTaxonomyParentId(value) || isFixedShortTaxonomyChildId(value)) return true;
 
   return hasShortSignal(value);
 }
@@ -827,9 +828,7 @@ function scannerMetadataFrom(row = {}) {
     legacy25BucketsMetadataOnly: true,
 
     learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
-    symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: true
+    symbolExcludedFromFamilyId: true
   };
 }
 
@@ -890,7 +889,6 @@ function normalizeLearningIdentity(row = {}) {
     fixedTaxonomyLearningId: Boolean(childTrueMicroFamilyId),
     fixedTaxonomyParentId: Boolean(parentTrueMicroFamilyId),
     trueMicroFamilySchema: childTrueMicroFamilyId ? TRUE_MICRO_SCHEMA : null,
-    childTrueMicroFamilySchema: childTrueMicroFamilyId ? CHILD_TRUE_MICRO_SCHEMA : null,
     parentTrueMicroFamilySchema: parentTrueMicroFamilyId ? PARENT_TRUE_MICRO_SCHEMA : null,
     broadTrueMicroFamilySchema: childTrueMicroFamilyId ? TRUE_MICRO_SCHEMA : null,
     learningGranularity: LEARNING_GRANULARITY,
@@ -1010,7 +1008,6 @@ function inferActionTradeSide(row = {}) {
     row.baseMicroFamilyId,
     row.legacyMicroFamilyId,
     row.parentTrueMicroFamilyId,
-    row.childTrueMicroFamilyId,
     row.scannerMicroFamilyId,
     row.scannerFamilyId,
     row.id,
@@ -1055,10 +1052,215 @@ function isLongAction(row = {}) {
   return inferActionTradeSide(row) === OPPOSITE_TRADE_SIDE;
 }
 
+function flattenValues(values = []) {
+  const stack = Array.isArray(values) ? [...values] : [values];
+  const output = [];
+
+  while (stack.length > 0) {
+    const value = stack.shift();
+
+    if (Array.isArray(value)) {
+      stack.unshift(...value);
+      continue;
+    }
+
+    output.push(value);
+  }
+
+  return output;
+}
+
+function firstFiniteNumber(values = []) {
+  for (const value of flattenValues(values)) {
+    if (value === undefined || value === null || value === '') continue;
+
+    const n = Number(value);
+
+    if (Number.isFinite(n)) return n;
+  }
+
+  return null;
+}
+
+function currentFitLabel(score = 0, fallback = 'UNKNOWN') {
+  if (!Number.isFinite(score)) return fallback || 'UNKNOWN';
+  if (score >= 45) return 'FIT';
+  if (score >= 20) return 'OK';
+  if (score <= -20) return 'MISFIT';
+
+  return 'NEUTRAL';
+}
+
+function marketBiasHaystack(row = {}) {
+  return [
+    row.currentMarketTrendSide,
+    row.marketTrendSide,
+    row.trendSide,
+    row.dashboardSide,
+    row.marketSide,
+    row.marketBias,
+    row.bias,
+    row.direction,
+    row.currentRegime,
+    row.marketRegime,
+    row.regime,
+    row.scannerReason,
+    row.reason,
+    row.currentFitReason,
+    ...(Array.isArray(row.currentFitReasons) ? row.currentFitReasons : [])
+  ]
+    .map((value) => upper(value))
+    .join(' | ');
+}
+
+function moveMetricValues(row = {}) {
+  return [
+    row.change1m,
+    row.change3m,
+    row.change5m,
+    row.change15m,
+    row.change30m,
+    row.change1h,
+    row.change2h,
+    row.change4h,
+    row.change24h,
+
+    row.priceChange1m,
+    row.priceChange3m,
+    row.priceChange5m,
+    row.priceChange15m,
+    row.priceChange30m,
+    row.priceChange1h,
+    row.priceChange2h,
+    row.priceChange4h,
+    row.priceChange24h,
+
+    row.priceChange1mPct,
+    row.priceChange3mPct,
+    row.priceChange5mPct,
+    row.priceChange15mPct,
+    row.priceChange30mPct,
+    row.priceChange1hPct,
+    row.priceChange2hPct,
+    row.priceChange4hPct,
+    row.priceChange24hPct,
+
+    row.percentChange,
+    row.changePct,
+    row.movePct,
+    row.pctMove,
+    row.scoreMovePct
+  ]
+    .map((value) => Number(value))
+    .filter(Number.isFinite);
+}
+
+function directionalMoveScore(row = {}) {
+  const values = moveMetricValues(row).filter((value) => value !== 0);
+
+  if (!values.length) return 0;
+
+  return values.reduce((total, value) => total + Math.sign(value), 0);
+}
+
+function getShortCurrentFit(row = {}) {
+  const explicitShort = firstFiniteNumber([
+    row.shortCurrentFit,
+    row.bearCurrentFit,
+    row.currentFitShort,
+    row.currentFitBear,
+    row.shortFitScore,
+    row.bearFitScore
+  ]);
+
+  if (explicitShort !== null) {
+    return {
+      score: explicitShort,
+      label: currentFitLabel(explicitShort, row.currentFit || 'UNKNOWN'),
+      source: 'EXPLICIT_SHORT_OR_BEAR_CURRENT_FIT'
+    };
+  }
+
+  const explicitLong = firstFiniteNumber([
+    row.longCurrentFit,
+    row.bullCurrentFit,
+    row.bullishCurrentFit,
+    row.currentFitLong,
+    row.currentFitBull,
+    row.longFitScore,
+    row.bullFitScore
+  ]);
+
+  if (explicitLong !== null) {
+    const score = -Math.abs(explicitLong);
+
+    return {
+      score,
+      label: currentFitLabel(score, row.currentFit || 'UNKNOWN'),
+      source: 'INVERTED_LONG_OR_BULL_CURRENT_FIT'
+    };
+  }
+
+  const rawFit = firstFiniteNumber([
+    row.currentFitScore,
+    row.fitScore,
+    row.marketFitScore,
+    row.marketFit,
+    row.currentFitNumeric,
+    row.scannerScore,
+    row.moveScore
+  ]);
+
+  if (rawFit === null) {
+    const moveScore = directionalMoveScore(row);
+    const score = moveScore < 0
+      ? Math.abs(moveScore)
+      : moveScore > 0
+        ? -Math.abs(moveScore)
+        : 0;
+
+    return {
+      score,
+      label: currentFitLabel(score, row.currentFit || row.currentFitLabel || 'UNKNOWN'),
+      source: 'SHORT_MIRRORED_MOVE_SCORE'
+    };
+  }
+
+  const haystack = marketBiasHaystack(row);
+  let score;
+
+  if (
+    haystack.includes('BEAR') ||
+    haystack.includes('BEARISH') ||
+    haystack.includes('SHORT') ||
+    haystack.includes('SELL') ||
+    haystack.includes('DOWNSIDE')
+  ) {
+    score = Math.abs(rawFit);
+  } else if (
+    haystack.includes('BULL') ||
+    haystack.includes('BULLISH') ||
+    haystack.includes('LONG') ||
+    haystack.includes('BUY') ||
+    haystack.includes('UPSIDE')
+  ) {
+    score = -Math.abs(rawFit);
+  } else {
+    score = -rawFit;
+  }
+
+  return {
+    score,
+    label: currentFitLabel(score, row.currentFit || row.currentFitLabel || 'UNKNOWN'),
+    source: 'SHORT_MIRRORED_GENERIC_CURRENT_FIT'
+  };
+}
+
 function forceShortVirtualRow(row = {}) {
   const inferredTradeSide = inferActionTradeSide(row);
   const identity = normalizeLearningIdentity(row);
   const scannerMetadata = scannerMetadataFrom(row);
+  const currentFit = getShortCurrentFit(row);
 
   const hasLearningMicroId = Boolean(identity.trueMicroFamilyId);
 
@@ -1088,7 +1290,6 @@ function forceShortVirtualRow(row = {}) {
     source: row.source || 'VIRTUAL',
     outcomeSource: row.outcomeSource || row.source || 'VIRTUAL',
     virtualOnly: true,
-    paperOnly: true,
     virtualTracked: true,
 
     realTrade: false,
@@ -1114,15 +1315,30 @@ function forceShortVirtualRow(row = {}) {
     exactTrueMicroOnly: true,
     exactTrueMicroFamilyRequired: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: true,
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    currentFit: currentFit.label,
+    currentFitLabel: currentFit.label,
+    currentFitScore: round(currentFit.score, 4),
+    fitScore: round(currentFit.score, 4),
+    currentFitSource: currentFit.source,
+    shortCurrentFit: round(currentFit.score, 4),
+    bearCurrentFit: round(currentFit.score, 4),
+    bullishCurrentFit: round(-Math.abs(currentFit.score), 4),
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     selectedMicroFamilyAlert: Boolean(
       row.selectedMicroFamilyAlert &&
@@ -1175,6 +1391,198 @@ function unwrapLockResult(lockResult) {
   return lockResult;
 }
 
+function lockSignalText(value = null) {
+  const payload = unwrapLockResult(value);
+
+  return [
+    value?.reason,
+    value?.error,
+    value?.message,
+    value?.code,
+    payload?.reason,
+    payload?.error,
+    payload?.message,
+    payload?.code,
+    typeof value === 'string' ? value : '',
+    value instanceof Error ? value.message : ''
+  ]
+    .filter(Boolean)
+    .map((part) => String(part).toUpperCase())
+    .join('|');
+}
+
+function isLockNotAcquiredSignal(value = null) {
+  const text = lockSignalText(value);
+
+  return (
+    text.includes('LOCK_NOT_ACQUIRED') ||
+    text.includes('TRADE_RUN_LOCK_ACTIVE') ||
+    text.includes('LOCK_ACTIVE') ||
+    text.includes('ALREADY_RUNNING') ||
+    text.includes('CONFLICT_LOCK') ||
+    text.includes('LOCKED')
+  );
+}
+
+function isLockNotAcquiredResult(lockResult = null) {
+  if (!lockResult || typeof lockResult !== 'object') return false;
+
+  const payload = unwrapLockResult(lockResult);
+
+  return Boolean(
+    isLockNotAcquiredSignal(lockResult) ||
+    isLockNotAcquiredSignal(payload) ||
+    (
+      lockResult.ok === false &&
+      String(lockResult.reason || '').toUpperCase().includes('LOCK')
+    ) ||
+    (
+      payload?.ok === false &&
+      String(payload.reason || payload.error || '').toUpperCase().includes('LOCK')
+    )
+  );
+}
+
+function buildLockSkippedResponse({
+  req,
+  body = {},
+  startedAt,
+  lockKey,
+  lockTtlSec,
+  rawResult = null,
+  error = null
+}) {
+  const reason = 'TRADE_RUN_LOCK_ACTIVE';
+
+  return {
+    ok: true,
+    tradeOk: true,
+    scannerPreloadOk: null,
+
+    skipped: true,
+    skippedNewEntries: true,
+    reason,
+    skipReason: reason,
+    message: 'Trade run overgeslagen: vorige SHORT trade-run is nog actief.',
+
+    statusWas409Before: true,
+    httpStatusPolicy: 'LOCK_CONFLICT_RETURNS_200_SKIPPED',
+
+    ...baseFlags(),
+
+    runSource: getRunSource(req, body),
+
+    lock: {
+      key: lockKey,
+      ttlSec: lockTtlSec,
+      active: true,
+      reason
+    },
+
+    runId: null,
+    snapshotId: null,
+
+    entryRows: 0,
+    waitRows: 0,
+    virtualCreatedRows: 0,
+    virtualExitRows: 0,
+    shadowExitRows: 0,
+
+    entryRowsList: [],
+    waitRowsList: [],
+    virtualCreatedRowsList: [],
+    virtualExits: [],
+    shadowExits: [],
+    realExits: [],
+
+    actionCounts: {
+      ...baseFlags()
+    },
+
+    counts: {
+      ...baseFlags(),
+      candidates: 0,
+      processed: 0,
+      entries: 0,
+      waits: 0,
+      observations: 0,
+      virtualExits: 0,
+      virtualExitRows: 0,
+      shadowExits: 0,
+      shadowExitRows: 0,
+      realExits: 0,
+      realExitRows: 0
+    },
+
+    activeMicroFamilyIds: [],
+    activeMacroFamilyIds: [],
+    selectedMicroFamilyIds: [],
+    selectedMacroFamilyIds: [],
+
+    scannerPreloadBeforeTrade: true,
+    scannerLatestPreserved: true,
+    scannerSnapshotPreserved: true,
+    scannerHistoryPreserved: true,
+
+    microFamiliesAppendOnly: true,
+    analyzePartialOnly: true,
+    analyzeFullOverwriteDisabled: true,
+
+    rotationPreserved: true,
+    manualSelectionPreserved: true,
+    discordSelectionPreserved: true,
+
+    shortKeys: {
+      namespace: SHORT_NAMESPACE,
+      prefix: SHORT_KEY_PREFIX,
+      scanLatest: SHORT_KEYS.scan.latest,
+      tradeLock: SHORT_KEYS.trade.lock,
+      tradeRunMeta: SHORT_KEYS.trade.runMeta,
+      tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
+      marketUniverseLatest: MARKET_UNIVERSE_KEY,
+      shortMarketUniverseLatest: SHORT_MARKET_UNIVERSE_KEY,
+      marketWeatherLatest: MARKET_WEATHER_KEY,
+      shortMarketWeatherLatest: SHORT_MARKET_WEATHER_KEY
+    },
+
+    warnings: [
+      'TRADE_RUN_SKIPPED_BECAUSE_LOCK_ACTIVE',
+      'NO_ERROR_FOR_CRON',
+      'PREVIOUS_RUN_PROBABLY_STILL_ACTIVE_OR_LOCK_TTL_NOT_EXPIRED'
+    ],
+
+    rawLockResult: rawResult || undefined,
+    rawError: error
+      ? {
+          message: error?.message || String(error),
+          reason: error?.reason || null,
+          code: error?.code || null
+        }
+      : undefined,
+
+    durationMs: now() - startedAt,
+    completedAt: now(),
+
+    run: {
+      ok: true,
+      skipped: true,
+      reason,
+      actions: [],
+      virtualExits: [],
+      shadowExits: [],
+      realExits: [],
+      ...baseFlags()
+    },
+
+    result: {
+      ok: true,
+      skipped: true,
+      reason,
+      ...baseFlags()
+    }
+  };
+}
+
 function responseOk(lockResult) {
   const payload = unwrapLockResult(lockResult);
 
@@ -1222,24 +1630,6 @@ function sanitizeArray(rows = []) {
   return (Array.isArray(rows) ? rows : [])
     .filter(isShortAction)
     .map(forceShortVirtualRow);
-}
-
-function flattenValues(values = []) {
-  const stack = Array.isArray(values) ? [...values] : [values];
-  const output = [];
-
-  while (stack.length > 0) {
-    const value = stack.shift();
-
-    if (Array.isArray(value)) {
-      stack.unshift(...value);
-      continue;
-    }
-
-    output.push(value);
-  }
-
-  return output;
 }
 
 function sanitizeParentIds(ids = []) {
@@ -1296,6 +1686,8 @@ function normalizeExitMath(row = {}) {
   const entry = safeNumber(row.entry ?? row.entryPrice, 0);
   const initialSl = safeNumber(row.initialSl ?? row.initialStopLoss ?? row.sl ?? row.stopLoss, 0);
   const exitPrice = safeNumber(row.exitPrice ?? row.currentPrice ?? row.lastPrice ?? row.price, 0);
+  const currentPrice = safeNumber(row.currentPrice ?? row.lastPrice ?? row.price ?? exitPrice, 0);
+  const tp = safeNumber(row.tp ?? row.takeProfit, 0);
 
   const riskDistance = entry > 0 && initialSl > 0 && initialSl > entry
     ? initialSl - entry
@@ -1303,10 +1695,16 @@ function normalizeExitMath(row = {}) {
 
   const grossR = riskDistance > 0
     ? (entry - exitPrice) / riskDistance
-    : safeNumber(row.grossR, 0);
+    : safeNumber(row.shortGrossR ?? row.grossR, 0);
+
+  const currentR = riskDistance > 0
+    ? (entry - currentPrice) / riskDistance
+    : safeNumber(row.shortCurrentR ?? row.currentR, 0);
 
   const netR = safeNumber(
-    row.netR ??
+    row.shortNetR ??
+      row.netShortR ??
+      row.netR ??
       row.r ??
       row.realizedNetR ??
       row.realizedR ??
@@ -1317,13 +1715,32 @@ function normalizeExitMath(row = {}) {
   return {
     entry: round(entry, 10),
     initialSl: round(initialSl, 10),
+    sl: round(row.sl ?? row.stopLoss ?? initialSl, 10),
+    tp: round(tp, 10),
     exitPrice: round(exitPrice, 10),
+    currentPrice: round(currentPrice, 10),
+
+    validShortGeometry: tp > 0 && entry > 0 && initialSl > 0 && tp < entry && entry < initialSl,
+    shortValidGeometry: tp > 0 && entry > 0 && initialSl > 0 && tp < entry && entry < initialSl,
+    shortTpHit: exitPrice > 0 && tp > 0 && exitPrice <= tp,
+    shortSlHit: exitPrice > 0 && initialSl > 0 && exitPrice >= initialSl,
+
     grossR: round(grossR, 4),
+    shortGrossR: round(grossR, 4),
+    currentR: round(currentR, 4),
+    shortCurrentR: round(currentR, 4),
     netR: round(netR, 4),
     r: round(netR, 4),
     realizedR: round(row.realizedR ?? netR, 4),
     costR: round(row.costR ?? row.totalCostR, 4),
-    avgCostR: round(row.avgCostR ?? row.costR ?? row.totalCostR, 4)
+    avgCostR: round(row.avgCostR ?? row.costR ?? row.totalCostR, 4),
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
   };
 }
 
@@ -1346,7 +1763,6 @@ function sanitizeExitRows(rows = []) {
     source: 'VIRTUAL',
     outcomeSource: 'VIRTUAL',
     virtualOnly: true,
-    paperOnly: true,
     virtualTracked: true,
     realTrade: false,
     realOrder: false,
@@ -1571,8 +1987,9 @@ function sanitizeRunPayload(payload) {
     virtualLearningOnly: true,
     shadowDataMode: 'VIRTUAL_LEARNING_OUTCOMES_COUNTED',
 
-    scannerSnapshotPreserved: true,
-    scannerLatestPreserved: true,
+    scannerPreloadBeforeTrade: true,
+    scannerSnapshotPreserved: false,
+    scannerLatestPreserved: false,
     microFamiliesAppendOnly: true,
     analyzePartialOnly: true,
 
@@ -1734,21 +2151,14 @@ function responseCounts(lockResult) {
     executionFingerprintExitRows: safeNumber(payload.executionFingerprintExitRows, 0),
     executionFingerprintsUsedAsLearningFamily: 0,
 
-    scannerSnapshotPreserved: true,
+    scannerPreloadBeforeTrade: true,
+    scannerSnapshotPreserved: false,
     microFamiliesAppendOnly: true
   };
 }
 
 function resolveStatus(error) {
   if (Number.isFinite(error?.statusCode)) return error.statusCode;
-
-  if (
-    error?.reason === 'LOCK_NOT_ACQUIRED' ||
-    error?.message === 'LOCK_NOT_ACQUIRED' ||
-    String(error?.message || '').includes('LOCK')
-  ) {
-    return 409;
-  }
 
   return 500;
 }
@@ -1788,7 +2198,6 @@ function buildRunOptions(req, body = {}) {
     shortDisabled: false,
 
     virtualOnly: true,
-    paperOnly: true,
     virtualLearning: true,
     virtualLearningForced: true,
     virtualTracked: true,
@@ -1829,15 +2238,12 @@ function buildRunOptions(req, body = {}) {
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: true,
     selectionGranularity: 'EXACT_75_CHILD',
 
     allowLearningWithoutActiveRotation: true,
@@ -1867,6 +2273,14 @@ function buildRunOptions(req, body = {}) {
       outcomeSource: 'VIRTUAL'
     },
 
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForManualSelection: true,
     discordOnlyForExactTrueMicroMatch: true,
@@ -1874,7 +2288,6 @@ function buildRunOptions(req, body = {}) {
     manualSelectionRequires75ChildTrueMicroFamilyId: true,
     macroMatchDoesNotTriggerDiscord: true,
     parentMacroMatchDoesNotTriggerDiscord: true,
-    parentMatchDoesNotTriggerDiscord: true,
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -1899,25 +2312,24 @@ function buildRunOptions(req, body = {}) {
       scannerLatest: SHORT_KEYS.scan.latest,
       tradeLock: SHORT_KEYS.trade.lock,
       tradeRunMeta: SHORT_KEYS.trade.runMeta,
-      tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot
+      tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
+      marketUniverseLatest: MARKET_UNIVERSE_KEY,
+      shortMarketUniverseLatest: SHORT_MARKET_UNIVERSE_KEY,
+      marketWeatherLatest: MARKET_WEATHER_KEY,
+      shortMarketWeatherLatest: SHORT_MARKET_WEATHER_KEY
     },
 
+    scannerPreloadBeforeTrade: true,
+    marketWeatherPreloadBeforeTrade: true,
+
     scannerRunAllowed: false,
-    scannerRunDisabledInsideTradeRun: true,
+    scannerRunDisabledInsideTradeSystem: true,
     preventScannerRun: true,
     doNotRunScanner: true,
-    noScannerRun: true,
-    noScannerRefresh: true,
+    noInternalScannerRun: true,
 
     scannerLatestReadOnly: true,
     readScannerLatestOnly: true,
-    preserveScannerLatest: true,
-    preserveScannerSnapshot: true,
-    preserveScannerHistory: true,
-
-    writeScannerLatest: false,
-    writeScannerSnapshot: false,
-    writeScannerHistory: false,
 
     allowTradeWrite: true,
     allowAnalyzePartialWrite: true,
@@ -1939,7 +2351,202 @@ function buildRunOptions(req, body = {}) {
   };
 }
 
-async function persistShortRunMeta(redis, payload = {}, result = {}) {
+function buildScannerPreloadOptions(req, body = {}) {
+  return {
+    force: true,
+    forced: true,
+
+    source: 'TRADE_RUN_SCANNER_PRELOAD',
+    trigger: 'api/trade/run.js',
+    runSource: getRunSource(req, body),
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    scannerSide: TARGET_SCANNER_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+    disableLong: true,
+
+    keys: {
+      scanLatest: SHORT_KEYS.scan.latest,
+      marketUniverseLatest: MARKET_UNIVERSE_KEY,
+      shortMarketUniverseLatest: SHORT_MARKET_UNIVERSE_KEY,
+      marketWeatherLatest: MARKET_WEATHER_KEY,
+      shortMarketWeatherLatest: SHORT_MARKET_WEATHER_KEY
+    },
+
+    namespace: SHORT_NAMESPACE,
+    keyPrefix: SHORT_KEY_PREFIX,
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+
+    scannerPreloadBeforeTrade: true,
+    marketWeatherPreloadBeforeTrade: true,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    learningRemainsBroad: true
+  };
+}
+
+function summarizeScannerPreload(scannerResult = null) {
+  if (!scannerResult || typeof scannerResult !== 'object') {
+    return {
+      ok: false,
+      reason: 'NO_SCANNER_RESULT'
+    };
+  }
+
+  return {
+    ok: scannerResult.ok !== false,
+    snapshotId: scannerResult.snapshotId || null,
+    createdAt: scannerResult.createdAt || null,
+    completedAt: scannerResult.completedAt || null,
+    durationMs: scannerResult.durationMs || null,
+
+    rawCount: safeNumber(scannerResult.rawCount, 0),
+    filteredUniverse: safeNumber(scannerResult.filteredUniverse, 0),
+
+    candidatesCount: safeNumber(scannerResult.candidatesCount, 0),
+    scannerGateCandidatesCount: safeNumber(scannerResult.scannerGateCandidatesCount, 0),
+    analyzeOnlyCandidatesCount: safeNumber(scannerResult.analyzeOnlyCandidatesCount, 0),
+
+    marketUniverseCount: safeNumber(scannerResult.marketUniverseCount, 0),
+    marketUniverseSaved: Boolean(scannerResult.marketUniverseSaved),
+    marketUniverseKeys: Array.isArray(scannerResult.marketUniverseKeys)
+      ? scannerResult.marketUniverseKeys
+      : [],
+
+    marketWeatherCount: safeNumber(scannerResult.marketWeatherCount, scannerResult.marketUniverseCount || 0),
+    marketWeatherSaved: Boolean(scannerResult.marketWeatherSaved),
+    marketWeatherKeys: Array.isArray(scannerResult.marketWeatherKeys)
+      ? scannerResult.marketWeatherKeys
+      : [],
+
+    btcState: scannerResult.btcState || null,
+    regime: scannerResult.regime || null,
+
+    topSymbols: Array.isArray(scannerResult.topSymbols)
+      ? scannerResult.topSymbols
+      : [],
+
+    scannerPreloadBeforeTrade: true
+  };
+}
+
+async function mirrorOneMarketKey({
+  volatileRedis,
+  durableRedis,
+  key
+}) {
+  const payload = await getJson(volatileRedis, key, null).catch(() => null);
+
+  if (!payload) {
+    return {
+      key,
+      ok: false,
+      reason: 'SOURCE_KEY_EMPTY'
+    };
+  }
+
+  await setJson(
+    durableRedis,
+    key,
+    {
+      ...payload,
+      mirroredFromVolatile: true,
+      mirroredToDurable: true,
+      mirroredAt: now(),
+      mirrorSourceKey: key,
+      scannerPreloadBeforeTrade: true,
+      marketWeatherPreloadBeforeTrade: true,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+      currentFitSoftOnly: true,
+      currentFitBlocksLearning: false,
+      learningRemainsBroad: true,
+      ...baseFlags()
+    }
+  );
+
+  return {
+    key,
+    ok: true
+  };
+}
+
+async function mirrorMarketCacheFromVolatileToDurable({
+  volatileRedis,
+  durableRedis
+}) {
+  const keys = [
+    MARKET_UNIVERSE_KEY,
+    SHORT_MARKET_UNIVERSE_KEY,
+    MARKET_WEATHER_KEY,
+    SHORT_MARKET_WEATHER_KEY
+  ];
+
+  const results = [];
+
+  for (const key of keys) {
+    results.push(await mirrorOneMarketKey({
+      volatileRedis,
+      durableRedis,
+      key
+    }));
+  }
+
+  const okKeys = results
+    .filter((row) => row.ok)
+    .map((row) => row.key);
+
+  return {
+    ok: okKeys.length > 0,
+    okKeys,
+    results,
+    marketWeatherMirrored: okKeys.includes(MARKET_WEATHER_KEY) || okKeys.includes(SHORT_MARKET_WEATHER_KEY),
+    marketUniverseMirrored: okKeys.includes(MARKET_UNIVERSE_KEY) || okKeys.includes(SHORT_MARKET_UNIVERSE_KEY)
+  };
+}
+
+async function runScannerPreload({
+  req,
+  body,
+  volatileRedis,
+  durableRedis
+}) {
+  const startedAt = now();
+
+  try {
+    const scannerResult = await runScanner(buildScannerPreloadOptions(req, body));
+
+    const mirror = await mirrorMarketCacheFromVolatileToDurable({
+      volatileRedis,
+      durableRedis
+    });
+
+    return {
+      ok: scannerResult?.ok !== false,
+      scanner: summarizeScannerPreload(scannerResult),
+      mirror,
+      durationMs: now() - startedAt
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || String(error),
+      durationMs: now() - startedAt,
+      scannerPreloadBeforeTrade: true
+    };
+  }
+}
+
+async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPreload = null) {
   if (!payload || typeof payload !== 'object') {
     return {
       persistedShortRunMeta: false,
@@ -1953,6 +2560,8 @@ async function persistShortRunMeta(redis, payload = {}, result = {}) {
 
     ...baseFlags(),
 
+    scannerPreload,
+
     persistedAt: now(),
     persistedBy: 'api/trade/run.js',
     persistedNamespace: SHORT_NAMESPACE,
@@ -1962,7 +2571,11 @@ async function persistShortRunMeta(redis, payload = {}, result = {}) {
       prefix: SHORT_KEY_PREFIX,
       tradeRunMeta: SHORT_KEYS.trade.runMeta,
       tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
-      scannerLatest: SHORT_KEYS.scan.latest
+      scannerLatest: SHORT_KEYS.scan.latest,
+      marketUniverseLatest: MARKET_UNIVERSE_KEY,
+      shortMarketUniverseLatest: SHORT_MARKET_UNIVERSE_KEY,
+      marketWeatherLatest: MARKET_WEATHER_KEY,
+      shortMarketWeatherLatest: SHORT_MARKET_WEATHER_KEY
     },
 
     rawResultOk: result?.ok !== false
@@ -1978,6 +2591,7 @@ async function persistShortRunMeta(redis, payload = {}, result = {}) {
         snapshotId: payload.snapshotId,
         runId: payload.runId || null,
         processedAt: now(),
+        scannerPreload,
         ...baseFlags()
       }
     ).catch(() => null);
@@ -1994,11 +2608,11 @@ async function persistShortRunMeta(redis, payload = {}, result = {}) {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.setHeader('X-Trade-Target-Side', TARGET_TRADE_SIDE);
+  res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Dashboard-Side', TARGET_DASHBOARD_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-Virtual-Only', 'true');
-  res.setHeader('X-Paper-Only', 'true');
   res.setHeader('X-Virtual-Learning-Forced', 'true');
   res.setHeader('X-Exchange-Orders-Disabled', 'true');
   res.setHeader('X-Bitget-Orders-Disabled', 'true');
@@ -2009,15 +2623,15 @@ export default async function handler(req, res) {
   res.setHeader('X-Exact-True-Micro-Match', 'true');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
   res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
-  res.setHeader('X-Child-True-Micro-Family-Schema', CHILD_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
   res.setHeader('X-Parent-Learning-Granularity', PARENT_LEARNING_GRANULARITY);
   res.setHeader('X-Manual-Selection-Match-Mode', 'EXACT_TRUE_MICRO_FAMILY_ID');
   res.setHeader('X-Run-Scope', RUN_SCOPE);
   res.setHeader('X-Write-Scope', WRITE_SCOPE);
-  res.setHeader('X-Scanner-Write', 'false');
-  res.setHeader('X-Scanner-Run-Allowed', 'false');
-  res.setHeader('X-Preserve-Scanner-Latest', 'true');
+  res.setHeader('X-Scanner-Write', 'true');
+  res.setHeader('X-Scanner-Run-Allowed', 'true');
+  res.setHeader('X-Scanner-Preload-Before-Trade', 'true');
+  res.setHeader('X-MarketWeather-Preload-Before-Trade', 'true');
   res.setHeader('X-MicroFamilies-Append-Only', 'true');
   res.setHeader('X-Admin-Page-Isolation', 'true');
   res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
@@ -2025,38 +2639,83 @@ export default async function handler(req, res) {
   res.setHeader('X-Long-Root-Touched', 'false');
 
   const startedAt = now();
+  let body = {};
 
   try {
     if (!isAllowedMethod(req.method)) {
       return methodNotAllowed(res);
     }
 
-    const body = await readBody(req);
+    body = await readBody(req);
     const runOptions = buildRunOptions(req, body);
 
-    const redis = getDurableRedis();
+    const durableRedis = getDurableRedis();
+    const volatileRedis = getVolatileRedis();
+
     const lockKey = SHORT_KEYS.trade.lock;
     const lockTtlSec = getLockTtlSec();
 
+    let scannerPreload = null;
+
     const rawResult = await withRedisLock(
-      redis,
+      durableRedis,
       lockKey,
       lockTtlSec,
-      async () => runTradeSystem(runOptions)
+      async () => {
+        scannerPreload = await runScannerPreload({
+          req,
+          body,
+          volatileRedis,
+          durableRedis
+        });
+
+        return runTradeSystem({
+          ...runOptions,
+          scannerPreloadBeforeTrade: true,
+          marketWeatherPreloadBeforeTrade: true,
+          scannerPreloadOk: scannerPreload?.ok === true,
+          marketWeatherMirroredToDurable: scannerPreload?.mirror?.marketWeatherMirrored === true,
+          marketUniverseMirroredToDurable: scannerPreload?.mirror?.marketUniverseMirrored === true
+        });
+      }
     );
+
+    if (isLockNotAcquiredResult(rawResult)) {
+      return res.status(200).json(buildLockSkippedResponse({
+        req,
+        body,
+        startedAt,
+        lockKey,
+        lockTtlSec,
+        rawResult
+      }));
+    }
 
     const payload = sanitizeRunPayload(unwrapLockResult(rawResult));
     const result = sanitizeLockResult(rawResult);
 
-    const persistence = await persistShortRunMeta(redis, payload, result);
+    const persistence = await persistShortRunMeta(
+      durableRedis,
+      payload,
+      result,
+      scannerPreload
+    );
 
     const actionCounts = responseActionCounts(rawResult);
     const counts = responseCounts(rawResult);
 
+    const scannerOk = scannerPreload?.ok === true;
+    const tradeOk = responseOk(rawResult);
+
     return res.status(200).json({
-      ok: responseOk(rawResult),
+      ok: tradeOk && scannerOk,
+      tradeOk,
+      scannerPreloadOk: scannerOk,
+
       skipped: responseSkipped(rawResult),
-      reason: responseReason(rawResult),
+      reason: !scannerOk
+        ? 'SCANNER_PRELOAD_FAILED'
+        : responseReason(rawResult),
       skipReason: payload?.skipReason || responseReason(rawResult),
 
       ...baseFlags(),
@@ -2069,6 +2728,11 @@ export default async function handler(req, res) {
       monitorOpenPositionsFirst: runOptions.monitorOpenPositionsFirst,
       monitorOpenPositions: runOptions.monitorOpenPositions,
       processScannerSnapshot: runOptions.processScannerSnapshot,
+
+      scannerPreload,
+
+      marketWeatherAvailableAfterRun: scannerPreload?.mirror?.marketWeatherMirrored === true,
+      marketUniverseAvailableAfterRun: scannerPreload?.mirror?.marketUniverseMirrored === true,
 
       runId: responseRunId(rawResult),
       snapshotId: responseSnapshotId(rawResult),
@@ -2132,10 +2796,12 @@ export default async function handler(req, res) {
       selectedTargetCandidateCount: safeNumber(payload?.selectedTargetCandidateCount, 0),
       selectedOppositeCandidateCount: 0,
 
-      scannerLatestPreserved: true,
-      scannerSnapshotPreserved: true,
+      scannerPreloadBeforeTrade: true,
+      scannerLatestPreserved: false,
+      scannerSnapshotPreserved: false,
       scannerHistoryPreserved: true,
-      scannerRunBlockedInsideTradeRun: true,
+      scannerRunBlockedInsideTradeRun: false,
+      scannerRunDisabledInsideTradeSystem: true,
 
       microFamiliesAppendOnly: true,
       analyzePartialOnly: true,
@@ -2153,10 +2819,20 @@ export default async function handler(req, res) {
         scanLatest: SHORT_KEYS.scan.latest,
         tradeLock: SHORT_KEYS.trade.lock,
         tradeRunMeta: SHORT_KEYS.trade.runMeta,
-        tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot
+        tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
+        marketUniverseLatest: MARKET_UNIVERSE_KEY,
+        shortMarketUniverseLatest: SHORT_MARKET_UNIVERSE_KEY,
+        marketWeatherLatest: MARKET_WEATHER_KEY,
+        shortMarketWeatherLatest: SHORT_MARKET_WEATHER_KEY
       },
 
       warnings: [
+        scannerPreload?.ok === false
+          ? `SCANNER_PRELOAD_FAILED:${scannerPreload.error || 'UNKNOWN'}`
+          : null,
+        scannerPreload?.mirror?.marketWeatherMirrored !== true
+          ? 'MARKET_WEATHER_NOT_MIRRORED_TO_DURABLE'
+          : null,
         payload?.ignoredLongActions > 0
           ? `LONG_ACTIONS_IGNORED:${payload.ignoredLongActions}`
           : null,
@@ -2192,6 +2868,20 @@ export default async function handler(req, res) {
       result
     });
   } catch (error) {
+    const lockKey = SHORT_KEYS.trade.lock;
+    const lockTtlSec = getLockTtlSec();
+
+    if (isLockNotAcquiredSignal(error)) {
+      return res.status(200).json(buildLockSkippedResponse({
+        req,
+        body,
+        startedAt,
+        lockKey,
+        lockTtlSec,
+        error
+      }));
+    }
+
     return res.status(resolveStatus(error)).json({
       ok: false,
 
