@@ -89,36 +89,36 @@ function upper(value, fallback = '') {
 
 function sizingConfig() {
   return {
-    enabled: CONFIG.short?.sizing?.enabled ?? CONFIG.sizing?.enabled ?? true,
+    enabled: CONFIG.sizing?.enabled !== false,
 
     baseRiskPct: Math.max(
       0,
-      safeNumber(CONFIG.short?.sizing?.baseRiskPct ?? CONFIG.sizing?.baseRiskPct, 0.0025)
+      safeNumber(CONFIG.sizing?.baseRiskPct, 0.0025)
     ),
 
     minMult: Math.max(
       0,
-      safeNumber(CONFIG.short?.sizing?.minMult ?? CONFIG.sizing?.minMult, 0.5)
+      safeNumber(CONFIG.sizing?.minMult, 0.5)
     ),
 
     maxMult: Math.max(
       0,
-      safeNumber(CONFIG.short?.sizing?.maxMult ?? CONFIG.sizing?.maxMult, 1.25)
+      safeNumber(CONFIG.sizing?.maxMult, 1.25)
     ),
 
     maxTotalRiskPct: Math.max(
       0,
-      safeNumber(CONFIG.short?.sizing?.maxTotalRiskPct ?? CONFIG.sizing?.maxTotalRiskPct, 0.03)
+      safeNumber(CONFIG.sizing?.maxTotalRiskPct, 0.03)
     ),
 
     maxSameSideRiskPct: Math.max(
       0,
-      safeNumber(CONFIG.short?.sizing?.maxSameSideRiskPct ?? CONFIG.sizing?.maxSameSideRiskPct, 0.015)
+      safeNumber(CONFIG.sizing?.maxSameSideRiskPct, 0.015)
     ),
 
     maxCounterBtcRiskPct: Math.max(
       0,
-      safeNumber(CONFIG.short?.sizing?.maxCounterBtcRiskPct ?? CONFIG.sizing?.maxCounterBtcRiskPct, 0.0075)
+      safeNumber(CONFIG.sizing?.maxCounterBtcRiskPct, 0.0075)
     ),
 
     priorTrades: Math.max(
@@ -152,7 +152,6 @@ function baseModeFlags() {
 
     virtualLearning: true,
     virtualOnly: true,
-    paperOnly: true,
     virtualTracked: true,
     shadowOnly: true,
     realTrade: false,
@@ -167,26 +166,8 @@ function baseModeFlags() {
     noRealOrders: true,
     noExchangeOrders: true,
 
-    validShortRiskShape: 'tp < entry < sl',
-    shortRiskFormula: 'tp < entry < sl',
-    shortTpRule: 'price <= tp',
-    shortSlRule: 'price >= sl',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-    shortExitRules: {
-      tp: 'price <= tp',
-      sl: 'price >= sl',
-      timeStop: 'TIME_STOP'
-    },
-
-    scannerSide: TARGET_SCANNER_SIDE,
-    scannerSearchSide: TARGET_SCANNER_SIDE,
-    scannerBearishOnly: true,
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
-    scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true,
-
     executionFingerprintsMetadataOnly: true,
     executionFingerprintsUsedAsLearningFamily: false,
 
@@ -203,8 +184,6 @@ function baseModeFlags() {
 
     manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
     discordOnlyForExactTrueMicroMatch: true,
-    discordOnlyForSelectedMicroFamilies: true,
-    discordSelectionRule: 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY',
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -213,14 +192,6 @@ function baseModeFlags() {
     avgRSource: 'netR',
     totalRSource: 'netR',
     avgCostRShown: true,
-
-    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
-    rankingUsesBalancedScore: true,
-    rankingUsesFairWinrate: true,
-    rankingUsesTotalR: true,
-    rankingUsesAvgR: true,
-    rankingUsesAvgCostR: true,
-    bareWinrateRankingDisabled: true,
 
     exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
@@ -236,26 +207,51 @@ function baseModeFlags() {
 
     minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING,
 
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    validShortRiskShape: 'tp < entry < sl',
+    shortRiskShape: 'tp < entry < sl',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
     longRootTouched: false
   };
 }
 
 function cleanSideText(value = '') {
   return upper(value)
+    .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
+    .replaceAll('LONGDISABLED_TRUE', 'SHORT')
+    .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
     .replaceAll('LONG_DISABLED_FALSE', '')
     .replaceAll('LONGDISABLED_FALSE', '')
     .replaceAll('BLOCK_LONG_FALSE', '')
     .replaceAll('LONG_ENABLED_FALSE', '')
     .replaceAll('LONG_ONLY_FALSE', '')
     .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', '')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', '')
-    .replaceAll('BLOCK_LONG', '')
-    .replaceAll('LONG_DISABLED', '')
-    .replaceAll('LONGDISABLED', '')
+    .replaceAll('SHORTDISABLED_FALSE', '')
+    .replaceAll('SHORT_ENABLED_FALSE', '')
+    .replaceAll('SHORT_ONLY_FALSE', '')
+    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
+    .replaceAll('BLOCK_LONG', 'SHORT')
+    .replaceAll('LONG_DISABLED', 'SHORT')
+    .replaceAll('LONGDISABLED', 'SHORT')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT')
@@ -268,14 +264,14 @@ function isScannerFingerprintId(id = '') {
   const value = upper(id);
 
   return (
-    value.startsWith('MICRO_LONG_SCANNER__') ||
-    value.includes('MICRO_LONG_SCANNER__') ||
-    value.startsWith('LONG_SCANNER_') ||
-    value.includes('LONG_SCANNER_') ||
     value.startsWith('MICRO_SHORT_SCANNER__') ||
     value.includes('MICRO_SHORT_SCANNER__') ||
     value.startsWith('SHORT_SCANNER_') ||
     value.includes('SHORT_SCANNER_') ||
+    value.startsWith('MICRO_LONG_SCANNER__') ||
+    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('LONG_SCANNER_') ||
+    value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
@@ -449,8 +445,8 @@ function normalizeTradeSide(value) {
     normalized.includes('_BUY_') ||
     normalized.endsWith('_BUY');
 
-  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
   if (longHit && !shortHit) return OPPOSITE_TRADE_SIDE;
+  if (shortHit && !longHit) return TARGET_TRADE_SIDE;
 
   if (shortHit && longHit) {
     if (normalized.includes('TRADE_SIDE_SHORT') || normalized.includes('TRADESIDE_SHORT')) return TARGET_TRADE_SIDE;
@@ -665,7 +661,7 @@ function inferTradeSide(row = {}) {
     return fromDefinitions;
   }
 
-  if (row.shortOnly === true || row.longDisabled === true) {
+  if (row.shortOnly === true && row.longDisabled === true) {
     return TARGET_TRADE_SIDE;
   }
 
@@ -859,7 +855,6 @@ function shortModeFlags(extra = {}) {
     ...baseModeFlags(),
 
     parentTrueMicroFamilyId: taxonomy.parentTrueMicroFamilyId,
-    coarseMicroFamilyId: taxonomy.parentTrueMicroFamilyId,
     childTrueMicroFamilyId: taxonomy.childTrueMicroFamilyId,
     trueMicroFamilyId: taxonomy.exactChild ? taxonomy.childTrueMicroFamilyId : taxonomy.trueMicroFamilyId,
     microFamilyId: taxonomy.exactChild ? taxonomy.childTrueMicroFamilyId : taxonomy.trueMicroFamilyId,
@@ -1055,12 +1050,9 @@ export function summarizeOpenRisk(openPositions = []) {
     trueMicroFamilyIds: [...trueMicroFamilyIds],
     childTrueMicroFamilyIds: [...trueMicroFamilyIds],
     parentTrueMicroFamilyIds: [...parentTrueMicroFamilyIds],
-    coarseMicroFamilyIds: [...parentTrueMicroFamilyIds],
 
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
-    scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true,
     executionFingerprintsMetadataOnly: true,
     executionFingerprintsUsedAsLearningFamily: false,
 
@@ -1121,9 +1113,7 @@ export function checkRiskCaps({
     positionSide: tradeSide,
     direction: tradeSide,
     shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
+    longDisabled: true
   };
 
   const want = normalizeRiskFraction(riskFraction);
