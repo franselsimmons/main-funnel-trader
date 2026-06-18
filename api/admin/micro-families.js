@@ -9,6 +9,7 @@ import {
   getVolatileRedis,
   getJson
 } from '../../src/redis.js';
+import { KEYS } from '../../src/keys.js';
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
 import { getActiveRotation } from '../../src/analyze/rotationEngine.js';
 
