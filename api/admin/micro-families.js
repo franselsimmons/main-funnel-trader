@@ -37,7 +37,7 @@ const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
 const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V1';
-const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V2';
+const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V3';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -105,8 +105,10 @@ const ACTIVE_ROTATION_TIMEOUT_MS = 1_800;
 const WEEK_MICROS_TIMEOUT_MS = 9_500;
 const MARKET_WEATHER_TIMEOUT_MS = 1_200;
 const MARKET_WEATHER_REDIS_READ_TIMEOUT_MS = 700;
+const MARKET_WEATHER_BUILD_TIMEOUT_MS = 3_500;
 
 const CACHE_TTL_MS = 60_000;
+const MARKET_WEATHER_EMPTY_CACHE_TTL_MS = 5_000;
 const CACHE_MAX_KEYS = 20;
 
 const cache = globalThis.__ADMIN_MICRO_FAMILIES_SHORT_75_CACHE__ ||= {
@@ -284,6 +286,35 @@ async function softReadJson(redis, key, fallback = null, timeoutMs = MARKET_WEAT
   }
 }
 
+async function softWriteJson(redis, key, payload, ttlSeconds = 300) {
+  if (!redis || !key || !redis.set) return false;
+
+  const json = JSON.stringify(payload);
+
+  try {
+    await redis.set(key, json, {
+      ex: ttlSeconds
+    });
+    return true;
+  } catch {
+    // Probeer andere Redis-client signature.
+  }
+
+  try {
+    await redis.set(key, json, 'EX', ttlSeconds);
+    return true;
+  } catch {
+    // Probeer zonder TTL.
+  }
+
+  try {
+    await redis.set(key, json);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function pruneCacheMap(map) {
   const entries = [...map.entries()];
 
@@ -308,12 +339,27 @@ function namespacedShortKey(key, fallback = MARKET_WEATHER_KEY) {
 function marketWeatherKeyCandidates() {
   return uniqueStrings([
     SHORT_MARKET_WEATHER_KEY,
-    namespacedShortKey(KEYS.short?.market?.weatherLatest),
-    namespacedShortKey(KEYS.short?.market?.weather),
-    namespacedShortKey(KEYS.market?.shortWeatherLatest),
-    namespacedShortKey(KEYS.market?.shortWeather),
-    namespacedShortKey(MARKET_WEATHER_KEY)
+    namespacedShortKey(KEYS?.short?.market?.weatherLatest),
+    namespacedShortKey(KEYS?.short?.market?.weather),
+    namespacedShortKey(KEYS?.market?.shortWeatherLatest),
+    namespacedShortKey(KEYS?.market?.shortWeather),
+    namespacedShortKey(MARKET_WEATHER_KEY),
+    `${SHORT_KEY_PREFIX}MARKET:WEATHER`,
+    `${SHORT_KEY_PREFIX}MARKET:WEATHER:CURRENT`,
+    `${SHORT_KEY_PREFIX}MARKET:WEATHER:SNAPSHOT`,
+    `${SHORT_KEY_PREFIX}SCANNER:WEATHER:LATEST`
   ]);
+}
+
+function rawMarketWeatherFallbackKeyCandidates() {
+  return uniqueStrings([
+    MARKET_WEATHER_KEY,
+    KEYS?.market?.weatherLatest,
+    KEYS?.market?.weather,
+    'MARKET:WEATHER',
+    'MARKET:WEATHER:CURRENT',
+    'MARKET:WEATHER:SNAPSHOT'
+  ]).filter((key) => !String(key).startsWith('LONG:'));
 }
 
 function redisClientsVolatileFirst() {
@@ -346,6 +392,64 @@ function redisClientsVolatileFirst() {
   }
 
   return clients;
+}
+
+async function persistMarketWeatherToShortKey(normalized, source = 'unknown') {
+  if (!normalized?.available) return false;
+
+  const payload = {
+    ok: true,
+    available: true,
+    source,
+    savedBy: 'api/admin/micro-families.js',
+    savedAt: Date.now(),
+    marketWeather: {
+      ...normalized,
+      sourceKey: SHORT_MARKET_WEATHER_KEY,
+      redisNamespace: SHORT_NAMESPACE,
+      redisKeyPrefix: SHORT_KEY_PREFIX,
+      longRootTouched: false
+    }
+  };
+
+  const clients = redisClientsVolatileFirst();
+
+  for (const client of clients) {
+    await softWriteJson(client.redis, SHORT_MARKET_WEATHER_KEY, payload, 300);
+  }
+
+  return clients.length > 0;
+}
+
+async function buildMarketWeatherDirect() {
+  const mod = await import('../../src/market/marketWeather.js');
+  const fn =
+    mod.getMarketWeather ||
+    mod.getCurrentMarketWeather ||
+    mod.buildMarketWeather ||
+    mod.default;
+
+  if (typeof fn !== 'function') {
+    throw new Error('MARKET_WEATHER_EXPORT_NOT_FOUND');
+  }
+
+  return fn({
+    tradeSide: TARGET_TRADE_SIDE,
+    side: TARGET_DASHBOARD_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    scannerSide: TARGET_SCANNER_SIDE,
+    namespace: SHORT_NAMESPACE,
+    keyPrefix: SHORT_KEY_PREFIX,
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    refresh: true,
+    save: true,
+    allowStale: true,
+    shortOnly: true,
+    longDisabled: true,
+    longRootTouched: false
+  });
 }
 
 function modePayload() {
@@ -2019,7 +2123,14 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
       squeezePct: null,
       confidence: 0,
       stale: false,
-      cacheStale: false
+      cacheStale: false,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+      shortOnly: true,
+      longDisabled: true,
+      redisNamespace: SHORT_NAMESPACE,
+      redisKeyPrefix: SHORT_KEY_PREFIX,
+      longRootTouched: false
     };
   }
 
@@ -2211,21 +2322,132 @@ async function readJsonFromAnyRedis(keys = marketWeatherKeyCandidates()) {
   return staleCandidate;
 }
 
+async function readRawMarketWeatherFallback() {
+  const clients = redisClientsVolatileFirst();
+
+  for (const key of rawMarketWeatherFallbackKeyCandidates()) {
+    const safeKey = String(key || '').trim();
+
+    if (!safeKey || safeKey.startsWith('LONG:')) continue;
+
+    for (const client of clients) {
+      if (!client.redis) continue;
+
+      try {
+        const payload = await softReadJson(
+          client.redis,
+          safeKey,
+          null,
+          MARKET_WEATHER_REDIS_READ_TIMEOUT_MS
+        );
+
+        if (!payload) continue;
+
+        const normalized = normalizeMarketWeather(payload, safeKey, client.name);
+
+        if (!normalized.available) continue;
+
+        await persistMarketWeatherToShortKey(normalized, 'raw_neutral_fallback_copy');
+
+        return {
+          key: safeKey,
+          redis: client.name,
+          payload,
+          normalized: {
+            ...normalized,
+            rawNeutralFallbackUsed: true,
+            copiedToShortMarketWeatherKey: true,
+            sourceKey: safeKey
+          }
+        };
+      } catch {
+        // Try next key/client.
+      }
+    }
+  }
+
+  return null;
+}
+
 async function getCurrentMarketWeatherSafe() {
-  if (cache.marketWeather && now() - cache.marketWeather.ts <= CACHE_TTL_MS) {
-    return cache.marketWeather.value;
+  if (cache.marketWeather) {
+    const age = now() - cache.marketWeather.ts;
+    const cachedValue = cache.marketWeather.value;
+
+    if (cachedValue?.available && age <= CACHE_TTL_MS) {
+      return {
+        ...cachedValue,
+        cacheHit: true
+      };
+    }
+
+    if (!cachedValue?.available && age <= MARKET_WEATHER_EMPTY_CACHE_TTL_MS) {
+      return {
+        ...cachedValue,
+        cacheHit: true,
+        emptyCacheHit: true
+      };
+    }
   }
 
   try {
-    const found = await withTimeout(
+    let found = await withTimeout(
       readJsonFromAnyRedis(marketWeatherKeyCandidates()),
       MARKET_WEATHER_TIMEOUT_MS,
       'MARKET_WEATHER_READ_TIMEOUT'
     );
 
-    const value = found?.normalized
+    if (!found?.normalized?.available) {
+      found = await withTimeout(
+        readRawMarketWeatherFallback(),
+        MARKET_WEATHER_TIMEOUT_MS,
+        'MARKET_WEATHER_RAW_FALLBACK_READ_TIMEOUT'
+      );
+    }
+
+    let value = found?.normalized
       ? found.normalized
       : normalizeMarketWeather(null, null, null);
+
+    if (!value.available) {
+      try {
+        const builtPayload = await withTimeout(
+          buildMarketWeatherDirect(),
+          MARKET_WEATHER_BUILD_TIMEOUT_MS,
+          'MARKET_WEATHER_SELF_HEAL_BUILD_TIMEOUT'
+        );
+
+        const builtValue = normalizeMarketWeather(
+          builtPayload,
+          builtPayload?.loadedFromKey || builtPayload?.sourceKey || SHORT_MARKET_WEATHER_KEY,
+          'self_heal_build'
+        );
+
+        if (builtValue.available) {
+          await persistMarketWeatherToShortKey(builtValue, 'self_heal_build');
+
+          value = {
+            ...builtValue,
+            builtFallbackUsed: true,
+            copiedToShortMarketWeatherKey: true
+          };
+        } else {
+          value = {
+            ...value,
+            buildFallbackTried: true,
+            buildFallbackAvailable: false,
+            buildFallbackReason: builtValue.reason || 'BUILT_MARKET_WEATHER_INCOMPLETE'
+          };
+        }
+      } catch (buildError) {
+        value = {
+          ...value,
+          buildFallbackTried: true,
+          buildFallbackFailed: true,
+          buildFallbackError: buildError?.message || String(buildError)
+        };
+      }
+    }
 
     cache.marketWeather = {
       ts: now(),
@@ -2247,7 +2469,12 @@ async function getCurrentMarketWeatherSafe() {
       squeezePct: null,
       confidence: 0,
       currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+      shortOnly: true,
+      longDisabled: true,
+      redisNamespace: SHORT_NAMESPACE,
+      redisKeyPrefix: SHORT_KEY_PREFIX,
+      longRootTouched: false
     };
 
     cache.marketWeather = {
@@ -2291,6 +2518,11 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     currentBearishPct: null,
     currentSqueezePct: null,
     currentMarketWeatherAvailable: false,
+    currentMarketWeatherSourceKey: marketWeather?.sourceKey || null,
+    currentMarketWeatherRedisSource: marketWeather?.redisSource || null,
+    currentMarketWeatherStaleFallbackUsed: Boolean(marketWeather?.staleFallbackUsed),
+    currentMarketWeatherRawNeutralFallbackUsed: Boolean(marketWeather?.rawNeutralFallbackUsed),
+    currentMarketWeatherBuiltFallbackUsed: Boolean(marketWeather?.builtFallbackUsed),
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
   };
@@ -2489,6 +2721,8 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     currentMarketWeatherSourceKey: marketWeather.sourceKey || null,
     currentMarketWeatherRedisSource: marketWeather.redisSource || null,
     currentMarketWeatherStaleFallbackUsed: Boolean(marketWeather.staleFallbackUsed),
+    currentMarketWeatherRawNeutralFallbackUsed: Boolean(marketWeather.rawNeutralFallbackUsed),
+    currentMarketWeatherBuiltFallbackUsed: Boolean(marketWeather.builtFallbackUsed),
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
   };
@@ -3238,6 +3472,8 @@ function normalizeMicroRow(
     currentMarketWeatherSourceKey: row.currentMarketWeatherSourceKey || null,
     currentMarketWeatherRedisSource: row.currentMarketWeatherRedisSource || null,
     currentMarketWeatherStaleFallbackUsed: Boolean(row.currentMarketWeatherStaleFallbackUsed),
+    currentMarketWeatherRawNeutralFallbackUsed: Boolean(row.currentMarketWeatherRawNeutralFallbackUsed),
+    currentMarketWeatherBuiltFallbackUsed: Boolean(row.currentMarketWeatherBuiltFallbackUsed),
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -3390,7 +3626,9 @@ function compactBestRow(row) {
     currentMarketTrendSide: row.currentMarketTrendSide || 'UNKNOWN',
     currentMarketWeatherAvailable: Boolean(row.currentMarketWeatherAvailable),
     currentMarketWeatherSourceKey: row.currentMarketWeatherSourceKey || null,
-    currentMarketWeatherRedisSource: row.currentMarketWeatherRedisSource || null
+    currentMarketWeatherRedisSource: row.currentMarketWeatherRedisSource || null,
+    currentMarketWeatherRawNeutralFallbackUsed: Boolean(row.currentMarketWeatherRawNeutralFallbackUsed),
+    currentMarketWeatherBuiltFallbackUsed: Boolean(row.currentMarketWeatherBuiltFallbackUsed)
   };
 }
 
@@ -4131,9 +4369,10 @@ function forcedShortFallbackRows(activeRotation, existingRows = [], marketWeathe
 
 export default async function handler(req, res) {
   const startedAt = now();
+  const marketWeatherCacheHadValueAtStart = Boolean(cache.marketWeather);
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-true-micro-net-outcome-currentfit-v2');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-true-micro-net-outcome-currentfit-v3-self-heal');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -4171,6 +4410,7 @@ export default async function handler(req, res) {
   res.setHeader('X-Current-Fit-Blocks-Learning', 'false');
   res.setHeader('X-Current-Fit-Score-Built', 'true');
   res.setHeader('X-MarketWeather-Engine-Built', 'true');
+  res.setHeader('X-MarketWeather-Self-Heal', 'true');
   res.setHeader('X-Redis-Namespace', SHORT_NAMESPACE);
   res.setHeader('X-Long-Root-Touched', 'false');
 
@@ -4412,8 +4652,20 @@ export default async function handler(req, res) {
       marketWeather.available !== true
         ? `MARKET_WEATHER_UNAVAILABLE:${marketWeather.reason || 'UNKNOWN'}`
         : null,
+      marketWeather.emptyCacheHit
+        ? 'MARKET_WEATHER_EMPTY_CACHE_HIT_SHORT_TTL'
+        : null,
       marketWeather.staleFallbackUsed
         ? 'MARKET_WEATHER_STALE_FALLBACK_USED_CURRENTFIT_STILL_ENABLED'
+        : null,
+      marketWeather.rawNeutralFallbackUsed
+        ? 'MARKET_WEATHER_RAW_NEUTRAL_FALLBACK_USED_AND_COPIED_TO_SHORT_KEY'
+        : null,
+      marketWeather.builtFallbackUsed
+        ? 'MARKET_WEATHER_SELF_HEAL_BUILD_USED_AND_COPIED_TO_SHORT_KEY'
+        : null,
+      marketWeather.buildFallbackFailed
+        ? `MARKET_WEATHER_SELF_HEAL_BUILD_FAILED:${marketWeather.buildFallbackError || 'UNKNOWN'}`
         : null,
       currentFitUnknownRows >= mergedRows.length && mergedRows.length > 0
         ? 'CURRENTFIT_ALL_UNKNOWN_MARKET_WEATHER_NOT_USABLE'
@@ -4469,7 +4721,10 @@ export default async function handler(req, res) {
       currentFitPolicy: {
         version: CURRENT_FIT_VERSION,
         marketWeatherKeys: marketWeatherKeyCandidates(),
-        marketWeatherRawLegacyKeyReadDisabled: true,
+        rawNeutralFallbackKeys: rawMarketWeatherFallbackKeyCandidates(),
+        marketWeatherRawNeutralFallbackEnabled: true,
+        marketWeatherSelfHealBuildEnabled: true,
+        marketWeatherEmptyCacheTtlMs: MARKET_WEATHER_EMPTY_CACHE_TTL_MS,
         marketWeatherAvailable: Boolean(marketWeather.available),
         sourceKey: marketWeather.sourceKey || null,
         redisSource: marketWeather.redisSource || null,
@@ -4480,6 +4735,9 @@ export default async function handler(req, res) {
         squeezePct: marketWeather.squeezePct,
         confidence: marketWeather.confidence,
         staleFallbackUsed: Boolean(marketWeather.staleFallbackUsed),
+        rawNeutralFallbackUsed: Boolean(marketWeather.rawNeutralFallbackUsed),
+        builtFallbackUsed: Boolean(marketWeather.builtFallbackUsed),
+        copiedToShortMarketWeatherKey: Boolean(marketWeather.copiedToShortMarketWeatherKey),
         reason: marketWeather.reason || null,
         softOnly: true,
         blocksLearning: false,
@@ -4568,6 +4826,7 @@ export default async function handler(req, res) {
         currentFitBlocksLearning: false,
         adaptiveLayerBuilt: false,
         marketWeatherEngineBuilt: true,
+        marketWeatherSelfHealBuilt: true,
         recentMomentumScoreBuilt: false,
         currentFitScoreBuilt: true,
         parentDiversificationBuilt: false,
@@ -4620,6 +4879,7 @@ export default async function handler(req, res) {
       best75Count: best75MicroFamilies.length,
       best75MicroFamilies,
       best25Count: best75MicroFamilies.slice(0, 25).length,
+      best25CountLegacyIgnored: best75MicroFamilies.slice(0, 25).length,
       best25MicroFamilies: best75MicroFamilies.slice(0, 25),
       topMicroFamilies: best75MicroFamilies,
       bestMicroFamilies: best75MicroFamilies,
@@ -4690,8 +4950,12 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        marketWeatherCacheHit: Boolean(cache.marketWeather),
-        path: 'shortOnly75ChildPersistentLearningNetOutcomeObservationFirstAnalyzeTrueMicroOnlyScannerFingerprintMetadataOnlyCurrentFitMarketWeatherAvgCostRFallbackFixV2',
+        marketWeatherCacheHadValueAtStart,
+        marketWeatherCacheHit: Boolean(marketWeather.cacheHit),
+        marketWeatherEmptyCacheHit: Boolean(marketWeather.emptyCacheHit),
+        marketWeatherRawNeutralFallbackUsed: Boolean(marketWeather.rawNeutralFallbackUsed),
+        marketWeatherBuiltFallbackUsed: Boolean(marketWeather.builtFallbackUsed),
+        path: 'shortOnly75ChildPersistentLearningNetOutcomeObservationFirstAnalyzeTrueMicroOnlyScannerFingerprintMetadataOnlyCurrentFitMarketWeatherSelfHealV3',
         best75Source: 'persistentLearningMergedRowsBeforeFilters'
       },
 
