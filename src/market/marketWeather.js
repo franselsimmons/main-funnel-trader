@@ -17,7 +17,7 @@
 
 import { CONFIG } from '../config.js';
 import { KEYS } from '../keys.js';
-import { getDurableRedis, getJson, setJson } from '../redis.js';
+import { getDurableRedis, getVolatileRedis, getJson, setJson } from '../redis.js';
 import { clamp, safeNumber, sideToTradeSide } from '../utils.js';
 
 const MARKET_WEATHER_VERSION = 'MARKET_WEATHER_ENGINE_V1';
@@ -106,6 +106,7 @@ const FIT_LABEL = Object.freeze({
 const DEFAULT_UNIVERSE_LIMIT = 100;
 const DEFAULT_MIN_UNIVERSE_SIZE = 15;
 const DEFAULT_STALE_AFTER_MS = 180_000;
+const DEFAULT_REDIS_READ_TIMEOUT_MS = 800;
 
 const DEFAULT_THRESHOLDS = Object.freeze({
   advancing1hPct: 0.15,
@@ -212,6 +213,13 @@ function configNumber(path = [], fallback) {
   return safeNumber(cur, fallback);
 }
 
+function redisReadTimeoutMs() {
+  return Math.max(
+    250,
+    Math.floor(configNumber(['short', 'marketWeather', 'redisReadTimeoutMs'], configNumber(['marketWeather', 'redisReadTimeoutMs'], DEFAULT_REDIS_READ_TIMEOUT_MS)))
+  );
+}
+
 function thresholds() {
   return {
     ...DEFAULT_THRESHOLDS,
@@ -274,6 +282,69 @@ function defaultWeatherKeys() {
 
     'MARKET:WEATHER:LATEST'
   ]).map((key) => namespacedShortKey(key));
+}
+
+function marketWeatherRedisClients(preferVolatile = true) {
+  const clients = [];
+
+  try {
+    const volatileRedis = getVolatileRedis();
+
+    if (volatileRedis) {
+      clients.push({
+        name: 'volatile',
+        redis: volatileRedis
+      });
+    }
+  } catch {
+    // Volatile Redis unavailable.
+  }
+
+  try {
+    const durableRedis = getDurableRedis();
+
+    if (durableRedis) {
+      clients.push({
+        name: 'durable',
+        redis: durableRedis
+      });
+    }
+  } catch {
+    // Durable Redis unavailable.
+  }
+
+  if (!preferVolatile) {
+    clients.reverse();
+  }
+
+  return clients;
+}
+
+async function readJsonWithSoftTimeout(redis, key, fallback = null, timeoutMs = redisReadTimeoutMs()) {
+  let timer = null;
+
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      resolve({
+        __timeout: true,
+        key,
+        timeoutMs
+      });
+    }, Math.max(1, Math.floor(timeoutMs)));
+  });
+
+  try {
+    const result = await Promise.race([
+      getJson(redis, key, fallback),
+      timeoutPromise
+    ]);
+
+    if (result?.__timeout) return fallback;
+
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function cleanSideText(value = '') {
@@ -1169,50 +1240,130 @@ function normalizeMarketWeatherPayload(weather = {}) {
     });
   }
 
-  const currentRegime = normalizeWeatherRegime(weather.currentRegime || weather.regime);
-  const currentTrendSide = normalizeWeatherTrendSide(weather.currentTrendSide || weather.trendSide || weather.marketTrendSide);
+  const currentRegime = normalizeWeatherRegime(
+    weather.currentRegime ||
+      weather.regime ||
+      weather.marketRegime ||
+      weather.currentVolatilityState ||
+      weather.volatilityState
+  );
+
+  const currentTrendSide = normalizeWeatherTrendSide(
+    weather.currentTrendSide ||
+      weather.trendSide ||
+      weather.marketTrendSide ||
+      weather.dashboardSide ||
+      weather.marketSide ||
+      weather.side ||
+      weather.bias ||
+      weather.direction
+  );
+
   const currentFlow = normalizeWeatherFlow(weather.currentFlow || weather.flow);
   const currentVolatilityState = normalizeWeatherVolatilityState(weather.currentVolatilityState || weather.volatilityState);
-  const confidence = Math.round(clamp(safeNumber(weather.currentMarketFitConfidence ?? weather.confidence ?? weather.weatherConfidence, 0), 0, 100));
+
+  const confidence = Math.round(clamp(
+    safeNumber(
+      weather.currentMarketFitConfidence ??
+        weather.confidence ??
+        weather.weatherConfidence ??
+        weather.marketConfidence ??
+        weather.score,
+      0
+    ),
+    0,
+    100
+  ));
 
   const sampleSize = safeNumber(
     weather.sampleSize ??
       weather.count ??
-      weather.universeCount,
+      weather.universeCount ??
+      weather.universeSize,
     0
   );
 
-  const generatedAt = safeNumber(weather.generatedAt || weather.updatedAt || weather.savedAt || weather.completedAt || 0, 0);
+  const generatedAt = safeNumber(
+    weather.generatedAt ||
+      weather.updatedAt ||
+      weather.savedAt ||
+      weather.completedAt ||
+      weather.createdAt ||
+      0,
+    0
+  );
+
   const ageMs = generatedAt > 0 ? Math.max(0, now() - generatedAt) : null;
-  const cacheStale = ageMs !== null ? ageMs > staleAfterMs() : bool(weather.cacheStale, false);
+  const cacheStale = ageMs !== null
+    ? ageMs > staleAfterMs()
+    : bool(weather.cacheStale || weather.stale, false);
 
-  const bullishPctRaw = safeNumber(weather.bullishPct, null);
-  const bearishPctRaw = safeNumber(weather.bearishPct, null);
-  const neutralPctRaw = safeNumber(weather.neutralPct, null);
+  const breadth = weather.breadth || {};
 
-  const advanceRatio = weather.breadth?.advanceRatio !== undefined
-    ? safeNumber(weather.breadth.advanceRatio, 0)
-    : Number.isFinite(bullishPctRaw)
-      ? bullishPctRaw / 100
-      : 0;
+  const bullishPctRaw = safeNumber(
+    weather.bullishPct ??
+      weather.bullPct ??
+      weather.longPct ??
+      breadth.bullishPct ??
+      breadth.bullPct ??
+      breadth.advancePct ??
+      breadth.advancingPct,
+    null
+  );
 
-  const declineRatio = weather.breadth?.declineRatio !== undefined
-    ? safeNumber(weather.breadth.declineRatio, 0)
-    : Number.isFinite(bearishPctRaw)
-      ? bearishPctRaw / 100
-      : 0;
+  const bearishPctRaw = safeNumber(
+    weather.bearishPct ??
+      weather.bearPct ??
+      weather.shortPct ??
+      breadth.bearishPct ??
+      breadth.bearPct ??
+      breadth.declinePct ??
+      breadth.decliningPct,
+    null
+  );
 
-  const neutralRatio = weather.breadth?.neutralRatio !== undefined
-    ? safeNumber(weather.breadth.neutralRatio, 0)
+  const neutralPctRaw = safeNumber(
+    weather.neutralPct ??
+      breadth.neutralPct,
+    null
+  );
+
+  const advanceRatio = breadth.advanceRatio !== undefined
+    ? safeNumber(breadth.advanceRatio, 0)
+    : breadth.advancingRatio !== undefined
+      ? safeNumber(breadth.advancingRatio, 0)
+      : Number.isFinite(bullishPctRaw)
+        ? bullishPctRaw / 100
+        : 0;
+
+  const declineRatio = breadth.declineRatio !== undefined
+    ? safeNumber(breadth.declineRatio, 0)
+    : breadth.decliningRatio !== undefined
+      ? safeNumber(breadth.decliningRatio, 0)
+      : Number.isFinite(bearishPctRaw)
+        ? bearishPctRaw / 100
+        : 0;
+
+  const neutralRatio = breadth.neutralRatio !== undefined
+    ? safeNumber(breadth.neutralRatio, 0)
     : Number.isFinite(neutralPctRaw)
       ? neutralPctRaw / 100
       : 0;
 
+  const available =
+    weather.available !== false &&
+    weather.ok !== false &&
+    (
+      sampleSize > 0 ||
+      currentRegime !== WEATHER_REGIME.UNKNOWN ||
+      currentTrendSide !== TREND_SIDE.UNKNOWN
+    );
+
   const normalized = {
     ...weather,
 
-    ok: weather.ok !== false && sampleSize > 0,
-    available: weather.available !== false && sampleSize > 0,
+    ok: available,
+    available,
 
     version: weather.version || MARKET_WEATHER_VERSION,
 
@@ -1235,6 +1386,7 @@ function normalizeMarketWeatherPayload(weather = {}) {
 
     cacheHealthy: bool(weather.cacheHealthy, sampleSize >= minUniverseSize()),
     cacheStale,
+    stale: bool(weather.stale, cacheStale),
     ageMs,
 
     sampleSize,
@@ -1242,27 +1394,31 @@ function normalizeMarketWeatherPayload(weather = {}) {
     count: sampleSize,
     universeCount: sampleSize,
 
+    bullishPct: Number.isFinite(bullishPctRaw) ? round2(bullishPctRaw) : null,
+    bearishPct: Number.isFinite(bearishPctRaw) ? round2(bearishPctRaw) : null,
+    neutralPct: Number.isFinite(neutralPctRaw) ? round2(neutralPctRaw) : null,
+
     breadth: {
-      advancingCount: safeNumber(weather.breadth?.advancingCount ?? weather.bullishCount, 0),
-      decliningCount: safeNumber(weather.breadth?.decliningCount ?? weather.bearishCount, 0),
-      neutralCount: safeNumber(weather.breadth?.neutralCount ?? weather.neutralCount, 0),
-      strongBullishCount: safeNumber(weather.breadth?.strongBullishCount, 0),
-      strongBearishCount: safeNumber(weather.breadth?.strongBearishCount, 0),
+      advancingCount: safeNumber(breadth.advancingCount ?? weather.bullishCount, 0),
+      decliningCount: safeNumber(breadth.decliningCount ?? weather.bearishCount, 0),
+      neutralCount: safeNumber(breadth.neutralCount ?? weather.neutralCount, 0),
+      strongBullishCount: safeNumber(breadth.strongBullishCount, 0),
+      strongBearishCount: safeNumber(breadth.strongBearishCount, 0),
 
       advanceRatio: round4(advanceRatio),
       declineRatio: round4(declineRatio),
       neutralRatio: round4(neutralRatio),
-      strongBullishRatio: safeNumber(weather.breadth?.strongBullishRatio, 0),
-      strongBearishRatio: safeNumber(weather.breadth?.strongBearishRatio, 0),
+      strongBullishRatio: safeNumber(breadth.strongBullishRatio, 0),
+      strongBearishRatio: safeNumber(breadth.strongBearishRatio, 0),
 
-      medianChange1h: safeNumber(weather.breadth?.medianChange1h, 0),
-      medianChange24h: safeNumber(weather.breadth?.medianChange24h, 0),
-      medianAbs1h: safeNumber(weather.breadth?.medianAbs1h, 0),
-      medianAbs24h: safeNumber(weather.breadth?.medianAbs24h, 0),
-      medianRangePct: safeNumber(weather.breadth?.medianRangePct, 0),
-      meanChange1h: safeNumber(weather.breadth?.meanChange1h, 0),
-      meanChange24h: safeNumber(weather.breadth?.meanChange24h, 0),
-      change24hDispersion: safeNumber(weather.breadth?.change24hDispersion, 0)
+      medianChange1h: safeNumber(breadth.medianChange1h, 0),
+      medianChange24h: safeNumber(breadth.medianChange24h, 0),
+      medianAbs1h: safeNumber(breadth.medianAbs1h, 0),
+      medianAbs24h: safeNumber(breadth.medianAbs24h, 0),
+      medianRangePct: safeNumber(breadth.medianRangePct, 0),
+      meanChange1h: safeNumber(breadth.meanChange1h, 0),
+      meanChange24h: safeNumber(breadth.meanChange24h, 0),
+      change24hDispersion: safeNumber(breadth.change24hDispersion, 0)
     },
 
     btc: {
@@ -1446,6 +1602,10 @@ export function buildMarketWeatherFromTickers(tickers = [], {
     count: sampleSize,
     universeCount: sampleSize,
 
+    bullishPct: round2(advanceRatio * 100),
+    bearishPct: round2(declineRatio * 100),
+    neutralPct: round2(neutralRatio * 100),
+
     breadth: {
       advancingCount,
       decliningCount,
@@ -1485,33 +1645,50 @@ export function buildMarketWeatherFromTickers(tickers = [], {
 }
 
 export async function loadScannerUniverse({
-  redis = getDurableRedis(),
+  redis = null,
   keys = defaultUniverseKeys()
 } = {}) {
+  const clients = redis
+    ? [{ name: 'provided', redis }]
+    : marketWeatherRedisClients(true);
+
   for (const key of keys) {
-    try {
-      const payload = await getJson(redis, key, null);
+    const namespacedKey = namespacedShortKey(key);
 
-      const rows = extractTickerRows(payload);
+    for (const client of clients) {
+      if (!client.redis || !namespacedKey) continue;
 
-      if (rows.length > 0) {
-        return {
-          ok: true,
-          key,
-          payload,
-          rows,
-          source: payload?.source || 'SCANNER_CACHE',
-          cacheUpdatedAt: safeNumber(payload?.updatedAt || payload?.generatedAt || payload?.ts, 0)
-        };
+      try {
+        const payload = await readJsonWithSoftTimeout(
+          client.redis,
+          namespacedKey,
+          null,
+          redisReadTimeoutMs()
+        );
+
+        const rows = extractTickerRows(payload);
+
+        if (rows.length > 0) {
+          return {
+            ok: true,
+            key: namespacedKey,
+            redisSource: client.name,
+            payload,
+            rows,
+            source: payload?.source || 'SCANNER_CACHE',
+            cacheUpdatedAt: safeNumber(payload?.updatedAt || payload?.generatedAt || payload?.ts, 0)
+          };
+        }
+      } catch {
+        // Try next key/client.
       }
-    } catch {
-      // Try next key.
     }
   }
 
   return {
     ok: false,
     key: null,
+    redisSource: null,
     payload: null,
     rows: [],
     source: 'NO_SCANNER_CACHE',
@@ -1520,7 +1697,7 @@ export async function loadScannerUniverse({
 }
 
 export async function buildMarketWeather({
-  redis = getDurableRedis(),
+  redis = null,
   universe = null,
   source = null,
   sourceKey = null,
@@ -1572,7 +1749,7 @@ export async function buildMarketWeather({
 }
 
 export async function saveMarketWeather(weather, {
-  redis = getDurableRedis(),
+  redis = null,
   keys = defaultWeatherKeys()
 } = {}) {
   const payload = normalizeMarketWeatherPayload({
@@ -1601,14 +1778,24 @@ export async function saveMarketWeather(weather, {
     ...shortModeFlags()
   });
 
+  const clients = redis
+    ? [{ name: 'provided', redis }]
+    : marketWeatherRedisClients(false);
+
   const savedKeys = [];
 
   for (const key of keys) {
-    try {
-      await setJson(redis, namespacedShortKey(key), payload);
-      savedKeys.push(namespacedShortKey(key));
-    } catch {
-      // Keep saving other compatibility keys.
+    const namespacedKey = namespacedShortKey(key);
+
+    for (const client of clients) {
+      if (!client.redis || !namespacedKey) continue;
+
+      try {
+        await setJson(client.redis, namespacedKey, payload);
+        savedKeys.push(`${client.name}:${namespacedKey}`);
+      } catch {
+        // Keep saving other compatibility keys.
+      }
     }
   }
 
@@ -1620,38 +1807,84 @@ export async function saveMarketWeather(weather, {
 }
 
 export async function loadMarketWeather({
-  redis = getDurableRedis(),
+  redis = null,
   keys = defaultWeatherKeys(),
   maxAgeMs = staleAfterMs()
 } = {}) {
+  const clients = redis
+    ? [{ name: 'provided', redis }]
+    : marketWeatherRedisClients(true);
+
+  let bestStale = null;
+
   for (const key of keys) {
-    try {
-      const rawWeather = await getJson(redis, namespacedShortKey(key), null);
+    const namespacedKey = namespacedShortKey(key);
 
-      if (!rawWeather) continue;
+    for (const client of clients) {
+      if (!client.redis || !namespacedKey) continue;
 
-      const generatedAt = safeNumber(rawWeather.generatedAt || rawWeather.updatedAt || rawWeather.savedAt || rawWeather.completedAt, 0);
-      const ageMs = generatedAt > 0 ? now() - generatedAt : null;
-      const stale = ageMs !== null ? ageMs > maxAgeMs : true;
+      try {
+        const rawWeather = await readJsonWithSoftTimeout(
+          client.redis,
+          namespacedKey,
+          null,
+          redisReadTimeoutMs()
+        );
 
-      return normalizeMarketWeatherPayload({
-        ...rawWeather,
-        loadedFromKey: namespacedShortKey(key),
-        loadedAt: now(),
-        ageMs,
-        stale,
-        cacheStale: stale,
-        softOnly: true,
-        blocksLearning: false,
-        currentFitSoftOnly: true,
-        currentFitBlocksLearning: false,
-        currentFitBlocksVirtualLearning: false,
-        currentFitBlocksShadowLearning: false,
-        ...shortModeFlags()
-      });
-    } catch {
-      // Try next key.
+        if (!rawWeather) continue;
+
+        const generatedAt = safeNumber(
+          rawWeather.generatedAt ||
+            rawWeather.updatedAt ||
+            rawWeather.savedAt ||
+            rawWeather.completedAt ||
+            rawWeather.createdAt,
+          0
+        );
+
+        const ageMs = generatedAt > 0 ? now() - generatedAt : null;
+        const stale = ageMs !== null ? ageMs > maxAgeMs : true;
+
+        const normalized = normalizeMarketWeatherPayload({
+          ...rawWeather,
+          loadedFromKey: namespacedKey,
+          loadedFromRedis: client.name,
+          loadedAt: now(),
+          ageMs,
+          stale,
+          cacheStale: stale,
+          softOnly: true,
+          blocksLearning: false,
+          currentFitSoftOnly: true,
+          currentFitBlocksLearning: false,
+          currentFitBlocksVirtualLearning: false,
+          currentFitBlocksShadowLearning: false,
+          ...shortModeFlags()
+        });
+
+        if (!stale && normalized.ok) {
+          return normalized;
+        }
+
+        if (!bestStale && normalized.sampleSize > 0) {
+          bestStale = normalized;
+        }
+      } catch {
+        // Try next key/client.
+      }
     }
+  }
+
+  if (bestStale) {
+    return normalizeMarketWeatherPayload({
+      ...bestStale,
+      ok: true,
+      available: true,
+      stale: true,
+      cacheStale: true,
+      staleFallbackUsed: true,
+      reason: 'STALE_MARKET_WEATHER_FALLBACK_USED'
+    });
   }
 
   return emptyWeather({
@@ -1975,7 +2208,12 @@ export function compactMarketWeatherForEntry(weather = {}) {
 
     cacheHealthy: Boolean(weatherRow.cacheHealthy),
     cacheStale: Boolean(weatherRow.cacheStale),
+    staleFallbackUsed: Boolean(weatherRow.staleFallbackUsed),
     sampleSize: safeNumber(weatherRow.sampleSize, 0),
+
+    bullishPct: weatherRow.bullishPct ?? null,
+    bearishPct: weatherRow.bearishPct ?? null,
+    neutralPct: weatherRow.neutralPct ?? null,
 
     breadth: {
       advanceRatio: safeNumber(weatherRow.breadth?.advanceRatio, 0),
@@ -2076,7 +2314,7 @@ export function annotateWithCurrentFit(row = {}, weather = {}) {
 }
 
 export async function getMarketWeather({
-  redis = getDurableRedis(),
+  redis = null,
   refresh = false,
   save = true,
   allowStale = true
@@ -2089,6 +2327,15 @@ export async function getMarketWeather({
     if (loaded.ok && (allowStale || loaded.stale !== true)) {
       return normalizeMarketWeatherPayload(loaded);
     }
+
+    if (allowStale && loaded.sampleSize > 0) {
+      return normalizeMarketWeatherPayload({
+        ...loaded,
+        ok: true,
+        available: true,
+        staleFallbackUsed: true
+      });
+    }
   }
 
   return buildMarketWeather({
@@ -2098,7 +2345,7 @@ export async function getMarketWeather({
 }
 
 export async function annotateWithLatestCurrentFit(row = {}, {
-  redis = getDurableRedis(),
+  redis = null,
   refresh = false
 } = {}) {
   const weather = await getMarketWeather({
