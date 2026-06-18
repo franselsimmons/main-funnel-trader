@@ -23,7 +23,7 @@ const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const MARKET_WEATHER_KEY = 'MARKET:WEATHER:LATEST';
-const SHORT_MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
+const SHORT_MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}${MARKET_WEATHER_KEY}`;
 
 const SHOW_SCANNER_FINGERPRINT_LEGACY_FALLBACK = false;
 
@@ -36,7 +36,7 @@ const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
 const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V1';
-const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V1';
+const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V2';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -103,6 +103,7 @@ const MAX_BEST_LIMIT = 100;
 const ACTIVE_ROTATION_TIMEOUT_MS = 1_800;
 const WEEK_MICROS_TIMEOUT_MS = 9_500;
 const MARKET_WEATHER_TIMEOUT_MS = 1_200;
+const MARKET_WEATHER_REDIS_READ_TIMEOUT_MS = 700;
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX_KEYS = 20;
@@ -173,6 +174,10 @@ function clamp(value, min = 0, max = 1) {
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function lower(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function getArray(value) {
@@ -253,6 +258,31 @@ function withTimeout(promise, timeoutMs, code = 'TIMEOUT') {
     });
 }
 
+async function softReadJson(redis, key, fallback = null, timeoutMs = MARKET_WEATHER_REDIS_READ_TIMEOUT_MS) {
+  if (!redis || !key) return fallback;
+
+  let timer = null;
+
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({
+      __timeout: true
+    }), Math.max(1, timeoutMs));
+  });
+
+  try {
+    const value = await Promise.race([
+      getJson(redis, key, fallback),
+      timeoutPromise
+    ]);
+
+    if (value?.__timeout) return fallback;
+
+    return value ?? fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function pruneCacheMap(map) {
   const entries = [...map.entries()];
 
@@ -262,6 +292,59 @@ function pruneCacheMap(map) {
     .sort((a, b) => num(a[1]?.ts, 0) - num(b[1]?.ts, 0))
     .slice(0, Math.max(0, entries.length - CACHE_MAX_KEYS))
     .forEach(([key]) => map.delete(key));
+}
+
+function namespacedShortKey(key, fallback = MARKET_WEATHER_KEY) {
+  const raw = String(key || fallback || '').trim();
+
+  if (!raw) return SHORT_MARKET_WEATHER_KEY;
+  if (raw.startsWith(SHORT_KEY_PREFIX)) return raw;
+  if (raw.startsWith('LONG:')) return `${SHORT_KEY_PREFIX}${raw.slice('LONG:'.length)}`;
+
+  return `${SHORT_KEY_PREFIX}${raw}`;
+}
+
+function marketWeatherKeyCandidates() {
+  return uniqueStrings([
+    SHORT_MARKET_WEATHER_KEY,
+    namespacedShortKey(KEYS.short?.market?.weatherLatest),
+    namespacedShortKey(KEYS.short?.market?.weather),
+    namespacedShortKey(KEYS.market?.shortWeatherLatest),
+    namespacedShortKey(KEYS.market?.shortWeather),
+    namespacedShortKey(MARKET_WEATHER_KEY)
+  ]);
+}
+
+function redisClientsVolatileFirst() {
+  const clients = [];
+
+  try {
+    const volatileRedis = getVolatileRedis();
+
+    if (volatileRedis) {
+      clients.push({
+        name: 'volatile',
+        redis: volatileRedis
+      });
+    }
+  } catch {
+    // Volatile Redis unavailable.
+  }
+
+  try {
+    const durableRedis = getDurableRedis();
+
+    if (durableRedis) {
+      clients.push({
+        name: 'durable',
+        redis: durableRedis
+      });
+    }
+  } catch {
+    // Durable Redis unavailable.
+  }
+
+  return clients;
 }
 
 function modePayload() {
@@ -387,6 +470,7 @@ function modePayload() {
     currentFitBlocksShadowLearning: false,
     currentFitAffectsSelectionOnly: true,
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     adaptiveLayerBuilt: false,
     marketWeatherEngineBuilt: true,
@@ -424,14 +508,14 @@ function normalizeMode(value) {
 
   if (VALID_MODES.has(raw)) return raw;
 
-  const lower = raw.toLowerCase();
+  const rawLower = lower(raw);
 
-  if (lower === 'totalr') return 'totalR';
-  if (lower === 'avgr') return 'avgR';
-  if (lower === 'directsl') return 'directSL';
-  if (lower === 'currentfit') return 'currentFit';
+  if (rawLower === 'totalr') return 'totalR';
+  if (rawLower === 'avgr') return 'avgR';
+  if (rawLower === 'directsl') return 'directSL';
+  if (rawLower === 'currentfit') return 'currentFit';
 
-  return VALID_MODES.has(lower) ? lower : 'balanced';
+  return VALID_MODES.has(rawLower) ? rawLower : 'balanced';
 }
 
 function normalizeRequestedTradeSide(value) {
@@ -859,8 +943,8 @@ function inferTradeSide(input = {}) {
     if (longSignal && !shortSignal) return OPPOSITE_TRADE_SIDE;
 
     if (parseShortTaxonomyMicroId(clean).valid) return TARGET_TRADE_SIDE;
-    if (clean.includes('MICRO_LONG_') || clean.includes('LONG')) return OPPOSITE_TRADE_SIDE;
-    if (clean.includes('MICRO_SHORT_') || clean.includes('SHORT')) return TARGET_TRADE_SIDE;
+    if (clean.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
+    if (clean.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
 
     return 'UNKNOWN';
   }
@@ -997,13 +1081,6 @@ function generateShortTaxonomyRows() {
 
           setupType: setup,
           regimeBucket: regime,
-
-          trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-          exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-          childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-          parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-          learningGranularity: LEARNING_GRANULARITY,
-          parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
           sourceWeekKey: PERSISTENT_LEARNING_KEY,
           sourceWeekPrimary: true,
@@ -1234,6 +1311,10 @@ function aggregateRecentOutcomes(row = {}) {
         acc.flats += 1;
       }
 
+      if (outcome.directSL || outcome.directToSL || outcome.directStopLoss || outcome.isDirectSL) {
+        acc.directSLCount += 1;
+      }
+
       return acc;
     },
     {
@@ -1244,7 +1325,8 @@ function aggregateRecentOutcomes(row = {}) {
       totalR: 0,
       totalCostR: 0,
       grossWinR: 0,
-      grossLossR: 0
+      grossLossR: 0,
+      directSLCount: 0
     }
   );
 }
@@ -1464,33 +1546,6 @@ function getTotalCostR(row = {}) {
     return Math.max(0, num(row.estimatedCostR, 0)) * completed;
   }
 
-  if (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0) {
-    const relevant = row.recentOutcomes
-      .filter(Boolean)
-      .filter(isShortRow)
-      .filter((outcome) => isLearningOutcomeSource(outcome.source || outcome.outcomeSource || 'VIRTUAL'));
-
-    const costs = relevant
-      .map((outcome) => Math.max(
-        0,
-        num(
-          outcome.costR ??
-            outcome.avgCostR ??
-            outcome.totalCostR ??
-            outcome.netCostR ??
-            outcome.estimatedCostR,
-          0
-        )
-      ))
-      .filter((costR) => costR > 0);
-
-    if (costs.length > 0) {
-      const avgRecentCostR = costs.reduce((sum, costR) => sum + costR, 0) / costs.length;
-
-      return avgRecentCostR * completed;
-    }
-  }
-
   return 0;
 }
 
@@ -1620,16 +1675,9 @@ function getDirectSLCount(row = {}) {
 
   if (hasValue(row.directSLCount)) return num(row.directSLCount, 0);
 
-  if (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0) {
-    return row.recentOutcomes
-      .filter(Boolean)
-      .filter(isShortRow)
-      .filter((outcome) => isLearningOutcomeSource(outcome.source || outcome.outcomeSource || 'VIRTUAL'))
-      .filter((outcome) => Boolean(outcome.directSL || outcome.directToSL || outcome.directStopLoss || outcome.isDirectSL))
-      .length;
-  }
+  const recent = aggregateRecentOutcomes(row);
 
-  return 0;
+  return recent.directSLCount;
 }
 
 function getDirectSLPct(row = {}) {
@@ -1848,6 +1896,16 @@ function pct01To100(value, fallback = null) {
   return n;
 }
 
+function confidenceTo01(value, fallback = 0.6) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return fallback;
+
+  if (Math.abs(n) > 1) return clamp(n / 100, 0, 1);
+
+  return clamp(n, 0, 1);
+}
+
 function normalizeMarketRegime(value = '') {
   const raw = upper(value);
 
@@ -1893,7 +1951,10 @@ function normalizeMarketTrendSide(value = '') {
     raw === 'LONG' ||
     raw === 'BUY' ||
     raw === 'UP' ||
-    raw.includes('BULL')
+    raw === 'UPSIDE' ||
+    raw === 'GREEN' ||
+    raw.includes('BULL') ||
+    raw.includes('WITH_LONG')
   ) {
     return 'bull';
   }
@@ -1904,7 +1965,10 @@ function normalizeMarketTrendSide(value = '') {
     raw === 'SHORT' ||
     raw === 'SELL' ||
     raw === 'DOWN' ||
-    raw.includes('BEAR')
+    raw === 'DOWNSIDE' ||
+    raw === 'RED' ||
+    raw.includes('BEAR') ||
+    raw.includes('WITH_SHORT')
   ) {
     return 'bear';
   }
@@ -1914,7 +1978,9 @@ function normalizeMarketTrendSide(value = '') {
     raw === 'RANGE' ||
     raw === 'SIDEWAYS' ||
     raw === 'NEUTRAL' ||
-    raw.includes('NEUTRAL')
+    raw === 'MIXED' ||
+    raw.includes('NEUTRAL') ||
+    raw.includes('MIXED')
   ) {
     return 'neutral';
   }
@@ -1950,7 +2016,9 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
       bullishPct: null,
       bearishPct: null,
       squeezePct: null,
-      confidence: 0
+      confidence: 0,
+      stale: false,
+      cacheStale: false
     };
   }
 
@@ -1960,17 +2028,22 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
       data.marketRegime ||
       data.regimeBucket ||
       data.btcRegime ||
-      data.state
+      data.state ||
+      data.currentVolatilityState ||
+      data.volatilityState
   );
 
   const currentTrendSide = normalizeMarketTrendSide(
     data.currentTrendSide ||
       data.trendSide ||
+      data.marketTrendSide ||
       data.dashboardSide ||
       data.marketSide ||
       data.side ||
       data.bias ||
-      data.direction
+      data.direction ||
+      data.currentFlow ||
+      data.flow
   );
 
   const bullishPct = pct01To100(
@@ -1979,7 +2052,10 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
       data.longPct ??
       data.bullishBreadth ??
       data.breadth?.bullishPct ??
-      data.breadth?.bullPct,
+      data.breadth?.bullPct ??
+      data.breadth?.advancePct ??
+      data.breadth?.advanceRatio ??
+      data.breadth?.advancingRatio,
     null
   );
 
@@ -1989,7 +2065,10 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
       data.shortPct ??
       data.bearishBreadth ??
       data.breadth?.bearishPct ??
-      data.breadth?.bearPct,
+      data.breadth?.bearPct ??
+      data.breadth?.declinePct ??
+      data.breadth?.declineRatio ??
+      data.breadth?.decliningRatio,
     null
   );
 
@@ -1998,25 +2077,45 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
       data.compressionPct ??
       data.squeezeBreadth ??
       data.breadth?.squeezePct ??
-      data.breadth?.compressionPct,
+      data.breadth?.compressionPct ??
+      (
+        normalizeMarketRegime(data.currentRegime || data.regime) === 'SQUEEZE'
+          ? 100
+          : null
+      ),
     null
   );
 
-  const confidenceRaw = pct01To100(
-    data.confidence ??
+  const confidence = confidenceTo01(
+    data.currentMarketFitConfidence ??
+      data.confidence ??
       data.marketConfidence ??
+      data.weatherConfidence ??
       data.score ??
       data.weatherScore,
-    null
+    0.6
   );
 
-  const confidence = confidenceRaw === null
-    ? 0.6
-    : clamp(confidenceRaw / 100, 0, 1);
+  const generatedAt = num(
+    data.generatedAt ||
+      data.updatedAt ||
+      data.savedAt ||
+      data.completedAt ||
+      data.createdAt ||
+      payload.generatedAt ||
+      payload.updatedAt ||
+      payload.savedAt ||
+      payload.createdAt,
+    0
+  );
+
+  const ageMs = generatedAt > 0 ? Math.max(0, now() - generatedAt) : null;
+  const stale = Boolean(data.stale || data.cacheStale || payload.stale || payload.cacheStale);
 
   const available =
     payload?.ok !== false &&
     data?.ok !== false &&
+    data?.available !== false &&
     (
       currentRegime !== 'UNKNOWN' ||
       currentTrendSide !== 'UNKNOWN' ||
@@ -2040,49 +2139,75 @@ function normalizeMarketWeather(payload = null, sourceKey = null, redisSource = 
     squeezePct: squeezePct === null ? null : round(squeezePct, 2),
     confidence: round(confidence, 4),
 
+    generatedAt: generatedAt || null,
     createdAt: data.createdAt || payload.createdAt || null,
     updatedAt: data.updatedAt || payload.updatedAt || null,
+    ageMs,
+    stale,
+    cacheStale: Boolean(data.cacheStale || payload.cacheStale || stale),
     rawRegime: data.regime || data.currentRegime || null,
-    rawTrendSide: data.trendSide || data.currentTrendSide || data.dashboardSide || null
+    rawTrendSide: data.trendSide || data.currentTrendSide || data.dashboardSide || null,
+
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+    shortOnly: true,
+    longDisabled: true,
+    redisNamespace: SHORT_NAMESPACE,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    longRootTouched: false
   };
 }
 
-async function readJsonFromAnyRedis(keys = []) {
-  const durableRedis = getDurableRedis();
-  const volatileRedis = getVolatileRedis();
+async function readJsonFromAnyRedis(keys = marketWeatherKeyCandidates()) {
+  const clients = redisClientsVolatileFirst();
 
-  const clients = [
-    {
-      name: 'durable',
-      redis: durableRedis
-    },
-    {
-      name: 'volatile',
-      redis: volatileRedis
-    }
-  ];
+  let staleCandidate = null;
 
-  for (const key of keys) {
+  for (const key of uniqueStrings(keys)) {
+    const safeKey = namespacedShortKey(key);
+
     for (const client of clients) {
-      if (!client.redis || !key) continue;
+      if (!client.redis || !safeKey) continue;
 
       try {
-        const payload = await getJson(client.redis, key, null);
+        const payload = await softReadJson(
+          client.redis,
+          safeKey,
+          null,
+          MARKET_WEATHER_REDIS_READ_TIMEOUT_MS
+        );
 
-        if (payload) {
+        if (!payload) continue;
+
+        const normalized = normalizeMarketWeather(payload, safeKey, client.name);
+
+        if (normalized.available && !normalized.stale && !normalized.cacheStale) {
           return {
-            key,
+            key: safeKey,
             redis: client.name,
-            payload
+            payload,
+            normalized
+          };
+        }
+
+        if (normalized.available && !staleCandidate) {
+          staleCandidate = {
+            key: safeKey,
+            redis: client.name,
+            payload,
+            normalized: {
+              ...normalized,
+              staleFallbackUsed: true
+            }
           };
         }
       } catch {
-        // volgende key/client proberen
+        // Try next key/client.
       }
     }
   }
 
-  return null;
+  return staleCandidate;
 }
 
 async function getCurrentMarketWeatherSafe() {
@@ -2092,16 +2217,13 @@ async function getCurrentMarketWeatherSafe() {
 
   try {
     const found = await withTimeout(
-      readJsonFromAnyRedis([
-        SHORT_MARKET_WEATHER_KEY,
-        MARKET_WEATHER_KEY
-      ]),
+      readJsonFromAnyRedis(marketWeatherKeyCandidates()),
       MARKET_WEATHER_TIMEOUT_MS,
       'MARKET_WEATHER_READ_TIMEOUT'
     );
 
-    const value = found?.payload
-      ? normalizeMarketWeather(found.payload, found.key, found.redis)
+    const value = found?.normalized
+      ? found.normalized
       : normalizeMarketWeather(null, null, null);
 
     cache.marketWeather = {
@@ -2122,7 +2244,9 @@ async function getCurrentMarketWeatherSafe() {
       bullishPct: null,
       bearishPct: null,
       squeezePct: null,
-      confidence: 0
+      confidence: 0,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
     };
 
     cache.marketWeather = {
@@ -2143,6 +2267,12 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     currentFitLabel: 'UNKNOWN',
     currentFitScore: 0,
     fitScore: 0,
+    shortCurrentFit: 0,
+    bearCurrentFit: 0,
+    bearishCurrentFit: 0,
+    longCurrentFit: 0,
+    bullCurrentFit: 0,
+    bullishCurrentFit: 0,
     currentFitConfidence: 0,
     currentFitReason: 'MARKET_WEATHER_UNAVAILABLE',
     currentFitReasons: ['MARKET_WEATHER_UNAVAILABLE'],
@@ -2160,7 +2290,8 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     currentBearishPct: null,
     currentSqueezePct: null,
     currentMarketWeatherAvailable: false,
-    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE'
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
   };
 
   if (!parsed?.isChild || !marketWeather?.available) {
@@ -2178,10 +2309,10 @@ function currentFitForMicro(row = {}, marketWeather = null) {
   const squeezePct = pct01To100(marketWeather.squeezePct, null);
 
   if (marketTrendSide === 'bear') {
-    score += 30;
+    score += 35;
     reasons.push('SHORT_MARKET_SIDE_MATCH_BEAR');
   } else if (marketTrendSide === 'neutral') {
-    score += 5;
+    score += 8;
     reasons.push('SHORT_MARKET_SIDE_NEUTRAL');
   } else if (marketTrendSide === 'bull') {
     score -= 45;
@@ -2200,9 +2331,59 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     reasons.push(`REGIME_MISMATCH_${parsed.regime}_VS_${marketRegime}`);
   }
 
+  if (parsed.setup === 'COMPRESSION') {
+    if (marketRegime === 'SQUEEZE' || (squeezePct !== null && squeezePct >= 35)) {
+      score += 18;
+      reasons.push('COMPRESSION_SETUP_SUPPORTED');
+    } else {
+      score -= 8;
+      reasons.push('COMPRESSION_SETUP_NOT_SUPPORTED');
+    }
+  }
+
+  if (parsed.setup === 'BREAKOUT') {
+    if (marketTrendSide === 'bear' && ['TREND', 'SQUEEZE'].includes(marketRegime)) {
+      score += 12;
+      reasons.push('BEAR_BREAKOUT_CONTEXT_SUPPORTED');
+    }
+    if (marketTrendSide === 'bull') {
+      score -= 14;
+      reasons.push('BREAKOUT_AGAINST_SHORT');
+    }
+  }
+
+  if (parsed.setup === 'CONTINUATION') {
+    if (marketTrendSide === 'bear' && marketRegime === 'TREND') {
+      score += 16;
+      reasons.push('BEAR_CONTINUATION_CONTEXT_SUPPORTED');
+    }
+    if (marketTrendSide === 'bull') {
+      score -= 18;
+      reasons.push('CONTINUATION_AGAINST_SHORT');
+    }
+  }
+
+  if (parsed.setup === 'RETEST') {
+    if (marketTrendSide === 'bear' && ['TREND', 'CHOP'].includes(marketRegime)) {
+      score += 10;
+      reasons.push('SHORT_RETEST_CONTEXT_SUPPORTED');
+    }
+  }
+
+  if (parsed.setup === 'SWEEP_REVERSAL') {
+    if (['CHOP', 'SQUEEZE'].includes(marketRegime)) {
+      score += 12;
+      reasons.push('SWEEP_REVERSAL_CONTEXT_SUPPORTED');
+    }
+    if (marketTrendSide === 'bull') {
+      score -= 8;
+      reasons.push('SWEEP_REVERSAL_BULLISH_HEADWIND');
+    }
+  }
+
   if (parsed.regime === 'SQUEEZE') {
     if (squeezePct !== null && squeezePct >= 35) {
-      score += 20;
+      score += 15;
       reasons.push('SQUEEZE_BREADTH_SUPPORTS_SQUEEZE_SETUP');
     } else if (squeezePct !== null && squeezePct < 15) {
       score -= 10;
@@ -2234,21 +2415,29 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     } else if (bullishPct > bearishPct + 10) {
       score -= 20;
       reasons.push('BULLISH_BREADTH_ABOVE_BEARISH');
+    } else {
+      reasons.push('BREADTH_MIXED');
     }
   }
 
   if (parsed.confirmationProfile === 'A_STRONG_ALIGN') {
-    score += 8;
+    score += marketTrendSide === 'bear' ? 12 : 6;
     reasons.push('CONFIRMATION_STRONG_ALIGN');
   } else if (parsed.confirmationProfile === 'B_FLOW_ALIGN') {
-    score += 5;
+    score += marketTrendSide === 'bear' ? 9 : 4;
     reasons.push('CONFIRMATION_FLOW_ALIGN');
+  } else if (parsed.confirmationProfile === 'C_VOLUME_ALIGN') {
+    score += 5;
+    reasons.push('CONFIRMATION_VOLUME_ALIGN');
+  } else if (parsed.confirmationProfile === 'D_MIXED_OK') {
+    score += marketTrendSide === 'neutral' || marketRegime === 'CHOP' ? 6 : 0;
+    reasons.push('CONFIRMATION_MIXED_OK');
   } else if (parsed.confirmationProfile === 'E_WEAK_CONTRA') {
-    score -= 5;
+    score -= 8;
     reasons.push('CONFIRMATION_WEAK_CONTRA');
   }
 
-  const normalizedScore = clamp(score, -100, 100);
+  const normalizedScore = round(clamp(score, -100, 100), 2);
 
   let label = 'NEUTRAL';
 
@@ -2265,8 +2454,16 @@ function currentFitForMicro(row = {}, marketWeather = null) {
   return {
     currentFit: label,
     currentFitLabel: label,
-    currentFitScore: round(normalizedScore, 2),
-    fitScore: round(normalizedScore, 2),
+    currentFitScore: normalizedScore,
+    fitScore: normalizedScore,
+
+    shortCurrentFit: normalizedScore,
+    bearCurrentFit: normalizedScore,
+    bearishCurrentFit: normalizedScore,
+    longCurrentFit: -normalizedScore,
+    bullCurrentFit: -normalizedScore,
+    bullishCurrentFit: -normalizedScore,
+
     currentFitConfidence: round(confidence, 4),
     currentFitReason: reasons.join('|'),
     currentFitReasons: reasons,
@@ -2288,7 +2485,11 @@ function currentFitForMicro(row = {}, marketWeather = null) {
     currentBearishPct: bearishPct === null ? null : round(bearishPct, 2),
     currentSqueezePct: squeezePct === null ? null : round(squeezePct, 2),
     currentMarketWeatherAvailable: true,
-    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE'
+    currentMarketWeatherSourceKey: marketWeather.sourceKey || null,
+    currentMarketWeatherRedisSource: marketWeather.redisSource || null,
+    currentMarketWeatherStaleFallbackUsed: Boolean(marketWeather.staleFallbackUsed),
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
   };
 }
 
@@ -2852,46 +3053,29 @@ function normalizeMicroRow(
   const trueMicroFamilyId = getTrueMicroFamilyId(row);
   const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
 
-  const microFamilyId = trueMicroFamilyId;
   const parentTrueMicroFamilyId = parsed.parentTrueMicroFamilyId;
-  const coarseMicroFamilyId = parentTrueMicroFamilyId;
-  const familyId = parentTrueMicroFamilyId;
-  const macroFamilyId = parentTrueMicroFamilyId;
-
-  const active = Boolean(row.active) || (
-    trueMicroFamilyId
-      ? activeSet.has(trueMicroFamilyId)
-      : false
-  );
-
-  const macroActive = Boolean(row.macroActive) || (
-    macroFamilyId
-      ? activeMacroSet.has(macroFamilyId)
-      : false
-  );
-
+  const riskGeometry = getShortRiskGeometry(row);
   const winrate = getSampleAdjustedWinrate(row);
   const tier = tierFor(row, winrate);
   const learningStatus = learningStatusFor(row, winrate);
   const tooEarly = winrate.outcomeSample < MIN_COMPLETED_ACTIVE_LEARNING;
-  const riskGeometry = getShortRiskGeometry(row);
 
   const base = {
     rank: index + 1,
 
-    microFamilyId,
+    microFamilyId: trueMicroFamilyId,
     trueMicroFamilyId,
     analyzeMicroFamilyId: trueMicroFamilyId,
     learningMicroFamilyId: trueMicroFamilyId,
     childTrueMicroFamilyId: trueMicroFamilyId,
 
     parentTrueMicroFamilyId,
-    coarseMicroFamilyId,
+    coarseMicroFamilyId: parentTrueMicroFamilyId,
     baseMicroFamilyId: parentTrueMicroFamilyId,
     legacyMicroFamilyId: parentTrueMicroFamilyId,
 
-    familyId,
-    macroFamilyId,
+    familyId: parentTrueMicroFamilyId,
+    macroFamilyId: parentTrueMicroFamilyId,
     parentMacroFamilyId: parentTrueMicroFamilyId,
     parentMicroFamilyId: parentTrueMicroFamilyId,
 
@@ -2929,8 +3113,8 @@ function normalizeMicroRow(
     sourceWeekPrimary: row.sourceWeekPrimary !== false,
     sourceWeekFallback: Boolean(row.sourceWeekFallback),
 
-    active,
-    macroActive,
+    active: Boolean(row.active) || activeSet.has(trueMicroFamilyId),
+    macroActive: Boolean(row.macroActive) || activeMacroSet.has(parentTrueMicroFamilyId),
 
     seen: num(row.seen, 0),
     observations: num(row.observations, 0),
@@ -3032,10 +3216,17 @@ function normalizeMicroRow(
     currentFitLabel: row.currentFitLabel || row.currentFit || 'UNKNOWN',
     currentFitScore: round(row.currentFitScore ?? row.fitScore ?? 0, 4),
     fitScore: round(row.fitScore ?? row.currentFitScore ?? 0, 4),
+    shortCurrentFit: round(row.shortCurrentFit ?? row.currentFitScore ?? row.fitScore ?? 0, 4),
+    bearCurrentFit: round(row.bearCurrentFit ?? row.currentFitScore ?? row.fitScore ?? 0, 4),
+    bearishCurrentFit: round(row.bearishCurrentFit ?? row.currentFitScore ?? row.fitScore ?? 0, 4),
+    longCurrentFit: round(row.longCurrentFit ?? -(row.currentFitScore ?? row.fitScore ?? 0), 4),
+    bullCurrentFit: round(row.bullCurrentFit ?? -(row.currentFitScore ?? row.fitScore ?? 0), 4),
+    bullishCurrentFit: round(row.bullishCurrentFit ?? -(row.currentFitScore ?? row.fitScore ?? 0), 4),
     currentFitConfidence: round(row.currentFitConfidence ?? 0, 4),
     currentFitReason: row.currentFitReason || null,
     currentFitReasons: Array.isArray(row.currentFitReasons) ? row.currentFitReasons : [],
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
     currentMarketRegime: row.currentMarketRegime || 'UNKNOWN',
     currentMarketTrendSide: row.currentMarketTrendSide || 'UNKNOWN',
@@ -3043,6 +3234,9 @@ function normalizeMicroRow(
     currentBearishPct: row.currentBearishPct ?? null,
     currentSqueezePct: row.currentSqueezePct ?? null,
     currentMarketWeatherAvailable: Boolean(row.currentMarketWeatherAvailable),
+    currentMarketWeatherSourceKey: row.currentMarketWeatherSourceKey || null,
+    currentMarketWeatherRedisSource: row.currentMarketWeatherRedisSource || null,
+    currentMarketWeatherStaleFallbackUsed: Boolean(row.currentMarketWeatherStaleFallbackUsed),
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -3190,9 +3384,12 @@ function compactBestRow(row) {
     fitScore: round(row.fitScore ?? row.currentFitScore ?? 0, 4),
     currentFitConfidence: round(row.currentFitConfidence ?? 0, 4),
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
     currentMarketRegime: row.currentMarketRegime || 'UNKNOWN',
     currentMarketTrendSide: row.currentMarketTrendSide || 'UNKNOWN',
-    currentMarketWeatherAvailable: Boolean(row.currentMarketWeatherAvailable)
+    currentMarketWeatherAvailable: Boolean(row.currentMarketWeatherAvailable),
+    currentMarketWeatherSourceKey: row.currentMarketWeatherSourceKey || null,
+    currentMarketWeatherRedisSource: row.currentMarketWeatherRedisSource || null
   };
 }
 
@@ -3935,7 +4132,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-true-micro-net-outcome-currentfit-v1');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-true-micro-net-outcome-currentfit-v2');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -4214,7 +4411,10 @@ export default async function handler(req, res) {
       marketWeather.available !== true
         ? `MARKET_WEATHER_UNAVAILABLE:${marketWeather.reason || 'UNKNOWN'}`
         : null,
-      currentFitUnknownRows >= mergedRows.length
+      marketWeather.staleFallbackUsed
+        ? 'MARKET_WEATHER_STALE_FALLBACK_USED_CURRENTFIT_STILL_ENABLED'
+        : null,
+      currentFitUnknownRows >= mergedRows.length && mergedRows.length > 0
         ? 'CURRENTFIT_ALL_UNKNOWN_MARKET_WEATHER_NOT_USABLE'
         : null,
       weekRows.length === 0 && activeFallbackRows.length > 0
@@ -4267,7 +4467,8 @@ export default async function handler(req, res) {
 
       currentFitPolicy: {
         version: CURRENT_FIT_VERSION,
-        marketWeatherKeys: [SHORT_MARKET_WEATHER_KEY, MARKET_WEATHER_KEY],
+        marketWeatherKeys: marketWeatherKeyCandidates(),
+        marketWeatherRawLegacyKeyReadDisabled: true,
         marketWeatherAvailable: Boolean(marketWeather.available),
         sourceKey: marketWeather.sourceKey || null,
         redisSource: marketWeather.redisSource || null,
@@ -4277,13 +4478,15 @@ export default async function handler(req, res) {
         bearishPct: marketWeather.bearishPct,
         squeezePct: marketWeather.squeezePct,
         confidence: marketWeather.confidence,
+        staleFallbackUsed: Boolean(marketWeather.staleFallbackUsed),
         reason: marketWeather.reason || null,
         softOnly: true,
         blocksLearning: false,
         blocksVirtualLearning: false,
         blocksShadowLearning: false,
         canBlockDiscordOnly: true,
-        polarity: 'bearish market = positive for SHORT; bullish market = negative for SHORT'
+        polarity: 'bearish market = positive for SHORT; bullish market = negative for SHORT',
+        definition: 'SHORT_MIRRORED_CURRENT_FIT'
       },
 
       riskOutcomePolicy: {
@@ -4486,7 +4689,8 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnly75ChildPersistentLearningNetOutcomeObservationFirstAnalyzeTrueMicroOnlyScannerFingerprintMetadataOnlyCurrentFitMarketWeatherAvgCostRFallbackFix',
+        marketWeatherCacheHit: Boolean(cache.marketWeather),
+        path: 'shortOnly75ChildPersistentLearningNetOutcomeObservationFirstAnalyzeTrueMicroOnlyScannerFingerprintMetadataOnlyCurrentFitMarketWeatherAvgCostRFallbackFixV2',
         best75Source: 'persistentLearningMergedRowsBeforeFilters'
       },
 
