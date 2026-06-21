@@ -2972,6 +2972,7 @@
           ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
           ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
           ${metricCard("Analyze 75-child rows", fmtInt(microRows.length || data.currentWeekMicroFamilies))}
+          ${metricCard("Default top N per side", "2", "engine selecteert minimaal 2 microfamilies")}
         </div>
 
         <div class="grid">
@@ -3460,7 +3461,7 @@
           </div>
 
           <div class="toolbar">
-            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact 75-child</button>
+            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
             <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
           </div>
         </div>
@@ -3501,6 +3502,7 @@
 
           <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible 75-child IDs</button>
           <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible exact IDs</button>
+          <button type="button" class="primary" id="activateTopTwoBtn">Activate top 2 adaptief</button>
           <button type="button" id="exportMicrosBtn">Export JSON</button>
         </div>
 
@@ -3596,11 +3598,21 @@
         activateSelectedMicroFamilies(ids);
       });
 
+      $("activateTopTwoBtn")?.addEventListener("click", () => {
+        activateTopN(2);
+      });
+
       $("exportMicrosBtn")?.addEventListener("click", () => {
         downloadJson("short-75-child-micro-families.json", state.micros);
       });
 
       bindMicroEvents();
+    }
+
+    function activateTopN(n) {
+      const rows = currentMicroRows().slice(0, n);
+      const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+      activateSelectedMicroFamilies(ids);
     }
 
     async function renderRotation() {
@@ -3675,6 +3687,7 @@
 
           <div class="toolbar">
             <button type="button" class="short-action" id="activateManualBtn">Save exact Discord selection</button>
+            <button type="button" class="primary" id="activateTopTwoRotationBtn">Select top 2 adaptief</button>
             <button type="button" id="clearManualBtn">Clear input</button>
             <button type="button" class="success" id="copyActiveBtn">Copy active 75-child IDs</button>
             <button type="button" id="exportRotationBtn">Export JSON</button>
@@ -3699,6 +3712,10 @@
       $("activateManualBtn")?.addEventListener("click", () => {
         const ids = uniqueStrings(($("manualMicroIds")?.value || "").split(/[\n,;\r]+/g));
         activateSelectedMicroFamilies(ids);
+      });
+
+      $("activateTopTwoRotationBtn")?.addEventListener("click", () => {
+        activateTopN(2);
       });
 
       $("clearManualBtn")?.addEventListener("click", () => {
