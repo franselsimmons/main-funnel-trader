@@ -1,3 +1,4 @@
+```html
 <!doctype html>
 <html lang="nl">
 <head>
@@ -788,6 +789,7 @@
     const PERSISTENT_LEARNING_KEY = "SHORT_LIVE";
 
     const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+    const MAX_ACTIVE_DISCORD_MICRO_FAMILIES = 2;
     const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
     const TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_75";
@@ -2737,7 +2739,8 @@
             <td><strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong></td>
             <td>
               <div class="micro-actions">
-                <button type="button" class="small short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+                <button type="button" class="small short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #1</button>
+                <button type="button" class="small short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #2</button>
                 <button type="button" class="small" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
               </div>
             </td>
@@ -2795,7 +2798,8 @@
             </div>
 
             <div class="toolbar">
-              <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+              <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #1</button>
+              <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #2</button>
               <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
             </div>
           </article>
@@ -2837,15 +2841,55 @@
       `;
     }
 
+    function currentManualSelectionSlots() {
+      const active = activeMicroIds()
+        .map((id) => String(id || "").trim().toUpperCase())
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      while (active.length < MAX_ACTIVE_DISCORD_MICRO_FAMILIES) {
+        active.push("");
+      }
+      return active;
+    }
+    function buildManualSelectionForSlot(slotNumber, id) {
+      const slots = currentManualSelectionSlots();
+      const cleanId = String(id || "").trim().toUpperCase();
+      const index = Number(slotNumber) === 2 ? 1 : 0;
+      if (!idAllowedInShortOnly(cleanId)) {
+        return slots.filter(Boolean);
+      }
+      slots[index] = cleanId;
+      return uniqueStrings(slots)
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+    }
+    function clearManualSelectionSlot(slotNumber) {
+      const slots = currentManualSelectionSlots();
+      const index = Number(slotNumber) === 2 ? 1 : 0;
+      slots[index] = "";
+      return uniqueStrings(slots)
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+    }
     function bindMicroEvents() {
-      document.querySelectorAll("[data-activate-one]").forEach((btn) => {
-        btn.addEventListener("click", () => activateSelectedMicroFamilies([btn.dataset.activateOne]));
+      document.querySelectorAll("[data-activate-slot]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const slotNumber = Number(btn.dataset.activateSlot || 1);
+          const id = btn.dataset.activateId || "";
+          const ids = buildManualSelectionForSlot(slotNumber, id);
+          activateSelectedMicroFamilies(ids);
+        });
       });
-
+      document.querySelectorAll("[data-clear-slot]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const slotNumber = Number(btn.dataset.clearSlot || 2);
+          const ids = clearManualSelectionSlot(slotNumber);
+          activateSelectedMicroFamilies(ids);
+        });
+      });
       document.querySelectorAll("[data-copy]").forEach((btn) => {
         btn.addEventListener("click", () => copyText(btn.dataset.copy, "75-child trueMicroFamilyId gekopieerd."));
       });
-
       document.querySelectorAll("[data-open-micro]").forEach((btn) => {
         btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
       });
@@ -3461,7 +3505,9 @@
           </div>
 
           <div class="toolbar">
-            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+            <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #1</button>
+            <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #2</button>
+            <button type="button" class="warn" data-clear-slot="2">Maak #2 leeg</button>
             <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
           </div>
         </div>
@@ -3594,7 +3640,9 @@
       });
 
       $("activateVisibleIdsBtn")?.addEventListener("click", () => {
-        const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+        const ids = uniqueStrings(rows.map(microId))
+          .filter(idAllowedInShortOnly)
+          .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
         activateSelectedMicroFamilies(ids);
       });
 
@@ -3610,8 +3658,10 @@
     }
 
     function activateTopN(n) {
-      const rows = currentMicroRows().slice(0, n);
-      const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+      const rows = currentMicroRows().slice(0, Math.min(n, MAX_ACTIVE_DISCORD_MICRO_FAMILIES));
+      const ids = uniqueStrings(rows.map(microId))
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
       activateSelectedMicroFamilies(ids);
     }
 
@@ -3734,8 +3784,11 @@
     }
 
     async function activateSelectedMicroFamilies(ids = []) {
-      const microFamilyIds = uniqueStrings(ids).filter(idAllowedInShortOnly);
-      const rejectedIds = uniqueStrings(ids).filter((id) => !idAllowedInShortOnly(id));
+      const allRequestedIds = uniqueStrings(ids);
+      const validIds = allRequestedIds.filter(idAllowedInShortOnly);
+      const microFamilyIds = validIds.slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      const rejectedIds = allRequestedIds.filter((id) => !idAllowedInShortOnly(id));
+      const ignoredExtraIds = validIds.slice(MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
       if (!microFamilyIds.length) {
         setMessage(
@@ -3748,9 +3801,9 @@
       }
 
       if (!confirm(
-        `Activeer Discord alerts voor ${microFamilyIds.length} exacte SHORT 75-child ID(s)?\n\n` +
-        `${microFamilyIds.slice(0, 8).join("\n")}` +
-        `${microFamilyIds.length > 8 ? "\n..." : ""}\n\n` +
+        `Activeer Discord alerts voor ${microFamilyIds.length} van maximaal ${MAX_ACTIVE_DISCORD_MICRO_FAMILIES} exacte SHORT 75-child ID(s)?\n\n` +
+        `${microFamilyIds.join("\n")}` +
+        `${ignoredExtraIds.length ? `\n\nGenegeerd boven limiet:\n${ignoredExtraIds.join("\n")}` : ""}\n\n` +
         "Virtual/shadow learning blijft breed doorlopen. CurrentFit mag Discord blokkeren."
       )) {
         return;
@@ -3828,7 +3881,7 @@
       };
 
       setMessage(
-        `Manual Discord selection opgeslagen.\nActive SHORT 75-child IDs: ${activeIds.length}\nVirtual/shadow learning blijft breed doorlopen.`,
+        `Manual Discord selection opgeslagen.\nActive SHORT 75-child IDs: ${activeIds.length}/${MAX_ACTIVE_DISCORD_MICRO_FAMILIES}\nVirtual/shadow learning blijft breed doorlopen.`,
         "ok"
       );
 
@@ -3876,8 +3929,9 @@
             ${statusPill(row)}
             ${currentFitPill(row)}
             ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
-            <button type="button" class="short-action" id="activateDrawerBtn" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Select exact</button>
-            <button type="button" id="copyDrawerBtn">Copy</button>
+            <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(row))}" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Zet als #1</button>
+            <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(microId(row))}" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Zet als #2</button>
+            <button type="button" class="warn" data-clear-slot="2">Maak #2 leeg</button>
           </div>
 
           <div class="grid">
@@ -3902,7 +3956,7 @@
         `;
 
         $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
-        $("activateDrawerBtn")?.addEventListener("click", () => activateSelectedMicroFamilies([microId(row)]));
+        bindMicroEvents();
         $("copyDrawerBtn")?.addEventListener("click", () => copyText(microId(row), "75-child trueMicroFamilyId gekopieerd."));
       } catch (error) {
         drawer.innerHTML = `
@@ -4201,3 +4255,4 @@
   </script>
 </body>
 </html>
+```
