@@ -39,7 +39,7 @@ const EXECUTION_MICRO_SUFFIX = 'XR';
 
 const ROTATION_SIDES = [TARGET_TRADE_SIDE];
 
-const DEFAULT_TOP_N_PER_SIDE = 1;
+const DEFAULT_TOP_N_PER_SIDE = 2;
 const MAX_TOP_N_PER_SIDE = 160;
 const DEFAULT_MIN_WEIGHTED_COMPLETED = 20;
 const DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_MERGE = 25;
@@ -225,7 +225,7 @@ function topNPerSide() {
 
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_TOP_N_PER_SIDE;
 
-  return Math.max(1, Math.min(MAX_TOP_N_PER_SIDE, n));
+  return Math.max(DEFAULT_TOP_N_PER_SIDE, Math.min(MAX_TOP_N_PER_SIDE, n));
 }
 
 function parentDiversificationEnabled() {
@@ -253,7 +253,7 @@ function maxPerParentTrueMicroFamily() {
 
   if (legacyEnforce === true) return 1;
 
-  return parentDiversificationEnabled() ? 1 : 0;
+  return parentDiversificationEnabled() ? DEFAULT_TOP_N_PER_SIDE : 0;
 }
 
 function minPrimaryRowsForPreviousMerge() {
@@ -2591,6 +2591,7 @@ function sanitizeActiveRotation(rotation = {}, {
       .filter(isShortRotationRow)
       .filter(isTrueMicroFamily)
   )
+    .slice(0, topNPerSide())
     .map((row, index) => compactRotationRow(row, index + 1))
     .filter((row) => row.microFamilyId)
     .filter((row) => isKnownTrueMicroId(row.microFamilyId));
@@ -3151,6 +3152,7 @@ export async function activateSelectedMicroFamilies(options = {}) {
   const microFamilies = sortAdaptiveRows(selectedRows)
     .filter(isShortRotationRow)
     .filter(isTrueMicroFamily)
+    .slice(0, topNPerSide())
     .map((row, index) => {
       if (row.manualOnly) {
         return {
@@ -3158,7 +3160,6 @@ export async function activateSelectedMicroFamilies(options = {}) {
           rank: index + 1
         };
       }
-
       return compactRotationRow(row, index + 1);
     })
     .filter((row) => row.microFamilyId)
