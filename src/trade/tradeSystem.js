@@ -88,7 +88,7 @@ const DEFAULT_DISCORD_MIN_CURRENT_FIT_CONFIDENCE = 35;
 const DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC = 15 * 60;
 
 const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 2000;
-const DEFAULT_MONITOR_TIMEOUT_MS = 8000;
+const DEFAULT_MONITOR_TIMEOUT_MS = 42000;
 const DEFAULT_CANDIDATE_TIMEOUT_MS = 7000;
 const DEFAULT_ANALYZE_TIMEOUT_MS = 12000;
 const DEFAULT_ROTATION_TIMEOUT_MS = 3000;
@@ -950,10 +950,15 @@ function tradeConfig() {
     ),
 
     monitorTimeoutMs: positiveInt(
-      firstDefined(options.monitorTimeoutMs, CONFIG.short?.trade?.monitorTimeoutMs),
+      firstDefined(
+        options.monitorTimeoutMs,
+        CONFIG.short?.trade?.monitorTimeoutMs,
+        CONFIG.trade?.shortMonitorTimeoutMs,
+        CONFIG.trade?.monitorTimeoutMs
+      ),
       DEFAULT_MONITOR_TIMEOUT_MS,
       500,
-      20000
+      52000
     ),
 
     candidateTimeoutMs: positiveInt(
@@ -1946,6 +1951,106 @@ async function fetchMidPrice(symbol) {
   return safeNumber(ob?.mid, 0);
 }
 
+function normalizeSymbolLookupKeys(value = '') {
+  const raw = String(value || '').trim();
+  const base = normalizeBaseSymbol(raw);
+  const contract = normalizeContractSymbol(raw || base);
+
+  return [...new Set([
+    raw.toUpperCase(),
+    base,
+    contract,
+    normalizeBaseSymbol(contract)
+  ]
+    .map((part) => String(part || '').trim().toUpperCase())
+    .filter(Boolean))];
+}
+
+function priceHintFromRow(row = {}) {
+  return firstFinite(
+    row.price,
+    row.markPrice,
+    row.currentPrice,
+    row.lastPrice,
+    row.close,
+    row.mid,
+    row.entry,
+    row.entryPrice,
+    row.scannerPrice,
+    row.referencePrice
+  ) || 0;
+}
+
+function buildSnapshotPriceHintMap(snapshot = {}) {
+  const map = new Map();
+  const rows = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
+
+  for (const row of rows) {
+    const price = priceHintFromRow(row);
+
+    if (!(price > 0)) continue;
+
+    const keys = [
+      ...normalizeSymbolLookupKeys(row.symbol),
+      ...normalizeSymbolLookupKeys(row.baseSymbol),
+      ...normalizeSymbolLookupKeys(row.contractSymbol)
+    ];
+
+    for (const key of keys) {
+      if (!map.has(key)) map.set(key, price);
+    }
+  }
+
+  return map;
+}
+
+function getPriceHintForSymbol(priceHintMap, symbol = '') {
+  if (!priceHintMap || !(priceHintMap instanceof Map)) return 0;
+
+  for (const key of normalizeSymbolLookupKeys(symbol)) {
+    const price = safeNumber(priceHintMap.get(key), 0);
+
+    if (price > 0) return price;
+  }
+
+  return 0;
+}
+
+function buildMonitorPriceFetcher(snapshot = {}) {
+  const priceHintMap = buildSnapshotPriceHintMap(snapshot);
+  const fetchCache = new Map();
+
+  const priceFetcher = async (symbol) => {
+    const hinted = getPriceHintForSymbol(priceHintMap, symbol);
+
+    if (hinted > 0) return hinted;
+
+    const key = normalizeContractSymbol(symbol || '');
+
+    if (!key) return 0;
+    if (fetchCache.has(key)) return fetchCache.get(key);
+
+    const promise = fetchMidPrice(key).catch(() => 0);
+
+    fetchCache.set(key, promise);
+
+    const fetched = await promise;
+    const price = safeNumber(fetched, 0);
+
+    fetchCache.set(key, price);
+
+    return price;
+  };
+
+  priceFetcher.meta = {
+    priceHintCount: priceHintMap.size,
+    usesSnapshotPriceHints: true,
+    fallback: 'BITGET_ORDERBOOK_MID'
+  };
+
+  return priceFetcher;
+}
+
 async function processCandidate(candidate) {
   const cfg = tradeConfig();
   const normalized = normalizeCandidate(candidate);
@@ -2749,7 +2854,8 @@ function buildQualityAudit({
   counts,
   openPositionCountBeforeEntries,
   openPositionCountAfterEntries,
-  marketContext
+  marketContext,
+  monitorDiagnostics
 }) {
   const candidateCount = candidates.length;
   const processedCount = processed.length;
@@ -2828,6 +2934,7 @@ function buildQualityAudit({
       squeezePct: marketContext?.squeezePct ?? null,
       confidence: marketContext?.confidence ?? null
     },
+    monitor: monitorDiagnostics || null,
     snapshot: {
       snapshotId: snapshot?.snapshotId || null,
       selectedSnapshotSource: snapshot?.selectedSnapshotSource || null,
@@ -2956,9 +3063,12 @@ export async function runTradeSystem(options = {}) {
 
     if (isTimeoutResult(marketContextResult)) runtimeWarnings.push('MARKET_CONTEXT_TIMEOUT_USING_EMPTY_CONTEXT');
 
+    const snapshot = await getLatestSnapshot();
+    const monitorPriceFetcher = buildMonitorPriceFetcher(snapshot || {});
+
     const monitorResult = await withTimeout(
       monitorOpenPositions({
-        priceFetcher: async (symbol) => fetchMidPrice(symbol),
+        priceFetcher: monitorPriceFetcher,
         tradeSide: TARGET_TRADE_SIDE,
         side: TARGET_DASHBOARD_SIDE,
         namespace: SHORT_NAMESPACE,
@@ -2968,7 +3078,9 @@ export async function runTradeSystem(options = {}) {
         virtualOnly: true,
         realOrdersDisabled: true,
         bitgetOrdersDisabled: true,
-        exchangeCallsDisabled: true
+        exchangeCallsDisabled: true,
+        useSnapshotPriceHints: true,
+        monitorPriceHintCount: monitorPriceFetcher.meta.priceHintCount
       }).catch((error) => ({
         __monitorError: true,
         error: error?.message || String(error)
@@ -2978,6 +3090,19 @@ export async function runTradeSystem(options = {}) {
     );
 
     const virtualExits = Array.isArray(monitorResult) ? monitorResult : [];
+
+    const monitorDiagnostics = {
+      monitorPreflightEnabled: true,
+      monitorPreflightOk: Array.isArray(monitorResult),
+      monitorPreflightTimedOut: isTimeoutResult(monitorResult),
+      monitorPreflightError: monitorResult?.__monitorError ? monitorResult.error : null,
+      monitorPreflightVirtualExitRows: virtualExits.length,
+      monitorPriceHintCount: monitorPriceFetcher.meta.priceHintCount,
+      monitorUsesSnapshotPriceHints: true,
+      monitorTimeoutMs: cfg.monitorTimeoutMs,
+      monitorSnapshotAvailable: Boolean(snapshot?.snapshotId),
+      monitorSnapshotId: snapshot?.snapshotId || null
+    };
 
     if (isTimeoutResult(monitorResult)) runtimeWarnings.push('MONITOR_OPEN_POSITIONS_TIMEOUT_SKIPPED_FOR_THIS_RUN');
     else if (monitorResult?.__monitorError) runtimeWarnings.push(`MONITOR_OPEN_POSITIONS_ERROR:${monitorResult.error}`);
@@ -2991,6 +3116,7 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta({
         runId,
         startedAt,
+        ...monitorDiagnostics,
         actions,
         realExits,
         virtualExits,
@@ -3010,14 +3136,13 @@ export async function runTradeSystem(options = {}) {
       });
     }
 
-    const snapshot = await getLatestSnapshot();
-
     if (!snapshot?.snapshotId) {
       const actions = [];
 
       return saveRunMeta({
         runId,
         startedAt,
+        ...monitorDiagnostics,
         actions,
         realExits,
         virtualExits,
@@ -3045,6 +3170,7 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta({
         runId,
         startedAt,
+        ...monitorDiagnostics,
         snapshotId: snapshot.snapshotId,
         snapshotAgeSec: Math.round(snapshotAgeSec),
         selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
@@ -3083,6 +3209,7 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta({
         runId,
         startedAt,
+        ...monitorDiagnostics,
         snapshotId: snapshot.snapshotId,
         selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
         selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
@@ -3462,12 +3589,14 @@ export async function runTradeSystem(options = {}) {
       },
       openPositionCountBeforeEntries,
       openPositionCountAfterEntries: openPositions.length,
-      marketContext
+      marketContext,
+      monitorDiagnostics
     });
 
     const baseResult = {
       runId,
       startedAt,
+      ...monitorDiagnostics,
       snapshotId: snapshot.snapshotId,
       snapshotCreatedAt: snapshot.createdAt,
       snapshotAgeSec: Math.round(snapshotAgeSec),
