@@ -959,9 +959,7 @@
 
     function parentFromChildTrueMicroFamilyId(id = "") {
       const parsed = parseFixedShortTaxonomyId(id);
-
       if (!parsed?.isChild) return "";
-
       return parsed.parentTrueMicroFamilyId;
     }
 
@@ -1149,7 +1147,6 @@
         input.familyId,
         input.family,
         input.baseFamilyId,
-
         input.parentTrueMicroFamilyId,
         input.microFamilyId,
         input.trueMicroFamilyId,
@@ -1162,25 +1159,21 @@
         input.learningMicroFamilyId,
         input.id,
         input.key,
-
         input.macroFamilyId,
         input.parentMacroFamilyId,
         input.parentMicroFamilyId,
         input.parentFamilyId,
         input.macroId,
-
         input.definition,
         input.microDefinition,
         input.macroDefinition,
         input.parentDefinition,
-
         input.scannerReason,
         input.reason,
         input.signalReason,
         input.actionReason,
         input.exitReason,
         input.rejectionReason,
-
         Array.isArray(input.definitionParts) ? input.definitionParts.join("|") : "",
         Array.isArray(input.microDefinitionParts) ? input.microDefinitionParts.join("|") : "",
         Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts.join("|") : "",
@@ -1303,7 +1296,6 @@
     function asArray(value) {
       if (Array.isArray(value)) return value;
       if (value && typeof value === "object") return Object.values(value);
-
       return [];
     }
 
@@ -1606,7 +1598,6 @@
         .join(" | ");
     }
 
-    // <<< gewijzigd: currentFitScore met SHORT_MIRRORED_CURRENT_FIT-check
     function currentFitScore(row = {}) {
       const explicitShort = firstFinite(
         row.shortCurrentFit,
@@ -1639,15 +1630,16 @@
       );
 
       if (direct !== null) {
-        // Eerst checken of het al SHORT-mirrored is
         const definition = upper(row.currentFitDefinition || "");
         const polarity = upper(row.currentFitPolarity || "");
+
         if (
           definition.includes("SHORT_MIRRORED_CURRENT_FIT") ||
           polarity.includes("BEARISH_POSITIVE_BULLISH_NEGATIVE")
         ) {
           return direct;
         }
+
         const haystack = marketBiasHaystack(row);
 
         if (
@@ -1816,7 +1808,6 @@
       return num(row.sampleReliability, 0);
     }
 
-    // <<< gewijzigd: adaptiveScore zonder fit/momentum
     function adaptiveScore(row = {}) {
       const direct = firstFinite(
         row.adaptiveScore,
@@ -2267,59 +2258,48 @@
         microFamilyId: id,
         trueMicroFamilyId: id,
         childTrueMicroFamilyId: id,
-
         parentTrueMicroFamilyId: parentId,
         parentMicroFamilyId: parentId,
         parentMacroFamilyId: parentId,
         macroFamilyId: parentId,
         coarseMicroFamilyId: parentId,
-
         side: DASHBOARD_SIDE,
         dashboardSide: DASHBOARD_SIDE,
         tradeSide: ONLY_SIDE,
         targetTradeSide: ONLY_SIDE,
         positionSide: ONLY_SIDE,
         direction: ONLY_SIDE,
-
         shortOnly: true,
         longDisabled: true,
         longOnly: false,
         shortDisabled: false,
-
         completed: done,
         outcomeSample: done,
         observationSample: obs,
         learningStatus: status,
         status,
-
         tooEarly: done < MIN_COMPLETED_ACTIVE_LEARNING,
         tooEarlyReason: done < MIN_COMPLETED_ACTIVE_LEARNING
           ? `completed ${done}/${MIN_COMPLETED_ACTIVE_LEARNING}`
           : null,
-
         tier: rowTier,
         selectedTier: rowTier,
         rotationEligibilityTier: rowTier,
-
         dashboardBalancedScore: balancedScore(row),
         balancedScore: num(row.balancedScore ?? row.dashboardBalancedScore ?? row.learningQualityRank, 0),
         fairWinrate: fairWinrate(row),
         recentMomentumScore: recentMomentumScore(row),
         currentFitScore: currentFitScore(row),
         adaptiveScore: adaptiveScore(row),
-
         avgCostR: avgCostR(row),
         directSLPct: directSLPct(row),
-
         trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
         learningGranularity: LEARNING_GRANULARITY,
         parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
         selectionGranularity: "EXACT_75_CHILD",
-
         measurementFixVersion: row.measurementFixVersion || MEASUREMENT_FIX_VERSION,
         adaptiveUiVersion: ADAPTIVE_UI_VERSION,
-
         completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
         completedOnlyClosedVirtualOrShadow: true,
         scoringRSource: "netR",
@@ -2328,14 +2308,12 @@
         totalRSource: "netR",
         avgCostRSource: "costR",
         seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
-
         riskTradeSide: ONLY_SIDE,
         riskGeometryRule: "SHORT: tp < entry < sl",
         tpHitRule: "SHORT: price <= tp",
         slHitRule: "SHORT: price >= sl",
         grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
         currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
-
         currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
         currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
         currentFitSoftOnly: true,
@@ -2345,13 +2323,11 @@
         learningRemainsBroad: true,
         selectionIsAdaptive: true,
         discordWillBeStrict: true,
-
         scannerFingerprintRole: row.scannerFingerprintRole || "METADATA_ONLY",
         scannerFingerprintsMetadataOnly: true,
         scannerFingerprintsUsedAsLearningFamily: false,
         executionFingerprintsMetadataOnly: true,
         executionFingerprintsUsedAsLearningFamily: false,
-
         legacyScannerFamilyFallback: false,
         scannerFingerprintLegacy: false,
         learningIdentitySource: row.learningIdentitySource || "ANALYZE_TRUE_MICRO_FAMILY",
@@ -2433,6 +2409,24 @@
       params.set("includeCurrentFit", "1");
 
       return `${endpoints.market}?${params.toString()}`;
+    }
+
+    function scannerApiUrl() {
+      const params = new URLSearchParams();
+
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("redisNamespace", SHORT_NAMESPACE);
+      params.set("redisKeyPrefix", SHORT_KEY_PREFIX);
+      params.set("persistentLearningKey", PERSISTENT_LEARNING_KEY);
+      params.set("includeSnapshot", "1");
+      params.set("includeCandidates", "1");
+      params.set("includeLatest", "1");
+      params.set("compact", "1");
+
+      return `${endpoints.scanner}?${params.toString()}`;
     }
 
     function extractMarketData(data = {}) {
@@ -2584,7 +2578,6 @@
       }
     }
 
-    // <<< gewijzigd: activeMicroIds met slice
     function activeMicroIds() {
       return uniqueStrings([
         state.rotation?.activeMicroFamilyIds || [],
@@ -2857,31 +2850,41 @@
         .map((id) => String(id || "").trim().toUpperCase())
         .filter(idAllowedInShortOnly)
         .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+
       while (active.length < MAX_ACTIVE_DISCORD_MICRO_FAMILIES) {
         active.push("");
       }
+
       return active;
     }
+
     function buildManualSelectionForSlot(slotNumber, id) {
       const slots = currentManualSelectionSlots();
       const cleanId = String(id || "").trim().toUpperCase();
       const index = Number(slotNumber) === 2 ? 1 : 0;
+
       if (!idAllowedInShortOnly(cleanId)) {
         return slots.filter(Boolean);
       }
+
       slots[index] = cleanId;
+
       return uniqueStrings(slots)
         .filter(idAllowedInShortOnly)
         .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
     }
+
     function clearManualSelectionSlot(slotNumber) {
       const slots = currentManualSelectionSlots();
       const index = Number(slotNumber) === 2 ? 1 : 0;
+
       slots[index] = "";
+
       return uniqueStrings(slots)
         .filter(idAllowedInShortOnly)
         .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
     }
+
     function bindMicroEvents() {
       document.querySelectorAll("[data-activate-slot]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -2891,6 +2894,7 @@
           activateSelectedMicroFamilies(ids);
         });
       });
+
       document.querySelectorAll("[data-clear-slot]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const slotNumber = Number(btn.dataset.clearSlot || 2);
@@ -2898,9 +2902,11 @@
           activateSelectedMicroFamilies(ids);
         });
       });
+
       document.querySelectorAll("[data-copy]").forEach((btn) => {
         btn.addEventListener("click", () => copyText(btn.dataset.copy, "75-child trueMicroFamilyId gekopieerd."));
       });
+
       document.querySelectorAll("[data-open-micro]").forEach((btn) => {
         btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
       });
@@ -2956,7 +2962,7 @@
           data.activeRotation?.trueMicroFamilyIds || []
         ])
           .filter(idAllowedInShortOnly)
-          .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES), // <<< gewijzigd
+          .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES),
         activeMacroFamilyIds: uniqueStrings([
           data.activeMacroFamilyIds || [],
           data.selectedMacroFamilyIds || [],
@@ -3194,21 +3200,45 @@
     async function renderScanner() {
       showLoading("scanner");
 
-      const data = await api(endpoints.scanner);
+      const endpointUrl = scannerApiUrl();
+      const data = await api(endpointUrl, {
+        timeoutMs: 22000
+      });
+
       state.scanner = data;
 
-      const snapshot = data.snapshot || data.latest || {};
-      const candidates = shortRows(snapshot.candidates || data.candidates || []);
+      const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
+      const candidates = shortRows(snapshot.candidates || data.candidates || data.rows || []);
+      const scannerOk = data.ok !== false && Boolean(snapshot.snapshotId || data.snapshotId || candidates.length);
+      const outputJson = JSON.stringify(data ?? {}, null, 2);
 
       $("scanner").innerHTML = `
+        <div class="section-title">
+          <div>
+            <h2>Scanner</h2>
+            <p>API-health voor scanner. Scanner schrijft geen learning family, geen trade, geen Discord.</p>
+          </div>
+        </div>
+
         <div class="toolbar">
           <button type="button" class="primary" id="runScannerBtn">Run Scanner now</button>
           <button type="button" id="copyScannerBtn">Copy JSON</button>
+          <button type="button" id="copyScannerUrlBtn">Copy API URL</button>
+          <button type="button" id="selectScannerOutputBtn">Select output</button>
+          <button type="button" id="openScannerApiBtn">Open API</button>
+          <button type="button" id="exportScannerBtn">Export JSON</button>
+        </div>
+
+        <div class="api-url-box">
+          <strong>API URL:</strong>
+          <code>${escapeHtml(endpointUrl)}</code>
         </div>
 
         <div class="grid">
+          ${metricCard("Scanner API", scannerOk ? "HEALTHY" : "CHECK", scannerOk ? "admin route geeft scannerdata terug" : "geen snapshot/candidates gevonden")}
+          ${metricCard("Endpoint", "/api/admin/scanner", "scanner health")}
           ${metricCard("Snapshot ID", snapshot.snapshotId || data.snapshotId || "-")}
-          ${metricCard("Age", ageText(snapshot.createdAt), fmtTs(snapshot.createdAt))}
+          ${metricCard("Age", ageText(snapshot.createdAt || data.createdAt), fmtTs(snapshot.createdAt || data.createdAt))}
           ${metricCard("SHORT candidates", fmtInt(candidates.length))}
           ${metricCard("Scanner gate", fmtInt(candidates.filter((row) => row.scannerGatePassed).length))}
           ${metricCard("Analyze-only", fmtInt(candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length))}
@@ -3220,7 +3250,7 @@
         <div class="section-title">
           <div>
             <h2>Scanner SHORT candidates</h2>
-            <p>Scanner zoekt bearish coins. Scanner schrijft geen learning family, geen trade, geen Discord.</p>
+            <p>Scanner zoekt bearish coins. Scanner fingerprints blijven metadata-only.</p>
           </div>
         </div>
 
@@ -3242,10 +3272,47 @@
           { label: "Regime", render: (row) => escapeHtml(row.regime || "-") },
           { label: "Reason", render: (row) => escapeHtml(row.scannerReason || row.reason || "-") }
         ], "Geen SHORT scanner candidates.")}
+
+        <div class="card">
+          <div class="api-output-head">
+            <h3>Scanner API output — health/debug</h3>
+            <button type="button" class="copy-big" id="copyScannerOutputBtn2">Kopieer alles</button>
+          </div>
+
+          <textarea id="scannerApiOutput" class="api-output-textarea" readonly>${escapeHtml(outputJson)}</textarea>
+        </div>
       `;
 
+      function copyScannerOutput() {
+        const box = $("scannerApiOutput");
+        copyText(box?.value || outputJson, "Scanner API output volledig gekopieerd.");
+      }
+
       $("runScannerBtn")?.addEventListener("click", runScannerNow);
-      $("copyScannerBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Scanner JSON gekopieerd."));
+
+      $("copyScannerBtn")?.addEventListener("click", copyScannerOutput);
+      $("copyScannerOutputBtn2")?.addEventListener("click", copyScannerOutput);
+
+      $("copyScannerUrlBtn")?.addEventListener("click", () => {
+        copyText(endpointUrl, "Scanner API URL gekopieerd.");
+      });
+
+      $("selectScannerOutputBtn")?.addEventListener("click", () => {
+        const box = $("scannerApiOutput");
+        if (!box) return;
+
+        box.focus();
+        box.select();
+        setMessage("Scanner API output geselecteerd. Je kunt nu kopiëren.", "ok");
+      });
+
+      $("openScannerApiBtn")?.addEventListener("click", () => {
+        window.open(endpointUrl, "_blank", "noopener,noreferrer");
+      });
+
+      $("exportScannerBtn")?.addEventListener("click", () => {
+        downloadJson("scanner-api-output.json", data);
+      });
     }
 
     async function runScannerNow() {
@@ -3256,31 +3323,25 @@
           body: JSON.stringify({
             force: true,
             forced: true,
-
             targetTradeSide: ONLY_SIDE,
             tradeSide: ONLY_SIDE,
             side: DASHBOARD_SIDE,
             scannerSide: DASHBOARD_SIDE,
             direction: ONLY_SIDE,
-
             shortOnly: true,
             longDisabled: true,
             disableLong: true,
-
             scannerOnly: true,
             scannerDecidesTrade: false,
             scannerDoesNotTrade: true,
             scannerDoesNotSelectMicroFamilies: true,
             scannerDoesNotSendDiscord: true,
-
             scannerFingerprintRole: "METADATA_ONLY",
             scannerFingerprintsMetadataOnly: true,
             scannerFingerprintsUsedAsLearningFamily: false,
-
             noTradeExecution: true,
             noDiscord: true,
             noMicroFamilySelection: true,
-
             persistentLearningKey: PERSISTENT_LEARNING_KEY,
             redisNamespace: SHORT_NAMESPACE,
             redisKeyPrefix: SHORT_KEY_PREFIX
@@ -3374,57 +3435,47 @@
             force: true,
             forced: true,
             forceProcessSnapshot: true,
-
             monitorOpenPositionsFirst: true,
             monitorOpenPositions: true,
             processScannerSnapshot: true,
-
             targetTradeSide: ONLY_SIDE,
             tradeSide: ONLY_SIDE,
             side: DASHBOARD_SIDE,
             positionSide: ONLY_SIDE,
             direction: ONLY_SIDE,
-
             shortOnly: true,
             longDisabled: true,
             disableLong: true,
-
             virtualOnly: true,
             virtualTracked: true,
             source: "VIRTUAL",
             outcomeSource: "VIRTUAL",
-
             realOrdersDisabled: true,
             exchangeOrdersDisabled: true,
             bitgetOrdersDisabled: true,
             noExchangeOrders: true,
             noRealOrders: true,
-
             allowLearningWithoutActiveRotation: true,
             ignoreMaxOpenPositionsForLearning: true,
             ignoreGlobalMaxOpenPositions: true,
             oneOpenPositionPerSymbol: true,
             maxOneOpenPositionPerSymbol: true,
-
             trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
             parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
             learningGranularity: LEARNING_GRANULARITY,
             parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
             selectionGranularity: "EXACT_75_CHILD",
-
             completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
             scoringRSource: "netR",
             winsLossesFlatsSource: "netR",
             avgCostRSource: "costR",
             seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
-
             currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
             currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
             currentFitSoftOnly: true,
             currentFitBlocksLearning: false,
             currentFitBlocksVirtualLearning: false,
             currentFitBlocksShadowLearning: false,
-
             shortRiskShape: {
               expression: "tp < entry < sl"
             },
@@ -3433,13 +3484,11 @@
             slHitRule: "SHORT: price >= sl",
             grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
             currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
-
             discordOnlyForSelectedMicroFamilies: true,
             discordOnlyForExactTrueMicroMatch: true,
             discordRequiresCurrentFit: true,
             macroMatchDoesNotTriggerDiscord: true,
             parentMacroMatchDoesNotTriggerDiscord: true,
-
             persistentLearningKey: PERSISTENT_LEARNING_KEY,
             redisNamespace: SHORT_NAMESPACE,
             redisKeyPrefix: SHORT_KEY_PREFIX
@@ -3675,6 +3724,7 @@
       const ids = uniqueStrings(rows.map(microId))
         .filter(idAllowedInShortOnly)
         .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+
       activateSelectedMicroFamilies(ids);
     }
 
@@ -3695,7 +3745,7 @@
         data.activeMicroFamilyIds || []
       ])
         .filter(idAllowedInShortOnly)
-        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES); // <<< gewijzigd
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
       const parentIds = uniqueStrings([
         active.activeMacroFamilyIds || [],
@@ -3829,52 +3879,42 @@
         timeoutMs: 28000,
         body: JSON.stringify({
           action: "activateSelectedMicroFamilies",
-
           microFamilyIds,
           activeMicroFamilyIds: microFamilyIds,
           trueMicroFamilyIds: microFamilyIds,
           childTrueMicroFamilyIds: microFamilyIds,
-
-          maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
-          maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
-          maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
-
+          maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
+          maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
+          maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
           macroFamilyIds: [],
           activeMacroFamilyIds: [],
-
           side: DASHBOARD_SIDE,
           tradeSide: ONLY_SIDE,
           positionSide: ONLY_SIDE,
           direction: ONLY_SIDE,
           targetTradeSide: ONLY_SIDE,
           dashboardSide: DASHBOARD_SIDE,
-
           shortOnly: true,
           longDisabled: true,
           disableLong: true,
-
           manualOnly: true,
           adminSelected: true,
           autoRotation: false,
-
           trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
           parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
           learningGranularity: LEARNING_GRANULARITY,
           parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
           selectionGranularity: "EXACT_75_CHILD",
-
           currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
           currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
           currentFitSoftOnly: true,
           currentFitBlocksLearning: false,
           selectionIsAdaptive: true,
-
           riskGeometryRule: "SHORT: tp < entry < sl",
           tpHitRule: "SHORT: price <= tp",
           slHitRule: "SHORT: price >= sl",
           grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
           currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
-
           discordOnlyForSelectedMicroFamilies: true,
           discordOnlyForExactTrueMicroMatch: true,
           discordRequiresCurrentFit: true,
@@ -3891,7 +3931,7 @@
         data.activeMicroFamilyIds || []
       ])
         .filter(idAllowedInShortOnly)
-        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES); // <<< gewijzigd
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
       state.rotation = {
         ...(state.rotation || {}),
@@ -3978,7 +4018,6 @@
 
         $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
         bindMicroEvents();
-        $("copyDrawerBtn")?.addEventListener("click", () => copyText(microId(row), "75-child trueMicroFamilyId gekopieerd."));
       } catch (error) {
         drawer.innerHTML = `
           <div class="drawer-head">
@@ -4189,11 +4228,9 @@
             confirmation: "SHORT_FACTORY_RESET_CONFIRMED",
             force,
             forceClosePositions: force,
-
             side: DASHBOARD_SIDE,
             tradeSide: ONLY_SIDE,
             targetTradeSide: ONLY_SIDE,
-
             shortOnly: true,
             longDisabled: true,
             trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
