@@ -2494,7 +2494,7 @@
         raw: data,
         source,
         universe,
-        ok: Boolean(data && Object.keys(data).length),
+        ok: Boolean(data && Object.keys(data).length && data.ok !== false),
         createdAt,
         ageText: ageText(createdAt),
         regime,
@@ -2505,6 +2505,185 @@
         confidence
       };
     }
+
+    // ---- NIEUWE HELPERS ----
+    function compactMarketApiOutput(market = {}) {
+      const raw = market.raw || {};
+      return {
+        ok: market.ok !== false,
+        available: Boolean(market.ok),
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        file: "src/market/marketWeather.js",
+        apiRoute: "/api/admin/market-weather",
+        timestamp: {
+          createdAt: market.createdAt || null,
+          ageText: market.ageText || "-",
+          human: fmtTs(market.createdAt)
+        },
+        market: {
+          regime: market.regime || "UNKNOWN",
+          trendSide: market.trendSide || "UNKNOWN",
+          bullishPct: market.bullishPct ?? null,
+          bearishPct: market.bearishPct ?? null,
+          squeezePct: market.squeezePct ?? null,
+          confidence: market.confidence ?? null
+        },
+        shortCurrentFitPolicy: {
+          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+          bearishPositive: true,
+          bullishNegative: true,
+          softGate: true,
+          blocksLearning: false,
+          blocksVirtualLearning: false,
+          blocksShadowLearning: false,
+          learningRemainsBroad: true,
+          discordCanBeStrict: true
+        },
+        riskContext: {
+          side: "SHORT",
+          riskGeometryRule: "tp < entry < sl",
+          tpHitRule: "price <= tp",
+          slHitRule: "price >= sl",
+          grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+          currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+          defaultPositionTimeStopMin: DEFAULT_POSITION_TIME_STOP_MIN
+        },
+        usedFor: [
+          "micro-family ranking",
+          "manual rotation context",
+          "Discord currentFit gate"
+        ],
+        notUsedFor: [
+          "learning family identity",
+          "scanner fingerprint identity",
+          "real exchange orders"
+        ],
+        error: raw?.ok === false
+          ? {
+              reason: raw.reason || null,
+              message: raw.message || raw.rawError || null,
+              status: raw.status || null
+            }
+          : null,
+        omitted: {
+          fullUniverseRows: true,
+          rawBreadthObjects: true,
+          verboseDebugFields: true,
+          fullApiStillAvailableViaOpenButton: true,
+          reason: "COMPACT_MARKET_WEATHER_OUTPUT_FOR_COPYING"
+        }
+      };
+    }
+
+    function compactOverviewApiOutput(data = {}, microData = {}, market = {}) {
+      const microRows = Array.isArray(microData?.rows) ? microData.rows : [];
+      const activeIds = uniqueStrings([
+        data.activeMicroFamilyIds || [],
+        data.activeRotation?.activeMicroFamilyIds || [],
+        data.activeRotation?.microFamilyIds || [],
+        data.activeRotation?.trueMicroFamilyIds || [],
+        microData?.activeMicroFamilyIds || []
+      ])
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      const parentIds = uniqueStrings([
+        data.activeMacroFamilyIds || [],
+        data.activeRotation?.activeMacroFamilyIds || [],
+        data.activeRotation?.macroFamilyIds || [],
+        microData?.activeMacroFamilyIds || []
+      ]).filter(parentIdAllowedInShortOnly);
+      const observing = microRows.filter((row) => learningStatus(row) === "OBSERVING").length;
+      const early = microRows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES").length;
+      const active = microRows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING").length;
+      const averageCostR = microRows.length
+        ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length
+        : 0;
+      const averageDirectSL = microRows.length
+        ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length
+        : 0;
+      return {
+        ok: data.ok !== false,
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        counts: {
+          analyze75ChildRows: microRows.length,
+          selectedDiscord75ChildIds: activeIds.length,
+          selectedParent15ContextIds: parentIds.length,
+          openVirtualPositions: Number(data.openPositions || data.positionsCount || 0),
+          scannerShortCandidates: Number(
+            data.shortScannerCandidates ||
+            data.scannerCandidates ||
+            data.latestScan?.shortCandidatesCount ||
+            0
+          )
+        },
+        learningStatus: {
+          observing,
+          earlyOutcomes: early,
+          activeLearning: active,
+          activeThreshold: MIN_COMPLETED_ACTIVE_LEARNING
+        },
+        quality: {
+          avgCostR: averageCostR,
+          avgDirectSLPct: averageDirectSL,
+          scoring: "netR after costs",
+          completedDefinition: "closed virtual/shadow outcomes only",
+          seenDefinition: "unique observation dedupe key"
+        },
+        selectedDiscordIds: activeIds,
+        selectedParentContextIds: parentIds,
+        market: {
+          regime: market.regime || "UNKNOWN",
+          trendSide: market.trendSide || "UNKNOWN",
+          bullishPct: market.bullishPct ?? null,
+          bearishPct: market.bearishPct ?? null,
+          squeezePct: market.squeezePct ?? null,
+          confidence: market.confidence ?? null,
+          ageText: market.ageText || "-"
+        },
+        rules: {
+          scannerFingerprintsUsedAsLearningFamily: false,
+          executionFingerprintsUsedAsLearningFamily: false,
+          learningIdentitySource: "ANALYZE_TRUE_MICRO_FAMILY",
+          trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+          parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+          selectionGranularity: "EXACT_75_CHILD",
+          discordMatch: "candidate.trueMicroFamilyId === manuallySelected75ChildId",
+          parentMatchTriggersDiscord: false,
+          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+          currentFitBlocksLearning: false,
+          currentFitCanBlockDiscord: true,
+          realOrdersDisabled: true
+        },
+        shortRisk: {
+          riskGeometryRule: "tp < entry < sl",
+          tpHitRule: "price <= tp",
+          slHitRule: "price >= sl",
+          grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+          currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+          defaultPositionTimeStopMin: DEFAULT_POSITION_TIME_STOP_MIN
+        },
+        warnings: data.runtimeWarnings || data.warnings || [],
+        error: data.error || data.reason || null,
+        omitted: {
+          fullRawOverview: true,
+          fullMicroRows: true,
+          fullPositionObjects: true,
+          verboseDebugFields: true,
+          reason: "COMPACT_OVERVIEW_OUTPUT_FOR_COPYING"
+        }
+      };
+    }
+    // ---- EINDE NIEUWE HELPERS ----
 
     async function fetchMarket() {
       const url = marketApiUrl();
@@ -3102,6 +3281,7 @@
       return state.micros;
     }
 
+    // ---- NIEUWE renderOverview ----
     async function renderOverview() {
       showLoading("overview");
 
@@ -3131,6 +3311,9 @@
       const active = microRows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING").length;
       const avgCost = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
       const avgDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
+
+      const compactOverview = compactOverviewApiOutput(data, microData, market);
+      const compactOverviewJson = JSON.stringify(compactOverview, null, 2);
 
       $("overview").innerHTML = `
         <div class="grid">
@@ -3202,19 +3385,46 @@
         </div>
 
         <div class="card">
-          <h3>Overview raw</h3>
-          ${jsonBlock(data)}
+          <div class="api-output-head">
+            <h3>Overview output — compact</h3>
+            <button type="button" class="copy-big" id="copyOverviewOutputBtn">Kopieer compact</button>
+          </div>
+          <div class="toolbar">
+            <button type="button" id="selectOverviewOutputBtn">Select compact output</button>
+            <button type="button" id="exportOverviewOutputBtn">Export compact JSON</button>
+          </div>
+          <textarea id="overviewApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactOverviewJson)}</textarea>
         </div>
       `;
+
+      $("copyOverviewOutputBtn")?.addEventListener("click", () => {
+        const box = $("overviewApiOutput");
+        copyText(box?.value || compactOverviewJson, "Compacte overview output gekopieerd.");
+      });
+
+      $("selectOverviewOutputBtn")?.addEventListener("click", () => {
+        const box = $("overviewApiOutput");
+        if (!box) return;
+
+        box.focus();
+        box.select();
+        box.setSelectionRange(0, box.value.length);
+        setMessage("Compacte overview output geselecteerd. Je kunt nu kopiëren.", "ok");
+      });
+
+      $("exportOverviewOutputBtn")?.addEventListener("click", () => {
+        downloadJson("overview-compact-short.json", compactOverview);
+      });
     }
 
+    // ---- NIEUWE renderMarket ----
     async function renderMarket() {
       showLoading("market");
 
       const endpointUrl = marketApiUrl();
       const market = await fetchMarket();
-      const outputData = market.raw || market;
-      const outputJson = JSON.stringify(outputData ?? {}, null, 2);
+      const compactOutput = compactMarketApiOutput(market);
+      const compactOutputJson = JSON.stringify(compactOutput, null, 2);
 
       $("market").innerHTML = `
         <div class="section-title">
@@ -3225,11 +3435,11 @@
         </div>
 
         <div class="toolbar">
-          <button type="button" class="primary" id="copyMarketOutputBtn">Copy API output</button>
+          <button type="button" class="primary" id="copyMarketOutputBtn">Copy compact output</button>
           <button type="button" id="copyMarketUrlBtn">Copy API URL</button>
-          <button type="button" id="selectMarketOutputBtn">Select output</button>
-          <button type="button" id="openMarketApiBtn">Open API</button>
-          <button type="button" id="exportMarketBtn">Export JSON</button>
+          <button type="button" id="selectMarketOutputBtn">Select compact output</button>
+          <button type="button" id="openMarketApiBtn">Open volledige API</button>
+          <button type="button" id="exportMarketBtn">Export compact JSON</button>
         </div>
 
         <div class="api-url-box">
@@ -3266,17 +3476,16 @@
 
         <div class="card">
           <div class="api-output-head">
-            <h3>API output — makkelijk kopiëren</h3>
-            <button type="button" class="copy-big" id="copyMarketOutputBtn2">Kopieer alles</button>
+            <h3>MarketWeather output — compact</h3>
+            <button type="button" class="copy-big" id="copyMarketOutputBtn2">Kopieer compact</button>
           </div>
-
-          <textarea id="marketApiOutput" class="api-output-textarea" readonly>${escapeHtml(outputJson)}</textarea>
+          <textarea id="marketApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactOutputJson)}</textarea>
         </div>
       `;
 
       function copyMarketOutput() {
         const box = $("marketApiOutput");
-        copyText(box?.value || outputJson, "marketWeather.js API output volledig gekopieerd.");
+        copyText(box?.value || compactOutputJson, "Compacte marketWeather output gekopieerd.");
       }
 
       $("copyMarketOutputBtn")?.addEventListener("click", copyMarketOutput);
@@ -3292,7 +3501,8 @@
 
         box.focus();
         box.select();
-        setMessage("API output geselecteerd. Je kunt nu kopiëren.", "ok");
+        box.setSelectionRange(0, box.value.length);
+        setMessage("Compacte marketWeather output geselecteerd. Je kunt nu kopiëren.", "ok");
       });
 
       $("openMarketApiBtn")?.addEventListener("click", () => {
@@ -3300,7 +3510,7 @@
       });
 
       $("exportMarketBtn")?.addEventListener("click", () => {
-        downloadJson("marketWeather.js-api-output.json", outputData);
+        downloadJson("marketWeather-compact-short.json", compactOutput);
       });
     }
 
