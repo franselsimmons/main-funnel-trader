@@ -83,6 +83,7 @@ const WINRATE_BAYES_BETA = 1;
 
 const SAMPLE_RELIABILITY_CAP = 50;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+const MAX_ACTIVE_DISCORD_MICRO_FAMILIES = 2; // <<< toegevoegd
 
 const DEFAULT_LIMIT = 75;
 const MAX_LIMIT = 300;
@@ -218,6 +219,18 @@ function uniqueStrings(values = []) {
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
+}
+
+// <<< NIEUWE HELPER: limiet op actieve micro-families
+function limitActiveMicroFamilyIds(ids = []) {
+  return uniqueStrings(ids)
+    .map((id) => upper(id))
+    .filter((id) => (
+      inferTradeSide(id) !== OPPOSITE_TRADE_SIDE &&
+      validLearningId(id) &&
+      isSelectableTrueMicroId(id)
+    ))
+    .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 }
 
 function withTimeout(promise, timeoutMs, code = 'TIMEOUT') {
@@ -453,6 +466,10 @@ function modePayload() {
     manualSelectionOnly: true,
     manualSelectionRequired: true,
     autoRotationActivationDisabled: true,
+    maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+    maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+    maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+    maxActiveDiscordMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
     discordOnlyForSelectedMicroFamilies: true,
     discordOnlyForExactTrueMicroMatch: true,
     manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
@@ -1475,28 +1492,21 @@ function getSeenCompletedRatio(row = {}) {
   return seen / completed;
 }
 
+// <<< HERZIENE getTotalR()
 function getTotalR(row = {}) {
   const completed = getCompletedSample(row);
   const recent = aggregateRecentOutcomes(row);
-
   if (completed <= 0) return 0;
-
   const virtualShadowTotalR =
     num(row.virtualTotalR, 0) +
     num(row.shadowTotalR, 0);
-
-  if (virtualShadowTotalR !== 0 || hasVirtualShadowOutcomeFields(row)) {
-    return virtualShadowTotalR;
-  }
-
+  if (virtualShadowTotalR !== 0) return virtualShadowTotalR;
   if (recent.completed > 0) return recent.totalR;
-
   if (hasValue(row.shortNetTotalR)) return num(row.shortNetTotalR, 0);
   if (hasValue(row.netShortTotalR)) return num(row.netShortTotalR, 0);
   if (hasValue(row.netTotalR)) return num(row.netTotalR, 0);
   if (hasValue(row.totalNetR)) return num(row.totalNetR, 0);
   if (hasValue(row.totalR)) return num(row.totalR, 0);
-
   return 0;
 }
 
@@ -3259,24 +3269,20 @@ function manualRowFromId(id, index = 0, marketWeather = null) {
   return raw ? decorateMicroRow(raw, marketWeather) : null;
 }
 
+// <<< HERZIEN: extractActiveIds met limiet
 function extractActiveIds(activeRotation) {
   if (!activeRotation) return [];
-
   const ids = [
     activeRotation.microFamilyIds || [],
     activeRotation.activeMicroFamilyIds || [],
     activeRotation.trueMicroFamilyIds || [],
+    activeRotation.childTrueMicroFamilyIds || [],
     activeRotation.ids || [],
     Array.isArray(activeRotation.microFamilies)
       ? activeRotation.microFamilies.map((row) => getTrueMicroFamilyId(row))
       : []
   ];
-
-  return uniqueStrings(ids).filter((id) => (
-    inferTradeSide(id) !== OPPOSITE_TRADE_SIDE &&
-    validLearningId(id) &&
-    isSelectableTrueMicroId(id)
-  ));
+  return limitActiveMicroFamilyIds(ids);
 }
 
 function extractActiveMacroIds(activeRotation) {
@@ -3337,7 +3343,8 @@ function buildRowsFromActiveRotation(activeRotation, marketWeather = null) {
 
   const existing = new Set(rows.map(rowKey).filter(Boolean));
 
-  for (const id of extractActiveIds(activeRotation)) {
+  // <<< gebruik limiet voor fallback
+  for (const id of limitActiveMicroFamilyIds(extractActiveIds(activeRotation))) {
     if (existing.has(id)) continue;
 
     const manual = manualRowFromId(id, rows.length, marketWeather);
@@ -4409,7 +4416,8 @@ function forcedShortFallbackRows(activeRotation, existingRows = [], marketWeathe
   const existing = new Set(existingRows.map(rowKey).filter(Boolean));
   const rows = [];
 
-  for (const id of extractActiveIds(activeRotation)) {
+  // <<< gebruik limiet
+  for (const id of limitActiveMicroFamilyIds(extractActiveIds(activeRotation))) {
     if (existing.has(id)) continue;
     if (inferTradeSide(id) === OPPOSITE_TRADE_SIDE) continue;
     if (!validLearningId(id)) continue;
@@ -4452,6 +4460,8 @@ export default async function handler(req, res) {
   res.setHeader('X-Virtual-Outcomes-Included', 'true');
   res.setHeader('X-Shadow-Outcomes-Included', 'true');
   res.setHeader('X-Manual-Selection-Only', 'true');
+  res.setHeader('X-Max-Active-Micro-Families', String(MAX_ACTIVE_DISCORD_MICRO_FAMILIES)); // <<< toegevoegd
+  res.setHeader('X-Max-Manual-Micro-Families', String(MAX_ACTIVE_DISCORD_MICRO_FAMILIES)); // <<< toegevoegd
   res.setHeader('X-Manual-Selection-Match-Mode', 'EXACT_TRUE_MICRO_FAMILY_ID');
   res.setHeader('X-Discord-Selection-Rule', 'EXACT_75_CHILD_TRUE_MICRO_FAMILY_ID_ONLY');
   res.setHeader('X-Scanner-Side', TARGET_SCANNER_SIDE);
@@ -4536,7 +4546,8 @@ export default async function handler(req, res) {
       getCurrentMarketWeatherSafe()
     ]);
 
-    const activeMicroFamilyIds = extractActiveIds(activeRotation);
+    // <<< gebruik limiet
+    const activeMicroFamilyIds = limitActiveMicroFamilyIds(extractActiveIds(activeRotation));
     const activeMacroFamilyIds = extractActiveMacroIds(activeRotation);
 
     const activeSet = new Set(activeMicroFamilyIds);
@@ -4772,6 +4783,20 @@ export default async function handler(req, res) {
       availableStatuses: ['ACTIVE_LEARNING', 'EARLY_OUTCOMES', 'OBSERVING'],
       availableCurrentFit: ['FIT', 'OK', 'NEUTRAL', 'MISFIT', 'UNKNOWN'],
 
+      // <<< toegevoegd
+      manualSelectionPolicy: {
+        maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
+        maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
+        maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
+        selectionGranularity: 'EXACT_75_CHILD',
+        selectableIdsAreChildrenOnly: true,
+        parentIdsAreMetadataOnly: true,
+        parentMatchDoesNotTriggerDiscord: true,
+        macroMatchDoesNotTriggerDiscord: true,
+        scannerFingerprintsUsedAsLearningFamily: false,
+        executionFingerprintsUsedAsLearningFamily: false
+      },
+
       measurementPolicy: {
         version: MEASUREMENT_FIX_VERSION,
         avgCostR: 'avgCostR = totalCostR / closedVirtualShadowCompleted, fallback avgCostR/costR/recentOutcomes.costR',
@@ -4873,6 +4898,9 @@ export default async function handler(req, res) {
         trueMicroFamilyOnly: true,
         exactTrueMicroOnly: true,
         selectableChildOnly: true,
+        maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+        maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+        maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
         trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
         parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
@@ -4891,6 +4919,8 @@ export default async function handler(req, res) {
         learningRemainsBroad: true,
         selectionWillBeAdaptive: true,
         discordWillBeStrict: true,
+        maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+        maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
         currentFitSoftOnly: true,
         currentFitBlocksLearning: false,
         adaptiveLayerBuilt: false,
