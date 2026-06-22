@@ -37,21 +37,21 @@ const DEFAULT_MAX_LOCK_TTL_SEC = 75;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
-const DEFAULT_MONITOR_TIMEOUT_MS = 8000;
+const DEFAULT_MONITOR_TIMEOUT_MS = 3500;
 const DEFAULT_MONITOR_ONLY_TIMEOUT_MS = 12000;
-const DEFAULT_MAX_RUNTIME_MS = 30000;
-const DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS = 30000;
+const DEFAULT_MAX_RUNTIME_MS = 26000;
+const DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS = 26000;
 
-const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 25;
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 12;
 const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 25;
 const DEFAULT_MONITOR_BATCH_SIZE = 80;
 const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 150;
 
 const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 400;
-const DEFAULT_CANDIDATE_TIMEOUT_MS = 4000;
-const DEFAULT_ANALYZE_TIMEOUT_MS = 7000;
-const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 1500;
-const DEFAULT_ROTATION_TIMEOUT_MS = 2000;
+const DEFAULT_CANDIDATE_TIMEOUT_MS = 3500;
+const DEFAULT_ANALYZE_TIMEOUT_MS = 6000;
+const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 1200;
+const DEFAULT_ROTATION_TIMEOUT_MS = 1200;
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
@@ -337,7 +337,7 @@ function getMonitorTimeoutMs(req, body = {}, monitorOnly = false) {
       CONFIG.trade?.monitorTimeoutMs ??
       (monitorOnly ? DEFAULT_MONITOR_ONLY_TIMEOUT_MS : DEFAULT_MONITOR_TIMEOUT_MS),
     monitorOnly ? DEFAULT_MONITOR_ONLY_TIMEOUT_MS : DEFAULT_MONITOR_TIMEOUT_MS,
-    3000,
+    1000,
     20000
   );
 }
@@ -459,6 +459,15 @@ function shouldForceUnlock(req, body = {}) {
   );
 }
 
+function shouldUnlockOnly(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.unlockOnly, false)) ||
+    isTrue(firstValue(req.query?.unlock_only, false)) ||
+    isTrue(body.unlockOnly) ||
+    isTrue(body.unlock_only)
+  );
+}
+
 function shouldMonitorOnly(req, body = {}) {
   return (
     isTrue(firstValue(req.query?.monitorOnly, false)) ||
@@ -513,6 +522,7 @@ function shouldRunScannerPreload(req, body = {}) {
 function getRunSource(req, body = {}) {
   const manual = (
     shouldForceProcessSnapshot(req, body) ||
+    shouldForceUnlock(req, body) ||
     isTrue(firstValue(req.query?.manual, false)) ||
     isTrue(body.manual)
   );
@@ -604,7 +614,10 @@ function isolationFlags() {
     monitorOpenPositionsBeforeEntries: true,
     exitSweepBeforeEntryGate: true,
     closeVirtualPositionsBeforeEntries: true,
-    newEntriesBlockedUntilMonitorAttempted: true,
+
+    snapshotAlreadyProcessedDoesNotBlockMonitor: true,
+    sameSnapshotRunsMonitorOnly: true,
+    newEntriesBlockedWhenSnapshotAlreadyProcessed: true,
 
     compactRunMetaForRedis: true,
     compactLastProcessedSnapshot: true,
@@ -690,7 +703,9 @@ function baseFlags() {
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
@@ -758,9 +773,7 @@ async function redisGetRaw(redis, key) {
   if (!redis || !key) return null;
 
   try {
-    if (typeof redis.get === 'function') {
-      return await redis.get(key);
-    }
+    if (typeof redis.get === 'function') return await redis.get(key);
   } catch {
     return null;
   }
@@ -1036,26 +1049,36 @@ async function runWithTradeLock({
     };
   }
 
+  let result;
+  let caughtError;
   let released = null;
 
   try {
-    const result = await fn(lock);
-
-    return {
-      ok: result?.ok !== false,
-      skipped: Boolean(result?.skipped || result?.skippedNewEntries),
-      reason: result?.reason || result?.skipReason || null,
-      result,
-      lock,
-      lockReleased: null
-    };
-  } finally {
-    released = await releaseOwnLock(redis, lockKey, lock.lockValue, false);
-
-    if (released?.released !== true) {
-      await releaseOwnLock(redis, lockKey, lock.lockValue, true);
-    }
+    result = await fn(lock);
+  } catch (error) {
+    caughtError = error;
   }
+
+  released = await releaseOwnLock(redis, lockKey, lock.lockValue, false);
+
+  if (released?.released !== true) {
+    released = await releaseOwnLock(redis, lockKey, lock.lockValue, true);
+  }
+
+  if (caughtError) {
+    caughtError.lock = lock;
+    caughtError.lockRelease = released;
+    throw caughtError;
+  }
+
+  return {
+    ok: result?.ok !== false,
+    skipped: Boolean(result?.skipped || result?.skippedNewEntries),
+    reason: result?.reason || result?.skipReason || null,
+    result,
+    lock,
+    lockRelease: released
+  };
 }
 
 function cleanSideText(value = '') {
@@ -2030,6 +2053,14 @@ function compactMarketContext(value = {}) {
   };
 }
 
+function compactError(error) {
+  const message = String(error?.message || error || 'UNKNOWN_ERROR');
+
+  return message.length > 1200
+    ? `${message.slice(0, 1200)}...TRUNCATED`
+    : message;
+}
+
 function sanitizeRunPayload(payload, { debug = false } = {}) {
   if (!payload || typeof payload !== 'object') return payload;
 
@@ -2310,8 +2341,8 @@ function compactMonitorPreflightPayload(payload = {}) {
     monitorOnly: true,
     processScannerSnapshot: false,
 
-    openPositionCountBeforeEntries: safeNumber(payload.openPositionCountBeforeEntries, 0),
-    openPositionCountAfterEntries: safeNumber(payload.openPositionCountAfterEntries, 0),
+    openPositionCountBeforeEntries: payload.openPositionCountBeforeEntries ?? null,
+    openPositionCountAfterEntries: payload.openPositionCountAfterEntries ?? null,
 
     virtualExitRows: safeNumber(payload.virtualExitRows, 0),
     shadowExitRows: safeNumber(payload.shadowExitRows, 0),
@@ -2364,15 +2395,10 @@ function responseSnapshotId(value) {
 }
 
 function responseActionCountsFromPayload(payload = {}, monitorPreflightPayload = null) {
-  const actionCounts = mergeActionCounts(
+  return mergeActionCounts(
     payload?.actionCounts || {},
     monitorPreflightPayload?.actionCounts || {}
   );
-
-  return {
-    ...baseFlags(),
-    ...actionCounts
-  };
 }
 
 function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null) {
@@ -2380,8 +2406,6 @@ function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null)
   const virtualExitRows = safeNumber(payload.virtualExitRows, 0) + safeNumber(monitorPreflightPayload?.virtualExitRows, 0);
 
   return {
-    ...baseFlags(),
-
     candidates: safeNumber(payload.candidates || payload.candidatesCount, 0),
     shortCandidateCount: safeNumber(payload.shortCandidateCount || payload.shortCandidatesCount, 0),
     nonShortCandidateCount: safeNumber(payload.nonShortCandidateCount, 0),
@@ -2464,9 +2488,96 @@ function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null)
   };
 }
 
+async function readLatestSnapshotId() {
+  const volatileRedis = getVolatileRedis();
+  const durableRedis = getDurableRedis();
+
+  const latest =
+    await getJson(volatileRedis, SHORT_KEYS.scan.latest, null).catch(() => null) ||
+    await getJson(durableRedis, SHORT_KEYS.scan.latest, null).catch(() => null);
+
+  if (!latest) {
+    return {
+      snapshotId: null,
+      source: null,
+      createdAt: null,
+      selectedTargetCandidateCount: 0
+    };
+  }
+
+  if (typeof latest === 'string') {
+    return {
+      snapshotId: latest,
+      source: 'SHORT:SCAN:LATEST_ID',
+      createdAt: null,
+      selectedTargetCandidateCount: 0
+    };
+  }
+
+  return {
+    snapshotId: latest.snapshotId || latest.id || latest.latestSnapshotId || latest.scanId || null,
+    source: Array.isArray(latest.candidates)
+      ? 'SHORT:SCAN:LATEST_FULL_SNAPSHOT'
+      : 'SHORT:SCAN:LATEST_POINTER',
+    createdAt: latest.createdAt || latest.completedAt || latest.ts || null,
+    selectedTargetCandidateCount: Array.isArray(latest.candidates)
+      ? latest.candidates.length
+      : safeNumber(latest.candidatesCount, 0)
+  };
+}
+
+async function readLastProcessedSnapshotId() {
+  const durableRedis = getDurableRedis();
+  const value = await getJson(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, null).catch(() => null);
+
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+
+  return value.snapshotId || value.id || value.latestSnapshotId || null;
+}
+
+async function determineSnapshotMode(req, body = {}) {
+  const latest = await readLatestSnapshotId();
+  const lastProcessedSnapshotId = await readLastProcessedSnapshotId();
+
+  const forceProcessSnapshot = shouldForceProcessSnapshot(req, body);
+  const requestedMonitorOnly = shouldMonitorOnly(req, body);
+
+  const snapshotAlreadyProcessed =
+    Boolean(latest.snapshotId) &&
+    Boolean(lastProcessedSnapshotId) &&
+    latest.snapshotId === lastProcessedSnapshotId;
+
+  const effectiveMonitorOnly =
+    requestedMonitorOnly ||
+    (snapshotAlreadyProcessed && !forceProcessSnapshot);
+
+  return {
+    latestSnapshotId: latest.snapshotId,
+    latestSnapshotSource: latest.source,
+    latestSnapshotCreatedAt: latest.createdAt,
+    latestSelectedTargetCandidateCount: latest.selectedTargetCandidateCount,
+    lastProcessedSnapshotId,
+
+    forceProcessSnapshot,
+    requestedMonitorOnly,
+    snapshotAlreadyProcessed,
+
+    effectiveMonitorOnly,
+    effectiveProcessScannerSnapshot: !effectiveMonitorOnly,
+
+    entriesBlockedBecauseSnapshotAlreadyProcessed:
+      snapshotAlreadyProcessed && !forceProcessSnapshot && !requestedMonitorOnly,
+
+    reason: snapshotAlreadyProcessed && !forceProcessSnapshot && !requestedMonitorOnly
+      ? 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY'
+      : null
+  };
+}
+
 function buildRunOptions(req, body = {}, overrides = {}) {
   const forceProcessSnapshot = shouldForceProcessSnapshot(req, body);
-  const monitorOnly = overrides.monitorOnly ?? shouldMonitorOnly(req, body);
+  const monitorOnly = Boolean(overrides.monitorOnly ?? shouldMonitorOnly(req, body));
   const processScannerSnapshot = overrides.processScannerSnapshot ?? !monitorOnly;
   const phase = overrides.phase || (monitorOnly ? 'MONITOR_ONLY' : 'TRADE_MAIN');
 
@@ -2508,6 +2619,9 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     allowExitProcessingWithoutScannerSnapshot: true,
     allowTimeStopExitWithoutScannerSnapshot: true,
     allowTpSlExitWithoutScannerSnapshot: true,
+
+    snapshotAlreadyProcessedDoesNotBlockMonitor: true,
+    sameSnapshotRunsMonitorOnly: true,
 
     monitorTimeoutMs,
     openPositionMonitorTimeoutMs: monitorTimeoutMs,
@@ -2714,7 +2828,9 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     preserveDiscordSelection: true,
 
     adminPageIsolation: true,
-    doesNotOverwriteOtherAdminPages: true
+    doesNotOverwriteOtherAdminPages: true,
+
+    ...overrides
   };
 }
 
@@ -2915,7 +3031,7 @@ async function runScannerPreload({
     return {
       ok: false,
       skipped: false,
-      error: error?.message || String(error),
+      error: compactError(error),
       durationMs: now() - startedAt,
       scannerPreloadBeforeTrade: true
     };
@@ -2939,7 +3055,7 @@ function skippedScannerPreload() {
   };
 }
 
-async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPreload = null, monitorPreflight = null) {
+async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPreload = null, monitorPreflight = null, snapshotMode = null) {
   if (!payload || typeof payload !== 'object') {
     return {
       persistedShortRunMeta: false,
@@ -2979,6 +3095,7 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
 
     scannerPreload,
     monitorPreflight,
+    snapshotMode,
 
     monitorPreflightEnabled: Boolean(monitorPreflight),
     monitorPreflightVirtualExitRows: safeNumber(monitorPreflight?.virtualExitRows, 0),
@@ -3020,10 +3137,17 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
       persistence.persistedShortRunMeta = true;
     })
     .catch((error) => {
-      persistence.warnings.push(`RUN_META_PERSIST_FAILED:${error?.message || String(error)}`);
+      persistence.warnings.push(`RUN_META_PERSIST_FAILED:${compactError(error)}`);
     });
 
-  if (payload.snapshotId) {
+  const shouldPersistLastProcessed =
+    Boolean(payload.snapshotId) &&
+    payload.processScannerSnapshot !== false &&
+    payload.reason !== 'MONITOR_ONLY' &&
+    payload.reason !== 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY' &&
+    snapshotMode?.effectiveMonitorOnly !== true;
+
+  if (shouldPersistLastProcessed) {
     await setJson(
       redis,
       SHORT_KEYS.trade.lastProcessedSnapshot,
@@ -3031,6 +3155,13 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
         snapshotId: payload.snapshotId,
         runId: payload.runId || null,
         processedAt: now(),
+        processScannerSnapshot: true,
+        snapshotMode: {
+          latestSnapshotId: snapshotMode?.latestSnapshotId || payload.snapshotId,
+          lastProcessedSnapshotId: snapshotMode?.lastProcessedSnapshotId || null,
+          snapshotAlreadyProcessed: Boolean(snapshotMode?.snapshotAlreadyProcessed),
+          effectiveMonitorOnly: false
+        },
         scannerPreload: scannerPreload
           ? {
               ok: scannerPreload.ok !== false,
@@ -3048,7 +3179,7 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
         persistence.persistedShortLastProcessedSnapshot = true;
       })
       .catch((error) => {
-        persistence.warnings.push(`LAST_PROCESSED_PERSIST_FAILED:${error?.message || String(error)}`);
+        persistence.warnings.push(`LAST_PROCESSED_PERSIST_FAILED:${compactError(error)}`);
       });
   }
 
@@ -3063,13 +3194,20 @@ function buildMonitorPreflightOptions(req, body = {}) {
   });
 }
 
-function buildMainTradeOptions(req, body = {}) {
+function buildMainTradeOptions(req, body = {}, snapshotMode = null) {
   const requestedMonitorOnly = shouldMonitorOnly(req, body);
+  const effectiveMonitorOnly = snapshotMode?.effectiveMonitorOnly ?? requestedMonitorOnly;
 
   return buildRunOptions(req, body, {
-    monitorOnly: requestedMonitorOnly,
-    processScannerSnapshot: !requestedMonitorOnly,
-    phase: requestedMonitorOnly ? 'MONITOR_ONLY_REQUEST' : 'TRADE_MAIN'
+    monitorOnly: effectiveMonitorOnly,
+    processScannerSnapshot: !effectiveMonitorOnly,
+    phase: effectiveMonitorOnly
+      ? snapshotMode?.snapshotAlreadyProcessed && !snapshotMode?.forceProcessSnapshot
+        ? 'MONITOR_ONLY_SNAPSHOT_ALREADY_PROCESSED'
+        : 'MONITOR_ONLY_REQUEST'
+      : 'TRADE_MAIN',
+    snapshotAlreadyProcessed: Boolean(snapshotMode?.snapshotAlreadyProcessed),
+    entriesBlockedBecauseSnapshotAlreadyProcessed: Boolean(snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed)
   });
 }
 
@@ -3205,7 +3343,7 @@ async function writeFailureRunMeta(redis, error, extra = {}) {
     reason: isPayloadTooLargeError(error)
       ? 'TRADE_SYSTEM_PERSISTENCE_PAYLOAD_TOO_LARGE_LOCK_RELEASED'
       : 'TRADE_SYSTEM_ERROR_LOCK_RELEASED',
-    error: error?.message || String(error),
+    error: compactError(error),
     compactedForVercelRuntime: true,
     persistedAt: now(),
     persistedBy: 'api/trade/run.js',
@@ -3216,6 +3354,10 @@ async function writeFailureRunMeta(redis, error, extra = {}) {
   await setJson(redis, SHORT_KEYS.trade.runMeta, payload).catch(() => null);
 
   return payload;
+}
+
+function isSnapshotAlreadyProcessedReason(reason = '') {
+  return String(reason || '').toUpperCase() === 'SNAPSHOT_ALREADY_PROCESSED';
 }
 
 export default async function handler(req, res) {
@@ -3254,6 +3396,7 @@ export default async function handler(req, res) {
   res.setHeader('X-Monitor-Open-Positions-First', 'true');
   res.setHeader('X-Exit-Sweep-Before-Entry-Gate', 'true');
   res.setHeader('X-Stale-Safe-Lock', 'true');
+  res.setHeader('X-Snapshot-Already-Processed-Monitor-Only', 'true');
 
   const startedAt = now();
   let body = {};
@@ -3271,7 +3414,6 @@ export default async function handler(req, res) {
     const scannerPreloadEnabled = shouldRunScannerPreload(req, body);
     const forceUnlock = shouldForceUnlock(req, body);
 
-    const mainRunOptions = buildMainTradeOptions(req, body);
     const durableRedis = getDurableRedis();
 
     const lockKey = SHORT_KEYS.trade.lock;
@@ -3279,8 +3421,33 @@ export default async function handler(req, res) {
     const staleLockAfterSec = getStaleLockAfterSec(req, body);
     const runSource = getRunSource(req, body);
 
+    if (shouldUnlockOnly(req, body)) {
+      const stateBefore = await readLockState(durableRedis, lockKey);
+      const released = await redisDel(durableRedis, lockKey);
+
+      return res.status(200).json({
+        ok: true,
+        skipped: true,
+        reason: 'UNLOCK_ONLY',
+        skipReason: 'UNLOCK_ONLY',
+        message: 'SHORT trade lock handmatig vrijgegeven.',
+        ...baseFlags(),
+        lock: {
+          key: lockKey,
+          released,
+          stateBefore: debug ? stateBefore : undefined
+        },
+        durationMs: now() - startedAt,
+        completedAt: now()
+      });
+    }
+
     let scannerPreload = null;
     let rawMonitorPreflight = null;
+    let snapshotMode = null;
+    let mainRunOptions = null;
+    let fallbackMonitorAfterSnapshotSkip = null;
+    let rawMainBeforeFallback = null;
 
     const rawResult = await runWithTradeLock({
       redis: durableRedis,
@@ -3290,7 +3457,7 @@ export default async function handler(req, res) {
       forceUnlock,
       runSource,
       fn: async () => {
-        if (scannerPreloadEnabled && !mainRunOptions.monitorOnly) {
+        if (scannerPreloadEnabled && !requestedMonitorOnly) {
           const volatileRedis = getVolatileRedis();
 
           scannerPreload = await runScannerPreload({
@@ -3303,7 +3470,10 @@ export default async function handler(req, res) {
           scannerPreload = skippedScannerPreload();
         }
 
-        if (monitorPreflightEnabled) {
+        snapshotMode = await determineSnapshotMode(req, body);
+        mainRunOptions = buildMainTradeOptions(req, body, snapshotMode);
+
+        if (monitorPreflightEnabled && !mainRunOptions.monitorOnly) {
           try {
             rawMonitorPreflight = await runTradeSystem({
               ...buildMonitorPreflightOptions(req, body),
@@ -3321,19 +3491,19 @@ export default async function handler(req, res) {
               runPhase: 'MONITOR_PREFLIGHT',
               monitorOnly: true,
               processScannerSnapshot: false,
-              error: error?.message || String(error),
+              error: compactError(error),
               durationMs: null,
               virtualExitRows: 0,
               shadowExitRows: 0,
               runtimeWarnings: [
                 'MONITOR_PREFLIGHT_FAILED',
-                error?.message || String(error)
+                compactError(error)
               ]
             };
           }
         }
 
-        return runTradeSystem({
+        const mainResult = await runTradeSystem({
           ...mainRunOptions,
           scannerPreloadBeforeTrade: scannerPreloadEnabled,
           marketWeatherPreloadBeforeTrade: scannerPreloadEnabled,
@@ -3348,6 +3518,54 @@ export default async function handler(req, res) {
           monitorPreflightVirtualExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.virtualExitRows, 0),
           monitorPreflightShadowExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.shadowExitRows, 0)
         });
+
+        const mainPayload = unwrapRunResult(mainResult);
+
+        if (
+          isSnapshotAlreadyProcessedReason(mainPayload?.reason || mainPayload?.skipReason) &&
+          !requestedMonitorOnly
+        ) {
+          rawMainBeforeFallback = mainResult;
+          fallbackMonitorAfterSnapshotSkip = true;
+
+          const monitorResult = await runTradeSystem({
+            ...buildRunOptions(req, body, {
+              monitorOnly: true,
+              processScannerSnapshot: false,
+              phase: 'MONITOR_ONLY_AFTER_SNAPSHOT_ALREADY_PROCESSED',
+              force: false,
+              forceProcessSnapshot: false,
+              snapshotAlreadyProcessed: true,
+              entriesBlockedBecauseSnapshotAlreadyProcessed: true
+            }),
+            scannerPreloadBeforeTrade: false,
+            marketWeatherPreloadBeforeTrade: false,
+            scannerPreloadOk: scannerPreload?.ok !== false,
+            fallbackMonitorAfterSnapshotAlreadyProcessed: true
+          });
+
+          return {
+            ok: monitorResult?.ok !== false,
+            skipped: true,
+            skippedNewEntries: true,
+            reason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
+            skipReason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
+            fallbackMonitorAfterSnapshotAlreadyProcessed: true,
+            rawMainBeforeFallback: mainResult,
+            result: {
+              ...unwrapRunResult(monitorResult),
+              reason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
+              skipReason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
+              skipped: true,
+              skippedNewEntries: true,
+              processScannerSnapshot: false,
+              snapshotAlreadyProcessed: true,
+              entriesBlockedBecauseSnapshotAlreadyProcessed: true
+            }
+          };
+        }
+
+        return mainResult;
       }
     });
 
@@ -3375,12 +3593,14 @@ export default async function handler(req, res) {
     const monitorPreflight = compactMonitorPreflightPayload(monitorPreflightPayload);
 
     const payload = sanitizeRunPayload(unwrapRunResult(rawResult), { debug });
+
     const persistence = await persistShortRunMeta(
       durableRedis,
       payload,
       rawResult,
       scannerPreload,
-      monitorPreflight
+      monitorPreflight,
+      snapshotMode
     );
 
     const actionCounts = responseActionCountsFromPayload(payload, monitorPreflightPayload);
@@ -3395,6 +3615,15 @@ export default async function handler(req, res) {
 
     const totalVirtualExitRows = safeNumber(payload?.virtualExitRows, 0) + safeNumber(monitorPreflightPayload?.virtualExitRows, 0);
     const totalShadowExitRows = safeNumber(payload?.shadowExitRows, 0) + safeNumber(monitorPreflightPayload?.shadowExitRows, 0);
+
+    const effectiveReason =
+      snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed
+        ? 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY'
+        : !scannerOk
+          ? 'SCANNER_PRELOAD_FAILED'
+          : monitorPreflightOk === false
+            ? 'MONITOR_PREFLIGHT_FAILED'
+            : responseReason(rawResult);
 
     return res.status(200).json({
       ok: tradeOk && scannerOk && monitorPreflightOk !== false,
@@ -3411,13 +3640,10 @@ export default async function handler(req, res) {
       totalVirtualExitRowsThisRequest: totalVirtualExitRows,
       totalShadowExitRowsThisRequest: totalShadowExitRows,
 
-      skipped: responseSkipped(rawResult),
-      reason: !scannerOk
-        ? 'SCANNER_PRELOAD_FAILED'
-        : monitorPreflightOk === false
-          ? 'MONITOR_PREFLIGHT_FAILED'
-          : responseReason(rawResult),
-      skipReason: payload?.skipReason || responseReason(rawResult),
+      skipped: responseSkipped(rawResult) || Boolean(snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed),
+      skippedNewEntries: Boolean(snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed || payload?.skippedNewEntries),
+      reason: effectiveReason,
+      skipReason: payload?.skipReason || effectiveReason,
 
       ...baseFlags(),
 
@@ -3433,24 +3659,33 @@ export default async function handler(req, res) {
         acquired: rawResult?.lock?.acquired === true,
         forceClearedBeforeAcquire: Boolean(rawResult?.lock?.forceClearedBeforeAcquire),
         staleClearedBeforeAcquire: Boolean(rawResult?.lock?.staleClearedBeforeAcquire),
-        released: true,
+        released: rawResult?.lockRelease?.released === true,
+        releaseReason: rawResult?.lockRelease?.reason || null,
         mode: 'STALE_SAFE_LOCK_RELEASED_IN_FINALLY'
       },
 
-      force: mainRunOptions.force,
-      forceProcessSnapshot: mainRunOptions.forceProcessSnapshot,
-      monitorOnly: mainRunOptions.monitorOnly,
-      monitorOpenPositionsFirst: mainRunOptions.monitorOpenPositionsFirst,
-      monitorOpenPositions: mainRunOptions.monitorOpenPositions,
-      processScannerSnapshot: mainRunOptions.processScannerSnapshot,
+      snapshotMode: {
+        ...snapshotMode,
+        rawMainBeforeFallbackReason: rawMainBeforeFallback
+          ? unwrapRunResult(rawMainBeforeFallback)?.reason || unwrapRunResult(rawMainBeforeFallback)?.skipReason || null
+          : null,
+        fallbackMonitorAfterSnapshotSkip: Boolean(fallbackMonitorAfterSnapshotSkip)
+      },
 
-      monitorTimeoutMs: mainRunOptions.monitorTimeoutMs,
-      openPositionMonitorTimeoutMs: mainRunOptions.openPositionMonitorTimeoutMs,
-      monitorBatchSize: mainRunOptions.monitorBatchSize,
-      openPositionMonitorLimit: mainRunOptions.openPositionMonitorLimit,
-      maxRuntimeMs: mainRunOptions.maxRuntimeMs,
-      maxCandidatesPerSnapshot: mainRunOptions.maxCandidatesPerSnapshot,
-      hardMaxCandidatesPerSnapshot: mainRunOptions.hardMaxCandidatesPerSnapshot,
+      force: mainRunOptions?.force ?? shouldForceProcessSnapshot(req, body),
+      forceProcessSnapshot: mainRunOptions?.forceProcessSnapshot ?? shouldForceProcessSnapshot(req, body),
+      monitorOnly: mainRunOptions?.monitorOnly ?? requestedMonitorOnly,
+      monitorOpenPositionsFirst: mainRunOptions?.monitorOpenPositionsFirst ?? true,
+      monitorOpenPositions: mainRunOptions?.monitorOpenPositions ?? true,
+      processScannerSnapshot: mainRunOptions?.processScannerSnapshot ?? true,
+
+      monitorTimeoutMs: mainRunOptions?.monitorTimeoutMs ?? getMonitorTimeoutMs(req, body, requestedMonitorOnly),
+      openPositionMonitorTimeoutMs: mainRunOptions?.openPositionMonitorTimeoutMs ?? getMonitorTimeoutMs(req, body, requestedMonitorOnly),
+      monitorBatchSize: mainRunOptions?.monitorBatchSize ?? getMonitorBatchSize(req, body),
+      openPositionMonitorLimit: mainRunOptions?.openPositionMonitorLimit ?? getOpenPositionMonitorLimit(req, body),
+      maxRuntimeMs: mainRunOptions?.maxRuntimeMs ?? getMaxRuntimeMs(req, body, requestedMonitorOnly),
+      maxCandidatesPerSnapshot: mainRunOptions?.maxCandidatesPerSnapshot ?? getMaxCandidatesPerSnapshot(req, body),
+      hardMaxCandidatesPerSnapshot: mainRunOptions?.hardMaxCandidatesPerSnapshot ?? getMaxCandidatesPerSnapshot(req, body),
 
       scannerPreload: debug
         ? scannerPreload
@@ -3529,9 +3764,9 @@ export default async function handler(req, res) {
         ? payload.selectedMacroFamilyIds
         : [],
 
-      selectedSnapshotSource: payload?.selectedSnapshotSource || null,
+      selectedSnapshotSource: payload?.selectedSnapshotSource || snapshotMode?.latestSnapshotSource || null,
       selectedSnapshotReason: payload?.selectedSnapshotReason || null,
-      selectedTargetCandidateCount: safeNumber(payload?.selectedTargetCandidateCount, 0),
+      selectedTargetCandidateCount: safeNumber(payload?.selectedTargetCandidateCount, snapshotMode?.latestSelectedTargetCandidateCount || 0),
       selectedOppositeCandidateCount: 0,
 
       scannerPreloadBeforeTrade: scannerPreloadEnabled,
@@ -3567,6 +3802,12 @@ export default async function handler(req, res) {
       warnings: [
         forceUnlock
           ? 'FORCE_UNLOCK_ENABLED_FOR_THIS_REQUEST'
+          : null,
+        snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed
+          ? 'SNAPSHOT_ALREADY_PROCESSED_ENTRIES_BLOCKED_MONITOR_STILL_RAN'
+          : null,
+        fallbackMonitorAfterSnapshotSkip
+          ? 'TRADE_SYSTEM_RETURNED_SNAPSHOT_ALREADY_PROCESSED_FALLBACK_MONITOR_RAN'
           : null,
         monitorPreflightEnabled
           ? 'MONITOR_PREFLIGHT_ENABLED_EXPLICITLY'
@@ -3623,12 +3864,16 @@ export default async function handler(req, res) {
       debug,
       run: debug ? payload : undefined,
       monitorPreflightRun: debug ? monitorPreflightPayload : undefined,
+      rawMainBeforeFallback: debug && rawMainBeforeFallback
+        ? sanitizeRunPayload(unwrapRunResult(rawMainBeforeFallback), { debug: false })
+        : undefined,
       result: debug
         ? {
             ok: rawResult?.ok !== false,
             skipped: Boolean(rawResult?.skipped),
             reason: rawResult?.reason || null,
-            lock: rawResult?.lock || null
+            lock: rawResult?.lock || null,
+            lockRelease: rawResult?.lockRelease || null
           }
         : undefined
     });
@@ -3651,8 +3896,8 @@ export default async function handler(req, res) {
         skipped: false,
         reason: 'TRADE_SYSTEM_PERSISTENCE_PAYLOAD_TOO_LARGE_LOCK_RELEASED',
         skipReason: 'TRADE_SYSTEM_PERSISTENCE_PAYLOAD_TOO_LARGE_LOCK_RELEASED',
-        message: 'TradeSystem probeerde te veel data in Redis te schrijven. Lock is vrijgegeven. Deze endpoint compact nu eigen runMeta; als dit blijft gebeuren moet src/trade/tradeSystem.js ook compact persist toepassen.',
-        error: error?.message || String(error),
+        message: 'TradeSystem probeerde te veel data in Redis te schrijven. Lock is vrijgegeven. Endpoint persist is compact; patch src/trade/tradeSystem.js als dit terugkomt.',
+        error: compactError(error),
 
         ...baseFlags(),
 
@@ -3678,7 +3923,7 @@ export default async function handler(req, res) {
 
       ...baseFlags(),
 
-      error: error?.message || String(error),
+      error: compactError(error),
       lock: {
         key: lockKey,
         releasedAfterError: true,
