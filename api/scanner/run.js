@@ -4,6 +4,7 @@ import { CONFIG } from '../../src/config.js';
 import { KEYS } from '../../src/keys.js';
 import {
   getVolatileRedis,
+  getDurableRedis,
   setJson
 } from '../../src/redis.js';
 import { withRedisLock } from '../../src/lock.js';
@@ -246,7 +247,13 @@ function baseFlags() {
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     redisKeysSeparatedFromLongRoot: true,
-    longRootTouched: false
+    longRootTouched: false,
+
+    scannerTradeRedisBridgeEnabled: true,
+    scannerWritesVolatileRedis: true,
+    scannerWritesDurableRedis: true,
+    tradeReadsSameScannerLatest: true,
+    scanLatestSharedKey: SHORT_KEYS.scan.latest
   };
 }
 
@@ -1075,12 +1082,12 @@ function normalizePayload(payload = {}) {
 
   const analyze = payload.analyze && typeof payload.analyze === 'object'
     ? {
-      ...payload.analyze,
-      ...baseFlags(),
-      scannerOutputOnly: true,
-      scannerDoesNotWriteLearning: true,
-      analyzeMustAssignTrueMicroFamily: true
-    }
+        ...payload.analyze,
+        ...baseFlags(),
+        scannerOutputOnly: true,
+        scannerDoesNotWriteLearning: true,
+        analyzeMustAssignTrueMicroFamily: true
+      }
     : payload.analyze || null;
 
   return {
@@ -1271,6 +1278,10 @@ function buildScannerOptions(req, body = {}) {
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
 
+    scannerTradeRedisBridgeEnabled: true,
+    scannerWritesVolatileRedis: true,
+    scannerWritesDurableRedis: true,
+
     keys: {
       scanLock: SHORT_KEYS.scan.lock,
       scanLatest: SHORT_KEYS.scan.latest,
@@ -1279,46 +1290,116 @@ function buildScannerOptions(req, body = {}) {
   };
 }
 
-async function persistShortScannerPayload(redis, payload = {}) {
+async function persistOneScannerPayload(redis, payload = {}, storageRole = 'UNKNOWN') {
+  if (!redis) {
+    return {
+      storageRole,
+      ok: false,
+      reason: 'REDIS_CLIENT_MISSING'
+    };
+  }
+
   const snapshotId = payload?.snapshotId || payload?.id || payload?.scanId || null;
+  const snapshotKey = snapshotId ? SHORT_KEYS.scan.snapshot(snapshotId) : null;
 
   const latestPayload = {
     ...payload,
     ...baseFlags(),
 
     snapshotId,
+
     persistedAt: now(),
     persistedBy: 'api/scanner/run.js',
     persistedNamespace: SHORT_NAMESPACE,
+    persistedStorageRole: storageRole,
 
     scannerPayloadRole: 'DISCOVERY_METADATA_ONLY',
     scannerDoesNotTrade: true,
     scannerDoesNotSelectMicroFamilies: true,
     scannerDoesNotSendDiscord: true,
 
+    scannerTradeRedisBridgeEnabled: true,
+    scannerLatestSharedKey: SHORT_KEYS.scan.latest,
+    scannerSnapshotSharedKey: snapshotKey,
+
     shortKeys: {
       namespace: SHORT_NAMESPACE,
       prefix: SHORT_KEY_PREFIX,
       scanLatest: SHORT_KEYS.scan.latest,
-      snapshotKey: snapshotId ? SHORT_KEYS.scan.snapshot(snapshotId) : null
+      snapshotKey
     }
   };
 
-  await setJson(redis, SHORT_KEYS.scan.latest, latestPayload).catch(() => null);
+  await setJson(redis, SHORT_KEYS.scan.latest, latestPayload);
 
-  if (snapshotId) {
-    await setJson(
-      redis,
-      SHORT_KEYS.scan.snapshot(snapshotId),
-      latestPayload
-    ).catch(() => null);
+  if (snapshotId && snapshotKey) {
+    await setJson(redis, snapshotKey, latestPayload);
   }
 
   return {
-    persistedShortLatest: true,
-    persistedShortSnapshot: Boolean(snapshotId),
+    storageRole,
+    ok: true,
+    persistedLatest: true,
+    persistedSnapshot: Boolean(snapshotId && snapshotKey),
     scanLatest: SHORT_KEYS.scan.latest,
-    snapshotKey: snapshotId ? SHORT_KEYS.scan.snapshot(snapshotId) : null
+    snapshotKey
+  };
+}
+
+async function persistShortScannerPayload({
+  volatileRedis,
+  durableRedis,
+  payload = {}
+}) {
+  const volatileResult = await persistOneScannerPayload(
+    volatileRedis,
+    payload,
+    'VOLATILE_SCANNER_PRIMARY'
+  ).catch((error) => ({
+    storageRole: 'VOLATILE_SCANNER_PRIMARY',
+    ok: false,
+    error: error?.message || String(error)
+  }));
+
+  const durableResult = await persistOneScannerPayload(
+    durableRedis,
+    payload,
+    'DURABLE_TRADE_READ_MIRROR'
+  ).catch((error) => ({
+    storageRole: 'DURABLE_TRADE_READ_MIRROR',
+    ok: false,
+    error: error?.message || String(error)
+  }));
+
+  const snapshotId = payload?.snapshotId || payload?.id || payload?.scanId || null;
+
+  return {
+    ok: volatileResult.ok === true || durableResult.ok === true,
+
+    scannerTradeRedisBridgeEnabled: true,
+
+    persistedShortLatest: volatileResult.ok === true || durableResult.ok === true,
+    persistedShortSnapshot: Boolean(
+      snapshotId &&
+        (
+          volatileResult.persistedSnapshot === true ||
+          durableResult.persistedSnapshot === true
+        )
+    ),
+
+    volatile: volatileResult,
+    durable: durableResult,
+
+    scanLatest: SHORT_KEYS.scan.latest,
+    snapshotKey: snapshotId ? SHORT_KEYS.scan.snapshot(snapshotId) : null,
+
+    tradeSystemReadsDurableMirror: true,
+    tradeSystemScannerLatestKey: SHORT_KEYS.scan.latest,
+
+    mismatchFixed: durableResult.ok === true,
+    warning: durableResult.ok === true
+      ? null
+      : 'DURABLE_SCANNER_MIRROR_FAILED_TRADE_MAY_READ_STALE_SCANNER_LATEST'
   };
 }
 
@@ -1346,6 +1427,10 @@ export default async function handler(req, res) {
   res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
   res.setHeader('X-Redis-Namespace', SHORT_NAMESPACE);
   res.setHeader('X-Long-Root-Touched', 'false');
+  res.setHeader('X-Scanner-Writes-Volatile-Redis', 'true');
+  res.setHeader('X-Scanner-Writes-Durable-Redis', 'true');
+  res.setHeader('X-Scanner-Trade-Redis-Bridge', 'true');
+  res.setHeader('X-Trade-Reads-Same-Scanner-Latest', 'true');
 
   const startedAt = now();
 
@@ -1357,12 +1442,14 @@ export default async function handler(req, res) {
     const body = await readBody(req);
     const scannerOptions = buildScannerOptions(req, body);
 
-    const redis = getVolatileRedis();
+    const volatileRedis = getVolatileRedis();
+    const durableRedis = getDurableRedis();
+
     const lockKey = SHORT_KEYS.scan.lock;
     const lockTtlSec = getLockTtlSec();
 
     const rawResult = await withRedisLock(
-      redis,
+      volatileRedis,
       lockKey,
       lockTtlSec,
       async () => runScanner(scannerOptions)
@@ -1371,14 +1458,18 @@ export default async function handler(req, res) {
     const result = normalizeLockResult(rawResult);
     const payload = normalizePayload(unwrapPayload(result));
 
-    const persistence = await persistShortScannerPayload(redis, payload);
+    const persistence = await persistShortScannerPayload({
+      volatileRedis,
+      durableRedis,
+      payload
+    });
 
-    const ok = result?.ok !== false && payload?.ok !== false;
+    const ok = result?.ok !== false && payload?.ok !== false && persistence.ok === true;
 
     return res.status(200).json({
       ok,
       skipped: Boolean(result?.skipped || payload?.skipped || false),
-      reason: result?.reason || payload?.reason || null,
+      reason: result?.reason || payload?.reason || persistence.warning || null,
 
       source: sourceLabel(req, body),
 
@@ -1408,14 +1499,40 @@ export default async function handler(req, res) {
 
       analyze: payload?.analyze || null,
 
+      scannerTradeAlignment: {
+        enabled: true,
+        fixed: persistence.durable?.ok === true,
+        scannerWritesVolatile: persistence.volatile?.ok === true,
+        scannerWritesDurable: persistence.durable?.ok === true,
+        tradeReadsDurableLatest: true,
+        sharedLatestKey: SHORT_KEYS.scan.latest,
+        snapshotKey: payload?.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null
+      },
+
       shortKeys: {
         namespace: SHORT_NAMESPACE,
         prefix: SHORT_KEY_PREFIX,
         scanLock: SHORT_KEYS.scan.lock,
         scanLatest: SHORT_KEYS.scan.latest,
         scanSnapshotPattern: SHORT_KEYS.scan.snapshotPattern,
-        snapshotKey: payload?.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null
+        snapshotKey: payload?.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null,
+
+        volatileScanLatest: SHORT_KEYS.scan.latest,
+        durableScanLatest: SHORT_KEYS.scan.latest,
+        tradeSystemScannerLatest: SHORT_KEYS.scan.latest
       },
+
+      warnings: [
+        persistence.durable?.ok !== true
+          ? 'DURABLE_SCANNER_MIRROR_FAILED_TRADE_MAY_NOT_SEE_THIS_SCAN'
+          : null,
+        Number(payload?.scannerGateCandidatesCount || 0) <= 0
+          ? 'NO_SCANNER_GATE_CANDIDATES_TRADE_MAY_HAVE_NO_NEW_ENTRIES'
+          : null,
+        Number(payload?.candidatesCount || 0) <= 0
+          ? 'NO_SHORT_SCANNER_CANDIDATES'
+          : null
+      ].filter(Boolean),
 
       durationMs: now() - startedAt,
 
