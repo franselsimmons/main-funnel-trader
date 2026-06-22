@@ -1,4 +1,3 @@
-```html
 <!doctype html>
 <html lang="nl">
 <head>
@@ -1607,6 +1606,7 @@
         .join(" | ");
     }
 
+    // <<< gewijzigd: currentFitScore met SHORT_MIRRORED_CURRENT_FIT-check
     function currentFitScore(row = {}) {
       const explicitShort = firstFinite(
         row.shortCurrentFit,
@@ -1639,6 +1639,15 @@
       );
 
       if (direct !== null) {
+        // Eerst checken of het al SHORT-mirrored is
+        const definition = upper(row.currentFitDefinition || "");
+        const polarity = upper(row.currentFitPolarity || "");
+        if (
+          definition.includes("SHORT_MIRRORED_CURRENT_FIT") ||
+          polarity.includes("BEARISH_POSITIVE_BULLISH_NEGATIVE")
+        ) {
+          return direct;
+        }
         const haystack = marketBiasHaystack(row);
 
         if (
@@ -1807,6 +1816,7 @@
       return num(row.sampleReliability, 0);
     }
 
+    // <<< gewijzigd: adaptiveScore zonder fit/momentum
     function adaptiveScore(row = {}) {
       const direct = firstFinite(
         row.adaptiveScore,
@@ -1817,13 +1827,11 @@
       if (direct !== null) return direct;
 
       const base = balancedScore(row);
-      const fit = currentFitScore(row);
-      const momentum = recentMomentumScore(row);
       const reliability = sampleReliability(row);
       const directSLPenalty = directSLPct(row) * 35;
       const costPenalty = avgCostR(row) * 8;
 
-      return base + fit * 0.35 + momentum * 0.25 + reliability * 10 - directSLPenalty - costPenalty;
+      return base + reliability * 10 - directSLPenalty - costPenalty;
     }
 
     function tierPill(value) {
@@ -2576,6 +2584,7 @@
       }
     }
 
+    // <<< gewijzigd: activeMicroIds met slice
     function activeMicroIds() {
       return uniqueStrings([
         state.rotation?.activeMicroFamilyIds || [],
@@ -2591,7 +2600,9 @@
         state.micros?.activeRotation?.trueMicroFamilyIds || [],
         state.overview?.activeMicroFamilyIds || [],
         state.trade?.activeMicroFamilyIds || []
-      ]).filter(idAllowedInShortOnly);
+      ])
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
     }
 
     function activeParentIds() {
@@ -2943,7 +2954,9 @@
           data.activeRotation?.activeMicroFamilyIds || [],
           data.activeRotation?.microFamilyIds || [],
           data.activeRotation?.trueMicroFamilyIds || []
-        ]).filter(idAllowedInShortOnly),
+        ])
+          .filter(idAllowedInShortOnly)
+          .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES), // <<< gewijzigd
         activeMacroFamilyIds: uniqueStrings([
           data.activeMacroFamilyIds || [],
           data.selectedMacroFamilyIds || [],
@@ -3547,7 +3560,7 @@
           <input id="microSearch" type="search" placeholder="Zoek 75-child, parent 15, setup, regime, confirmation..." value="${escapeAttr(state.microSearch)}" />
 
           <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible 75-child IDs</button>
-          <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible exact IDs</button>
+          <button type="button" class="success" id="activateVisibleIdsBtn">Activate top 2 visible exact IDs</button>
           <button type="button" class="primary" id="activateTopTwoBtn">Activate top 2 adaptief</button>
           <button type="button" id="exportMicrosBtn">Export JSON</button>
         </div>
@@ -3680,7 +3693,9 @@
         active.microFamilyIds || [],
         active.trueMicroFamilyIds || [],
         data.activeMicroFamilyIds || []
-      ]).filter(idAllowedInShortOnly);
+      ])
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES); // <<< gewijzigd
 
       const parentIds = uniqueStrings([
         active.activeMacroFamilyIds || [],
@@ -3729,14 +3744,14 @@
         <div class="card">
           <h3>Manual exact 75-child IDs</h3>
           <p class="metric-extra">
-            Plak één of meer trueMicroFamilyIds zoals MICRO_SHORT_BREAKOUT_TREND_A_STRONG_ALIGN.
+            Plak maximaal 2 trueMicroFamilyIds zoals MICRO_SHORT_BREAKOUT_TREND_A_STRONG_ALIGN.
             Parent IDs zoals MICRO_SHORT_BREAKOUT_TREND worden geweigerd voor Discord selectie.
           </p>
 
           <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN">${escapeHtml(activeIds.join("\n"))}</textarea>
 
           <div class="toolbar">
-            <button type="button" class="short-action" id="activateManualBtn">Save exact Discord selection</button>
+            <button type="button" class="short-action" id="activateManualBtn">Save max 2 exact Discord IDs</button>
             <button type="button" class="primary" id="activateTopTwoRotationBtn">Select top 2 adaptief</button>
             <button type="button" id="clearManualBtn">Clear input</button>
             <button type="button" class="success" id="copyActiveBtn">Copy active 75-child IDs</button>
@@ -3820,6 +3835,10 @@
           trueMicroFamilyIds: microFamilyIds,
           childTrueMicroFamilyIds: microFamilyIds,
 
+          maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+          maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+          maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES, // <<< toegevoegd
+
           macroFamilyIds: [],
           activeMacroFamilyIds: [],
 
@@ -3870,7 +3889,9 @@
         active.microFamilyIds || [],
         active.trueMicroFamilyIds || [],
         data.activeMicroFamilyIds || []
-      ]).filter(idAllowedInShortOnly);
+      ])
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES); // <<< gewijzigd
 
       state.rotation = {
         ...(state.rotation || {}),
@@ -4255,4 +4276,3 @@
   </script>
 </body>
 </html>
-```
