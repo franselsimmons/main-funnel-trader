@@ -65,9 +65,9 @@ const READ_SCOPE = 'READ_SHORT_SCANNER_LATEST_ONLY';
 const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V1';
 const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_FAMILY_TP_SL_LEARNING_V1';
 
-const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 12;
-const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 25;
-const DEFAULT_DATA_CONCURRENCY = 3;
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 8;
+const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 12;
+const DEFAULT_DATA_CONCURRENCY = 2;
 const DEFAULT_CANDLE_LIMIT = 40;
 const DEFAULT_MIN_LIVE_CANDLES_15M = 10;
 const DEFAULT_MAX_SNAPSHOT_AGE_SEC = 8 * 60;
@@ -87,13 +87,15 @@ const DEFAULT_DISCORD_REQUIRE_CURRENT_FIT = true;
 const DEFAULT_DISCORD_MIN_CURRENT_FIT_CONFIDENCE = 35;
 const DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC = 15 * 60;
 
-const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 2000;
-const DEFAULT_MONITOR_TIMEOUT_MS = 8000;
-const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 650;
-const DEFAULT_CANDIDATE_TIMEOUT_MS = 7000;
-const DEFAULT_ANALYZE_TIMEOUT_MS = 12000;
-const DEFAULT_ROTATION_TIMEOUT_MS = 3000;
-const DEFAULT_MAX_RUNTIME_MS = 30000;
+const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 1500;
+const DEFAULT_MONITOR_TIMEOUT_MS = 4500;
+const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 400;
+const DEFAULT_CANDIDATE_TIMEOUT_MS = 4000;
+const DEFAULT_ANALYZE_TIMEOUT_MS = 7000;
+const DEFAULT_ROTATION_TIMEOUT_MS = 1200;
+const DEFAULT_MAX_RUNTIME_MS = 25000;
+
+const DEFAULT_MONITOR_LIVE_PRICE_FETCH_ENABLED = false;
 
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
@@ -210,6 +212,14 @@ function ratio(part, total) {
 
 function pct(part, total) {
   return Number((ratio(part, total) * 100).toFixed(2));
+}
+
+function elapsedMs(startedAt) {
+  return Math.max(0, now() - safeNumber(startedAt, now()));
+}
+
+function runtimeExceeded(startedAt, cfg, reserveMs = 1500) {
+  return elapsedMs(startedAt) >= Math.max(1000, safeNumber(cfg.maxRuntimeMs, DEFAULT_MAX_RUNTIME_MS) - reserveMs);
 }
 
 function timeoutPayload(label, timeoutMs) {
@@ -695,7 +705,7 @@ function tradeConfig() {
     ),
     DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT,
     1,
-    100
+    50
   );
 
   const requestedMaxCandidates = cfgNumber(
@@ -736,6 +746,14 @@ function tradeConfig() {
       CONFIG.trade?.allowLearningRiskVirtualEntries
     ),
     DEFAULT_ALLOW_STANDARDIZED_LEARNING_RISK_VIRTUAL_ENTRIES
+  );
+
+  const monitorLivePriceFetchEnabled = cfgBoolean(
+    firstDefined(
+      options.monitorLivePriceFetchEnabled,
+      options.allowMonitorLivePriceFetch
+    ),
+    DEFAULT_MONITOR_LIVE_PRICE_FETCH_ENABLED
   );
 
   return {
@@ -797,7 +815,7 @@ function tradeConfig() {
       ),
       DEFAULT_DATA_CONCURRENCY,
       1,
-      5
+      3
     ),
 
     candleLimit: positiveInt(
@@ -952,7 +970,7 @@ function tradeConfig() {
       ),
       DEFAULT_MARKET_CONTEXT_TIMEOUT_MS,
       250,
-      5000
+      4000
     ),
 
     monitorTimeoutMs: positiveInt(
@@ -964,7 +982,7 @@ function tradeConfig() {
       ),
       DEFAULT_MONITOR_TIMEOUT_MS,
       500,
-      12000
+      8000
     ),
 
     monitorPriceFetchTimeoutMs: positiveInt(
@@ -976,8 +994,10 @@ function tradeConfig() {
       ),
       DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS,
       100,
-      1500
+      1000
     ),
+
+    monitorLivePriceFetchEnabled,
 
     candidateTimeoutMs: positiveInt(
       firstDefined(
@@ -988,7 +1008,7 @@ function tradeConfig() {
       ),
       DEFAULT_CANDIDATE_TIMEOUT_MS,
       500,
-      10000
+      7000
     ),
 
     analyzeTimeoutMs: positiveInt(
@@ -1000,7 +1020,7 @@ function tradeConfig() {
       ),
       DEFAULT_ANALYZE_TIMEOUT_MS,
       500,
-      15000
+      12000
     ),
 
     rotationTimeoutMs: positiveInt(
@@ -1012,7 +1032,7 @@ function tradeConfig() {
       ),
       DEFAULT_ROTATION_TIMEOUT_MS,
       250,
-      5000
+      3000
     ),
 
     maxRuntimeMs: positiveInt(
@@ -1024,7 +1044,7 @@ function tradeConfig() {
       ),
       DEFAULT_MAX_RUNTIME_MS,
       5000,
-      35000
+      30000
     )
   };
 }
@@ -1907,7 +1927,13 @@ function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LE
     riskPct,
     rewardPct,
 
-    spreadPct: safeNumber(normalized.spreadPct, CONFIG.short?.cost?.fallbackSpreadPct ?? CONFIG.cost?.shortFallbackSpreadPct ?? CONFIG.cost?.fallbackSpreadPct ?? 0.0008),
+    spreadPct: safeNumber(
+      normalized.spreadPct,
+      CONFIG.short?.cost?.fallbackSpreadPct ??
+        CONFIG.cost?.shortFallbackSpreadPct ??
+        CONFIG.cost?.fallbackSpreadPct ??
+        0.0008
+    ),
     depthMinUsd1p: safeNumber(normalized.depthMinUsd1p, 0),
     fundingRate: safeNumber(normalized.fundingRate, 0),
 
@@ -1967,7 +1993,10 @@ async function fetchLiveCandidateData(candidate) {
         fetchFailed: true,
         mid: 0,
         bias: 'NEUTRAL',
-        spreadPct: CONFIG.short?.cost?.fallbackSpreadPct || CONFIG.cost?.shortFallbackSpreadPct || CONFIG.cost?.fallbackSpreadPct || 0.0008,
+        spreadPct: CONFIG.short?.cost?.fallbackSpreadPct ||
+          CONFIG.cost?.shortFallbackSpreadPct ||
+          CONFIG.cost?.fallbackSpreadPct ||
+          0.0008,
         depthMinUsd1p: 0
       },
       funding: { rate: 0, fetchFailed: true },
@@ -2053,6 +2082,11 @@ async function fetchMidPriceFast(symbol, priceHints = new Map()) {
   if (hinted > 0) return hinted;
 
   const cfg = tradeConfig();
+
+  if (!cfg.monitorLivePriceFetchEnabled) {
+    return 0;
+  }
+
   const result = await withTimeout(
     fetchMidPrice(symbol).catch(() => 0),
     cfg.monitorPriceFetchTimeoutMs,
@@ -2104,13 +2138,17 @@ async function processCandidate(candidate) {
   if (isTimeoutResult(dataResult) || dataResult?.error || dataResult?.ob?.fetchFailed) {
     return {
       actions: [],
-      metrics: [standardizedRiskMetrics(normalized, isTimeoutResult(dataResult)
-        ? 'LIVE_DATA_TIMEOUT_STANDARDIZED_LEARNING_TP_SL'
-        : 'LIVE_DATA_FAILED_STANDARDIZED_LEARNING_TP_SL')]
+      metrics: [standardizedRiskMetrics(
+        normalized,
+        isTimeoutResult(dataResult)
+          ? 'LIVE_DATA_TIMEOUT_STANDARDIZED_LEARNING_TP_SL'
+          : 'LIVE_DATA_FAILED_STANDARDIZED_LEARNING_TP_SL'
+      )]
     };
   }
 
-  const hasEnough15mCandles = Array.isArray(dataResult.candles15m) && dataResult.candles15m.length >= cfg.minLiveCandles15m;
+  const hasEnough15mCandles = Array.isArray(dataResult.candles15m) &&
+    dataResult.candles15m.length >= cfg.minLiveCandles15m;
 
   if (!hasEnough15mCandles) {
     return {
@@ -2319,7 +2357,11 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
 
 async function loadRecentTargetSnapshots(redis, limit = 8) {
   const pattern = namespacedShortKey(
-    keyFromMaybeFunction(KEYS.short?.scan?.snapshot || KEYS.scan?.shortSnapshot || KEYS.scan?.snapshot, '*', 'SCAN:SNAPSHOT:*'),
+    keyFromMaybeFunction(
+      KEYS.short?.scan?.snapshot || KEYS.scan?.shortSnapshot || KEYS.scan?.snapshot,
+      '*',
+      'SCAN:SNAPSHOT:*'
+    ),
     'SCAN:SNAPSHOT:*'
   );
 
@@ -3046,6 +3088,58 @@ async function saveRunMeta(result) {
   return finalResult;
 }
 
+function baseEarlyReturnPayload({
+  runId,
+  startedAt,
+  snapshot,
+  actions = [],
+  realExits = [],
+  virtualExits = [],
+  shadowExits = [],
+  reason,
+  runtimeWarnings = [],
+  marketContext = {},
+  processScannerSnapshot = false,
+  priceHints = new Map(),
+  extra = {}
+}) {
+  return {
+    runId,
+    startedAt,
+    snapshotId: snapshot?.snapshotId || null,
+    selectedSnapshotSource: snapshot?.selectedSnapshotSource || null,
+    selectedSnapshotReason: snapshot?.selectedSnapshotReason || null,
+    selectedTargetCandidateCount: snapshot?.selectedTargetCandidateCount || 0,
+    selectedShortCandidateCount: snapshot?.selectedShortCandidateCount || 0,
+    selectedOppositeCandidateCount: snapshot?.selectedOppositeCandidateCount || 0,
+    selectedLongCandidateCount: snapshot?.selectedLongCandidateCount || 0,
+    blockedNonShortCandidatesCount: snapshot?.blockedNonShortCandidatesCount || 0,
+    blockedNonLongCandidatesCount: snapshot?.blockedNonLongCandidatesCount || 0,
+    actions,
+    realExits,
+    virtualExits,
+    shadowExits,
+    entryRows: 0,
+    waitRows: actions.length,
+    virtualCreatedRows: 0,
+    skippedNewEntries: true,
+    reason,
+    runtimeWarnings,
+    actionCounts: buildRunActionCounts(actions, virtualExits),
+    marketContext,
+    monitorOpenPositions: true,
+    monitorOpenPositionsFirst: true,
+    processScannerSnapshot,
+    monitorPriceHintCount: priceHints.size,
+    monitorLivePriceFetchEnabled: tradeConfig().monitorLivePriceFetchEnabled,
+    monitorPriceSource: tradeConfig().monitorLivePriceFetchEnabled
+      ? 'SCANNER_SNAPSHOT_HINTS_THEN_LIVE_FETCH'
+      : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
+    ...isolationFlags(),
+    ...extra
+  };
+}
+
 export async function runTradeSystem(options = {}) {
   const previousOptions = ACTIVE_RUN_OPTIONS;
   ACTIVE_RUN_OPTIONS = options || {};
@@ -3107,62 +3201,56 @@ export async function runTradeSystem(options = {}) {
     const realExits = [];
 
     if (monitorOnly) {
-      const actions = [];
-
-      return saveRunMeta({
+      return saveRunMeta(baseEarlyReturnPayload({
         runId,
         startedAt,
-        actions,
+        snapshot,
+        actions: [],
         realExits,
         virtualExits,
         shadowExits,
-        entryRows: 0,
-        waitRows: 0,
-        virtualCreatedRows: 0,
-        skippedNewEntries: true,
         reason: 'MONITOR_ONLY',
         runtimeWarnings,
-        actionCounts: buildRunActionCounts(actions, virtualExits),
         marketContext,
-        monitorOpenPositions: true,
-        monitorOpenPositionsFirst: true,
         processScannerSnapshot: false,
-        snapshotId: snapshot?.snapshotId || null,
-        selectedSnapshotSource: snapshot?.selectedSnapshotSource || null,
-        selectedSnapshotReason: snapshot?.selectedSnapshotReason || null,
-        selectedTargetCandidateCount: snapshot?.selectedTargetCandidateCount || 0,
-        selectedShortCandidateCount: snapshot?.selectedShortCandidateCount || 0,
-        selectedOppositeCandidateCount: snapshot?.selectedOppositeCandidateCount || 0,
-        selectedLongCandidateCount: snapshot?.selectedLongCandidateCount || 0,
-        monitorPriceHintCount: priceHints.size,
-        ...isolationFlags()
-      });
+        priceHints
+      }));
+    }
+
+    if (runtimeExceeded(startedAt, cfg, 9000)) {
+      runtimeWarnings.push('MAX_RUNTIME_AFTER_MONITOR_SKIPPING_NEW_ENTRIES');
+
+      return saveRunMeta(baseEarlyReturnPayload({
+        runId,
+        startedAt,
+        snapshot,
+        actions: [],
+        realExits,
+        virtualExits,
+        shadowExits,
+        reason: 'MAX_RUNTIME_AFTER_MONITOR',
+        runtimeWarnings,
+        marketContext,
+        processScannerSnapshot: false,
+        priceHints
+      }));
     }
 
     if (!snapshot?.snapshotId) {
-      const actions = [];
-
-      return saveRunMeta({
+      return saveRunMeta(baseEarlyReturnPayload({
         runId,
         startedAt,
-        actions,
+        snapshot,
+        actions: [],
         realExits,
         virtualExits,
         shadowExits,
-        entryRows: 0,
-        waitRows: 0,
-        virtualCreatedRows: 0,
-        skippedNewEntries: true,
         reason: 'NO_SHORT_SCANNER_SNAPSHOT',
         runtimeWarnings,
-        actionCounts: buildRunActionCounts(actions, virtualExits),
         marketContext,
-        monitorOpenPositions: true,
-        monitorOpenPositionsFirst: true,
         processScannerSnapshot: true,
-        monitorPriceHintCount: priceHints.size,
-        ...isolationFlags()
-      });
+        priceHints
+      }));
     }
 
     const snapshotAgeSec = (now() - safeNumber(snapshot.createdAt, 0)) / 1000;
@@ -3170,37 +3258,23 @@ export async function runTradeSystem(options = {}) {
     if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
       const actions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
 
-      return saveRunMeta({
+      return saveRunMeta(baseEarlyReturnPayload({
         runId,
         startedAt,
-        snapshotId: snapshot.snapshotId,
-        snapshotAgeSec: Math.round(snapshotAgeSec),
-        selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
-        selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
-        selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
-        selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
-        selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
-        selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
-        blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
-        blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0,
+        snapshot,
         actions,
         realExits,
         virtualExits,
         shadowExits,
-        entryRows: 0,
-        waitRows: actions.length,
-        virtualCreatedRows: 0,
-        skippedNewEntries: true,
         reason: 'SNAPSHOT_TOO_STALE',
         runtimeWarnings,
-        actionCounts: buildRunActionCounts(actions, virtualExits),
         marketContext,
-        monitorOpenPositions: true,
-        monitorOpenPositionsFirst: true,
         processScannerSnapshot: false,
-        monitorPriceHintCount: priceHints.size,
-        ...isolationFlags()
-      });
+        priceHints,
+        extra: {
+          snapshotAgeSec: Math.round(snapshotAgeSec)
+        }
+      }));
     }
 
     const lastProcessed = await getJson(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, null);
@@ -3209,36 +3283,39 @@ export async function runTradeSystem(options = {}) {
     if (sameSnapshot && !forceProcessSnapshot) {
       const actions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
 
-      return saveRunMeta({
+      return saveRunMeta(baseEarlyReturnPayload({
         runId,
         startedAt,
-        snapshotId: snapshot.snapshotId,
-        selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
-        selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
-        selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
-        selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
-        selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
-        selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
-        blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
-        blockedNonLongCandidatesCount: snapshot.blockedNonLongCandidatesCount || 0,
+        snapshot,
         actions,
         realExits,
         virtualExits,
         shadowExits,
-        entryRows: 0,
-        waitRows: actions.length,
-        virtualCreatedRows: 0,
-        skippedNewEntries: true,
         reason: 'SNAPSHOT_ALREADY_PROCESSED',
         runtimeWarnings,
-        actionCounts: buildRunActionCounts(actions, virtualExits),
         marketContext,
-        monitorOpenPositions: true,
-        monitorOpenPositionsFirst: true,
         processScannerSnapshot: false,
-        monitorPriceHintCount: priceHints.size,
-        ...isolationFlags()
-      });
+        priceHints
+      }));
+    }
+
+    if (runtimeExceeded(startedAt, cfg, 8000)) {
+      runtimeWarnings.push('MAX_RUNTIME_BEFORE_ROTATION_SKIPPING_NEW_ENTRIES');
+
+      return saveRunMeta(baseEarlyReturnPayload({
+        runId,
+        startedAt,
+        snapshot,
+        actions: [],
+        realExits,
+        virtualExits,
+        shadowExits,
+        reason: 'MAX_RUNTIME_BEFORE_ROTATION',
+        runtimeWarnings,
+        marketContext,
+        processScannerSnapshot: false,
+        priceHints
+      }));
     }
 
     const activeRotationResult = await withTimeout(
@@ -3290,6 +3367,25 @@ export async function runTradeSystem(options = {}) {
     const cappedCandidateCount = Math.max(0, allTargetCandidates.length - candidates.length);
     if (cappedCandidateCount > 0) runtimeWarnings.push(`SHORT_CANDIDATES_CAPPED_FOR_VERCEL:${cappedCandidateCount}`);
 
+    if (runtimeExceeded(startedAt, cfg, 7000)) {
+      runtimeWarnings.push('MAX_RUNTIME_BEFORE_CANDIDATES_SKIPPING_NEW_ENTRIES');
+
+      return saveRunMeta(baseEarlyReturnPayload({
+        runId,
+        startedAt,
+        snapshot,
+        actions: preAnalyzeBlockedActions,
+        realExits,
+        virtualExits,
+        shadowExits,
+        reason: 'MAX_RUNTIME_BEFORE_CANDIDATES',
+        runtimeWarnings,
+        marketContext,
+        processScannerSnapshot: false,
+        priceHints
+      }));
+    }
+
     const processed = await mapConcurrent(candidates, cfg.dataConcurrency, safeProcessCandidate);
     const candidateTimeoutRows = processed.filter((row) => row?.timedOut).length;
     if (candidateTimeoutRows > 0) runtimeWarnings.push(`CANDIDATE_TIMEOUT_ROWS:${candidateTimeoutRows}`);
@@ -3318,6 +3414,31 @@ export async function runTradeSystem(options = {}) {
     const syntheticRiskRows = liveRows.filter((row) => row.syntheticRisk).length;
     const learningOnlyRows = liveRows.filter((row) => row.learningOnly).length;
     const riskValidRows = liveRows.filter(hasValidRiskShape).length;
+
+    if (runtimeExceeded(startedAt, cfg, 6000)) {
+      runtimeWarnings.push('MAX_RUNTIME_BEFORE_ANALYZE_SKIPPING_NEW_ENTRIES');
+
+      return saveRunMeta(baseEarlyReturnPayload({
+        runId,
+        startedAt,
+        snapshot,
+        actions: earlyActions,
+        realExits,
+        virtualExits,
+        shadowExits,
+        reason: 'MAX_RUNTIME_BEFORE_ANALYZE',
+        runtimeWarnings,
+        marketContext,
+        processScannerSnapshot: false,
+        priceHints,
+        extra: {
+          candidates: candidates.length,
+          processed: processed.length,
+          liveRows: liveRows.length,
+          riskValidRows
+        }
+      }));
+    }
 
     let analyzedRowsRaw = [];
     let analyzeError = null;
@@ -3447,7 +3568,7 @@ export async function runTradeSystem(options = {}) {
     let unselectedMicroEntryRows = 0;
 
     for (const row of analyzedRows) {
-      if (now() - startedAt >= cfg.maxRuntimeMs) {
+      if (runtimeExceeded(startedAt, cfg, 2500)) {
         runtimeWarnings.push('MAX_RUNTIME_REACHED_ENTRY_LOOP_STOPPED');
         break;
       }
@@ -3626,6 +3747,10 @@ export async function runTradeSystem(options = {}) {
       analyzeTimeoutMs: cfg.analyzeTimeoutMs,
       monitorTimeoutMs: cfg.monitorTimeoutMs,
       monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+      monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+      monitorPriceSource: cfg.monitorLivePriceFetchEnabled
+        ? 'SCANNER_SNAPSHOT_HINTS_THEN_LIVE_FETCH'
+        : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
       marketContextTimeoutMs: cfg.marketContextTimeoutMs,
       maxRuntimeMs: cfg.maxRuntimeMs,
 
