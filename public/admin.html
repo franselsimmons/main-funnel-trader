@@ -560,21 +560,6 @@
       word-break: break-word;
     }
 
-    @media (max-width: 720px) {
-      .micro-desktop-table {
-        display: none;
-      }
-
-      .micro-mobile-cards {
-        display: block;
-      }
-
-      .api-output-textarea {
-        min-height: 420px;
-        font-size: 11px;
-      }
-    }
-
     .empty {
       padding: 22px;
       text-align: center;
@@ -729,6 +714,12 @@
       input[type="search"] { min-width: 100%; }
       .manual-grid,
       .coin-stats { grid-template-columns: repeat(2, 1fr); }
+      .micro-desktop-table { display: none; }
+      .micro-mobile-cards { display: block; }
+      .api-output-textarea {
+        min-height: 420px;
+        font-size: 11px;
+      }
     }
   </style>
 </head>
@@ -1233,14 +1224,6 @@
         parentFromChildTrueMicroFamilyId(id) ||
         ""
       ).trim().toUpperCase();
-    }
-
-    function macroId(row = {}) {
-      return parentMicroId(row);
-    }
-
-    function familyId(row = {}) {
-      return String(row.familyId || row.family || row.baseFamilyId || "").trim();
     }
 
     function isRealAnalyzeMicroRow(row = {}) {
@@ -1956,14 +1939,6 @@
         });
       } finally {
         timeout.clear();
-      }
-    }
-
-    async function optionalApi(url, fallback = null) {
-      try {
-        return await api(url, { timeoutMs: 12000 });
-      } catch {
-        return fallback;
       }
     }
 
@@ -2845,6 +2820,138 @@
       `;
     }
 
+    function compactScannerCandidate(row = {}) {
+      return {
+        symbol: baseSymbol(row),
+        contractSymbol: row.contractSymbol || row.instId || row.instrumentId || `${baseSymbol(row)}USDT`,
+        side: ONLY_SIDE,
+        price: firstFinite(row.price, row.currentPrice, row.markPrice, row.entry),
+        scannerScore: firstFinite(row.scannerScore, row.moveScore, row.sniperScore, row.confluence),
+        change1h: firstFinite(row.change1h, row.priceChange1h),
+        change24h: firstFinite(row.change24h, row.priceChange24h),
+        volume24h: firstFinite(row.volume24h, row.quoteVolume24h),
+        scannerGatePassed: Boolean(row.scannerGatePassed),
+        analyzeOnly: Boolean(row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly),
+        regime: row.regime || row.currentRegime || null,
+        btcState: row.btcState || null,
+        reason: row.scannerReason || row.reason || null,
+        role: "SCANNER_METADATA_ONLY"
+      };
+    }
+
+    function scannerWarnings(data = {}) {
+      if (Array.isArray(data.runtimeWarnings)) return data.runtimeWarnings;
+      if (Array.isArray(data.warnings)) return data.warnings;
+      if (data.warning) return [data.warning];
+      return [];
+    }
+
+    function scannerErrors(data = {}) {
+      if (Array.isArray(data.errors)) return data.errors;
+      if (data.error) return [data.error];
+      if (data.reason && data.ok === false) return [data.reason];
+      return [];
+    }
+
+    function scannerHealthStatus({ data = {}, snapshot = {}, candidates = [] } = {}) {
+      const warnings = scannerWarnings(data);
+      const errors = scannerErrors(data);
+      const snapshotId = snapshot.snapshotId || data.snapshotId || null;
+      const createdAt = Number(snapshot.createdAt || data.createdAt || snapshot.completedAt || data.completedAt || 0);
+      const ageSec = createdAt > 0 ? Math.round((Date.now() - createdAt) / 1000) : null;
+
+      if (errors.length) return "ERROR";
+      if (data.ok === false) return "ERROR";
+      if (!snapshotId && !candidates.length) return "NO_SNAPSHOT";
+      if (Number.isFinite(ageSec) && ageSec > 15 * 60) return "STALE";
+      if (!candidates.length) return "NO_CANDIDATES";
+      if (warnings.length) return "HEALTHY_WITH_WARNINGS";
+
+      return "HEALTHY";
+    }
+
+    function compactScannerApiOutput(data = {}) {
+      const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
+      const rawCandidates = snapshot.candidates || data.candidates || data.rows || [];
+      const candidates = shortRows(rawCandidates);
+
+      const warnings = scannerWarnings(data);
+      const errors = scannerErrors(data);
+
+      const snapshotId = snapshot.snapshotId || data.snapshotId || null;
+      const createdAt = Number(snapshot.createdAt || data.createdAt || snapshot.completedAt || data.completedAt || 0);
+      const ageSec = createdAt > 0 ? Math.round((Date.now() - createdAt) / 1000) : null;
+
+      const gatePassed = candidates.filter((row) => row.scannerGatePassed).length;
+      const analyzeOnly = candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length;
+
+      return {
+        ok: data.ok !== false,
+        health: scannerHealthStatus({ data, snapshot, candidates }),
+
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+
+        apiRoute: endpoints.scanner,
+        runRoute: endpoints.runScanner,
+
+        snapshot: {
+          snapshotId,
+          createdAt: createdAt || null,
+          ageSec,
+          ageText: ageText(createdAt),
+          source: data.selectedSnapshotSource || snapshot.selectedSnapshotSource || data.source || null,
+          reason: data.selectedSnapshotReason || snapshot.selectedSnapshotReason || data.reason || null
+        },
+
+        counts: {
+          rawCandidates: Array.isArray(rawCandidates) ? rawCandidates.length : 0,
+          shortCandidates: candidates.length,
+          scannerGatePassed: gatePassed,
+          analyzeOnly,
+          ignoredOppositeSide: Number(snapshot.rawLongCandidatesIgnored || data.rawOppositeCount || data.ignoredLongCandidates || 0),
+          filteredUniverse: Number(snapshot.filteredUniverse || data.filteredUniverse || data.scannerSnapshotStats?.filteredUniverse || 0) || null,
+          rawUniverse: Number(snapshot.rawCount || data.rawCount || data.scannerSnapshotStats?.rawCount || 0) || null
+        },
+
+        scannerRules: {
+          scannerWritesLearning: false,
+          scannerWritesTrade: false,
+          scannerSendsDiscord: false,
+          scannerFingerprintRole: "METADATA_ONLY",
+          scannerFingerprintsUsedAsLearningFamily: false,
+          learningIdentitySource: "ANALYZE_TRUE_MICRO_FAMILY"
+        },
+
+        market: {
+          regime: data.marketContext?.regime || data.currentMarketWeather?.regime || data.currentMarketWeather?.currentRegime || null,
+          trendSide: data.marketContext?.trendSide || data.currentMarketWeather?.trendSide || data.currentMarketWeather?.currentTrendSide || null,
+          confidence: data.marketContext?.confidence || data.currentMarketWeather?.confidence || null,
+          bullishPct: data.marketContext?.bullishPct || data.currentMarketWeather?.bullishPct || null,
+          bearishPct: data.marketContext?.bearishPct || data.currentMarketWeather?.bearishPct || null,
+          squeezePct: data.marketContext?.squeezePct || data.currentMarketWeather?.squeezePct || null
+        },
+
+        warnings,
+        errors,
+
+        topCandidates: candidates
+          .slice(0, 12)
+          .map(compactScannerCandidate),
+
+        omitted: {
+          fullCandidatesArray: true,
+          rawUniverseRows: true,
+          marketUniverseRows: true,
+          verboseDebugFields: true,
+          fullApiStillAvailableViaOpenButton: true,
+          reason: "COMPACT_SCANNER_HEALTH_OUTPUT_FOR_CHATGPT_UPLOAD"
+        }
+      };
+    }
+
     function currentManualSelectionSlots() {
       const active = activeMicroIds()
         .map((id) => String(id || "").trim().toUpperCase())
@@ -3209,24 +3316,24 @@
 
       const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
       const candidates = shortRows(snapshot.candidates || data.candidates || data.rows || []);
-      const scannerOk = data.ok !== false && Boolean(snapshot.snapshotId || data.snapshotId || candidates.length);
-      const outputJson = JSON.stringify(data ?? {}, null, 2);
+      const compactOutput = compactScannerApiOutput(data);
+      const compactOutputJson = JSON.stringify(compactOutput, null, 2);
 
       $("scanner").innerHTML = `
         <div class="section-title">
           <div>
             <h2>Scanner</h2>
-            <p>API-health voor scanner. Scanner schrijft geen learning family, geen trade, geen Discord.</p>
+            <p>Compacte API-health voor scanner. Scanner schrijft geen learning family, geen trade, geen Discord.</p>
           </div>
         </div>
 
         <div class="toolbar">
           <button type="button" class="primary" id="runScannerBtn">Run Scanner now</button>
-          <button type="button" id="copyScannerBtn">Copy JSON</button>
+          <button type="button" id="copyScannerBtn">Copy compact JSON</button>
           <button type="button" id="copyScannerUrlBtn">Copy API URL</button>
-          <button type="button" id="selectScannerOutputBtn">Select output</button>
-          <button type="button" id="openScannerApiBtn">Open API</button>
-          <button type="button" id="exportScannerBtn">Export JSON</button>
+          <button type="button" id="selectScannerOutputBtn">Select compact output</button>
+          <button type="button" id="openScannerApiBtn">Open volledige API</button>
+          <button type="button" id="exportScannerBtn">Export compact JSON</button>
         </div>
 
         <div class="api-url-box">
@@ -3235,14 +3342,14 @@
         </div>
 
         <div class="grid">
-          ${metricCard("Scanner API", scannerOk ? "HEALTHY" : "CHECK", scannerOk ? "admin route geeft scannerdata terug" : "geen snapshot/candidates gevonden")}
+          ${metricCard("Scanner health", compactOutput.health, "compacte status")}
           ${metricCard("Endpoint", "/api/admin/scanner", "scanner health")}
-          ${metricCard("Snapshot ID", snapshot.snapshotId || data.snapshotId || "-")}
-          ${metricCard("Age", ageText(snapshot.createdAt || data.createdAt), fmtTs(snapshot.createdAt || data.createdAt))}
-          ${metricCard("SHORT candidates", fmtInt(candidates.length))}
-          ${metricCard("Scanner gate", fmtInt(candidates.filter((row) => row.scannerGatePassed).length))}
-          ${metricCard("Analyze-only", fmtInt(candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length))}
-          ${metricCard("Ignored LONG", fmtInt(snapshot.rawLongCandidatesIgnored || data.rawOppositeCount || 0))}
+          ${metricCard("Snapshot ID", compactOutput.snapshot.snapshotId || "-")}
+          ${metricCard("Age", compactOutput.snapshot.ageText || "-", fmtTs(compactOutput.snapshot.createdAt))}
+          ${metricCard("SHORT candidates", fmtInt(compactOutput.counts.shortCandidates))}
+          ${metricCard("Scanner gate", fmtInt(compactOutput.counts.scannerGatePassed))}
+          ${metricCard("Analyze-only", fmtInt(compactOutput.counts.analyzeOnly))}
+          ${metricCard("Ignored LONG", fmtInt(compactOutput.counts.ignoredOppositeSide))}
           ${metricCard("Learning identity", "Analyze only")}
           ${metricCard("Scanner IDs", "metadata only")}
         </div>
@@ -3275,17 +3382,17 @@
 
         <div class="card">
           <div class="api-output-head">
-            <h3>Scanner API output — health/debug</h3>
-            <button type="button" class="copy-big" id="copyScannerOutputBtn2">Kopieer alles</button>
+            <h3>Scanner API health output — compact</h3>
+            <button type="button" class="copy-big" id="copyScannerOutputBtn2">Kopieer compact</button>
           </div>
 
-          <textarea id="scannerApiOutput" class="api-output-textarea" readonly>${escapeHtml(outputJson)}</textarea>
+          <textarea id="scannerApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactOutputJson)}</textarea>
         </div>
       `;
 
       function copyScannerOutput() {
         const box = $("scannerApiOutput");
-        copyText(box?.value || outputJson, "Scanner API output volledig gekopieerd.");
+        copyText(box?.value || compactOutputJson, "Compacte Scanner health output gekopieerd.");
       }
 
       $("runScannerBtn")?.addEventListener("click", runScannerNow);
@@ -3303,7 +3410,7 @@
 
         box.focus();
         box.select();
-        setMessage("Scanner API output geselecteerd. Je kunt nu kopiëren.", "ok");
+        setMessage("Compacte scanner output geselecteerd. Je kunt nu kopiëren.", "ok");
       });
 
       $("openScannerApiBtn")?.addEventListener("click", () => {
@@ -3311,7 +3418,7 @@
       });
 
       $("exportScannerBtn")?.addEventListener("click", () => {
-        downloadJson("scanner-api-output.json", data);
+        downloadJson("scanner-health-compact-short.json", compactOutput);
       });
     }
 
