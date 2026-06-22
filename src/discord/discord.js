@@ -131,9 +131,7 @@ function discordConfig() {
 
 function truncate(value, max = 1024) {
   const text = String(value ?? '');
-
   if (text.length <= max) return text;
-
   return `${text.slice(0, Math.max(0, max - 3))}...`;
 }
 
@@ -149,7 +147,6 @@ function fmtPrice(value) {
   const n = Number(value);
 
   if (!Number.isFinite(n)) return 'NA';
-
   if (n >= 1000) return n.toFixed(2);
   if (n >= 1) return n.toFixed(6);
 
@@ -737,6 +734,46 @@ function extractResultR(outcome = {}) {
     outcome.r ??
     null
   );
+}
+
+function exitTypeLabel(outcome = {}) {
+  const reason = upper(outcome.exitReason || outcome.reason || outcome.closeReason || outcome.status || '');
+
+  if (
+    reason === 'TP' ||
+    reason.includes('TAKE_PROFIT') ||
+    reason.includes('TAKE PROFIT') ||
+    reason.includes('TARGET') ||
+    outcome.tpHitNow === true ||
+    outcome.tpExitArmed === true ||
+    outcome.shortTpHit === true
+  ) {
+    return 'TP';
+  }
+
+  if (
+    reason === 'SL' ||
+    reason.includes('STOP_LOSS') ||
+    reason.includes('STOP LOSS') ||
+    reason.includes('STOPLOSS') ||
+    outcome.slHitNow === true ||
+    outcome.slExitArmed === true ||
+    outcome.shortSlHit === true
+  ) {
+    return 'SL';
+  }
+
+  if (
+    reason.includes('TIME') ||
+    reason.includes('TIME_STOP') ||
+    reason.includes('TIME STOP') ||
+    outcome.timeStopHitNow === true ||
+    outcome.timeStopExitArmed === true
+  ) {
+    return 'TIME';
+  }
+
+  return reason || 'EXIT';
 }
 
 function trueMicroFamilyId(payload = {}) {
@@ -1466,69 +1503,16 @@ export async function sendEntryAlert(entry = {}) {
   const symbol = normalizeBaseSymbol(entry.symbol || entry.contractSymbol);
   const side = normalizeSideLabel(entry);
 
-  const stats = weeklyStats(entry);
-  const sample = completedSample(entry);
-  const wr = bestWinrate(entry);
-  const avgR = statValue(entry, 'avgR');
-  const totalR = statValue(entry, 'totalR');
-  const profitFactor = statValue(entry, 'profitFactor');
-  const directSLPct = statValue(entry, 'directSLPct');
-  const sampleReliability = statValue(entry, 'sampleReliability');
-  const avgCostR = statValue(entry, 'avgCostR');
-  const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId(entry));
-  const shortCurrentFit = getShortCurrentFit(entry);
-
   const content = {
-    username: 'Micro-Family Trader',
+    username: 'Trade Alerts',
     embeds: [
       {
-        title: `${symbol || 'UNKNOWN'} ${side} VIRTUAL SNIPER ENTRY`,
+        title: `${symbol || 'UNKNOWN'} ${side} TRADE OPENED`,
         color: discordColorForSide(entry),
-        description: truncate(entryReasonText(entry), 300),
         fields: [
-          field('Source', SOURCE_VIRTUAL, true),
           field('Entry', fmtPrice(entry.entry), true),
           field('TP', fmtPrice(entry.tp), true),
-          field('SL', fmtPrice(entry.sl ?? entry.initialSl), true),
-          field('RR', fmtR(entry.rr), true),
-          field('Risk', fmtPct(entry.riskPct), true),
-          field('Spread', fmtPct(entry.spreadPct ?? entry.liveSpreadPct), true),
-
-          field('Risk geometry', 'SHORT: tp < entry < sl', false),
-          field('TP rule', 'SHORT: price <= tp', true),
-          field('SL rule', 'SHORT: price >= sl', true),
-          field('Current fit', shortCurrentFit === null ? 'NA' : fmtNumber(shortCurrentFit, 2), true),
-
-          field('True micro 75-child', trueMicroFamilyId(entry) || 'NA', false),
-          field('Parent 15', parentTrueMicroFamilyId(entry) || 'NA', false),
-          field('Setup', parsed.setupType || entry.setupType || 'NA', true),
-          field('Regime', parsed.regimeBucket || entry.regimeBucket || 'NA', true),
-          field('Confirmation', parsed.confirmationProfile || entry.confirmationProfile || 'NA', true),
-
-          field('Fingerprint metadata', fingerprint(entry), true),
-          field('Rotation', entry.activeRotationId || entry.rotationId || 'NA', true),
-          field('Match', entry.rotationMatchType || 'TRUE_MICRO_EXACT_75_CHILD', true),
-
-          field('Winrate fair', fmtPctSmart(wr), true),
-          field('Completed', fmtNumber(sample, 2), true),
-          field('Reliability', fmtPctSmart(sampleReliability), true),
-          field('Avg R', fmtR(avgR), true),
-          field('Total R', fmtR(totalR), true),
-          field('Avg cost', fmtR(avgCostR), true),
-          field('Profit factor', fmtNumber(profitFactor, 2), true),
-          field('Direct SL', fmtPctSmart(directSLPct), true),
-
-          field(
-            'Confluence',
-            [
-              `RSI=${entry.rsiZone || stats.rsiZone || 'NA'}`,
-              `FLOW=${entry.flow || stats.flow || 'NA'}`,
-              `OB=${entry.obRelation || stats.obRelation || 'NA'}`,
-              `BTC=${entry.btcRelation || stats.btcRelation || 'NA'}`,
-              `REGIME=${entry.regime || stats.regime || 'NA'}`
-            ].join(' | '),
-            false
-          )
+          field('SL', fmtPrice(entry.sl ?? entry.initialSl), true)
         ],
         timestamp: nowIso()
       }
@@ -1577,39 +1561,20 @@ export async function sendExitAlert(outcome = {}) {
   const side = normalizeSideLabel(outcome);
   const exitPrice = extractExitPrice(outcome);
   const resultR = extractResultR(outcome);
-  const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId(outcome));
-  const risk = getShortRiskGeometry(outcome);
+  const exitType = exitTypeLabel(outcome);
 
   const content = {
-    username: 'Micro-Family Trader',
+    username: 'Trade Alerts',
     embeds: [
       {
-        title: `${symbol || 'UNKNOWN'} ${side} VIRTUAL EXIT`,
+        title: `${symbol || 'UNKNOWN'} ${side} TRADE CLOSED`,
         color: discordColorForResult(resultR),
         fields: [
-          field('Source', SOURCE_VIRTUAL, true),
+          field('Entry', fmtPrice(outcome.entry ?? outcome.entryPrice), true),
+          field('TP', fmtPrice(outcome.tp ?? outcome.takeProfit), true),
+          field('SL', fmtPrice(outcome.sl ?? outcome.initialSl ?? outcome.stopLoss), true),
           field('Exit', fmtPrice(exitPrice), true),
-          field('Result net', fmtR(resultR), true),
-          field('Reason', outcome.exitReason || 'EXIT', true),
-          field('Cost', fmtR(outcome.costR), true),
-          field('PnL net', fmtPct(outcome.pnlPct ?? outcome.netPnlPct), true),
-          field('Gross R', fmtR(outcome.shortGrossR ?? risk.shortGrossR ?? outcome.grossR), true),
-          field('Current R', fmtR(outcome.shortCurrentR ?? risk.shortCurrentR ?? outcome.currentR), true),
-          field('MFE', fmtR(outcome.mfeR), true),
-          field('MAE', fmtR(outcome.maeR), true),
-
-          field('Risk geometry', 'SHORT: tp < entry < sl', false),
-          field('TP rule', 'SHORT: price <= tp', true),
-          field('SL rule', 'SHORT: price >= sl', true),
-
-          field('True micro 75-child', trueMicroFamilyId(outcome) || 'NA', false),
-          field('Parent 15', parentTrueMicroFamilyId(outcome) || 'NA', false),
-          field('Setup', parsed.setupType || outcome.setupType || 'NA', true),
-          field('Regime', parsed.regimeBucket || outcome.regimeBucket || 'NA', true),
-          field('Confirmation', parsed.confirmationProfile || outcome.confirmationProfile || 'NA', true),
-
-          field('Fingerprint metadata', fingerprint(outcome), true),
-          field('Rotation', outcome.activeRotationId || outcome.rotationId || 'NA', true)
+          field('Closed by', exitType, true)
         ],
         timestamp: nowIso()
       }
