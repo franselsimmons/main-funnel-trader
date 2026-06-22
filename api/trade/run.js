@@ -22,16 +22,26 @@ const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
-const DEFAULT_LOCK_TTL_SEC = 75;
+
+const DEFAULT_LOCK_TTL_SEC = 150;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+
+const DEFAULT_MONITOR_TIMEOUT_MS = 30000;
+const DEFAULT_MONITOR_ONLY_TIMEOUT_MS = 42000;
+const DEFAULT_MAX_RUNTIME_MS = 52000;
+const DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS = 52000;
+
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 25;
+const DEFAULT_MONITOR_BATCH_SIZE = 150;
+const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 250;
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const RUN_SCOPE = 'TRADE_FAST_SCANNER_PRELOAD_OPTIONAL';
+const RUN_SCOPE = 'TRADE_FAST_MONITOR_FIRST_SCANNER_PRELOAD_OPTIONAL';
 const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
 const READ_SCOPE = 'READ_SHORT_SCANNER_AND_MARKET_WEATHER';
 
@@ -137,12 +147,43 @@ function safeNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function safeInt(value, fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return fallback;
+
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
 function round(value, decimals = 4) {
   return Number(safeNumber(value, 0).toFixed(decimals));
 }
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function firstValue(value, fallback = null) {
+  if (Array.isArray(value)) return value[0] ?? fallback;
+  if (value === undefined || value === null || value === '') return fallback;
+
+  return value;
+}
+
+function isTrue(value) {
+  if (value === true || value === 1) return true;
+
+  const raw = String(value ?? '').trim().toLowerCase();
+
+  return ['true', '1', 'yes', 'y', 'on', 'force', 'forced'].includes(raw);
+}
+
+function isFalse(value) {
+  if (value === false || value === 0) return true;
+
+  const raw = String(value ?? '').trim().toLowerCase();
+
+  return ['false', '0', 'no', 'n', 'off', 'disabled', 'skip'].includes(raw);
 }
 
 function getPositionTimeStopMin() {
@@ -168,7 +209,194 @@ function getLockTtlSec() {
 
   if (!Number.isFinite(ttl) || ttl <= 0) return DEFAULT_LOCK_TTL_SEC;
 
-  return Math.max(10, Math.floor(ttl));
+  return Math.max(120, Math.floor(ttl));
+}
+
+function getMonitorTimeoutMs(req, body = {}, monitorOnly = false) {
+  const requested = firstValue(
+    req.query?.monitorTimeoutMs ??
+      req.query?.monitor_timeout_ms ??
+      body.monitorTimeoutMs ??
+      body.monitor_timeout_ms,
+    null
+  );
+
+  return safeInt(
+    requested ??
+      CONFIG.short?.trade?.monitorTimeoutMs ??
+      CONFIG.trade?.shortMonitorTimeoutMs ??
+      CONFIG.trade?.monitorTimeoutMs ??
+      (monitorOnly ? DEFAULT_MONITOR_ONLY_TIMEOUT_MS : DEFAULT_MONITOR_TIMEOUT_MS),
+    monitorOnly ? DEFAULT_MONITOR_ONLY_TIMEOUT_MS : DEFAULT_MONITOR_TIMEOUT_MS,
+    5000,
+    55000
+  );
+}
+
+function getMaxRuntimeMs(req, body = {}, monitorOnly = false) {
+  const requested = firstValue(
+    req.query?.maxRuntimeMs ??
+      req.query?.max_runtime_ms ??
+      body.maxRuntimeMs ??
+      body.max_runtime_ms,
+    null
+  );
+
+  return safeInt(
+    requested ??
+      CONFIG.short?.trade?.maxRuntimeMs ??
+      CONFIG.trade?.shortMaxRuntimeMs ??
+      CONFIG.trade?.maxRuntimeMs ??
+      (monitorOnly ? DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS : DEFAULT_MAX_RUNTIME_MS),
+    monitorOnly ? DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS : DEFAULT_MAX_RUNTIME_MS,
+    15000,
+    58000
+  );
+}
+
+function getMaxCandidatesPerSnapshot(req, body = {}) {
+  const requested = firstValue(
+    req.query?.maxCandidates ??
+      req.query?.max_candidates ??
+      req.query?.maxCandidatesPerSnapshot ??
+      req.query?.max_candidates_per_snapshot ??
+      body.maxCandidates ??
+      body.max_candidates ??
+      body.maxCandidatesPerSnapshot ??
+      body.max_candidates_per_snapshot,
+    null
+  );
+
+  return safeInt(
+    requested ??
+      CONFIG.short?.trade?.maxCandidatesPerSnapshot ??
+      CONFIG.trade?.shortMaxCandidatesPerSnapshot ??
+      CONFIG.trade?.maxCandidatesPerSnapshot ??
+      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
+    DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
+    1,
+    100
+  );
+}
+
+function getMonitorBatchSize(req, body = {}) {
+  const requested = firstValue(
+    req.query?.monitorBatchSize ??
+      req.query?.monitor_batch_size ??
+      body.monitorBatchSize ??
+      body.monitor_batch_size,
+    null
+  );
+
+  return safeInt(
+    requested ??
+      CONFIG.short?.trade?.monitorBatchSize ??
+      CONFIG.trade?.shortMonitorBatchSize ??
+      CONFIG.trade?.monitorBatchSize ??
+      DEFAULT_MONITOR_BATCH_SIZE,
+    DEFAULT_MONITOR_BATCH_SIZE,
+    10,
+    500
+  );
+}
+
+function getOpenPositionMonitorLimit(req, body = {}) {
+  const requested = firstValue(
+    req.query?.openPositionMonitorLimit ??
+      req.query?.open_position_monitor_limit ??
+      body.openPositionMonitorLimit ??
+      body.open_position_monitor_limit,
+    null
+  );
+
+  return safeInt(
+    requested ??
+      CONFIG.short?.trade?.openPositionMonitorLimit ??
+      CONFIG.trade?.shortOpenPositionMonitorLimit ??
+      CONFIG.trade?.openPositionMonitorLimit ??
+      DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
+    DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
+    10,
+    1000
+  );
+}
+
+function shouldForceProcessSnapshot(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.force, false)) ||
+    isTrue(firstValue(req.query?.forced, false)) ||
+    isTrue(firstValue(req.query?.forceProcessSnapshot, false)) ||
+    isTrue(firstValue(req.query?.force_process_snapshot, false)) ||
+    isTrue(body.force) ||
+    isTrue(body.forced) ||
+    isTrue(body.forceProcessSnapshot) ||
+    isTrue(body.force_process_snapshot)
+  );
+}
+
+function shouldMonitorOnly(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.monitorOnly, false)) ||
+    isTrue(firstValue(req.query?.monitor_only, false)) ||
+    isTrue(body.monitorOnly) ||
+    isTrue(body.monitor_only)
+  );
+}
+
+function shouldRunMonitorPreflight(req, body = {}) {
+  if (
+    isFalse(firstValue(req.query?.monitorPreflight, null)) ||
+    isFalse(firstValue(req.query?.monitor_preflight, null)) ||
+    isFalse(body.monitorPreflight) ||
+    isFalse(body.monitor_preflight)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function shouldDebug(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.debug, false)) ||
+    isTrue(firstValue(req.query?.details, false)) ||
+    isTrue(firstValue(req.query?.full, false)) ||
+    isTrue(body.debug) ||
+    isTrue(body.details) ||
+    isTrue(body.full)
+  );
+}
+
+function shouldRunScannerPreload(req, body = {}) {
+  return (
+    isTrue(firstValue(req.query?.scannerPreload, false)) ||
+    isTrue(firstValue(req.query?.scanner_preload, false)) ||
+    isTrue(firstValue(req.query?.preloadScanner, false)) ||
+    isTrue(firstValue(req.query?.runScanner, false)) ||
+    isTrue(body.scannerPreload) ||
+    isTrue(body.scanner_preload) ||
+    isTrue(body.preloadScanner) ||
+    isTrue(body.runScanner)
+  );
+}
+
+function getRunSource(req, body = {}) {
+  const manual = (
+    isTrue(firstValue(req.query?.manual, false)) ||
+    isTrue(firstValue(req.query?.force, false)) ||
+    isTrue(firstValue(req.query?.forced, false)) ||
+    isTrue(firstValue(req.query?.forceProcessSnapshot, false)) ||
+    isTrue(firstValue(req.query?.force_process_snapshot, false)) ||
+    isTrue(body.manual) ||
+    isTrue(body.force) ||
+    isTrue(body.forced) ||
+    isTrue(body.forceProcessSnapshot) ||
+    isTrue(body.force_process_snapshot)
+  );
+
+  return manual
+    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_MONITOR_FIRST'
+    : 'CRON_OR_API_SHORT_TRADE_RUN_MONITOR_FIRST';
 }
 
 function isolationFlags() {
@@ -238,7 +466,15 @@ function isolationFlags() {
     noGlobalMaxOpenPositionsBlock: true,
     globalMaxOpenPositionsBlockDisabled: true,
     maxOneOpenPositionPerSymbol: true,
-    oneOpenPositionPerSymbol: true
+    oneOpenPositionPerSymbol: true,
+
+    monitorPreflightDefaultEnabled: true,
+    monitorOpenPositionsHardFirst: true,
+    monitorOpenPositionsBeforeEntries: true,
+    exitSweepBeforeEntryGate: true,
+    closeVirtualPositionsBeforeEntries: true,
+    newEntriesBlockedUntilMonitorAttempted: true,
+    monitorTimeoutRaised: true
   };
 }
 
@@ -371,6 +607,12 @@ function baseFlags() {
     redisKeysSeparatedFromLongRoot: true,
     longRootTouched: false,
 
+    defaultMonitorTimeoutMs: DEFAULT_MONITOR_TIMEOUT_MS,
+    defaultMonitorOnlyTimeoutMs: DEFAULT_MONITOR_ONLY_TIMEOUT_MS,
+    defaultMaxRuntimeMs: DEFAULT_MAX_RUNTIME_MS,
+    defaultMonitorBatchSize: DEFAULT_MONITOR_BATCH_SIZE,
+    defaultOpenPositionMonitorLimit: DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
+
     ...isolationFlags()
   };
 }
@@ -421,86 +663,6 @@ async function readBody(req) {
   }
 
   return parseJson(Buffer.concat(chunks).toString('utf8'));
-}
-
-function firstValue(value, fallback = null) {
-  if (Array.isArray(value)) return value[0] ?? fallback;
-  if (value === undefined || value === null || value === '') return fallback;
-
-  return value;
-}
-
-function isTrue(value) {
-  if (value === true || value === 1) return true;
-
-  const raw = String(value ?? '').trim().toLowerCase();
-
-  return ['true', '1', 'yes', 'y', 'on', 'force', 'forced'].includes(raw);
-}
-
-function shouldForceProcessSnapshot(req, body = {}) {
-  return (
-    isTrue(firstValue(req.query?.force, false)) ||
-    isTrue(firstValue(req.query?.forced, false)) ||
-    isTrue(firstValue(req.query?.forceProcessSnapshot, false)) ||
-    isTrue(firstValue(req.query?.force_process_snapshot, false)) ||
-    isTrue(body.force) ||
-    isTrue(body.forced) ||
-    isTrue(body.forceProcessSnapshot) ||
-    isTrue(body.force_process_snapshot)
-  );
-}
-
-function shouldMonitorOnly(req, body = {}) {
-  return (
-    isTrue(firstValue(req.query?.monitorOnly, false)) ||
-    isTrue(firstValue(req.query?.monitor_only, false)) ||
-    isTrue(body.monitorOnly) ||
-    isTrue(body.monitor_only)
-  );
-}
-
-function shouldDebug(req, body = {}) {
-  return (
-    isTrue(firstValue(req.query?.debug, false)) ||
-    isTrue(firstValue(req.query?.details, false)) ||
-    isTrue(firstValue(req.query?.full, false)) ||
-    isTrue(body.debug) ||
-    isTrue(body.details) ||
-    isTrue(body.full)
-  );
-}
-
-function shouldRunScannerPreload(req, body = {}) {
-  return (
-    isTrue(firstValue(req.query?.scannerPreload, false)) ||
-    isTrue(firstValue(req.query?.scanner_preload, false)) ||
-    isTrue(firstValue(req.query?.preloadScanner, false)) ||
-    isTrue(firstValue(req.query?.runScanner, false)) ||
-    isTrue(body.scannerPreload) ||
-    isTrue(body.scanner_preload) ||
-    isTrue(body.preloadScanner) ||
-    isTrue(body.runScanner)
-  );
-}
-
-function getRunSource(req, body = {}) {
-  const manual = (
-    isTrue(firstValue(req.query?.manual, false)) ||
-    isTrue(firstValue(req.query?.force, false)) ||
-    isTrue(firstValue(req.query?.forced, false)) ||
-    isTrue(firstValue(req.query?.forceProcessSnapshot, false)) ||
-    isTrue(firstValue(req.query?.force_process_snapshot, false)) ||
-    isTrue(body.manual) ||
-    isTrue(body.force) ||
-    isTrue(body.forced) ||
-    isTrue(body.forceProcessSnapshot) ||
-    isTrue(body.force_process_snapshot)
-  );
-
-  return manual
-    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_FAST'
-    : 'CRON_OR_API_SHORT_TRADE_RUN_FAST';
 }
 
 function cleanSideText(value = '') {
@@ -1783,17 +1945,6 @@ function normalizeExitMath(row = {}) {
   };
 }
 
-function buildExitAction(exit = {}) {
-  return forceShortVirtualRow({
-    ...exit,
-    ...normalizeExitMath(exit),
-    action: 'VIRTUAL_EXIT',
-    reason: exit.exitReason || exit.reason || 'VIRTUAL_POSITION_CLOSED',
-    source: 'VIRTUAL',
-    outcomeSource: 'VIRTUAL'
-  });
-}
-
 function sanitizeExitRows(rows = [], limit = MAX_DEBUG_ROWS) {
   return sanitizeArray(rows, limit).map((row) => ({
     ...row,
@@ -2084,16 +2235,21 @@ function sanitizeLockResult(lockResult, payload = null) {
   };
 }
 
-function responseActionCountsFromPayload(payload = {}) {
+function responseActionCountsFromPayload(payload = {}, monitorPreflightPayload = null) {
+  const actionCounts = mergeActionCounts(
+    payload?.actionCounts || {},
+    monitorPreflightPayload?.actionCounts || {}
+  );
+
   return {
     ...baseFlags(),
-    ...(payload?.actionCounts || {})
+    ...actionCounts
   };
 }
 
-function responseCountsFromPayload(payload = {}) {
-  const actionsCount = safeNumber(payload.actionsCount, 0);
-  const virtualExitRows = safeNumber(payload.virtualExitRows, 0);
+function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null) {
+  const actionsCount = safeNumber(payload.actionsCount, 0) + safeNumber(monitorPreflightPayload?.actionsCount, 0);
+  const virtualExitRows = safeNumber(payload.virtualExitRows, 0) + safeNumber(monitorPreflightPayload?.virtualExitRows, 0);
 
   return {
     ...baseFlags(),
@@ -2157,6 +2313,9 @@ function responseCountsFromPayload(payload = {}) {
     virtualExits: virtualExitRows,
     virtualExitRows,
 
+    monitorPreflightVirtualExits: safeNumber(monitorPreflightPayload?.virtualExitRows, 0),
+    monitorPreflightShadowExits: safeNumber(monitorPreflightPayload?.shadowExitRows, 0),
+
     activeMicroFamilies: safeNumber(payload.activeMicroFamilies, 0),
     activeMacroFamilies: safeNumber(payload.activeMacroFamilies, 0),
 
@@ -2203,20 +2362,65 @@ function resolveStatus(error) {
   return 500;
 }
 
-function buildRunOptions(req, body = {}) {
+function buildRunOptions(req, body = {}, overrides = {}) {
   const forceProcessSnapshot = shouldForceProcessSnapshot(req, body);
-  const monitorOnly = shouldMonitorOnly(req, body);
+  const monitorOnly = overrides.monitorOnly ?? shouldMonitorOnly(req, body);
+  const processScannerSnapshot = overrides.processScannerSnapshot ?? !monitorOnly;
+  const phase = overrides.phase || (monitorOnly ? 'MONITOR_ONLY' : 'TRADE_MAIN');
+
+  const monitorTimeoutMs = getMonitorTimeoutMs(req, body, monitorOnly);
+  const maxRuntimeMs = getMaxRuntimeMs(req, body, monitorOnly);
+  const monitorBatchSize = getMonitorBatchSize(req, body);
+  const openPositionMonitorLimit = getOpenPositionMonitorLimit(req, body);
+  const maxCandidatesPerSnapshot = monitorOnly
+    ? 0
+    : getMaxCandidatesPerSnapshot(req, body);
 
   return {
     force: forceProcessSnapshot,
     forceProcessSnapshot,
     monitorOnly,
 
+    runPhase: phase,
+    tradeRunPhase: phase,
+
     monitorOpenPositionsFirst: true,
     monitorOpenPositions: true,
     processOpenPositions: true,
     closeVirtualPositions: true,
-    processScannerSnapshot: !monitorOnly,
+    closeShadowPositions: true,
+    closeOpenPositions: true,
+
+    monitorOpenPositionsHardFirst: true,
+    monitorOpenPositionsBeforeEntries: true,
+    forceMonitorOpenPositions: true,
+    exitSweepBeforeEntryGate: true,
+    closeVirtualPositionsBeforeEntries: true,
+    closeShadowPositionsBeforeEntries: true,
+    newEntriesBlockedUntilMonitorAttempted: true,
+
+    processScannerSnapshot,
+
+    monitorOnlyDoesNotProcessScannerSnapshot: monitorOnly,
+    skipScannerSnapshotWhenMonitorOnly: monitorOnly,
+    allowExitProcessingWithoutScannerSnapshot: true,
+    allowTimeStopExitWithoutScannerSnapshot: true,
+    allowTpSlExitWithoutScannerSnapshot: true,
+
+    monitorTimeoutMs,
+    openPositionMonitorTimeoutMs: monitorTimeoutMs,
+    closeVirtualPositionsTimeoutMs: monitorTimeoutMs,
+    closeShadowPositionsTimeoutMs: monitorTimeoutMs,
+    positionMonitorTimeoutMs: monitorTimeoutMs,
+    maxRuntimeMs,
+
+    monitorBatchSize,
+    openPositionMonitorLimit,
+    maxOpenPositionsToMonitor: openPositionMonitorLimit,
+
+    maxCandidatesPerSnapshot,
+    analyzeMaxCandidatesPerSnapshot: maxCandidatesPerSnapshot,
+    hardMaxCandidatesPerSnapshot: maxCandidatesPerSnapshot,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -2641,7 +2845,46 @@ function compactRunMetaPayload(payload = {}) {
   };
 }
 
-async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPreload = null) {
+function compactMonitorPreflightPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  return {
+    ok: payload.ok !== false,
+    runId: payload.runId || null,
+    runPhase: payload.runPhase || payload.tradeRunPhase || 'MONITOR_PREFLIGHT',
+
+    monitorOnly: true,
+    processScannerSnapshot: false,
+
+    openPositionCountBeforeEntries: safeNumber(payload.openPositionCountBeforeEntries, 0),
+    openPositionCountAfterEntries: safeNumber(payload.openPositionCountAfterEntries, 0),
+
+    virtualExitRows: safeNumber(payload.virtualExitRows, 0),
+    shadowExitRows: safeNumber(payload.shadowExitRows, 0),
+    realExitRows: 0,
+
+    actionsCount: safeNumber(payload.actionsCount, 0),
+    rawActionCounts: payload.rawActionCounts || payload.actionCounts || {},
+
+    runtimeWarnings: Array.isArray(payload.runtimeWarnings)
+      ? payload.runtimeWarnings
+      : [],
+
+    reason: payload.reason || payload.skipReason || null,
+    durationMs: safeNumber(payload.durationMs, 0),
+
+    monitorTimeoutMs: payload.monitorTimeoutMs || null,
+    maxRuntimeMs: payload.maxRuntimeMs || null
+  };
+}
+
+async function persistShortRunMeta(
+  redis,
+  payload = {},
+  result = {},
+  scannerPreload = null,
+  monitorPreflight = null
+) {
   if (!payload || typeof payload !== 'object') {
     return {
       persistedShortRunMeta: false,
@@ -2658,6 +2901,11 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
     ...baseFlags(),
 
     scannerPreload,
+    monitorPreflight,
+
+    monitorPreflightEnabled: Boolean(monitorPreflight),
+    monitorPreflightVirtualExitRows: safeNumber(monitorPreflight?.virtualExitRows, 0),
+    monitorPreflightShadowExitRows: safeNumber(monitorPreflight?.shadowExitRows, 0),
 
     persistedAt: now(),
     persistedBy: 'api/trade/run.js',
@@ -2689,6 +2937,7 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
         runId: payload.runId || null,
         processedAt: now(),
         scannerPreload,
+        monitorPreflight,
         ...baseFlags()
       }
     ).catch(() => null);
@@ -2701,6 +2950,24 @@ async function persistShortRunMeta(redis, payload = {}, result = {}, scannerPrel
     tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
     compactedForVercelRuntime: true
   };
+}
+
+function buildMonitorPreflightOptions(req, body = {}) {
+  return buildRunOptions(req, body, {
+    monitorOnly: true,
+    processScannerSnapshot: false,
+    phase: 'MONITOR_PREFLIGHT'
+  });
+}
+
+function buildMainTradeOptions(req, body = {}) {
+  const requestedMonitorOnly = shouldMonitorOnly(req, body);
+
+  return buildRunOptions(req, body, {
+    monitorOnly: requestedMonitorOnly,
+    processScannerSnapshot: !requestedMonitorOnly,
+    phase: requestedMonitorOnly ? 'MONITOR_ONLY_REQUEST' : 'TRADE_MAIN_AFTER_MONITOR_PREFLIGHT'
+  });
 }
 
 export default async function handler(req, res) {
@@ -2736,6 +3003,10 @@ export default async function handler(req, res) {
   res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
   res.setHeader('X-Redis-Namespace', SHORT_NAMESPACE);
   res.setHeader('X-Long-Root-Touched', 'false');
+  res.setHeader('X-Monitor-Preflight-Default', 'enabled');
+  res.setHeader('X-Monitor-Open-Positions-First', 'true');
+  res.setHeader('X-Exit-Sweep-Before-Entry-Gate', 'true');
+  res.setHeader('X-Monitor-Timeout-Ms', String(DEFAULT_MONITOR_TIMEOUT_MS));
 
   const startedAt = now();
   let body = {};
@@ -2748,22 +3019,25 @@ export default async function handler(req, res) {
     body = await readBody(req);
 
     const debug = shouldDebug(req, body);
+    const requestedMonitorOnly = shouldMonitorOnly(req, body);
+    const monitorPreflightEnabled = !requestedMonitorOnly && shouldRunMonitorPreflight(req, body);
     const scannerPreloadEnabled = shouldRunScannerPreload(req, body);
-    const runOptions = buildRunOptions(req, body);
 
+    const mainRunOptions = buildMainTradeOptions(req, body);
     const durableRedis = getDurableRedis();
 
     const lockKey = SHORT_KEYS.trade.lock;
     const lockTtlSec = getLockTtlSec();
 
     let scannerPreload = null;
+    let rawMonitorPreflight = null;
 
     const rawResult = await withRedisLock(
       durableRedis,
       lockKey,
       lockTtlSec,
       async () => {
-        if (scannerPreloadEnabled && !runOptions.monitorOnly) {
+        if (scannerPreloadEnabled && !mainRunOptions.monitorOnly) {
           const volatileRedis = getVolatileRedis();
 
           scannerPreload = await runScannerPreload({
@@ -2776,13 +3050,50 @@ export default async function handler(req, res) {
           scannerPreload = skippedScannerPreload();
         }
 
+        if (monitorPreflightEnabled) {
+          try {
+            rawMonitorPreflight = await runTradeSystem({
+              ...buildMonitorPreflightOptions(req, body),
+              scannerPreloadBeforeTrade: false,
+              marketWeatherPreloadBeforeTrade: false,
+              scannerPreloadOk: scannerPreload?.ok !== false,
+              marketWeatherMirroredToDurable: scannerPreload?.mirror?.marketWeatherMirrored === true,
+              marketUniverseMirroredToDurable: scannerPreload?.mirror?.marketUniverseMirrored === true,
+              monitorPreflight: true,
+              preflightRun: true
+            });
+          } catch (error) {
+            rawMonitorPreflight = {
+              ok: false,
+              runPhase: 'MONITOR_PREFLIGHT',
+              monitorOnly: true,
+              processScannerSnapshot: false,
+              error: error?.message || String(error),
+              durationMs: null,
+              virtualExitRows: 0,
+              shadowExitRows: 0,
+              runtimeWarnings: [
+                'MONITOR_PREFLIGHT_FAILED',
+                error?.message || String(error)
+              ]
+            };
+          }
+        }
+
         return runTradeSystem({
-          ...runOptions,
+          ...mainRunOptions,
           scannerPreloadBeforeTrade: scannerPreloadEnabled,
           marketWeatherPreloadBeforeTrade: scannerPreloadEnabled,
           scannerPreloadOk: scannerPreload?.ok !== false,
           marketWeatherMirroredToDurable: scannerPreload?.mirror?.marketWeatherMirrored === true,
-          marketUniverseMirroredToDurable: scannerPreload?.mirror?.marketUniverseMirrored === true
+          marketUniverseMirroredToDurable: scannerPreload?.mirror?.marketUniverseMirrored === true,
+          monitorPreflightEnabled,
+          monitorPreflightCompleted: Boolean(rawMonitorPreflight),
+          monitorPreflightOk: rawMonitorPreflight
+            ? unwrapLockResult(rawMonitorPreflight)?.ok !== false
+            : null,
+          monitorPreflightVirtualExitRows: safeNumber(unwrapLockResult(rawMonitorPreflight)?.virtualExitRows, 0),
+          monitorPreflightShadowExitRows: safeNumber(unwrapLockResult(rawMonitorPreflight)?.shadowExitRows, 0)
         });
       }
     );
@@ -2799,6 +3110,16 @@ export default async function handler(req, res) {
       }));
     }
 
+    const rawMonitorPayload = rawMonitorPreflight
+      ? unwrapLockResult(rawMonitorPreflight)
+      : null;
+
+    const monitorPreflightPayload = rawMonitorPayload
+      ? sanitizeRunPayload(rawMonitorPayload, { debug })
+      : null;
+
+    const monitorPreflight = compactMonitorPreflightPayload(monitorPreflightPayload);
+
     const payload = sanitizeRunPayload(unwrapLockResult(rawResult), { debug });
     const result = sanitizeLockResult(rawResult, payload);
 
@@ -2806,39 +3127,62 @@ export default async function handler(req, res) {
       durableRedis,
       payload,
       result,
-      scannerPreload
+      scannerPreload,
+      monitorPreflight
     );
 
-    const actionCounts = responseActionCountsFromPayload(payload);
-    const counts = responseCountsFromPayload(payload);
+    const actionCounts = responseActionCountsFromPayload(payload, monitorPreflightPayload);
+    const counts = responseCountsFromPayload(payload, monitorPreflightPayload);
 
     const scannerOk = scannerPreload?.ok !== false;
     const scannerSkipped = scannerPreload?.skipped === true;
     const tradeOk = responseOk(rawResult);
+    const monitorPreflightOk = monitorPreflight
+      ? monitorPreflight.ok !== false
+      : null;
+
+    const totalVirtualExitRows = safeNumber(payload?.virtualExitRows, 0) + safeNumber(monitorPreflightPayload?.virtualExitRows, 0);
+    const totalShadowExitRows = safeNumber(payload?.shadowExitRows, 0) + safeNumber(monitorPreflightPayload?.shadowExitRows, 0);
 
     return res.status(200).json({
-      ok: tradeOk && scannerOk,
+      ok: tradeOk && scannerOk && monitorPreflightOk !== false,
       tradeOk,
       scannerPreloadOk: scannerOk,
       scannerPreloadSkipped: scannerSkipped,
       scannerPreloadEnabled,
 
+      monitorPreflightEnabled,
+      monitorPreflightOk,
+      monitorPreflight,
+      monitorPreflightVirtualExitRows: safeNumber(monitorPreflightPayload?.virtualExitRows, 0),
+      monitorPreflightShadowExitRows: safeNumber(monitorPreflightPayload?.shadowExitRows, 0),
+      totalVirtualExitRowsThisRequest: totalVirtualExitRows,
+      totalShadowExitRowsThisRequest: totalShadowExitRows,
+
       skipped: responseSkipped(rawResult),
       reason: !scannerOk
         ? 'SCANNER_PRELOAD_FAILED'
-        : responseReason(rawResult),
+        : monitorPreflightOk === false
+          ? 'MONITOR_PREFLIGHT_FAILED'
+          : responseReason(rawResult),
       skipReason: payload?.skipReason || responseReason(rawResult),
 
       ...baseFlags(),
 
       runSource: getRunSource(req, body),
 
-      force: runOptions.force,
-      forceProcessSnapshot: runOptions.forceProcessSnapshot,
-      monitorOnly: runOptions.monitorOnly,
-      monitorOpenPositionsFirst: runOptions.monitorOpenPositionsFirst,
-      monitorOpenPositions: runOptions.monitorOpenPositions,
-      processScannerSnapshot: runOptions.processScannerSnapshot,
+      force: mainRunOptions.force,
+      forceProcessSnapshot: mainRunOptions.forceProcessSnapshot,
+      monitorOnly: mainRunOptions.monitorOnly,
+      monitorOpenPositionsFirst: mainRunOptions.monitorOpenPositionsFirst,
+      monitorOpenPositions: mainRunOptions.monitorOpenPositions,
+      processScannerSnapshot: mainRunOptions.processScannerSnapshot,
+
+      monitorTimeoutMs: mainRunOptions.monitorTimeoutMs,
+      openPositionMonitorTimeoutMs: mainRunOptions.openPositionMonitorTimeoutMs,
+      monitorBatchSize: mainRunOptions.monitorBatchSize,
+      openPositionMonitorLimit: mainRunOptions.openPositionMonitorLimit,
+      maxRuntimeMs: mainRunOptions.maxRuntimeMs,
 
       scannerPreload: debug
         ? scannerPreload
@@ -2953,6 +3297,15 @@ export default async function handler(req, res) {
       },
 
       warnings: [
+        monitorPreflightEnabled
+          ? 'MONITOR_PREFLIGHT_ENABLED_OPEN_POSITIONS_CLOSED_BEFORE_NEW_ENTRIES'
+          : 'MONITOR_PREFLIGHT_DISABLED',
+        monitorPreflightOk === false
+          ? 'MONITOR_PREFLIGHT_FAILED_ENTRIES_MAY_STILL_BLOCK_ON_EXISTING_SYMBOLS'
+          : null,
+        monitorPreflightEnabled && safeNumber(monitorPreflightPayload?.virtualExitRows, 0) <= 0
+          ? 'MONITOR_PREFLIGHT_NO_VIRTUAL_EXITS'
+          : null,
         !scannerPreloadEnabled
           ? 'SCANNER_PRELOAD_DISABLED_FAST_TRADE_RUN_USE_API_SCANNER_RUN_SEPARATELY_OR_QUERY_SCANNERPRELOAD_TRUE'
           : null,
@@ -2988,6 +3341,9 @@ export default async function handler(req, res) {
           : null,
         (payload?.activeMicroFamilyIds || []).some((id) => !isSelectableTrueMicroId(id))
           ? 'NON_75_CHILD_ACTIVE_MICRO_IDS_REMOVED'
+          : null,
+        payload?.skippedByExistingSymbol > 0
+          ? `SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION:${payload.skippedByExistingSymbol}`
           : null
       ].filter(Boolean),
 
@@ -2995,6 +3351,7 @@ export default async function handler(req, res) {
 
       debug,
       run: debug ? payload : undefined,
+      monitorPreflightRun: debug ? monitorPreflightPayload : undefined,
       result: debug ? result : undefined
     });
   } catch (error) {
