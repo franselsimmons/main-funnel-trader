@@ -40,11 +40,21 @@ const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const POSITION_SOURCE = 'VIRTUAL';
 const OUTCOME_SOURCE = 'VIRTUAL';
 
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V8';
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V9';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V2';
 
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+
+const DEFAULT_OPEN_POSITION_SCAN_LIMIT = 500;
+const DEFAULT_MONITOR_POSITION_LIMIT = 30;
+const DEFAULT_MONITOR_BATCH_SIZE = 30;
+const DEFAULT_MONITOR_CONCURRENCY = 2;
+const DEFAULT_MONITOR_RUNTIME_MS = 3000;
+const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 650;
+const DEFAULT_PRICE_FETCH_TIMEOUT_MS = 350;
+const DEFAULT_RECORD_OUTCOME_TIMEOUT_MS = 1200;
+const DEFAULT_DISCORD_EXIT_TIMEOUT_MS = 900;
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -100,6 +110,48 @@ function now() {
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = Math.floor(safeNumber(value, fallback));
+  return Math.max(min, Math.min(max, n));
+}
+
+function elapsedMs(startedAt) {
+  return Math.max(0, now() - safeNumber(startedAt, now()));
+}
+
+function runtimeExceeded(startedAt, maxRuntimeMs, reserveMs = 150) {
+  return elapsedMs(startedAt) >= Math.max(100, safeNumber(maxRuntimeMs, DEFAULT_MONITOR_RUNTIME_MS) - reserveMs);
+}
+
+function timeoutResult(label, timeoutMs) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({
+        __timeout: true,
+        label,
+        timeoutMs
+      });
+    }, Math.max(1, Math.floor(safeNumber(timeoutMs, 1))));
+  });
+}
+
+async function withTimeout(promise, timeoutMs, label, fallback = null) {
+  const result = await Promise.race([
+    Promise.resolve(promise).catch((error) => ({
+      __error: true,
+      label,
+      error: error?.message || String(error)
+    })),
+    timeoutResult(label, timeoutMs)
+  ]);
+
+  if (result?.__timeout || result?.__error) {
+    return fallback ?? result;
+  }
+
+  return result;
 }
 
 function namespacedShortKey(key, fallback) {
@@ -167,25 +219,76 @@ const SHORT_KEYS = {
   }
 };
 
-function tradeConfig() {
+function tradeConfig(options = {}) {
   return {
-    dataConcurrency: Math.max(
-      1,
-      Math.floor(safeNumber(
+    dataConcurrency: clampInt(
+      options.dataConcurrency ??
         CONFIG.short?.trade?.dataConcurrency ??
-          CONFIG.trade?.dataConcurrency,
-        5
-      ))
+        CONFIG.trade?.dataConcurrency,
+      DEFAULT_MONITOR_CONCURRENCY,
+      1,
+      3
     ),
 
     positionTimeStopMin: Math.max(
       1,
       safeNumber(
-        CONFIG.short?.trade?.positionTimeStopMin ??
+        options.positionTimeStopMin ??
+          CONFIG.short?.trade?.positionTimeStopMin ??
           CONFIG.trade?.positionTimeStopMin,
         DEFAULT_POSITION_TIME_STOP_MIN
       )
-    )
+    ),
+
+    monitorPositionLimit: clampInt(
+      options.maxOpenPositionsToMonitor ??
+        options.openPositionMonitorLimit ??
+        CONFIG.short?.trade?.openPositionMonitorLimit ??
+        CONFIG.trade?.openPositionMonitorLimit,
+      DEFAULT_MONITOR_POSITION_LIMIT,
+      1,
+      250
+    ),
+
+    monitorBatchSize: clampInt(
+      options.monitorBatchSize ??
+        CONFIG.short?.trade?.monitorBatchSize ??
+        CONFIG.trade?.monitorBatchSize,
+      DEFAULT_MONITOR_BATCH_SIZE,
+      1,
+      250
+    ),
+
+    monitorRuntimeMs: clampInt(
+      options.maxRuntimeMs ??
+        options.monitorTimeoutMs ??
+        CONFIG.short?.trade?.monitorTimeoutMs ??
+        CONFIG.trade?.monitorTimeoutMs,
+      DEFAULT_MONITOR_RUNTIME_MS,
+      500,
+      15000
+    ),
+
+    monitorOnePositionTimeoutMs: clampInt(
+      options.monitorOnePositionTimeoutMs ??
+        CONFIG.short?.trade?.monitorOnePositionTimeoutMs ??
+        CONFIG.trade?.monitorOnePositionTimeoutMs,
+      DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS,
+      100,
+      3000
+    ),
+
+    priceFetchTimeoutMs: clampInt(
+      options.monitorPriceFetchTimeoutMs ??
+        options.priceFetchTimeoutMs ??
+        CONFIG.short?.trade?.monitorPriceFetchTimeoutMs ??
+        CONFIG.trade?.monitorPriceFetchTimeoutMs,
+      DEFAULT_PRICE_FETCH_TIMEOUT_MS,
+      50,
+      2000
+    ),
+
+    persistNoPriceFailures: options.persistNoPriceFailures === true
   };
 }
 
@@ -357,13 +460,11 @@ function parseShortTaxonomyMicroId(id = '') {
 
 function isExactShortChildTrueMicroId(id = '') {
   const parsed = parseShortTaxonomyMicroId(id);
-
   return Boolean(parsed.valid && parsed.selectable && parsed.isChild);
 }
 
 function isParentShortTrueMicroId(id = '') {
   const parsed = parseShortTaxonomyMicroId(id);
-
   return Boolean(parsed.valid && parsed.isParent && !parsed.selectable);
 }
 
@@ -890,7 +991,7 @@ function normalizeMicroIdentity(row = {}) {
     scannerFamilyId: row.scannerFamilyId || null,
     scannerDefinition: row.scannerDefinition || null,
     scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
-      ? row.scannerDefinitionParts
+      ? row.scannerDefinitionParts.slice(0, 40)
       : [],
 
     executionMicroFamilyId: executionId,
@@ -1092,66 +1193,102 @@ function applyLiveStopManagement(position) {
   return position;
 }
 
+function positionAgeMs(position = {}, timestamp = now()) {
+  const openedAt = safeNumber(position.openedAt || position.createdAt, 0);
+
+  if (openedAt <= 0) return 0;
+
+  return Math.max(0, timestamp - openedAt);
+}
+
+function isTimeStopExpired(position = {}, timestamp = now(), options = {}) {
+  const cfg = tradeConfig(options);
+  const ageMs = positionAgeMs(position, timestamp);
+
+  return ageMs >= cfg.positionTimeStopMin * 60 * 1000;
+}
+
+function fallbackExitPrice(position = {}) {
+  const price = safeNumber(
+    position.currentPrice ??
+      position.lastPrice ??
+      position.markPrice ??
+      position.price ??
+      position.entry,
+    0
+  );
+
+  return price > 0 ? price : safeNumber(position.entry, 0);
+}
+
 function detectExit({
   position,
   price,
-  timestamp
+  timestamp,
+  options = {}
 } = {}) {
-  const cfg = tradeConfig();
-
   const current = safeNumber(price, 0);
   const tp = safeNumber(position.tp, 0);
   const sl = safeNumber(position.sl, 0);
-  const openedAt = safeNumber(position.openedAt || position.createdAt, 0);
-
-  if (current <= 0 || tp <= 0 || sl <= 0) {
-    return {
-      shouldExit: false,
-      reason: null,
-      trigger: null
-    };
-  }
+  const expired = isTimeStopExpired(position, timestamp, options);
 
   if (!isShortPosition(position)) {
     return {
       shouldExit: false,
       reason: 'NON_SHORT_POSITION_IGNORED',
-      trigger: null
+      trigger: null,
+      exitPrice: 0
     };
   }
 
-  if (current <= tp) {
+  if (current > 0 && tp > 0 && current <= tp) {
     return {
       shouldExit: true,
       reason: 'TP',
-      trigger: 'price <= tp'
+      trigger: 'price <= tp',
+      exitPrice: current,
+      priceSource: 'LIVE_OR_HINT_PRICE'
     };
   }
 
-  if (current >= sl) {
+  if (current > 0 && sl > 0 && current >= sl) {
     return {
       shouldExit: true,
       reason: 'SL',
-      trigger: 'price >= sl'
+      trigger: 'price >= sl',
+      exitPrice: current,
+      priceSource: 'LIVE_OR_HINT_PRICE'
     };
   }
 
-  const expired =
-    openedAt > 0 &&
-    timestamp - openedAt >= cfg.positionTimeStopMin * 60 * 1000;
-
   if (expired) {
+    const fallback = current > 0 ? current : fallbackExitPrice(position);
+
     return {
-      shouldExit: true,
+      shouldExit: fallback > 0,
       reason: 'TIME_STOP',
-      trigger: 'TIME_STOP'
+      trigger: current > 0
+        ? 'TIME_STOP_WITH_LIVE_OR_HINT_PRICE'
+        : 'TIME_STOP_WITH_POSITION_PRICE_FALLBACK',
+      exitPrice: fallback,
+      priceSource: current > 0 ? 'LIVE_OR_HINT_PRICE' : 'POSITION_FALLBACK_PRICE'
+    };
+  }
+
+  if (current <= 0 || tp <= 0 || sl <= 0) {
+    return {
+      shouldExit: false,
+      reason: null,
+      trigger: null,
+      exitPrice: 0
     };
   }
 
   return {
     shouldExit: false,
     reason: null,
-    trigger: null
+    trigger: null,
+    exitPrice: current
   };
 }
 
@@ -1315,6 +1452,109 @@ function buildVirtualFlags(row = {}) {
   };
 }
 
+function compactMarketWeather(value = null) {
+  if (!value || typeof value !== 'object') return null;
+
+  return {
+    ok: value.ok ?? null,
+    available: value.available ?? null,
+    version: value.version || null,
+    snapshotId: value.snapshotId || null,
+    createdAt: value.createdAt || null,
+    completedAt: value.completedAt || null,
+    updatedAt: value.updatedAt || null,
+    currentRegime: value.currentRegime || value.regime || null,
+    regime: value.regime || value.currentRegime || null,
+    currentTrendSide: value.currentTrendSide || value.trendSide || null,
+    trendSide: value.trendSide || value.currentTrendSide || null,
+    confidence: value.confidence ?? null,
+    bullishPct: value.bullishPct ?? null,
+    bearishPct: value.bearishPct ?? null,
+    squeezePct: value.squeezePct ?? null,
+    btcState: value.btcState || null,
+    btcChange1h: value.btcChange1h ?? null,
+    btcChange24h: value.btcChange24h ?? null,
+    compactedForRedis: true
+  };
+}
+
+function compactWeeklyStats(value = null) {
+  if (!value || typeof value !== 'object') return null;
+
+  return {
+    id: value.id || value.microFamilyId || value.trueMicroFamilyId || null,
+    microFamilyId: value.microFamilyId || value.trueMicroFamilyId || null,
+    trueMicroFamilyId: value.trueMicroFamilyId || value.microFamilyId || null,
+    completed: safeNumber(value.completed ?? value.outcomeSample, 0),
+    wins: safeNumber(value.wins, 0),
+    losses: safeNumber(value.losses, 0),
+    flats: safeNumber(value.flats, 0),
+    winrate: value.winrate ?? value.winRate ?? null,
+    fairWinrate: value.fairWinrate ?? null,
+    avgR: value.avgR ?? null,
+    totalR: value.totalR ?? null,
+    avgCostR: value.avgCostR ?? null,
+    directSLPct: value.directSLPct ?? null,
+    balancedScore: value.balancedScore ?? value.dashboardBalancedScore ?? null,
+    compactedForRedis: true
+  };
+}
+
+function compactOpenPositionRow(row = {}) {
+  const compacted = {
+    ...row,
+
+    currentMarketWeather: compactMarketWeather(row.currentMarketWeather),
+    entryMarketWeather: compactMarketWeather(row.entryMarketWeather),
+
+    currentMarketUniverse: null,
+    entryMarketUniverse: null,
+
+    weeklyStats: compactWeeklyStats(row.weeklyStats),
+    selectedWeeklyStats: compactWeeklyStats(row.selectedWeeklyStats),
+
+    scannerDefinitionParts: Array.isArray(row.scannerDefinitionParts)
+      ? row.scannerDefinitionParts.slice(0, 40)
+      : [],
+
+    definitionParts: Array.isArray(row.definitionParts)
+      ? row.definitionParts.slice(0, 40)
+      : undefined,
+
+    microDefinitionParts: Array.isArray(row.microDefinitionParts)
+      ? row.microDefinitionParts.slice(0, 40)
+      : undefined,
+
+    executionFingerprintParts: Array.isArray(row.executionFingerprintParts)
+      ? row.executionFingerprintParts.slice(0, 40)
+      : undefined,
+
+    actions: undefined,
+    virtualActions: undefined,
+    candidates: undefined,
+    scannerSnapshot: undefined,
+    rawSnapshot: undefined,
+    rawCandidate: undefined,
+    marketUniverseRows: undefined,
+    universeRows: undefined,
+    candles15m: undefined,
+    candles1h: undefined,
+    orderBook: undefined,
+    rawOrderBook: undefined,
+    selectedRotation: undefined,
+
+    compactedForRedis: true,
+    compactedBy: 'src/trade/positionEngine.js',
+    compactedAt: now()
+  };
+
+  for (const key of Object.keys(compacted)) {
+    if (compacted[key] === undefined) delete compacted[key];
+  }
+
+  return compacted;
+}
+
 function calcGrossMovePctFromPosition({
   position,
   exitPrice
@@ -1454,7 +1694,9 @@ function applyNetCostModelToOutcome({
 } = {}) {
   if (!outcome || typeof outcome !== 'object') return outcome;
 
-  if (!isShortPosition(position) || !isShortPosition(outcome)) {
+  const outcomeSide = inferPositionTradeSide(outcome);
+
+  if (!isShortPosition(position) || outcomeSide === OPPOSITE_TRADE_SIDE) {
     return {
       ...outcome,
       skipped: true,
@@ -1551,14 +1793,24 @@ function applyNetCostModelToOutcome({
   });
 }
 
-export async function getOpenPositions() {
+export async function getOpenPositions(options = {}) {
   const redis = getDurableRedis();
-  const keys = await getKeys(redis, SHORT_KEYS.trade.openPattern, 1000);
+  const limit = clampInt(
+    options.limit ??
+      options.openPositionLimit ??
+      options.maxOpenPositionsToRead ??
+      DEFAULT_OPEN_POSITION_SCAN_LIMIT,
+    DEFAULT_OPEN_POSITION_SCAN_LIMIT,
+    1,
+    1000
+  );
+
+  const keys = await getKeys(redis, SHORT_KEYS.trade.openPattern, limit).catch(() => []);
 
   if (!keys.length) return [];
 
   const rows = await Promise.all(
-    keys.map((key) => getJson(redis, key, null))
+    keys.map((key) => getJson(redis, key, null).catch(() => null))
   );
 
   return rows
@@ -1582,7 +1834,7 @@ export async function getOpenPosition(symbol) {
     getDurableRedis(),
     SHORT_KEYS.trade.open(keySymbol),
     null
-  );
+  ).catch(() => null);
 
   if (!row) return null;
   if (String(row.status || 'OPEN').toUpperCase() !== 'OPEN') return null;
@@ -1616,7 +1868,7 @@ export async function saveOpenPosition(position) {
   const normalized = forceShortPositionFields(position);
   const identity = normalizeMicroIdentity(normalized);
 
-  const row = forceShortPositionFields({
+  const row = compactOpenPositionRow(forceShortPositionFields({
     ...normalized,
     ...identity,
     ...buildVirtualFlags(normalized),
@@ -1630,7 +1882,7 @@ export async function saveOpenPosition(position) {
     strategyVersion: normalized.strategyVersion || CONFIG.strategyVersion,
 
     updatedAt: now()
-  });
+  }));
 
   assertPositionPersistable(row);
 
@@ -1652,7 +1904,9 @@ export async function deleteOpenPosition(symbol) {
 
   if (!key) return 0;
 
-  return getDurableRedis().del(key);
+  const redis = getDurableRedis();
+
+  return redis.del(key);
 }
 
 export function updatePathMetrics(position, price) {
@@ -1787,6 +2041,9 @@ export function buildOpenPositionFromEntry(entry) {
 
     initialSl: normalizedEntry.initialSl || normalizedEntry.sl,
 
+    currentPrice: safeNumber(normalizedEntry.currentPrice ?? normalizedEntry.price ?? normalizedEntry.entry, 0),
+    lastPrice: safeNumber(normalizedEntry.lastPrice ?? normalizedEntry.currentPrice ?? normalizedEntry.price ?? normalizedEntry.entry, 0),
+
     currentR: 0,
     shortCurrentR: 0,
     mfeR: 0,
@@ -1820,11 +2077,11 @@ export function buildOpenPositionFromEntry(entry) {
     trailLiveApplied: false,
     slManagementSource: null,
 
-    entryMarketWeather: normalizedEntry.entryMarketWeather || null,
+    entryMarketWeather: normalizedEntry.entryMarketWeather || normalizedEntry.currentMarketWeather || null,
     entryCurrentRegime: normalizedEntry.entryCurrentRegime || normalizedEntry.currentRegime || null,
     entryCurrentTrendSide: normalizedEntry.entryCurrentTrendSide || normalizedEntry.currentTrendSide || null,
     entryCurrentFit: normalizedEntry.entryCurrentFit ?? normalizedEntry.currentFit ?? null,
-    entryCurrentFitConfidence: normalizedEntry.entryCurrentFitConfidence ?? normalizedEntry.currentMarketFitConfidence ?? null,
+    entryCurrentFitConfidence: normalizedEntry.entryCurrentFitConfidence ?? normalizedEntry.currentMarketFitConfidence ?? normalizedEntry.currentFitConfidence ?? null,
     entryWeatherFitMatchedFamily: normalizedEntry.entryWeatherFitMatchedFamily ?? null,
 
     currentFitSoftOnly: true,
@@ -1856,12 +2113,14 @@ export function buildOpenPositionFromEntry(entry) {
   return position;
 }
 
-async function markPriceFetchFailed(position) {
+async function markPriceFetchFailed(position, { persist = false } = {}) {
   position.priceFetchFailures = safeNumber(position.priceFetchFailures, 0) + 1;
   position.lastPriceFetchFailedAt = now();
   position.updatedAt = now();
 
-  await saveOpenPosition(forceShortPositionFields(position));
+  if (persist) {
+    await saveOpenPosition(forceShortPositionFields(position)).catch(() => null);
+  }
 
   return position;
 }
@@ -1957,7 +2216,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     selectedForDiscord: Boolean(position.selectedForDiscord || position.discordAlertEligible || position.selectedMicroFamilyAlert),
     rotationMatchType: position.rotationMatchType || outcome.rotationMatchType || null,
 
-    weeklyStats: position.weeklyStats || null,
+    weeklyStats: compactWeeklyStats(position.weeklyStats),
 
     virtualOnly: true,
     virtualTracked: true,
@@ -1974,7 +2233,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     scannerFamilyId: position.scannerFamilyId || identity.scannerFamilyId || null,
     scannerDefinition: position.scannerDefinition || identity.scannerDefinition || null,
     scannerDefinitionParts: Array.isArray(position.scannerDefinitionParts)
-      ? position.scannerDefinitionParts
+      ? position.scannerDefinitionParts.slice(0, 40)
       : identity.scannerDefinitionParts || [],
 
     executionMicroFamilyId: position.executionMicroFamilyId || identity.executionMicroFamilyId || null,
@@ -2045,7 +2304,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
-    entryMarketWeather: position.entryMarketWeather || outcome.entryMarketWeather || null,
+    entryMarketWeather: compactMarketWeather(position.entryMarketWeather || outcome.entryMarketWeather),
     entryCurrentRegime: position.entryCurrentRegime || position.currentRegime || outcome.entryCurrentRegime || outcome.currentRegime || null,
     entryCurrentTrendSide: position.entryCurrentTrendSide || position.currentTrendSide || outcome.entryCurrentTrendSide || outcome.currentTrendSide || null,
     entryCurrentFit: position.entryCurrentFit ?? position.currentFit ?? outcome.entryCurrentFit ?? outcome.currentFit ?? null,
@@ -2072,7 +2331,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
   });
 }
 
-async function maybeSendExitAlert(position, outcome) {
+async function maybeSendExitAlert(position, outcome, options = {}) {
   if (!position.discordAlertEligible && !position.selectedMicroFamilyAlert && !position.selectedForDiscord) {
     return {
       sent: false,
@@ -2089,30 +2348,141 @@ async function maybeSendExitAlert(position, outcome) {
     };
   }
 
-  try {
-    await sendExitAlert(outcome);
-
-    return {
+  const result = await withTimeout(
+    sendExitAlert(outcome).then(() => ({
       sent: true,
       skipped: false,
       reason: 'DISCORD_EXIT_ALERT_SENT'
-    };
-  } catch (error) {
-    return {
+    })),
+    options.discordExitTimeoutMs || DEFAULT_DISCORD_EXIT_TIMEOUT_MS,
+    'DISCORD_EXIT_ALERT_TIMEOUT',
+    {
       sent: false,
       skipped: false,
       failed: true,
-      reason: 'DISCORD_EXIT_ALERT_FAILED',
-      error: error?.message || String(error)
-    };
-  }
+      timeout: true,
+      reason: 'DISCORD_EXIT_ALERT_TIMEOUT'
+    }
+  );
+
+  return result;
+}
+
+async function persistOutcomeNonBlocking(outcome, options = {}) {
+  const recordResult = await withTimeout(
+    recordOutcome(clonePlainObject(outcome), {
+      source: OUTCOME_SOURCE,
+      weekKey: PERSISTENT_LEARNING_KEY,
+      persistentLearningKey: PERSISTENT_LEARNING_KEY,
+      tradeSide: TARGET_TRADE_SIDE,
+      side: TARGET_DASHBOARD_SIDE,
+      virtualOnly: true,
+      realOrdersDisabled: true,
+      bitgetOrdersDisabled: true,
+      exchangeCallsDisabled: true
+    }),
+    options.recordOutcomeTimeoutMs || DEFAULT_RECORD_OUTCOME_TIMEOUT_MS,
+    'RECORD_OUTCOME_TIMEOUT',
+    {
+      ok: false,
+      timeout: true,
+      reason: 'RECORD_OUTCOME_TIMEOUT'
+    }
+  );
+
+  return recordResult;
+}
+
+async function closePosition({
+  position,
+  exit,
+  timestamp,
+  options = {}
+}) {
+  const closedAt = timestamp;
+  const exitPrice = roundPrice(exit.exitPrice || fallbackExitPrice(position));
+  const directSL = isDirectSLExit({
+    position,
+    exitReason: exit.reason
+  });
+
+  const closedPosition = forceShortPositionFields({
+    ...position,
+    status: 'CLOSED',
+    closedAt,
+    completedAt: closedAt,
+    exitPrice,
+    exitReason: exit.reason,
+    exitTrigger: exit.trigger,
+    exitPriceSource: exit.priceSource || null,
+    outcomeSource: OUTCOME_SOURCE,
+    source: POSITION_SOURCE,
+    directToSL: directSL,
+    directSL
+  });
+
+  const baseOutcome = buildOutcomeFromPosition({
+    position: closedPosition,
+    exitPrice,
+    exitReason: exit.reason,
+    source: OUTCOME_SOURCE
+  });
+
+  const netOutcome = applyNetCostModelToOutcome({
+    outcome: {
+      ...baseOutcome,
+      status: 'CLOSED',
+      closedAt,
+      completedAt: closedAt,
+      exitPrice,
+      exitReason: exit.reason,
+      exitTrigger: exit.trigger,
+      exitPriceSource: exit.priceSource || null,
+      source: OUTCOME_SOURCE,
+      outcomeSource: OUTCOME_SOURCE,
+      directToSL: directSL,
+      directSL
+    },
+    position: closedPosition,
+    exitPrice
+  });
+
+  const outcome = enrichOutcomeIdentity(netOutcome, closedPosition);
+
+  await deleteOpenPosition(closedPosition.symbol || closedPosition.contractSymbol);
+
+  const recordResult = await persistOutcomeNonBlocking(outcome, options);
+  const discordResult = await maybeSendExitAlert(closedPosition, clonePlainObject(outcome), options);
+
+  return {
+    type: 'EXIT',
+    position: closedPosition,
+    outcome: {
+      ...outcome,
+      recordOutcomeResult: recordResult,
+      discordExitAlertResult: discordResult,
+      discordExitAlertSent: Boolean(discordResult.sent)
+    }
+  };
 }
 
 async function monitorOnePosition({
   position,
   priceFetcher,
-  timestamp
+  timestamp,
+  startedAt,
+  options = {}
 }) {
+  const cfg = tradeConfig(options);
+
+  if (runtimeExceeded(startedAt, cfg.monitorRuntimeMs, 200)) {
+    return {
+      type: 'SKIPPED_RUNTIME_BUDGET',
+      position,
+      outcome: null
+    };
+  }
+
   if (!isShortPosition(position)) {
     return {
       type: 'IGNORED_NON_SHORT',
@@ -2138,10 +2508,43 @@ async function monitorOnePosition({
   }
 
   const fetchSymbol = position.contractSymbol || position.symbol;
-  const price = await priceFetcher(fetchSymbol).catch(() => 0);
 
-  if (!price) {
-    await markPriceFetchFailed(position);
+  const price = await withTimeout(
+    Promise.resolve(priceFetcher(fetchSymbol)).catch(() => 0),
+    cfg.priceFetchTimeoutMs,
+    'POSITION_PRICE_FETCH_TIMEOUT',
+    0
+  );
+
+  const currentPrice = safeNumber(price, 0);
+
+  if (currentPrice > 0) {
+    position.priceFetchFailures = 0;
+    position.lastPriceFetchFailedAt = null;
+
+    updatePathMetrics(position, currentPrice);
+  }
+
+  const exit = detectExit({
+    position,
+    price: currentPrice,
+    timestamp,
+    options
+  });
+
+  if (exit.shouldExit) {
+    return closePosition({
+      position,
+      exit,
+      timestamp,
+      options
+    });
+  }
+
+  if (currentPrice <= 0) {
+    await markPriceFetchFailed(position, {
+      persist: cfg.persistNoPriceFailures
+    });
 
     return {
       type: 'NO_PRICE',
@@ -2150,118 +2553,71 @@ async function monitorOnePosition({
     };
   }
 
-  position.priceFetchFailures = 0;
-  position.lastPriceFetchFailedAt = null;
-
-  updatePathMetrics(position, price);
-
-  const exit = detectExit({
-    position,
-    price,
-    timestamp
-  });
-
-  if (!exit.shouldExit) {
-    await saveOpenPosition(position);
-
-    return {
-      type: 'UPDATED',
-      position,
-      outcome: null
-    };
-  }
-
-  const closedAt = timestamp;
-  const exitPrice = roundPrice(price);
-  const directSL = isDirectSLExit({
-    position,
-    exitReason: exit.reason
-  });
-
-  const closedPosition = forceShortPositionFields({
-    ...position,
-    status: 'CLOSED',
-    closedAt,
-    completedAt: closedAt,
-    exitPrice,
-    exitReason: exit.reason,
-    exitTrigger: exit.trigger,
-    outcomeSource: OUTCOME_SOURCE,
-    source: POSITION_SOURCE,
-    directToSL: directSL,
-    directSL
-  });
-
-  const baseOutcome = buildOutcomeFromPosition({
-    position: closedPosition,
-    exitPrice,
-    exitReason: exit.reason,
-    source: OUTCOME_SOURCE
-  });
-
-  const netOutcome = applyNetCostModelToOutcome({
-    outcome: {
-      ...baseOutcome,
-      status: 'CLOSED',
-      closedAt,
-      completedAt: closedAt,
-      exitPrice,
-      exitReason: exit.reason,
-      exitTrigger: exit.trigger,
-      source: OUTCOME_SOURCE,
-      outcomeSource: OUTCOME_SOURCE,
-      directToSL: directSL,
-      directSL
-    },
-    position: closedPosition,
-    exitPrice
-  });
-
-  const outcome = enrichOutcomeIdentity(netOutcome, closedPosition);
-
-  const analyzeOutcome = clonePlainObject(outcome);
-  const discordOutcome = clonePlainObject(outcome);
-
-  await recordOutcome(analyzeOutcome, {
-    source: OUTCOME_SOURCE,
-    weekKey: PERSISTENT_LEARNING_KEY
-  });
-
-  const discordResult = await maybeSendExitAlert(closedPosition, discordOutcome);
-
-  await deleteOpenPosition(closedPosition.symbol || closedPosition.contractSymbol);
+  await saveOpenPosition(position);
 
   return {
-    type: 'EXIT',
-    position: closedPosition,
-    outcome: {
-      ...discordOutcome,
-      discordExitAlertResult: discordResult,
-      discordExitAlertSent: Boolean(discordResult.sent)
-    }
+    type: 'UPDATED',
+    position,
+    outcome: null
   };
 }
 
-export async function monitorOpenPositions({ priceFetcher } = {}) {
+export async function monitorOpenPositions(options = {}) {
+  const {
+    priceFetcher
+  } = options;
+
   if (typeof priceFetcher !== 'function') {
     throw new Error('PRICE_FETCHER_REQUIRED');
   }
 
-  const positions = await getOpenPositions();
+  const cfg = tradeConfig(options);
+  const startedAt = now();
+  const timestamp = now();
+
+  const openPositions = await withTimeout(
+    getOpenPositions({
+      limit: Math.max(cfg.monitorPositionLimit, cfg.monitorBatchSize)
+    }),
+    Math.min(900, cfg.monitorRuntimeMs),
+    'GET_OPEN_POSITIONS_TIMEOUT',
+    []
+  );
+
+  const positions = (Array.isArray(openPositions) ? openPositions : [])
+    .slice(0, Math.min(cfg.monitorPositionLimit, cfg.monitorBatchSize));
 
   if (!positions.length) return [];
-
-  const cfg = tradeConfig();
-  const timestamp = now();
 
   const results = await mapConcurrent(
     positions,
     cfg.dataConcurrency,
-    async (position) => monitorOnePosition({
-      position,
-      priceFetcher,
-      timestamp
-    })
+    async (position) => {
+      if (runtimeExceeded(startedAt, cfg.monitorRuntimeMs, 250)) {
+        return {
+          type: 'SKIPPED_RUNTIME_BUDGET',
+          position,
+          outcome: null
+        };
+      }
+
+      return withTimeout(
+        monitorOnePosition({
+          position,
+          priceFetcher,
+          timestamp,
+          startedAt,
+          options
+        }),
+        cfg.monitorOnePositionTimeoutMs,
+        'MONITOR_ONE_POSITION_TIMEOUT',
+        {
+          type: 'POSITION_MONITOR_TIMEOUT',
+          position,
+          outcome: null
+        }
+      );
+    }
   );
 
   return results
