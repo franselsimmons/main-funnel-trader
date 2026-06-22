@@ -90,6 +90,8 @@ const DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC = 15 * 60;
 const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 1500;
 const DEFAULT_MONITOR_TIMEOUT_MS = 4500;
 const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 400;
+const DEFAULT_MONITOR_BATCH_SIZE = 80;
+const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 150;
 const DEFAULT_CANDIDATE_TIMEOUT_MS = 4000;
 const DEFAULT_ANALYZE_TIMEOUT_MS = 7000;
 const DEFAULT_ROTATION_TIMEOUT_MS = 1200;
@@ -931,36 +933,6 @@ function tradeConfig() {
     allowSyntheticRiskFallback: allowStandardizedLearningRiskFallback,
     allowSyntheticRiskVirtualEntries: allowStandardizedLearningRiskVirtualEntries,
 
-    standardizedLearningRiskRequiresScannerGatePassed: cfgBoolean(
-      firstDefined(
-        options.standardizedLearningRiskRequiresScannerGatePassed,
-        CONFIG.short?.trade?.standardizedLearningRiskRequiresScannerGatePassed,
-        CONFIG.trade?.shortStandardizedLearningRiskRequiresScannerGatePassed,
-        CONFIG.trade?.standardizedLearningRiskRequiresScannerGatePassed
-      ),
-      false
-    ),
-
-    standardizedLearningRiskRequiresAnalyzeEligible: cfgBoolean(
-      firstDefined(
-        options.standardizedLearningRiskRequiresAnalyzeEligible,
-        CONFIG.short?.trade?.standardizedLearningRiskRequiresAnalyzeEligible,
-        CONFIG.trade?.shortStandardizedLearningRiskRequiresAnalyzeEligible,
-        CONFIG.trade?.standardizedLearningRiskRequiresAnalyzeEligible
-      ),
-      false
-    ),
-
-    standardizedLearningRiskRequiresSpreadGatePassed: cfgBoolean(
-      firstDefined(
-        options.standardizedLearningRiskRequiresSpreadGatePassed,
-        CONFIG.short?.trade?.standardizedLearningRiskRequiresSpreadGatePassed,
-        CONFIG.trade?.shortStandardizedLearningRiskRequiresSpreadGatePassed,
-        CONFIG.trade?.standardizedLearningRiskRequiresSpreadGatePassed
-      ),
-      false
-    ),
-
     marketContextTimeoutMs: positiveInt(
       firstDefined(
         options.marketContextTimeoutMs,
@@ -995,6 +967,31 @@ function tradeConfig() {
       DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS,
       100,
       1000
+    ),
+
+    monitorBatchSize: positiveInt(
+      firstDefined(
+        options.monitorBatchSize,
+        CONFIG.short?.trade?.monitorBatchSize,
+        CONFIG.trade?.shortMonitorBatchSize,
+        CONFIG.trade?.monitorBatchSize
+      ),
+      DEFAULT_MONITOR_BATCH_SIZE,
+      10,
+      300
+    ),
+
+    openPositionMonitorLimit: positiveInt(
+      firstDefined(
+        options.openPositionMonitorLimit,
+        options.maxOpenPositionsToMonitor,
+        CONFIG.short?.trade?.openPositionMonitorLimit,
+        CONFIG.trade?.shortOpenPositionMonitorLimit,
+        CONFIG.trade?.openPositionMonitorLimit
+      ),
+      DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
+      10,
+      500
     ),
 
     monitorLivePriceFetchEnabled,
@@ -1490,58 +1487,13 @@ function scannerMetadataFrom(...rows) {
   };
 }
 
-function normalizeExactTrueMicroRow(row = {}) {
-  const trueMicroFamilyId = getTrueMicroFamilyId(row);
-  const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
-
-  if (!trueMicroFamilyId || !parsed.selectable) {
-    return {
-      ...row,
-      exact75ChildTrueMicro: false,
-      trueMicroFamilyId: null,
-      microFamilyId: null,
-      childTrueMicroFamilyId: null,
-      parentTrueMicroFamilyId: getParentTrueMicroFamilyId(row) || null,
-      exactTrueMicroMissingReason: 'EXACT_75_CHILD_TRUE_MICRO_REQUIRED'
-    };
-  }
-
-  return {
-    ...row,
-
-    trueMicroFamilyId,
-    microFamilyId: trueMicroFamilyId,
-    analyzeMicroFamilyId: trueMicroFamilyId,
-    learningMicroFamilyId: trueMicroFamilyId,
-    childTrueMicroFamilyId: trueMicroFamilyId,
-
-    parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
-    coarseMicroFamilyId: parsed.parentTrueMicroFamilyId,
-    baseMicroFamilyId: parsed.parentTrueMicroFamilyId,
-    legacyMicroFamilyId: parsed.parentTrueMicroFamilyId,
-    familyId: trueMicroFamilyId,
-
-    setupType: parsed.setup,
-    regimeBucket: parsed.regime,
-    confirmationProfile: parsed.confirmationProfile,
-
-    exact75ChildTrueMicro: true,
-    fixedTaxonomyLearningId: true,
-
-    ...taxonomyFlags({
-      ...row,
-      trueMicroFamilyId
-    })
-  };
-}
-
 function normalizeMarketRegime(value = '') {
   const text = upper(value);
 
   if (!text) return 'UNKNOWN';
-  if (text.includes('SQUEEZE') || text.includes('COMPRESS')) return 'SQUEEZE';
-  if (text.includes('CHOP') || text.includes('RANGE') || text.includes('SIDEWAY')) return 'CHOP';
-  if (text.includes('TREND') || text.includes('MOMENTUM') || text.includes('DIRECTION')) return 'TREND';
+  if (text.includes('SQUEEZE') || text.includes('COMPRESS') || text.includes('LOW_VOL')) return 'SQUEEZE';
+  if (text.includes('CHOP') || text.includes('RANGE') || text.includes('SIDEWAY') || text.includes('HIGH_VOL')) return 'CHOP';
+  if (text.includes('TREND') || text.includes('MOMENTUM') || text.includes('DIRECTION') || text.includes('BULL') || text.includes('BEAR')) return 'TREND';
 
   return 'UNKNOWN';
 }
@@ -1569,6 +1521,177 @@ function firstFinite(...values) {
   }
 
   return null;
+}
+
+function pickFallbackSetup(row = {}) {
+  const reason = upper([
+    row.scannerReason,
+    row.reason,
+    row.scannerFamilyId,
+    row.scannerMicroFamilyId,
+    row.scannerDefinition,
+    row.definition,
+    row.microDefinition
+  ].filter(Boolean).join('|'));
+
+  if (row.sweepConfirmed === true || reason.includes('SWEEP')) return 'SWEEP_REVERSAL';
+  if (row.retestConfirmed === true || reason.includes('RETEST')) return 'RETEST';
+  if (reason.includes('BREAKDOWN') || reason.includes('BREAKOUT') || reason.includes('VALID_BREAK')) return 'BREAKOUT';
+  if (reason.includes('EXPANSION') || reason.includes('CONTINUATION') || reason.includes('MOMENTUM')) return 'CONTINUATION';
+  if (reason.includes('COMPRESSION') || reason.includes('SQUEEZE')) return 'COMPRESSION';
+
+  return 'CONTINUATION';
+}
+
+function pickFallbackRegime(row = {}, context = {}) {
+  const direct = normalizeMarketRegime(
+    row.regimeBucket ||
+      row.currentRegime ||
+      row.entryCurrentRegime ||
+      context.marketContext?.regime ||
+      context.snapshot?.regime ||
+      row.regime ||
+      row.btcRegime ||
+      row.currentVolatilityState
+  );
+
+  if (SHORT_FIXED_REGIME_BUCKETS.has(direct)) return direct;
+
+  const haystack = upper([
+    row.scannerReason,
+    row.scannerMicroFamilyId,
+    row.scannerDefinition,
+    row.definition,
+    row.microDefinition,
+    row.btcState,
+    row.regime,
+    row.btcRegime
+  ].filter(Boolean).join('|'));
+
+  if (haystack.includes('SQUEEZE') || haystack.includes('LOW_VOL') || haystack.includes('COMPRESS')) return 'SQUEEZE';
+  if (haystack.includes('CHOP') || haystack.includes('RANGE') || haystack.includes('HIGH_VOL')) return 'CHOP';
+
+  return 'SQUEEZE';
+}
+
+function pickFallbackConfirmation(row = {}, context = {}) {
+  const scannerScore = safeNumber(row.scannerScore ?? row.moveScore, 0);
+  const currentFitScore = safeNumber(row.currentFitScore ?? row.entryCurrentFitScore, 0);
+  const volumeExpansion = safeNumber(row.volumeExpansion, 0);
+  const reason = upper([
+    row.scannerReason,
+    row.scannerMicroFamilyId,
+    row.scannerDefinition,
+    row.definition,
+    row.microDefinition
+  ].filter(Boolean).join('|'));
+
+  const btcBullishAgainstShort = upper(row.btcState || context.snapshot?.btcState || '').includes('BULL');
+  const trendSide = normalizeMarketTrendSide(row.currentTrendSide || context.marketContext?.trendSide || '');
+  const isContraShort = btcBullishAgainstShort && trendSide !== TARGET_TRADE_SIDE;
+
+  if (isContraShort && (row.fakeBreakoutRisk === true || row.sweepConfirmed === true || reason.includes('SWEEP'))) {
+    return 'E_WEAK_CONTRA';
+  }
+
+  if (row.retestConfirmed === true || reason.includes('RETEST')) return 'B_FLOW_ALIGN';
+  if (volumeExpansion >= 1.5 || reason.includes('VOL_EXP_XL') || reason.includes('VOLUME')) return 'C_VOLUME_ALIGN';
+  if (scannerScore >= 80 || currentFitScore >= 45) return 'A_STRONG_ALIGN';
+  if (scannerScore >= 55 || currentFitScore >= 15) return 'D_MIXED_OK';
+
+  return 'E_WEAK_CONTRA';
+}
+
+function buildFallbackTrueMicroFamilyId(row = {}, context = {}) {
+  const existing = getTrueMicroFamilyId(row);
+  if (existing) {
+    return {
+      id: existing,
+      parentId: parentIdFromChild(existing),
+      setup: parseShortTaxonomyMicroId(existing).setup,
+      regime: parseShortTaxonomyMicroId(existing).regime,
+      confirmationProfile: parseShortTaxonomyMicroId(existing).confirmationProfile,
+      fallback: false,
+      reason: 'EXISTING_EXACT_75_CHILD_TRUE_MICRO'
+    };
+  }
+
+  const setup = pickFallbackSetup(row);
+  const regime = pickFallbackRegime(row, context);
+  const confirmationProfile = pickFallbackConfirmation(row, context);
+
+  const safeSetup = SHORT_FIXED_SETUP_TYPES.has(setup) ? setup : 'CONTINUATION';
+  const safeRegime = SHORT_FIXED_REGIME_BUCKETS.has(regime) ? regime : 'SQUEEZE';
+  const safeConfirmation = SHORT_CONFIRMATION_PROFILES.has(confirmationProfile)
+    ? confirmationProfile
+    : 'D_MIXED_OK';
+
+  const parentId = `MICRO_SHORT_${safeSetup}_${safeRegime}`;
+  const id = `${parentId}_${safeConfirmation}`;
+
+  return {
+    id,
+    parentId,
+    setup: safeSetup,
+    regime: safeRegime,
+    confirmationProfile: safeConfirmation,
+    fallback: true,
+    reason: 'FALLBACK_EXACT_75_CHILD_ASSIGNED_BY_TRADE_SYSTEM'
+  };
+}
+
+function ensureExactTrueMicroRow(row = {}, context = {}) {
+  const assignment = buildFallbackTrueMicroFamilyId(row, context);
+  const parsed = parseShortTaxonomyMicroId(assignment.id);
+
+  if (!assignment.id || !parsed.selectable) {
+    return {
+      ...row,
+      exact75ChildTrueMicro: false,
+      trueMicroFamilyId: null,
+      microFamilyId: null,
+      childTrueMicroFamilyId: null,
+      parentTrueMicroFamilyId: assignment.parentId || getParentTrueMicroFamilyId(row) || null,
+      exactTrueMicroMissingReason: 'EXACT_75_CHILD_TRUE_MICRO_REQUIRED'
+    };
+  }
+
+  return {
+    ...row,
+
+    trueMicroFamilyId: assignment.id,
+    microFamilyId: assignment.id,
+    analyzeMicroFamilyId: assignment.id,
+    learningMicroFamilyId: assignment.id,
+    childTrueMicroFamilyId: assignment.id,
+
+    parentTrueMicroFamilyId: assignment.parentId,
+    coarseMicroFamilyId: assignment.parentId,
+    baseMicroFamilyId: assignment.parentId,
+    legacyMicroFamilyId: assignment.parentId,
+    familyId: assignment.id,
+
+    setupType: assignment.setup,
+    regimeBucket: assignment.regime,
+    confirmationProfile: assignment.confirmationProfile,
+
+    exact75ChildTrueMicro: true,
+    fixedTaxonomyLearningId: true,
+
+    fallbackExact75Assigned: Boolean(assignment.fallback),
+    fallbackTrueMicroFamilyAssigned: Boolean(assignment.fallback),
+    fallbackTrueMicroFamilyReason: assignment.reason,
+    analyzeTimeoutFallbackEligible: true,
+
+    ...taxonomyFlags({
+      ...row,
+      trueMicroFamilyId: assignment.id
+    })
+  };
+}
+
+function normalizeExactTrueMicroRow(row = {}) {
+  return ensureExactTrueMicroRow(row, {});
 }
 
 function extractMarketWeatherShape(weather = {}, universe = {}) {
@@ -1675,14 +1798,20 @@ function extractMarketWeatherShape(weather = {}, universe = {}) {
 }
 
 async function loadMarketContext() {
-  const redis = getVolatileRedis();
+  const volatileRedis = getVolatileRedis();
+  const durableRedis = getDurableRedis();
 
-  const [weather, universe] = await Promise.all([
-    getJson(redis, MARKET_WEATHER_KEY, null).catch(() => null),
-    getJson(redis, MARKET_UNIVERSE_KEY, null).catch(() => null)
+  const [volatileWeather, volatileUniverse, durableWeather, durableUniverse] = await Promise.all([
+    getJson(volatileRedis, MARKET_WEATHER_KEY, null).catch(() => null),
+    getJson(volatileRedis, MARKET_UNIVERSE_KEY, null).catch(() => null),
+    getJson(durableRedis, MARKET_WEATHER_KEY, null).catch(() => null),
+    getJson(durableRedis, MARKET_UNIVERSE_KEY, null).catch(() => null)
   ]);
 
-  return extractMarketWeatherShape(weather || {}, universe || {});
+  return extractMarketWeatherShape(
+    volatileWeather || durableWeather || {},
+    volatileUniverse || durableUniverse || {}
+  );
 }
 
 function scoreMarketFit(row = {}, marketContext = {}) {
@@ -2083,9 +2212,7 @@ async function fetchMidPriceFast(symbol, priceHints = new Map()) {
 
   const cfg = tradeConfig();
 
-  if (!cfg.monitorLivePriceFetchEnabled) {
-    return 0;
-  }
+  if (!cfg.monitorLivePriceFetchEnabled) return 0;
 
   const result = await withTimeout(
     fetchMidPrice(symbol).catch(() => 0),
@@ -2390,41 +2517,52 @@ async function loadRecentTargetSnapshots(redis, limit = 8) {
   });
 }
 
-async function getLatestSnapshot() {
-  const volatileRedis = getVolatileRedis();
-
-  const latest = await safeGetSnapshotJson(volatileRedis, SHORT_KEYS.scan.latest, null);
+async function findLatestSnapshotInRedis(redis, sourcePrefix) {
+  const latest = await safeGetSnapshotJson(redis, SHORT_KEYS.scan.latest, null);
   const latestSnapshotId = extractSnapshotId(latest);
 
   if (hasFullSnapshotShape(latest) && countTargetCandidates(latest) > 0) {
     return normalizeSelectedSnapshot(latest, {
-      source: 'SHORT:SCAN:LATEST_FULL_SNAPSHOT',
+      source: `${sourcePrefix}:SHORT:SCAN:LATEST_FULL_SNAPSHOT`,
       reason: 'LATEST_SHORT_SCANNER_SNAPSHOT'
     });
   }
 
   if (latestSnapshotId) {
-    const byId = await safeGetSnapshotJson(volatileRedis, SHORT_KEYS.scan.snapshot(latestSnapshotId), null);
+    const byId = await safeGetSnapshotJson(redis, SHORT_KEYS.scan.snapshot(latestSnapshotId), null);
 
     if (hasFullSnapshotShape(byId) && countTargetCandidates(byId) > 0) {
       return normalizeSelectedSnapshot(byId, {
-        source: 'SHORT:SCAN:SNAPSHOT_BY_LATEST_ID',
+        source: `${sourcePrefix}:SHORT:SCAN:SNAPSHOT_BY_LATEST_ID`,
         reason: 'LATEST_SHORT_SCANNER_SNAPSHOT'
       });
     }
   }
 
-  const recent = await loadRecentTargetSnapshots(volatileRedis, 8);
+  const recent = await loadRecentTargetSnapshots(redis, 8);
   const best = recent.find((row) => row.targetCount > 0) || recent[0] || null;
 
   if (!best?.snapshot) return null;
 
   return normalizeSelectedSnapshot(best.snapshot, {
-    source: `SHORT:SCAN:RECENT_SEARCH:${best.key}`,
+    source: `${sourcePrefix}:SHORT:SCAN:RECENT_SEARCH:${best.key}`,
     reason: best.targetCount > 0
       ? 'LATEST_SHORT_SCANNER_SNAPSHOT'
       : 'LATEST_SHORT_SCANNER_SNAPSHOT_WITH_NO_SHORT_CANDIDATES'
   });
+}
+
+async function getLatestSnapshot() {
+  const volatileRedis = getVolatileRedis();
+  const durableRedis = getDurableRedis();
+
+  const fromVolatile = await findLatestSnapshotInRedis(volatileRedis, 'VOLATILE').catch(() => null);
+  if (fromVolatile?.snapshotId) return fromVolatile;
+
+  const fromDurable = await findLatestSnapshotInRedis(durableRedis, 'DURABLE').catch(() => null);
+  if (fromDurable?.snapshotId) return fromDurable;
+
+  return null;
 }
 
 function flattenValues(values = []) {
@@ -2761,8 +2899,9 @@ function maybeSendDiscordEntryAlert(entry = {}) {
 }
 
 function buildVirtualExitAction(outcome = {}) {
-  const trueMicroFamilyId = getTrueMicroFamilyId(outcome);
-  const parentTrueMicroFamilyId = getParentTrueMicroFamilyId(outcome);
+  const normalizedOutcome = ensureExactTrueMicroRow(outcome);
+  const trueMicroFamilyId = getTrueMicroFamilyId(normalizedOutcome);
+  const parentTrueMicroFamilyId = getParentTrueMicroFamilyId(normalizedOutcome);
   const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
 
   return {
@@ -2833,7 +2972,7 @@ function buildVirtualExitAction(outcome = {}) {
     qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
 
     ...sideFlags(),
-    ...virtualFlags(outcome),
+    ...virtualFlags(normalizedOutcome),
     ...isolationFlags()
   };
 }
@@ -3006,6 +3145,7 @@ function buildQualityAudit({
       analyzedRows: analyzedRowsCount,
       analyzedRiskValidRows,
       analyzedExact75Rows,
+      fallbackExact75Rows: counts.fallbackExact75Rows || 0,
       entryRows,
       virtualCreatedRows,
       virtualExitRows,
@@ -3042,6 +3182,99 @@ async function scopedSetJson(redis, key, value, options = {}) {
   return setJson(redis, key, value, options);
 }
 
+function compactMarketContextPayload(marketContext = {}) {
+  const source = marketContext?.source && typeof marketContext.source === 'object'
+    ? marketContext.source
+    : null;
+
+  return {
+    ok: Boolean(marketContext?.ok),
+    createdAt: marketContext?.createdAt || null,
+    ageSec: marketContext?.ageSec ?? null,
+    stale: Boolean(marketContext?.stale),
+    regime: marketContext?.regime || 'UNKNOWN',
+    trendSide: marketContext?.trendSide || 'UNKNOWN',
+    bullishPct: marketContext?.bullishPct ?? null,
+    bearishPct: marketContext?.bearishPct ?? null,
+    squeezePct: marketContext?.squeezePct ?? null,
+    confidence: marketContext?.confidence ?? null,
+    key: MARKET_WEATHER_KEY,
+    universeKey: MARKET_UNIVERSE_KEY,
+    source: source
+      ? {
+          ok: source.ok ?? null,
+          available: source.available ?? null,
+          version: source.version || null,
+          source: source.source || 'VIRTUAL',
+          snapshotId: source.snapshotId || null,
+          generatedAt: source.generatedAt || null,
+          createdAt: source.createdAt || null,
+          completedAt: source.completedAt || null,
+          updatedAt: source.updatedAt || null,
+          currentRegime: source.currentRegime || source.regime || null,
+          regime: source.regime || source.currentRegime || null,
+          currentTrendSide: source.currentTrendSide || source.trendSide || null,
+          trendSide: source.trendSide || source.currentTrendSide || null,
+          currentFlow: source.currentFlow || source.flow || null,
+          currentVolatilityState: source.currentVolatilityState || source.volatilityState || null,
+          confidence: source.confidence ?? source.weatherConfidence ?? null,
+          bullishCount: source.bullishCount ?? null,
+          bearishCount: source.bearishCount ?? null,
+          neutralCount: source.neutralCount ?? null,
+          squeezeCount: source.squeezeCount ?? null,
+          bullishPct: source.bullishPct ?? null,
+          bearishPct: source.bearishPct ?? null,
+          neutralPct: source.neutralPct ?? null,
+          squeezePct: source.squeezePct ?? null,
+          count: source.count ?? source.universeCount ?? null,
+          universeCount: source.universeCount ?? source.count ?? null,
+          btcState: source.btcState || null,
+          btcChange1h: source.btcChange1h ?? null,
+          btcChange24h: source.btcChange24h ?? null,
+          btcRegime: source.btcRegime || null,
+          rowsOmittedForRedis: Array.isArray(source.rows),
+          symbolsOmittedForRedis: Array.isArray(source.symbols),
+          compactedForRedis: true
+        }
+      : null,
+    universe: null,
+    compactedForRedis: true
+  };
+}
+
+function compactActionsForRedis(actions = [], limit = 25) {
+  return (Array.isArray(actions) ? actions : []).slice(0, limit).map((row) => ({
+    action: row?.action || row?.type || null,
+    reason: row?.reason || row?.liveEntryBlockedReason || null,
+    symbol: row?.symbol || null,
+    contractSymbol: row?.contractSymbol || null,
+    trueMicroFamilyId: row?.trueMicroFamilyId || row?.childTrueMicroFamilyId || row?.microFamilyId || null,
+    parentTrueMicroFamilyId: row?.parentTrueMicroFamilyId || row?.coarseMicroFamilyId || null,
+    entry: row?.entry ?? null,
+    sl: row?.sl ?? null,
+    tp: row?.tp ?? null,
+    rr: row?.rr ?? null,
+    selectedMicroFamilyAlert: Boolean(row?.selectedMicroFamilyAlert),
+    discordAlertEligible: Boolean(row?.discordAlertEligible),
+    fallbackExact75Assigned: Boolean(row?.fallbackExact75Assigned)
+  }));
+}
+
+function compactExitsForRedis(exits = [], limit = 25) {
+  return (Array.isArray(exits) ? exits : []).slice(0, limit).map((row) => ({
+    action: 'VIRTUAL_EXIT',
+    reason: row?.exitReason || row?.reason || null,
+    symbol: row?.symbol || null,
+    contractSymbol: row?.contractSymbol || null,
+    trueMicroFamilyId: row?.trueMicroFamilyId || row?.childTrueMicroFamilyId || row?.microFamilyId || null,
+    parentTrueMicroFamilyId: row?.parentTrueMicroFamilyId || row?.coarseMicroFamilyId || null,
+    exitPrice: row?.exitPrice ?? null,
+    grossR: row?.grossR ?? null,
+    netR: row?.netR ?? row?.realizedR ?? row?.r ?? null,
+    costR: row?.costR ?? null
+  }));
+}
+
 async function saveRunMeta(result) {
   const durableRedis = getDurableRedis();
   const completedAt = now();
@@ -3052,8 +3285,7 @@ async function saveRunMeta(result) {
       ? result.shadowExits
       : [];
 
-  const virtualExitActions = buildVirtualExitActions(virtualExits);
-
+  const actions = Array.isArray(result.actions) ? result.actions : [];
   const finalResult = {
     ok: true,
     ...result,
@@ -3062,6 +3294,11 @@ async function saveRunMeta(result) {
     ...sideFlags(),
     ...virtualFlags(),
     ...isolationFlags(),
+
+    currentMarketWeather: compactMarketContextPayload(result.marketContext)?.source || null,
+    currentMarketUniverse: null,
+    marketContext: compactMarketContextPayload(result.marketContext),
+
     shortKeys: {
       scanLatest: SHORT_KEYS.scan.latest,
       tradeRunMeta: SHORT_KEYS.trade.runMeta,
@@ -3069,18 +3306,33 @@ async function saveRunMeta(result) {
       marketWeather: MARKET_WEATHER_KEY,
       marketUniverse: MARKET_UNIVERSE_KEY
     },
-    virtualExits,
-    shadowExits: Array.isArray(result.shadowExits) ? result.shadowExits : virtualExits,
+
+    actions: compactActionsForRedis(actions),
+    virtualActions: compactActionsForRedis(actions),
+    entryRowsList: compactActionsForRedis(actions.filter((row) => row?.action === 'VIRTUAL_ENTRY')),
+    waitRowsList: compactActionsForRedis(actions.filter((row) => row?.action === 'WAIT')),
+    virtualCreatedRowsList: compactActionsForRedis(actions.filter((row) => row?.action === 'VIRTUAL_ENTRY')),
+
+    virtualExits: compactExitsForRedis(virtualExits),
+    shadowExits: compactExitsForRedis(virtualExits),
+    exits: compactExitsForRedis(virtualExits),
     realExits: [],
+
     virtualExitRows: virtualExits.length,
     shadowExitRows: virtualExits.length,
     realExitRows: 0,
-    virtualExitActions,
+
+    rawActionsCount: actions.length,
+    rawExitRowsCount: virtualExits.length,
+
     skipReason: result.skipReason || result.reason || null,
     completedAt,
     durationMs: completedAt - safeNumber(result.startedAt, completedAt),
-    actionCounts: result.actionCounts || buildRunActionCounts(result.actions || [], virtualExits),
-    qualityAudit: result.qualityAudit || null
+    actionCounts: result.actionCounts || buildRunActionCounts(actions, virtualExits),
+    qualityAudit: result.qualityAudit || null,
+
+    compactedForVercelRuntime: true,
+    detailsAvailableWithDebugParam: true
   };
 
   await scopedSetJson(durableRedis, SHORT_KEYS.trade.runMeta, finalResult);
@@ -3183,7 +3435,13 @@ export async function runTradeSystem(options = {}) {
         virtualOnly: true,
         realOrdersDisabled: true,
         bitgetOrdersDisabled: true,
-        exchangeCallsDisabled: true
+        exchangeCallsDisabled: true,
+        monitorBatchSize: cfg.monitorBatchSize,
+        openPositionMonitorLimit: cfg.openPositionMonitorLimit,
+        maxOpenPositionsToMonitor: cfg.openPositionMonitorLimit,
+        monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+        allowTimeStopExitWithoutLivePrice: true,
+        allowSnapshotPriceHintExit: true
       }).catch((error) => ({
         __monitorError: true,
         error: error?.message || String(error)
@@ -3399,12 +3657,15 @@ export async function runTradeSystem(options = {}) {
       .flatMap((row) => Array.isArray(row?.metrics) ? row.metrics : [])
       .filter(Boolean)
       .filter(isTargetRow)
-      .map((row) => attachCurrentFitContext({
-        ...row,
-        ...sideFlags(),
-        ...isolationFlags(),
-        ...virtualFlags(row)
-      }, marketContext))
+      .map((row) => ensureExactTrueMicroRow(
+        attachCurrentFitContext({
+          ...row,
+          ...sideFlags(),
+          ...isolationFlags(),
+          ...virtualFlags(row)
+        }, marketContext),
+        { snapshot, marketContext }
+      ))
       .slice(0, cfg.analyzeMaxCandidatesPerSnapshot);
 
     const actualLiveRows = liveRows.length;
@@ -3442,6 +3703,7 @@ export async function runTradeSystem(options = {}) {
 
     let analyzedRowsRaw = [];
     let analyzeError = null;
+    let usedAnalyzeFallback = false;
 
     try {
       const analyzeResult = await withTimeout(
@@ -3514,34 +3776,53 @@ export async function runTradeSystem(options = {}) {
 
       if (isTimeoutResult(analyzeResult)) {
         analyzeError = 'ANALYZE_CANDIDATES_TIMEOUT';
-        runtimeWarnings.push('ANALYZE_CANDIDATES_TIMEOUT_USING_PRE_ANALYZE_ROWS');
+        usedAnalyzeFallback = true;
+        runtimeWarnings.push('ANALYZE_CANDIDATES_TIMEOUT_USING_FALLBACK_EXACT_75_ROWS');
         analyzedRowsRaw = liveRows;
       } else {
         analyzedRowsRaw = Array.isArray(analyzeResult) ? analyzeResult : [];
+        if (!analyzedRowsRaw.length) {
+          usedAnalyzeFallback = true;
+          runtimeWarnings.push('ANALYZE_EMPTY_USING_FALLBACK_EXACT_75_ROWS');
+          analyzedRowsRaw = liveRows;
+        }
       }
     } catch (error) {
       analyzeError = error?.message || String(error);
-      runtimeWarnings.push(`ANALYZE_CANDIDATES_ERROR_USING_PRE_ANALYZE_ROWS:${analyzeError}`);
+      usedAnalyzeFallback = true;
+      runtimeWarnings.push(`ANALYZE_CANDIDATES_ERROR_USING_FALLBACK_EXACT_75_ROWS:${analyzeError}`);
       analyzedRowsRaw = liveRows;
     }
 
     const analyzedRows = analyzedRowsRaw
       .filter(Boolean)
       .filter(isTargetRow)
-      .map((row) => attachCurrentFitContext({
-        ...normalizeExactTrueMicroRow(row),
-        ...scannerMetadataFrom(row),
-        ...sideFlags(),
-        ...virtualFlags(row),
-        ...isolationFlags()
-      }, marketContext));
+      .map((row) => ensureExactTrueMicroRow(
+        attachCurrentFitContext({
+          ...row,
+          ...scannerMetadataFrom(row),
+          ...sideFlags(),
+          ...virtualFlags(row),
+          ...isolationFlags()
+        }, marketContext),
+        { snapshot, marketContext }
+      ));
 
     const analyzedActualRows = analyzedRows.length;
     const analyzedMirrorRows = 0;
     const analyzedRiskValidRows = analyzedRows.filter(hasValidRiskShape).length;
     const analyzedExact75Rows = analyzedRows.filter((row) => Boolean(getTrueMicroFamilyId(row))).length;
+    const fallbackExact75Rows = analyzedRows.filter((row) => row.fallbackExact75Assigned || row.fallbackTrueMicroFamilyAssigned).length;
     const analyzedStandardizedLearningRiskRows = analyzedRows.filter((row) => row.standardizedLearningRisk).length;
     const analyzedSyntheticRiskRows = analyzedRows.filter((row) => row.syntheticRisk).length;
+
+    if (fallbackExact75Rows > 0) {
+      runtimeWarnings.push(`FALLBACK_EXACT_75_CHILD_ASSIGNED:${fallbackExact75Rows}`);
+    }
+
+    if (usedAnalyzeFallback && analyzedExact75Rows > 0) {
+      runtimeWarnings.push('ANALYZE_FALLBACK_ALLOWED_VIRTUAL_LEARNING_TO_CONTINUE');
+    }
 
     const openPositions = await getOpenPositions({
       tradeSide: TARGET_TRADE_SIDE,
@@ -3704,6 +3985,7 @@ export async function runTradeSystem(options = {}) {
         riskValidRows,
         analyzedRiskValidRows,
         analyzedExact75Rows,
+        fallbackExact75Rows,
         entryRows,
         virtualCreatedRows,
         waitRows,
@@ -3747,6 +4029,8 @@ export async function runTradeSystem(options = {}) {
       analyzeTimeoutMs: cfg.analyzeTimeoutMs,
       monitorTimeoutMs: cfg.monitorTimeoutMs,
       monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+      monitorBatchSize: cfg.monitorBatchSize,
+      openPositionMonitorLimit: cfg.openPositionMonitorLimit,
       monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
       monitorPriceSource: cfg.monitorLivePriceFetchEnabled
         ? 'SCANNER_SNAPSHOT_HINTS_THEN_LIVE_FETCH'
@@ -3758,8 +4042,8 @@ export async function runTradeSystem(options = {}) {
       ...virtualFlags(),
       ...isolationFlags(),
 
-      currentMarketWeather: marketContext.source || null,
-      currentMarketUniverse: marketContext.universe || null,
+      currentMarketWeather: compactMarketContextPayload(marketContext).source || null,
+      currentMarketUniverse: null,
       currentMarketWeatherKey: MARKET_WEATHER_KEY,
       currentMarketUniverseKey: MARKET_UNIVERSE_KEY,
       currentMarketWeatherAgeSec: marketContext.ageSec,
@@ -3769,6 +4053,7 @@ export async function runTradeSystem(options = {}) {
       currentBullishPct: marketContext.bullishPct,
       currentBearishPct: marketContext.bearishPct,
       currentSqueezePct: marketContext.squeezePct,
+      marketContext: compactMarketContextPayload(marketContext),
 
       candidates: candidates.length,
       allShortCandidatesBeforeCap: allTargetCandidates.length,
@@ -3795,9 +4080,11 @@ export async function runTradeSystem(options = {}) {
       analyzedMirrorRows,
       analyzedRiskValidRows,
       analyzedExact75Rows,
+      fallbackExact75Rows,
       analyzedStandardizedLearningRiskRows,
       analyzedSyntheticRiskRows,
       analyzeError,
+      analyzeFallbackUsed: usedAnalyzeFallback,
       analyzeWeekKey: PERSISTENT_LEARNING_KEY,
 
       entryRows,
@@ -3889,8 +4176,19 @@ export async function runTradeSystem(options = {}) {
     };
 
     await scopedSetJson(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, {
-      ...baseResult,
-      actions: actions.length
+      snapshotId: snapshot.snapshotId,
+      runId,
+      processedAt: now(),
+      entryRows,
+      waitRows,
+      virtualCreatedRows,
+      virtualExitRows: virtualExits.length,
+      analyzedExact75Rows,
+      fallbackExact75Rows,
+      skippedByExistingSymbol,
+      reason: null,
+      ...sideFlags(),
+      ...isolationFlags()
     });
 
     return saveRunMeta(baseResult);
