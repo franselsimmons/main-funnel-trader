@@ -30,6 +30,8 @@ const SOURCE_LIVE = 'LIVE';
 const SOURCE_TRADE = 'TRADE';
 const SOURCE_SHADOW = 'SHADOW';
 
+const CUSTOMER_DISCLAIMER = 'Geen financieel advies. Beheer je eigen risico.';
+
 const DISCORD_LIMITS = {
   fieldName: 256,
   fieldValue: 1024
@@ -191,6 +193,57 @@ function upper(value, fallback = '') {
   const text = String(value ?? '').trim();
 
   return text ? text.toUpperCase() : fallback;
+}
+
+function displaySymbol(payload = {}) {
+  const raw = upper(
+    payload.contractSymbol ||
+      payload.instId ||
+      payload.instrumentId ||
+      payload.symbol ||
+      payload.baseSymbol ||
+      ''
+  );
+
+  if (!raw) return 'UNKNOWN';
+
+  const cleaned = raw.replace(/[^A-Z0-9]/g, '');
+
+  if (cleaned.endsWith('USDT')) return cleaned;
+
+  const base = normalizeBaseSymbol(cleaned) || cleaned.replace(/USDT$/u, '');
+
+  return `${upper(base || cleaned)}USDT`;
+}
+
+function tradeDirectionEmoji(payload = {}) {
+  return isShortPayload(payload) ? '🔴' : '🟢';
+}
+
+function exitEmoji(exitType = '', resultR = null) {
+  const type = upper(exitType);
+
+  if (type === 'TP') return '✅';
+  if (type === 'SL') return '❌';
+  if (type === 'TIME') return '⏹️';
+
+  const r = Number(resultR);
+
+  if (Number.isFinite(r) && r > 0) return '✅';
+  if (Number.isFinite(r) && r < 0) return '❌';
+
+  return '⏹️';
+}
+
+function customerExitReason(exitType = '') {
+  const type = upper(exitType);
+
+  if (type === 'TP') return 'TP geraakt';
+  if (type === 'SL') return 'SL geraakt';
+  if (type === 'TIME') return 'tijdslimiet';
+  if (type === 'MANUAL') return 'handmatig gesloten';
+
+  return 'gesloten';
 }
 
 function cleanSideText(value = '') {
@@ -736,6 +789,18 @@ function extractResultR(outcome = {}) {
   );
 }
 
+function resultRForDiscord(outcome = {}) {
+  const direct = safeNumber(extractResultR(outcome), NaN);
+
+  if (Number.isFinite(direct)) return direct;
+
+  const risk = getShortRiskGeometry(outcome);
+
+  if (Number.isFinite(risk.shortGrossR)) return risk.shortGrossR;
+
+  return null;
+}
+
 function exitTypeLabel(outcome = {}) {
   const reason = upper(outcome.exitReason || outcome.reason || outcome.closeReason || outcome.status || '');
 
@@ -771,6 +836,22 @@ function exitTypeLabel(outcome = {}) {
     outcome.timeStopExitArmed === true
   ) {
     return 'TIME';
+  }
+
+  if (
+    reason.includes('MANUAL') ||
+    reason.includes('ADMIN_CLOSE') ||
+    reason.includes('FORCE_CLOSE')
+  ) {
+    return 'MANUAL';
+  }
+
+  const risk = getShortRiskGeometry(outcome);
+  const exitPrice = safeNumber(extractExitPrice(outcome), 0);
+
+  if (risk.validShortGeometry && exitPrice > 0) {
+    if (exitPrice <= risk.tp) return 'TP';
+    if (exitPrice >= risk.sl) return 'SL';
   }
 
   return reason || 'EXIT';
@@ -1500,20 +1581,24 @@ export async function sendEntryAlert(entry = {}) {
     );
   }
 
-  const symbol = normalizeBaseSymbol(entry.symbol || entry.contractSymbol);
+  const symbol = displaySymbol(entry);
   const side = normalizeSideLabel(entry);
+  const directionEmoji = tradeDirectionEmoji(entry);
 
   const content = {
     username: 'Trade Alerts',
     embeds: [
       {
-        title: `${symbol || 'UNKNOWN'} ${side} TRADE OPENED`,
+        title: `${directionEmoji} ${side} — ${symbol}`,
         color: discordColorForSide(entry),
-        fields: [
-          field('Entry', fmtPrice(entry.entry), true),
-          field('TP', fmtPrice(entry.tp), true),
-          field('SL', fmtPrice(entry.sl ?? entry.initialSl), true)
-        ],
+        description: [
+          `Entry   ${fmtPrice(entry.entry)}`,
+          `TP      ${fmtPrice(entry.tp)}`,
+          `SL      ${fmtPrice(entry.sl ?? entry.initialSl)}`
+        ].join('\n'),
+        footer: {
+          text: CUSTOMER_DISCLAIMER
+        },
         timestamp: nowIso()
       }
     ]
@@ -1557,25 +1642,27 @@ export async function sendExitAlert(outcome = {}) {
     );
   }
 
-  const symbol = normalizeBaseSymbol(outcome.symbol || outcome.contractSymbol);
+  const symbol = displaySymbol(outcome);
   const side = normalizeSideLabel(outcome);
   const exitPrice = extractExitPrice(outcome);
-  const resultR = extractResultR(outcome);
+  const resultR = resultRForDiscord(outcome);
   const exitType = exitTypeLabel(outcome);
+  const emoji = exitEmoji(exitType, resultR);
+  const reason = customerExitReason(exitType);
 
   const content = {
     username: 'Trade Alerts',
     embeds: [
       {
-        title: `${symbol || 'UNKNOWN'} ${side} TRADE CLOSED`,
+        title: `${emoji} ${side} gesloten — ${symbol}`,
         color: discordColorForResult(resultR),
-        fields: [
-          field('Entry', fmtPrice(outcome.entry ?? outcome.entryPrice), true),
-          field('TP', fmtPrice(outcome.tp ?? outcome.takeProfit), true),
-          field('SL', fmtPrice(outcome.sl ?? outcome.initialSl ?? outcome.stopLoss), true),
-          field('Exit', fmtPrice(exitPrice), true),
-          field('Closed by', exitType, true)
-        ],
+        description: [
+          `Exit      ${fmtPrice(exitPrice)}`,
+          `Resultaat ${fmtR(resultR)}  (${reason})`
+        ].join('\n'),
+        footer: {
+          text: CUSTOMER_DISCLAIMER
+        },
         timestamp: nowIso()
       }
     ]
