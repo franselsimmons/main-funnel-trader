@@ -51,18 +51,26 @@ const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
 const READ_SCOPE = 'READ_SHORT_SCANNER_AND_MARKET_WEATHER';
 
 const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V1';
-const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_FAMILY_TP_SL_LEARNING_V1';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_FAMILY_TP_SL_LEARNING_V2';
+
+const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 
 const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 8;
 const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 10;
 const DEFAULT_DATA_CONCURRENCY = 2;
 const DEFAULT_MAX_SNAPSHOT_AGE_SEC = 8 * 60;
 
-const DEFAULT_MIN_RISK_PCT = 0.0035;
-const DEFAULT_MAX_RISK_PCT = 0.03;
-const DEFAULT_FALLBACK_RISK_PCT = 0.005;
-const DEFAULT_RR = 2.0;
-const DEFAULT_MIN_RR = 1.5;
+const DEFAULT_MIN_RISK_PCT = 0.0045;
+const DEFAULT_MAX_RISK_PCT = 0.035;
+const DEFAULT_FALLBACK_RISK_PCT = 0.0065;
+
+const DEFAULT_RR = 2.2;
+const DEFAULT_MIN_RR = 1.8;
+const DEFAULT_MAX_RR = 3.0;
+
+const DEFAULT_MIN_REWARD_PCT = 0.01;
+const DEFAULT_MIN_DISCORD_REWARD_PCT = 0.012;
+const DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO = 0.62;
 
 const DEFAULT_TRADE_EVERY_SCANNER_CANDIDATE_VIRTUAL = true;
 const DEFAULT_ALLOW_STANDARDIZED_LEARNING_RISK_FALLBACK = true;
@@ -640,6 +648,15 @@ function virtualFlags(row = {}) {
     riskEnginePreferredButNotRequiredForLearning: true,
     standardizedLearningRiskFallbackEnabled: DEFAULT_ALLOW_STANDARDIZED_LEARNING_RISK_FALLBACK,
 
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    adaptiveShortRiskEnabled: true,
+    minRRDefault: DEFAULT_MIN_RR,
+    defaultRR: DEFAULT_RR,
+    maxRRDefault: DEFAULT_MAX_RR,
+    minRewardPctDefault: DEFAULT_MIN_REWARD_PCT,
+    minDiscordRewardPctDefault: DEFAULT_MIN_DISCORD_REWARD_PCT,
+    maxRiskToRewardDistanceRatioDefault: DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO,
+
     observationFirst: true,
     observationFirstAnalyze: true,
     observationFirstLearning: true,
@@ -946,6 +963,46 @@ function tradeConfig() {
         CONFIG.trade?.minRR
       ),
       DEFAULT_MIN_RR
+    ),
+
+    maxRR: cfgNumber(
+      firstDefined(
+        options.maxRR,
+        CONFIG.short?.trade?.maxRR,
+        CONFIG.trade?.shortMaxRR,
+        CONFIG.trade?.maxRR
+      ),
+      DEFAULT_MAX_RR
+    ),
+
+    minRewardPct: cfgNumber(
+      firstDefined(
+        options.minRewardPct,
+        CONFIG.short?.trade?.minRewardPct,
+        CONFIG.trade?.shortMinRewardPct,
+        CONFIG.trade?.minRewardPct
+      ),
+      DEFAULT_MIN_REWARD_PCT
+    ),
+
+    minDiscordRewardPct: cfgNumber(
+      firstDefined(
+        options.minDiscordRewardPct,
+        CONFIG.short?.trade?.minDiscordRewardPct,
+        CONFIG.trade?.shortMinDiscordRewardPct,
+        CONFIG.trade?.minDiscordRewardPct
+      ),
+      DEFAULT_MIN_DISCORD_REWARD_PCT
+    ),
+
+    maxRiskToRewardDistanceRatio: cfgNumber(
+      firstDefined(
+        options.maxRiskToRewardDistanceRatio,
+        CONFIG.short?.trade?.maxRiskToRewardDistanceRatio,
+        CONFIG.trade?.shortMaxRiskToRewardDistanceRatio,
+        CONFIG.trade?.maxRiskToRewardDistanceRatio
+      ),
+      DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO
     ),
 
     positionTimeStopMin: cfgNumber(
@@ -1979,6 +2036,254 @@ function candidateFallbackPrice(row = {}, fallback = 0) {
   );
 }
 
+function adaptiveShortRr(row = {}, cfg = tradeConfig()) {
+  const setup = setupFromRow(row);
+  const regime = regimeFromRow(row);
+  const confirmation = confirmationFromRow(row);
+
+  const currentFit = upper(row.currentFit || row.entryCurrentFit);
+  const scannerScore = safeNumber(row.scannerScore ?? row.moveScore, 0);
+  const fitScore = safeNumber(row.currentFitScore ?? row.entryCurrentFitScore, 0);
+
+  let rr = safeNumber(cfg.defaultRR, DEFAULT_RR);
+
+  if (setup === 'BREAKOUT' && regime === 'TREND') rr = 2.5;
+  else if (setup === 'CONTINUATION' && regime === 'TREND') rr = 2.35;
+  else if (setup === 'RETEST' && regime === 'TREND') rr = 2.2;
+  else if (setup === 'SWEEP_REVERSAL' && regime === 'TREND') rr = 2.05;
+  else if (setup === 'COMPRESSION' && regime === 'SQUEEZE') rr = 2.3;
+  else if (regime === 'CHOP') rr = 1.85;
+  else if (regime === 'SQUEEZE') rr = 2.15;
+
+  if (confirmation === 'A_STRONG_ALIGN') rr += 0.25;
+  if (confirmation === 'B_FLOW_ALIGN') rr += 0.1;
+  if (confirmation === 'C_VOLUME_ALIGN') rr += 0.05;
+  if (confirmation === 'D_MIXED_OK') rr -= 0.1;
+  if (confirmation === 'E_WEAK_CONTRA') rr -= 0.35;
+
+  if (currentFit === 'MATCH') rr += 0.15;
+  if (currentFit === 'WEAK_MATCH') rr += 0.05;
+  if (currentFit === 'MISFIT') rr -= 0.35;
+
+  if (scannerScore >= 85) rr += 0.1;
+  if (scannerScore < 55) rr -= 0.15;
+  if (fitScore < -20) rr -= 0.25;
+
+  return Number(
+    clampNumber(
+      rr,
+      Math.max(safeNumber(cfg.minRR, DEFAULT_MIN_RR), DEFAULT_MIN_RR),
+      safeNumber(cfg.maxRR, DEFAULT_MAX_RR)
+    ).toFixed(2)
+  );
+}
+
+function adaptiveShortRiskPct(row = {}, cfg = tradeConfig()) {
+  const setup = setupFromRow(row);
+  const regime = regimeFromRow(row);
+  const confirmation = confirmationFromRow(row);
+
+  const scannerScore = safeNumber(row.scannerScore ?? row.moveScore, 0);
+  const spreadPct = safeNumber(row.spreadPct, 0);
+
+  let riskPct = safeNumber(cfg.fallbackRiskPct, DEFAULT_FALLBACK_RISK_PCT);
+
+  if (setup === 'BREAKOUT') riskPct += 0.0007;
+  if (setup === 'SWEEP_REVERSAL') riskPct += 0.0009;
+  if (setup === 'COMPRESSION') riskPct += 0.0008;
+  if (setup === 'RETEST') riskPct += 0.0004;
+
+  if (regime === 'CHOP') riskPct += 0.0008;
+  if (regime === 'SQUEEZE') riskPct += 0.0006;
+
+  if (confirmation === 'A_STRONG_ALIGN') riskPct += 0.0002;
+  if (confirmation === 'E_WEAK_CONTRA') riskPct -= 0.0006;
+
+  if (scannerScore >= 85) riskPct += 0.0002;
+  if (scannerScore < 55) riskPct -= 0.0004;
+
+  if (spreadPct > 0.0012) riskPct += 0.0004;
+
+  return Number(
+    clampNumber(
+      riskPct,
+      Math.max(0.0005, safeNumber(cfg.minRiskPct, DEFAULT_MIN_RISK_PCT)),
+      Math.max(
+        safeNumber(cfg.minRiskPct, DEFAULT_MIN_RISK_PCT),
+        safeNumber(cfg.maxRiskPct, DEFAULT_MAX_RISK_PCT)
+      )
+    ).toFixed(8)
+  );
+}
+
+function buildShortTpSlPlan({
+  entry,
+  riskPct,
+  rr,
+  cfg = tradeConfig()
+} = {}) {
+  const entryPrice = safeNumber(entry, 0);
+  const minRR = Math.max(safeNumber(cfg.minRR, DEFAULT_MIN_RR), DEFAULT_MIN_RR);
+  const maxRR = safeNumber(cfg.maxRR, DEFAULT_MAX_RR);
+  const cleanRR = clampNumber(rr, minRR, maxRR);
+
+  let cleanRiskPct = clampNumber(
+    riskPct,
+    Math.max(0.0005, safeNumber(cfg.minRiskPct, DEFAULT_MIN_RISK_PCT)),
+    Math.max(
+      safeNumber(cfg.minRiskPct, DEFAULT_MIN_RISK_PCT),
+      safeNumber(cfg.maxRiskPct, DEFAULT_MAX_RISK_PCT)
+    )
+  );
+
+  let rewardPct = cleanRiskPct * cleanRR;
+
+  if (rewardPct < safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT)) {
+    cleanRiskPct = clampNumber(
+      safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT) / cleanRR,
+      Math.max(0.0005, safeNumber(cfg.minRiskPct, DEFAULT_MIN_RISK_PCT)),
+      Math.max(
+        safeNumber(cfg.minRiskPct, DEFAULT_MIN_RISK_PCT),
+        safeNumber(cfg.maxRiskPct, DEFAULT_MAX_RISK_PCT)
+      )
+    );
+
+    rewardPct = cleanRiskPct * cleanRR;
+  }
+
+  const sl = entryPrice * (1 + cleanRiskPct);
+  const tp = Math.max(entryPrice * (1 - rewardPct), entryPrice * 0.0001);
+
+  const actualRiskPct = entryPrice > 0 ? (sl - entryPrice) / entryPrice : 0;
+  const actualRewardPct = entryPrice > 0 ? (entryPrice - tp) / entryPrice : 0;
+  const actualRR = actualRiskPct > 0 ? actualRewardPct / actualRiskPct : 0;
+
+  return {
+    entry: entryPrice,
+    sl,
+    tp,
+    rr: Number(actualRR.toFixed(4)),
+    riskPct: Number(actualRiskPct.toFixed(8)),
+    rewardPct: Number(actualRewardPct.toFixed(8)),
+    riskDistance: sl - entryPrice,
+    rewardDistance: entryPrice - tp,
+    riskToRewardDistanceRatio: actualRewardPct > 0
+      ? Number((actualRiskPct / actualRewardPct).toFixed(6))
+      : 999,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION
+  };
+}
+
+function applyAdaptiveShortRisk(row = {}, reason = 'ADAPTIVE_SHORT_RR_TP_SL') {
+  const cfg = tradeConfig();
+  const entry = candidateFallbackPrice(row, 0);
+
+  if (entry <= 0) {
+    return {
+      ...row,
+      entry: 0,
+      sl: 0,
+      tp: 0,
+      rr: 0,
+      riskPct: 0,
+      rewardPct: 0,
+      liveRiskValid: false,
+      liveEntryBlockedReason: 'ADAPTIVE_SHORT_RISK_NO_PRICE',
+      riskPlanVersion: SHORT_RISK_PLAN_VERSION
+    };
+  }
+
+  const rr = adaptiveShortRr(row, cfg);
+  const riskPct = adaptiveShortRiskPct(row, cfg);
+
+  const plan = buildShortTpSlPlan({
+    entry,
+    riskPct,
+    rr,
+    cfg
+  });
+
+  const riskQualityOk =
+    plan.entry > 0 &&
+    plan.tp > 0 &&
+    plan.sl > 0 &&
+    plan.tp < plan.entry &&
+    plan.entry < plan.sl &&
+    plan.rr >= safeNumber(cfg.minRR, DEFAULT_MIN_RR) &&
+    plan.rewardPct >= safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT) &&
+    plan.riskToRewardDistanceRatio <= safeNumber(
+      cfg.maxRiskToRewardDistanceRatio,
+      DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO
+    );
+
+  return {
+    ...row,
+
+    price: plan.entry,
+    currentPrice: row.currentPrice ?? plan.entry,
+    lastPrice: row.lastPrice ?? row.currentPrice ?? plan.entry,
+
+    entry: plan.entry,
+    entryPrice: plan.entry,
+
+    sl: plan.sl,
+    initialSl: plan.sl,
+    stopLoss: plan.sl,
+    stop: plan.sl,
+    stopPrice: plan.sl,
+
+    tp: plan.tp,
+    takeProfit: plan.tp,
+    target: plan.tp,
+    targetPrice: plan.tp,
+
+    rr: plan.rr,
+    riskPct: plan.riskPct,
+    rewardPct: plan.rewardPct,
+    riskDistance: plan.riskDistance,
+    rewardDistance: plan.rewardDistance,
+    riskToRewardDistanceRatio: plan.riskToRewardDistanceRatio,
+
+    adaptiveShortRisk: true,
+    adaptiveShortRiskReason: reason,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    riskSource: row.riskSource || 'ADAPTIVE_STANDARDIZED_SHORT_TP_SL',
+
+    minRRRequired: safeNumber(cfg.minRR, DEFAULT_MIN_RR),
+    maxRRAllowed: safeNumber(cfg.maxRR, DEFAULT_MAX_RR),
+    minRewardPctRequired: safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT),
+    minDiscordRewardPctRequired: safeNumber(cfg.minDiscordRewardPct, DEFAULT_MIN_DISCORD_REWARD_PCT),
+    maxRiskToRewardDistanceRatioRequired: safeNumber(
+      cfg.maxRiskToRewardDistanceRatio,
+      DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO
+    ),
+
+    rrQualityOk: plan.rr >= safeNumber(cfg.minRR, DEFAULT_MIN_RR),
+    rewardQualityOk: plan.rewardPct >= safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT),
+    discordRewardQualityOk: plan.rewardPct >= safeNumber(cfg.minDiscordRewardPct, DEFAULT_MIN_DISCORD_REWARD_PCT),
+    riskToRewardDistanceQualityOk: plan.riskToRewardDistanceRatio <= safeNumber(
+      cfg.maxRiskToRewardDistanceRatio,
+      DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO
+    ),
+
+    liveRiskValid: riskQualityOk,
+    liveEntryBlockedReason: riskQualityOk ? null : 'ADAPTIVE_SHORT_RISK_QUALITY_FAILED',
+
+    validShortRiskShape: riskQualityOk,
+    shortRiskRule: 'tp < entry < sl',
+    shortTpExitRule: 'price <= tp',
+    shortSlExitRule: 'price >= sl',
+    shortTimeStopExitRule: 'TIME_STOP',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+  };
+}
+
 function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LEARNING_TP_SL') {
   const cfg = tradeConfig();
   const normalized = normalizeCandidate(candidate);
@@ -2000,23 +2305,14 @@ function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LE
       analysisInputOnly: true,
       learningOnly: true,
       liveRiskValid: false,
-      liveEntryBlockedReason: mid <= 0 ? 'STANDARDIZED_SHORT_RISK_NO_PRICE' : 'STANDARDIZED_LEARNING_RISK_FALLBACK_DISABLED'
+      liveEntryBlockedReason: mid <= 0
+        ? 'STANDARDIZED_SHORT_RISK_NO_PRICE'
+        : 'STANDARDIZED_LEARNING_RISK_FALLBACK_DISABLED',
+      riskPlanVersion: SHORT_RISK_PLAN_VERSION
     };
   }
 
-  const rr = Math.max(cfg.minRR, cfg.defaultRR, 0.5);
-  const riskPct = clampNumber(
-    cfg.fallbackRiskPct,
-    Math.max(0.0005, cfg.minRiskPct),
-    Math.max(cfg.minRiskPct, cfg.maxRiskPct)
-  );
-
-  const entry = mid;
-  const sl = entry * (1 + riskPct);
-  const tp = Math.max(entry * (1 - riskPct * rr), entry * 0.0001);
-  const rewardPct = Math.max(0, (entry - tp) / entry);
-
-  const row = {
+  const baseRow = {
     ...normalized,
     ...scannerMetadataFrom(normalized),
     ...sideFlags(),
@@ -2025,12 +2321,6 @@ function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LE
     price: mid,
     currentPrice: mid,
     lastPrice: mid,
-    entry,
-    sl,
-    tp,
-    rr,
-    riskPct,
-    rewardPct,
 
     spreadPct: safeNumber(
       normalized.spreadPct,
@@ -2047,7 +2337,7 @@ function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LE
     scannerScore: safeNumber(normalized.scannerScore ?? normalized.moveScore, 0),
     moveScore: safeNumber(normalized.moveScore ?? normalized.scannerScore, 0),
 
-    riskSource: 'LEARNING_STANDARDIZED_TP_SL',
+    riskSource: 'ADAPTIVE_STANDARDIZED_SHORT_TP_SL',
     riskEngineRisk: false,
     standardizedLearningRisk: true,
     standardizedLearningRiskReason: reason,
@@ -2060,29 +2350,19 @@ function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LE
     observationOnly: false,
     analysisInputOnly: false,
     learningOnly: false,
-    liveRiskValid: true,
-    liveEntryBlockedReason: null,
-
-    validShortRiskShape: true,
-    shortRiskRule: 'tp < entry < sl',
-    shortTpExitRule: 'price <= tp',
-    shortSlExitRule: 'price >= sl',
-    shortTimeStopExitRule: 'TIME_STOP',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-    riskGeometryRule: 'SHORT: tp < entry < sl',
-    tpHitRule: 'SHORT: price <= tp',
-    slHitRule: 'SHORT: price >= sl',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     positionTimeStopMin: cfg.positionTimeStopMin,
     liveDataTs: now()
   };
 
+  const row = applyAdaptiveShortRisk(
+    baseRow,
+    reason || 'STANDARDIZED_SHORT_ADAPTIVE_RR_TP_SL'
+  );
+
   return {
     ...row,
-    liveRiskValid: hasValidRiskShape(row)
+    liveRiskValid: hasValidRiskShape(row) && row.liveRiskValid !== false
   };
 }
 
@@ -2699,13 +2979,64 @@ function validateVirtualEntry(row = {}) {
     };
   }
 
+  const rr = safeNumber(row.rr, 0);
+  const riskPct = safeNumber(row.riskPct, 0);
+  const rewardPct = safeNumber(row.rewardPct, 0);
+  const riskToRewardDistanceRatio = safeNumber(row.riskToRewardDistanceRatio, 999);
+
+  if (rr < safeNumber(cfg.minRR, DEFAULT_MIN_RR)) {
+    return {
+      ok: false,
+      reason: 'SHORT_RR_BELOW_MINIMUM',
+      rr,
+      minRR: safeNumber(cfg.minRR, DEFAULT_MIN_RR)
+    };
+  }
+
+  if (rewardPct < safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT)) {
+    return {
+      ok: false,
+      reason: 'SHORT_REWARD_PCT_TOO_SMALL',
+      rewardPct,
+      minRewardPct: safeNumber(cfg.minRewardPct, DEFAULT_MIN_REWARD_PCT)
+    };
+  }
+
+  if (riskPct <= 0 || riskPct > safeNumber(cfg.maxRiskPct, DEFAULT_MAX_RISK_PCT)) {
+    return {
+      ok: false,
+      reason: 'SHORT_RISK_PCT_OUT_OF_RANGE',
+      riskPct,
+      maxRiskPct: safeNumber(cfg.maxRiskPct, DEFAULT_MAX_RISK_PCT)
+    };
+  }
+
+  if (
+    riskToRewardDistanceRatio >
+    safeNumber(cfg.maxRiskToRewardDistanceRatio, DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO)
+  ) {
+    return {
+      ok: false,
+      reason: 'SHORT_RISK_TOO_CLOSE_TO_REWARD',
+      riskToRewardDistanceRatio,
+      maxRiskToRewardDistanceRatio: safeNumber(
+        cfg.maxRiskToRewardDistanceRatio,
+        DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO
+      )
+    };
+  }
+
   return {
     ok: true,
     reason: row.standardizedLearningRisk
-      ? 'SHORT_VIRTUAL_LEARNING_STANDARDIZED_TP_SL'
+      ? 'SHORT_VIRTUAL_LEARNING_ADAPTIVE_RR_TP_SL'
       : row.syntheticRisk
         ? 'SHORT_VIRTUAL_RISK_VALID_SYNTHETIC_EXPLICITLY_ENABLED'
-        : 'SHORT_VIRTUAL_RISK_ENGINE_VALID'
+        : 'SHORT_VIRTUAL_RISK_ENGINE_VALID',
+    rr,
+    riskPct,
+    rewardPct,
+    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION
   };
 }
 
@@ -2753,7 +3084,7 @@ function buildVirtualEntryAction({
     ...isolationFlags(),
 
     action: 'VIRTUAL_ENTRY',
-    reason: virtualGate.reason || 'SHORT_VIRTUAL_LEARNING_STANDARDIZED_TP_SL',
+    reason: virtualGate.reason || 'SHORT_VIRTUAL_LEARNING_ADAPTIVE_RR_TP_SL',
     shadowOnly: false,
 
     selectedRotationId: alertContext.rotationId,
@@ -2780,6 +3111,22 @@ function buildVirtualEntryAction({
     weeklyStats: selectedWeeklyStats,
     riskFraction,
     virtualGate,
+
+    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    adaptiveShortRisk: Boolean(row.adaptiveShortRisk),
+    adaptiveShortRiskReason: row.adaptiveShortRiskReason || null,
+
+    minRRRequired: row.minRRRequired ?? tradeConfig().minRR,
+    maxRRAllowed: row.maxRRAllowed ?? tradeConfig().maxRR,
+    minRewardPctRequired: row.minRewardPctRequired ?? tradeConfig().minRewardPct,
+    minDiscordRewardPctRequired: row.minDiscordRewardPctRequired ?? tradeConfig().minDiscordRewardPct,
+    maxRiskToRewardDistanceRatioRequired:
+      row.maxRiskToRewardDistanceRatioRequired ?? tradeConfig().maxRiskToRewardDistanceRatio,
+
+    rrQualityOk: Boolean(row.rrQualityOk),
+    rewardQualityOk: Boolean(row.rewardQualityOk),
+    discordRewardQualityOk: Boolean(row.discordRewardQualityOk),
+    riskToRewardDistanceQualityOk: Boolean(row.riskToRewardDistanceQualityOk),
 
     liveEligible: Boolean(finalDiscordAlertEligible),
     outcomeIdentityLocked: true,
@@ -2928,6 +3275,12 @@ function buildDiscordEntryAlertPayload(entry = {}) {
     childTrueMicroFamilyIds: [microId],
     microFamilyIds: [microId],
 
+    riskPlanVersion: entry.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: entry.rr,
+    riskPct: entry.riskPct,
+    rewardPct: entry.rewardPct,
+    riskToRewardDistanceRatio: entry.riskToRewardDistanceRatio,
+
     discordPayloadSanitizedForEntryAlert: true
   };
 }
@@ -3060,6 +3413,7 @@ function buildVirtualExitAction(outcome = {}) {
     slHitNow: Boolean(outcome.slHitNow || outcome.shortSlHit || outcome.exitReason === 'SL'),
     timeStopHitNow: Boolean(outcome.timeStopHitNow || outcome.exitReason === 'TIME_STOP'),
 
+    riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
     slHitRule: 'SHORT: price >= sl',
@@ -3195,6 +3549,13 @@ function buildQualityAudit({
   return {
     profile: QUALITY_MEASUREMENT_PROFILE,
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    defaultRR: DEFAULT_RR,
+    minRR: DEFAULT_MIN_RR,
+    maxRR: DEFAULT_MAX_RR,
+    minRewardPct: DEFAULT_MIN_REWARD_PCT,
+    minDiscordRewardPct: DEFAULT_MIN_DISCORD_REWARD_PCT,
+    maxRiskToRewardDistanceRatio: DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO,
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
     scannerSide: TARGET_SCANNER_SIDE,
@@ -3284,7 +3645,7 @@ function buildQualityAudit({
     runtimeWarnings,
     primaryBottleneck,
     topWaitReasons: topReasonCounts(actions, 12),
-    measurementPrinciple: 'Alles bearish van scanner virtueel laten leren; Discord alleen voor exact geselecteerde bewezen 75-child trueMicroFamilyIds met geldige CurrentFit.'
+    measurementPrinciple: 'Alles bearish van scanner virtueel laten leren; Discord alleen voor exact geselecteerde bewezen 75-child trueMicroFamilyIds met geldige CurrentFit en adaptive RR/TP/SL.'
   };
 }
 
@@ -3378,6 +3739,7 @@ async function saveRunMeta(result) {
     ...result,
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
     qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     ...sideFlags(),
     ...virtualFlags(),
     ...isolationFlags(),
@@ -3425,6 +3787,7 @@ async function saveRunMeta(result) {
       reason: finalResult.reason || null,
       runtimeWarnings: Array.isArray(finalResult.runtimeWarnings) ? finalResult.runtimeWarnings : [],
       compactedForRedis: true,
+      riskPlanVersion: SHORT_RISK_PLAN_VERSION,
       ...sideFlags(),
       ...virtualFlags(),
       ...isolationFlags()
@@ -3486,6 +3849,18 @@ function baseEarlyReturnPayload({
     monitorPriceSource: cfg.monitorLivePriceFetchEnabled
       ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
       : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
+
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    defaultRR: cfg.defaultRR,
+    minRR: cfg.minRR,
+    maxRR: cfg.maxRR,
+    minRewardPct: cfg.minRewardPct,
+    minDiscordRewardPct: cfg.minDiscordRewardPct,
+    minRiskPct: cfg.minRiskPct,
+    maxRiskPct: cfg.maxRiskPct,
+    fallbackRiskPct: cfg.fallbackRiskPct,
+    maxRiskToRewardDistanceRatio: cfg.maxRiskToRewardDistanceRatio,
+
     ...sideFlags(),
     ...virtualFlags(),
     ...isolationFlags(),
@@ -3678,13 +4053,24 @@ function normalizeAnalyzedRows({
   return mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw, liveRows)
     .filter(Boolean)
     .filter(isTargetRow)
-    .map((row) => attachCurrentFitContext({
-      ...assignFallbackExact75(row, marketContext, fallbackReason),
-      ...scannerMetadataFrom(row),
-      ...sideFlags(),
-      ...virtualFlags(row),
-      ...isolationFlags()
-    }, marketContext))
+    .map((row) => {
+      const exactRow = assignFallbackExact75(row, marketContext, fallbackReason);
+
+      const contextualRow = attachCurrentFitContext({
+        ...exactRow,
+        ...scannerMetadataFrom(row),
+        ...sideFlags(),
+        ...virtualFlags(row),
+        ...isolationFlags()
+      }, marketContext);
+
+      return applyAdaptiveShortRisk(
+        contextualRow,
+        contextualRow.fallbackExact75
+          ? 'ADAPTIVE_SHORT_RR_AFTER_FALLBACK_EXACT_75'
+          : 'ADAPTIVE_SHORT_RR_AFTER_ANALYZE_EXACT_75'
+      );
+    })
     .filter((row) => Boolean(getTrueMicroFamilyId(row)));
 }
 
@@ -4034,6 +4420,7 @@ export async function runTradeSystem(options = {}) {
           currentFitBlocksLearning: false,
           currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
           currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+          riskPlanVersion: SHORT_RISK_PLAN_VERSION,
           riskGeometryRule: 'SHORT: tp < entry < sl',
           tpHitRule: 'SHORT: price <= tp',
           slHitRule: 'SHORT: price >= sl',
@@ -4294,6 +4681,18 @@ export async function runTradeSystem(options = {}) {
       scannerWideVirtualLearning: cfg.scannerWideVirtualLearning,
       tradeEveryScannerCandidateVirtual: cfg.tradeEveryScannerCandidateVirtual,
       skipLiveRiskFetchForLearning: cfg.skipLiveRiskFetchForLearning,
+
+      riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+      defaultRR: cfg.defaultRR,
+      minRR: cfg.minRR,
+      maxRR: cfg.maxRR,
+      minRewardPct: cfg.minRewardPct,
+      minDiscordRewardPct: cfg.minDiscordRewardPct,
+      minRiskPct: cfg.minRiskPct,
+      maxRiskPct: cfg.maxRiskPct,
+      fallbackRiskPct: cfg.fallbackRiskPct,
+      maxRiskToRewardDistanceRatio: cfg.maxRiskToRewardDistanceRatio,
+
       maxCandidatesPerSnapshot: cfg.maxCandidatesPerSnapshot,
       analyzeMaxCandidatesPerSnapshot: cfg.analyzeMaxCandidatesPerSnapshot,
       hardMaxCandidatesPerSnapshot: cfg.hardMaxCandidatesPerSnapshot,
