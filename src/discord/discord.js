@@ -58,7 +58,6 @@ const LONG_TOKENS = new Set([
 const REAL_ORDER_SOURCES = new Set([
   SOURCE_REAL,
   SOURCE_LIVE,
-  SOURCE_TRADE,
   'ENTRY',
   'ORDER',
   'BITGET'
@@ -174,6 +173,8 @@ function fmtPctSmart(value) {
 }
 
 function fmtR(value) {
+  if (value === null || value === undefined || value === '') return 'NA';
+
   const n = Number(value);
 
   if (!Number.isFinite(n)) return 'NA';
@@ -240,7 +241,7 @@ function exitEmoji(exitType = '', resultR = null) {
 
   if (type === 'TP') return '✅';
   if (type === 'SL') return '❌';
-  if (type === 'TIME') return '⏹️';
+  if (type === 'TIME' || type === 'TIME_STOP') return '⏹️';
 
   const r = Number(resultR);
 
@@ -255,7 +256,7 @@ function customerExitReason(exitType = '') {
 
   if (type === 'TP') return 'TP geraakt';
   if (type === 'SL') return 'SL geraakt';
-  if (type === 'TIME') return 'tijdslimiet';
+  if (type === 'TIME' || type === 'TIME_STOP') return 'tijdslimiet';
   if (type === 'MANUAL') return 'handmatig gesloten';
 
   return 'gesloten';
@@ -1064,19 +1065,28 @@ function getShortCurrentFit(payload = {}) {
   return -raw;
 }
 
-function isRealOrderSource(payload = {}) {
+function isExplicitlyVirtualPayload(payload = {}) {
   const sources = [
     payload.source,
     payload.sourceMode,
     payload.outcomeSource,
-    payload.positionSource,
-    payload.orderSource
-  ]
-    .map(normalizeSource)
-    .filter(Boolean);
+    payload.positionSource
+  ].map(normalizeSource);
 
-  if (sources.some((source) => REAL_ORDER_SOURCES.has(source))) return true;
+  return Boolean(
+    sources.includes(SOURCE_VIRTUAL) ||
+    payload.virtualOnly === true ||
+    payload.virtualTracked === true ||
+    payload.paperTrade === true ||
+    payload.paperPosition === true ||
+    payload.realTrade === false ||
+    payload.realOrder === false ||
+    payload.exchangeOrder === false ||
+    payload.bitgetOrderPlaced === false
+  );
+}
 
+function hasExplicitRealOrderFlag(payload = {}) {
   return Boolean(
     payload.realTrade === true ||
     payload.realOrder === true ||
@@ -1087,21 +1097,26 @@ function isRealOrderSource(payload = {}) {
   );
 }
 
-function isVirtualSource(payload = {}) {
+function isRealOrderSource(payload = {}) {
+  if (hasExplicitRealOrderFlag(payload)) return true;
+
+  if (isExplicitlyVirtualPayload(payload)) return false;
+
   const sources = [
     payload.source,
     payload.sourceMode,
     payload.outcomeSource,
-    payload.positionSource
-  ].map(normalizeSource);
+    payload.positionSource,
+    payload.orderSource
+  ]
+    .map(normalizeSource)
+    .filter(Boolean);
 
-  return (
-    sources.includes(SOURCE_VIRTUAL) ||
-    payload.virtualOnly === true ||
-    payload.virtualTracked === true ||
-    payload.paperTrade === true ||
-    payload.paperPosition === true
-  );
+  return sources.some((source) => REAL_ORDER_SOURCES.has(source));
+}
+
+function isVirtualSource(payload = {}) {
+  return isExplicitlyVirtualPayload(payload);
 }
 
 function isMirrorPayload(payload = {}) {
@@ -1209,7 +1224,8 @@ function matchTypeIsExactChildTrueMicro(entry = {}) {
   if (!matchType) {
     return Boolean(
       entry.discordAlertEligible === true ||
-      entry.selectedForDiscord === true
+      entry.selectedForDiscord === true ||
+      entry.selectedMicroFamilyAlert === true
     );
   }
 
@@ -1242,11 +1258,11 @@ function hasSelectedMicroRotationMatch(entry = {}) {
 
   if (!microId) return false;
   if (!validLearningChildId(microId)) return false;
-  if (!entry.activeRotationId && !entry.rotationId) return false;
 
   const selected = Boolean(
     entry.discordAlertEligible === true ||
     entry.selectedForDiscord === true ||
+    entry.selectedMicroFamilyAlert === true ||
     entry.liveEligible === true
   );
 
@@ -1322,6 +1338,7 @@ function compactPayload(payload = {}) {
 
     liveEligible: Boolean(payload.liveEligible),
     discordAlertEligible: Boolean(payload.discordAlertEligible),
+    selectedMicroFamilyAlert: Boolean(payload.selectedMicroFamilyAlert),
     selectedForDiscord: Boolean(payload.selectedForDiscord),
 
     virtualOnly: payload.virtualOnly !== false,
@@ -1332,6 +1349,8 @@ function compactPayload(payload = {}) {
     analysisInputOnly: Boolean(payload.analysisInputOnly),
     learningOnly: Boolean(payload.learningOnly),
 
+    activeRotationId: payload.activeRotationId || payload.rotationId || null,
+    selectedRotationId: payload.selectedRotationId || payload.activeRotationId || payload.rotationId || null,
     rotationMatchType: payload.rotationMatchType || null,
 
     microFamilyId: trueId,
@@ -1346,8 +1365,6 @@ function compactPayload(payload = {}) {
 
     familyId: payload.familyId || null,
     macroFamilyId: parentId,
-
-    activeRotationId: payload.activeRotationId || payload.rotationId || null,
 
     executionFingerprintHash: payload.executionFingerprintHash || null,
     executionFingerprintRole: 'METADATA_ONLY',
