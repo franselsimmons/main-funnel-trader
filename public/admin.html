@@ -20,7 +20,6 @@
       --amber: #d97706;
       --blue: #2563eb;
       --purple: #7c3aed;
-      --cyan: #0891b2;
       --shadow: 0 2px 12px rgba(15, 23, 42, 0.07);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -200,7 +199,9 @@
     }
 
     .hidden,
-    .panel.hidden { display: none; }
+    .panel.hidden {
+      display: none;
+    }
 
     .message {
       border-radius: 16px;
@@ -337,6 +338,8 @@
     .pill.weakfit { background: #ccfbf1; color: #0f766e; }
     .pill.neutral { background: #f1f5f9; color: #475569; }
     .pill.misfit { background: #fee2e2; color: #991b1b; }
+    .pill.clean { background: #dcfce7; color: #166534; }
+    .pill.legacy { background: #ffedd5; color: #9a3412; }
 
     .score-bar {
       height: 8px;
@@ -390,7 +393,9 @@
       z-index: 1;
     }
 
-    tr:hover td { background: #f8fafc; }
+    tr:hover td {
+      background: #f8fafc;
+    }
 
     code {
       font-size: 12px;
@@ -468,7 +473,7 @@
     }
 
     .micro-desktop-table table {
-      min-width: 1180px;
+      min-width: 1420px;
     }
 
     .micro-id-cell {
@@ -665,7 +670,7 @@
     }
 
     .manual-card {
-      max-width: 1100px;
+      max-width: 1120px;
       margin-bottom: 14px;
     }
 
@@ -700,22 +705,55 @@
 
     @media (max-width: 1180px) {
       .grid,
-      .coin-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
-      .grid-3 { grid-template-columns: 1fr; }
+      .coin-grid {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+
+      .grid-3 {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 720px) {
-      header { padding: 18px 14px; }
-      .header-inner { flex-direction: column; }
-      main { padding: 14px; }
+      header {
+        padding: 18px 14px;
+      }
+
+      .header-inner {
+        flex-direction: column;
+      }
+
+      main {
+        padding: 14px;
+      }
+
       .grid,
-      .coin-grid { grid-template-columns: 1fr; }
-      .tab { flex: 1 1 auto; padding: 9px 10px; }
-      input[type="search"] { min-width: 100%; }
+      .coin-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .tab {
+        flex: 1 1 auto;
+        padding: 9px 10px;
+      }
+
+      input[type="search"] {
+        min-width: 100%;
+      }
+
       .manual-grid,
-      .coin-stats { grid-template-columns: repeat(2, 1fr); }
-      .micro-desktop-table { display: none; }
-      .micro-mobile-cards { display: block; }
+      .coin-stats {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .micro-desktop-table {
+        display: none;
+      }
+
+      .micro-mobile-cards {
+        display: block;
+      }
+
       .api-output-textarea {
         min-height: 420px;
         font-size: 11px;
@@ -732,13 +770,16 @@
         <div>
           <strong>SHORT 75 Micro-Family Learning Admin</strong>
           <div class="brand-subtitle">
-            Scanner → Analyze 75-child trueMicroFamilyId → virtual/shadow outcomes → netR scoring → adaptive selection → strict Discord
+            Scanner → Analyze 75-child trueMicroFamilyId → candle first-touch virtual outcomes → netR scoring → adaptive manual Discord selection
           </div>
         </div>
       </div>
 
       <div class="header-actions">
-        <div class="live-pill"><span class="live-dot"></span><span id="liveLabel">SHORT-only · broad learning · adaptive selection</span></div>
+        <div class="live-pill">
+          <span class="live-dot"></span>
+          <span id="liveLabel">SHORT-only · clean measurement · adaptive selection</span>
+        </div>
         <button id="refreshBtn" type="button">Refresh</button>
       </div>
     </div>
@@ -787,8 +828,12 @@
     const LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1";
     const PARENT_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1";
 
-    const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1";
-    const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V1";
+    const SHORT_RISK_PLAN_VERSION = "SHORT_ADAPTIVE_RR_TP_SL_V2";
+    const POSITION_COST_MODEL_VERSION = "POSITION_ENGINE_SHORT_NET_COST_V11";
+    const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_V4";
+    const OBSERVATION_DEDUPE_VERSION = "SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2";
+    const OUTCOME_DEDUPE_VERSION = "SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V2";
+    const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V2";
 
     const SHORT_FIXED_SETUP_TYPES = new Set([
       "BREAKOUT",
@@ -845,8 +890,7 @@
     };
 
     const tabs = ["overview", "market", "scanner", "trade", "micros", "rotation", "discord", "reset"];
-    const validMicroModes = ["adaptive", "balanced", "winrate", "totalR", "avgR", "directSL", "observed", "cost", "currentFit"];
-
+    const validMicroModes = ["adaptive", "clean", "balanced", "winrate", "totalR", "avgR", "directSL", "observed", "cost", "currentFit"];
     const $ = (id) => document.getElementById(id);
 
     class ApiError extends Error {
@@ -925,9 +969,7 @@
       if (confirmation && !SHORT_FIXED_CONFIRMATION_PROFILES.has(confirmation)) return null;
 
       const parentTrueMicroFamilyId = `MICRO_SHORT_${setup}_${regime}`;
-      const childTrueMicroFamilyId = confirmation
-        ? `${parentTrueMicroFamilyId}_${confirmation}`
-        : null;
+      const childTrueMicroFamilyId = confirmation ? `${parentTrueMicroFamilyId}_${confirmation}` : null;
 
       return {
         setup,
@@ -950,8 +992,7 @@
 
     function parentFromChildTrueMicroFamilyId(id = "") {
       const parsed = parseFixedShortTaxonomyId(id);
-      if (!parsed?.isChild) return "";
-      return parsed.parentTrueMicroFamilyId;
+      return parsed?.isChild ? parsed.parentTrueMicroFamilyId : "";
     }
 
     function normalizeSide(value) {
@@ -1226,6 +1267,78 @@
       ).trim().toUpperCase();
     }
 
+    function rowMeasurementFixVersion(row = {}) {
+      return String(
+        row.measurementFixVersion ||
+        row.measurementVersion ||
+        row.positionMeasurementFixVersion ||
+        row.measurementProfile ||
+        ""
+      ).trim();
+    }
+
+    function rowRiskPlanVersion(row = {}) {
+      return String(
+        row.riskPlanVersion ||
+        row.shortRiskPlanVersion ||
+        row.riskVersion ||
+        ""
+      ).trim();
+    }
+
+    function rowCostModelVersion(row = {}) {
+      return String(
+        row.costModelVersion ||
+        row.positionCostModelVersion ||
+        row.costVersion ||
+        ""
+      ).trim();
+    }
+
+    function rowObservationDedupeVersion(row = {}) {
+      return String(
+        row.observationDedupeVersion ||
+        row.obsDedupeVersion ||
+        row.dedupeVersion ||
+        ""
+      ).trim();
+    }
+
+    function rowOutcomeDedupeVersion(row = {}) {
+      return String(
+        row.outcomeDedupeVersion ||
+        row.outcomeDeduplicationVersion ||
+        ""
+      ).trim();
+    }
+
+    function isCleanMeasurementRow(row = {}) {
+      const fix = rowMeasurementFixVersion(row);
+      const risk = rowRiskPlanVersion(row);
+      const cost = rowCostModelVersion(row);
+      const obs = rowObservationDedupeVersion(row);
+      const out = rowOutcomeDedupeVersion(row);
+
+      const explicitClean =
+        row.measurementClean === true ||
+        row.cleanMeasurement === true ||
+        row.cleanLearningRow === true;
+
+      const fixOk = !fix || fix === MEASUREMENT_FIX_VERSION;
+      const riskOk = !risk || risk === SHORT_RISK_PLAN_VERSION;
+      const costOk = !cost || cost === POSITION_COST_MODEL_VERSION;
+      const obsOk = !obs || obs === OBSERVATION_DEDUPE_VERSION;
+      const outOk = !out || out === OUTCOME_DEDUPE_VERSION;
+
+      return explicitClean || (fixOk && riskOk && costOk && obsOk && outOk);
+    }
+
+    function measurementPill(row = {}) {
+      return isCleanMeasurementRow(row)
+        ? '<span class="pill clean">CLEAN</span>'
+        : '<span class="pill legacy">LEGACY</span>';
+    }
+
     function isRealAnalyzeMicroRow(row = {}) {
       const id = microId(row);
       const parentId = parentMicroId(row);
@@ -1302,6 +1415,13 @@
       return Math.max(min, Math.min(max, n));
     }
 
+    function normalizePctFraction(value, fallback = 0) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return fallback;
+      if (Math.abs(n) > 1.5) return n / 100;
+      return n;
+    }
+
     function fmt(value, decimals = 3) {
       const n = Number(value);
       if (!Number.isFinite(n)) return "-";
@@ -1315,7 +1435,7 @@
     }
 
     function fmtPct(value) {
-      const n = Number(value);
+      const n = normalizePctFraction(value, NaN);
       if (!Number.isFinite(n)) return "-";
       return `${(n * 100).toFixed(1)}%`;
     }
@@ -1367,8 +1487,9 @@
 
       if (seconds < 60) return `${seconds}s geleden`;
       if (seconds < 3600) return `${Math.floor(seconds / 60)}m geleden`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}u geleden`;
 
-      return `${Math.floor(seconds / 3600)}u geleden`;
+      return `${Math.floor(seconds / 86400)}d geleden`;
     }
 
     function baseSymbol(row = {}) {
@@ -1396,7 +1517,7 @@
       if (closed > 0) return closed;
 
       const outcome = Number(row.outcomeSample);
-      if (Number.isFinite(outcome)) return outcome;
+      if (Number.isFinite(outcome) && outcome > 0) return outcome;
 
       const explicit = Number(row.completed);
       if (Number.isFinite(explicit) && explicit > 0) return explicit;
@@ -1497,16 +1618,12 @@
       if (marketRegime && marketRegime !== "UNKNOWN") {
         hasSignal = true;
 
-        if (marketRegime === parsed.regime) {
-          score += 40;
-        } else if (
+        if (marketRegime === parsed.regime) score += 40;
+        else if (
           (marketRegime === "TREND" && parsed.regime === "SQUEEZE") ||
           (marketRegime === "SQUEEZE" && parsed.regime === "TREND")
-        ) {
-          score += 12;
-        } else {
-          score -= 10;
-        }
+        ) score += 12;
+        else score -= 10;
       }
 
       if (parsed.confirmation === "A_STRONG_ALIGN") score += 18;
@@ -1576,9 +1693,7 @@
         row.reason,
         row.currentFitReason,
         Array.isArray(row.currentFitReasons) ? row.currentFitReasons.join("|") : ""
-      ]
-        .map((value) => upper(value))
-        .join(" | ");
+      ].map((value) => upper(value)).join(" | ");
     }
 
     function currentFitScore(row = {}) {
@@ -1645,7 +1760,7 @@
           return -Math.abs(direct);
         }
 
-        return -direct;
+        return direct;
       }
 
       const numericFit = firstFinite(
@@ -1662,7 +1777,7 @@
         if (marketTrend === "SHORT") return Math.abs(numericFit);
         if (marketTrend === "LONG") return -Math.abs(numericFit);
 
-        return -numericFit;
+        return numericFit;
       }
 
       const fit = upper(
@@ -1709,25 +1824,11 @@
       const score = currentFitScore(row);
       const conf = currentFitConfidence(row);
 
-      if (fit === "MATCH") {
-        return `<span class="pill fit">FIT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
-
-      if (fit === "WEAK_MATCH") {
-        return `<span class="pill weakfit">WEAK FIT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
-
-      if (fit === "MISFIT") {
-        return `<span class="pill misfit">MISFIT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
-
-      if (fit === "NEUTRAL") {
-        return `<span class="pill neutral">NEUTRAL ${escapeHtml(fmt(conf, 0))}</span>`;
-      }
-
-      if (score !== 0) {
-        return `<span class="pill neutral">SOFT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
+      if (fit === "MATCH") return `<span class="pill fit">FIT ${escapeHtml(fmt(score, 0))}</span>`;
+      if (fit === "WEAK_MATCH") return `<span class="pill weakfit">WEAK FIT ${escapeHtml(fmt(score, 0))}</span>`;
+      if (fit === "MISFIT") return `<span class="pill misfit">MISFIT ${escapeHtml(fmt(score, 0))}</span>`;
+      if (fit === "NEUTRAL") return `<span class="pill neutral">NEUTRAL ${escapeHtml(fmt(conf, 0))}</span>`;
+      if (score !== 0) return `<span class="pill neutral">SOFT ${escapeHtml(fmt(score, 0))}</span>`;
 
       return '<span class="pill raw">UNKNOWN</span>';
     }
@@ -1757,7 +1858,7 @@
     }
 
     function fairWinrate(row = {}) {
-      return num(
+      return normalizePctFraction(
         row.fairWinrate ??
         row.sampleAdjustedWinrate ??
         row.sampleWilsonLowerBound ??
@@ -1784,11 +1885,15 @@
     }
 
     function directSLPct(row = {}) {
-      return Math.max(0, num(row.directSLPct, 0));
+      return Math.max(0, normalizePctFraction(row.directSLPct ?? row.directToSLPct, 0));
     }
 
     function sampleReliability(row = {}) {
       return num(row.sampleReliability, 0);
+    }
+
+    function cleanMeasurementScore(row = {}) {
+      return isCleanMeasurementRow(row) ? 1 : 0;
     }
 
     function adaptiveScore(row = {}) {
@@ -1798,14 +1903,15 @@
         row.currentAdaptiveScore
       );
 
-      if (direct !== null) return direct;
+      if (direct !== null) return direct + (isCleanMeasurementRow(row) ? 0 : -25);
 
       const base = balancedScore(row);
       const reliability = sampleReliability(row);
       const directSLPenalty = directSLPct(row) * 35;
       const costPenalty = avgCostR(row) * 8;
+      const legacyPenalty = isCleanMeasurementRow(row) ? 0 : 25;
 
-      return base + reliability * 10 - directSLPenalty - costPenalty;
+      return base + reliability * 10 - directSLPenalty - costPenalty - legacyPenalty;
     }
 
     function tierPill(value) {
@@ -1824,9 +1930,7 @@
       const status = learningStatus(row);
       const done = completed(row);
 
-      if (status === "ACTIVE_LEARNING") {
-        return '<span class="pill active">ACTIVE_LEARNING</span>';
-      }
+      if (status === "ACTIVE_LEARNING") return '<span class="pill active">ACTIVE_LEARNING</span>';
 
       if (status === "EARLY_OUTCOMES") {
         return `<span class="pill soft">EARLY_OUTCOMES · ${escapeHtml(fmt(done, 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>`;
@@ -1964,18 +2068,13 @@
     }
 
     function table(rows, cols, emptyText = "Geen data.") {
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return `<div class="empty">${escapeHtml(emptyText)}</div>`;
-      }
+      if (!Array.isArray(rows) || rows.length === 0) return `<div class="empty">${escapeHtml(emptyText)}</div>`;
 
       const head = cols.map((col) => `<th>${escapeHtml(col.label)}</th>`).join("");
 
       const body = rows.map((row, index) => {
         const cells = cols.map((col) => {
-          const value = col.render
-            ? col.render(row, index)
-            : escapeHtml(row?.[col.key]);
-
+          const value = col.render ? col.render(row, index) : escapeHtml(row?.[col.key]);
           return `<td>${value}</td>`;
         }).join("");
 
@@ -1998,11 +2097,8 @@
       for (const key of keys) {
         const value = data?.[key];
 
-        if (Array.isArray(value)) {
-          rows.push(...value);
-        } else if (value && typeof value === "object") {
-          rows.push(...Object.values(value));
-        }
+        if (Array.isArray(value)) rows.push(...value);
+        else if (value && typeof value === "object") rows.push(...Object.values(value));
       }
 
       return rows;
@@ -2141,8 +2237,13 @@
       return String(microId(a) || "").localeCompare(String(microId(b) || ""));
     }
 
+    function compareCleanFirst(a, b) {
+      return compareNumberDesc(cleanMeasurementScore(a), cleanMeasurementScore(b));
+    }
+
     function compareBestDataFirst(a, b) {
       return (
+        compareCleanFirst(a, b) ||
         compareNumberDesc(balancedScore(a), balancedScore(b)) ||
         compareNumberDesc(netTotalR(a), netTotalR(b)) ||
         compareNumberDesc(netAvgR(a), netAvgR(b)) ||
@@ -2157,11 +2258,10 @@
     }
 
     function compareMicroRows(a, b, mode = state.microMode) {
+      if (mode === "clean") return compareCleanFirst(a, b) || compareBestDataFirst(a, b);
+
       if (mode === "adaptive") {
-        return (
-          compareNumberDesc(adaptiveScore(a), adaptiveScore(b)) ||
-          compareBestDataFirst(a, b)
-        );
+        return compareNumberDesc(adaptiveScore(a), adaptiveScore(b)) || compareBestDataFirst(a, b);
       }
 
       if (mode === "currentFit") {
@@ -2172,46 +2272,18 @@
         );
       }
 
-      if (mode === "cost") {
-        return (
-          compareNumberAsc(avgCostR(a), avgCostR(b)) ||
-          compareBestDataFirst(a, b)
-        );
-      }
-
-      if (mode === "observed") {
-        return (
-          compareNumberDesc(observationSample(a), observationSample(b)) ||
-          compareBestDataFirst(a, b)
-        );
-      }
-
-      if (mode === "directSL") {
-        return (
-          compareNumberAsc(directSLPct(a), directSLPct(b)) ||
-          compareBestDataFirst(a, b)
-        );
-      }
-
-      if (mode === "totalR") {
-        return (
-          compareNumberDesc(netTotalR(a), netTotalR(b)) ||
-          compareBestDataFirst(a, b)
-        );
-      }
-
-      if (mode === "avgR") {
-        return (
-          compareNumberDesc(netAvgR(a), netAvgR(b)) ||
-          compareBestDataFirst(a, b)
-        );
-      }
+      if (mode === "cost") return compareNumberAsc(avgCostR(a), avgCostR(b)) || compareBestDataFirst(a, b);
+      if (mode === "observed") return compareNumberDesc(observationSample(a), observationSample(b)) || compareBestDataFirst(a, b);
+      if (mode === "directSL") return compareNumberAsc(directSLPct(a), directSLPct(b)) || compareBestDataFirst(a, b);
+      if (mode === "totalR") return compareNumberDesc(netTotalR(a), netTotalR(b)) || compareBestDataFirst(a, b);
+      if (mode === "avgR") return compareNumberDesc(netAvgR(a), netAvgR(b)) || compareBestDataFirst(a, b);
 
       if (mode === "winrate") {
         return (
+          compareCleanFirst(a, b) ||
           compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
-          compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
-          compareNumberDesc(a.sampleBayesianWinrate ?? a.bayesianWinrate, b.sampleBayesianWinrate ?? b.bayesianWinrate) ||
+          compareNumberDesc(normalizePctFraction(a.sampleWilsonLowerBound ?? a.wilsonLowerBound), normalizePctFraction(b.sampleWilsonLowerBound ?? b.wilsonLowerBound)) ||
+          compareNumberDesc(normalizePctFraction(a.sampleBayesianWinrate ?? a.bayesianWinrate), normalizePctFraction(b.sampleBayesianWinrate ?? b.bayesianWinrate)) ||
           compareNumberDesc(completed(a), completed(b)) ||
           compareBestDataFirst(a, b)
         );
@@ -2254,9 +2326,7 @@
         learningStatus: status,
         status,
         tooEarly: done < MIN_COMPLETED_ACTIVE_LEARNING,
-        tooEarlyReason: done < MIN_COMPLETED_ACTIVE_LEARNING
-          ? `completed ${done}/${MIN_COMPLETED_ACTIVE_LEARNING}`
-          : null,
+        tooEarlyReason: done < MIN_COMPLETED_ACTIVE_LEARNING ? `completed ${done}/${MIN_COMPLETED_ACTIVE_LEARNING}` : null,
         tier: rowTier,
         selectedTier: rowTier,
         rotationEligibilityTier: rowTier,
@@ -2268,12 +2338,17 @@
         adaptiveScore: adaptiveScore(row),
         avgCostR: avgCostR(row),
         directSLPct: directSLPct(row),
+        cleanMeasurement: isCleanMeasurementRow(row),
         trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
         learningGranularity: LEARNING_GRANULARITY,
         parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
         selectionGranularity: "EXACT_75_CHILD",
-        measurementFixVersion: row.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+        riskPlanVersion: rowRiskPlanVersion(row) || SHORT_RISK_PLAN_VERSION,
+        costModelVersion: rowCostModelVersion(row) || POSITION_COST_MODEL_VERSION,
+        measurementFixVersion: rowMeasurementFixVersion(row) || MEASUREMENT_FIX_VERSION,
+        observationDedupeVersion: rowObservationDedupeVersion(row) || OBSERVATION_DEDUPE_VERSION,
+        outcomeDedupeVersion: rowOutcomeDedupeVersion(row) || OUTCOME_DEDUPE_VERSION,
         adaptiveUiVersion: ADAPTIVE_UI_VERSION,
         completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
         completedOnlyClosedVirtualOrShadow: true,
@@ -2285,8 +2360,9 @@
         seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
         riskTradeSide: ONLY_SIDE,
         riskGeometryRule: "SHORT: tp < entry < sl",
-        tpHitRule: "SHORT: price <= tp",
-        slHitRule: "SHORT: price >= sl",
+        tpHitRule: "SHORT: candle.low <= tp",
+        slHitRule: "SHORT: candle.high >= sl",
+        sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
         grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
         currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
         currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
@@ -2321,22 +2397,66 @@
         }));
     }
 
-    function microApiUrl() {
+    function identityVersions() {
+      return {
+        trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+        parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+        learningGranularity: LEARNING_GRANULARITY,
+        parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+        riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+        costModelVersion: POSITION_COST_MODEL_VERSION,
+        measurementFixVersion: MEASUREMENT_FIX_VERSION,
+        observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+        outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+        adaptiveUiVersion: ADAPTIVE_UI_VERSION
+      };
+    }
+
+    function riskPolicyObject() {
+      return {
+        side: "SHORT",
+        riskGeometryRule: "tp < entry < sl",
+        tpHitRule: "candle.low <= tp",
+        slHitRule: "candle.high >= sl",
+        sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
+        monitorRule: "1m candle range since last check; range result wins over current price",
+        grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+        currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+        defaultPositionTimeStopMin: DEFAULT_POSITION_TIME_STOP_MIN
+      };
+    }
+
+    function commonSideParams() {
       const params = new URLSearchParams();
-      const apiMode = state.microMode === "adaptive" || state.microMode === "currentFit" || state.microMode === "cost"
+
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("positionSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("weekKey", PERSISTENT_LEARNING_KEY);
+      params.set("persistentLearningKey", PERSISTENT_LEARNING_KEY);
+      params.set("redisNamespace", SHORT_NAMESPACE);
+      params.set("redisKeyPrefix", SHORT_KEY_PREFIX);
+      params.set("trueMicroFamilySchema", TRUE_MICRO_SCHEMA);
+      params.set("parentTrueMicroFamilySchema", PARENT_TRUE_MICRO_SCHEMA);
+      params.set("selectionGranularity", "EXACT_75_CHILD");
+      params.set("riskPlanVersion", SHORT_RISK_PLAN_VERSION);
+      params.set("costModelVersion", POSITION_COST_MODEL_VERSION);
+      params.set("measurementFixVersion", MEASUREMENT_FIX_VERSION);
+      params.set("observationDedupeVersion", OBSERVATION_DEDUPE_VERSION);
+      params.set("outcomeDedupeVersion", OUTCOME_DEDUPE_VERSION);
+
+      return params;
+    }
+
+    function microApiUrl() {
+      const params = commonSideParams();
+      const apiMode = state.microMode === "adaptive" || state.microMode === "currentFit" || state.microMode === "cost" || state.microMode === "clean"
         ? "balanced"
         : state.microMode;
 
       params.set("mode", apiMode);
-      params.set("side", ONLY_SIDE);
-      params.set("tradeSide", ONLY_SIDE);
-      params.set("targetTradeSide", ONLY_SIDE);
-      params.set("dashboardSide", DASHBOARD_SIDE);
-      params.set("weekKey", PERSISTENT_LEARNING_KEY);
-      params.set("persistentLearningKey", PERSISTENT_LEARNING_KEY);
-      params.set("trueMicroFamilySchema", TRUE_MICRO_SCHEMA);
-      params.set("parentTrueMicroFamilySchema", PARENT_TRUE_MICRO_SCHEMA);
-      params.set("selectionGranularity", "EXACT_75_CHILD");
       params.set("limit", String(state.microLimit));
       params.set("bestLimit", String(state.bestLimit));
       params.set("sideLimit", String(state.bestLimit));
@@ -2345,6 +2465,7 @@
       params.set("includeMarketWeather", "1");
       params.set("includeCurrentFit", "1");
       params.set("includeAdaptive", "1");
+      params.set("includeCleanMeasurement", "1");
       params.set("compact", "1");
 
       if (state.microSearch.trim()) params.set("q", state.microSearch.trim());
@@ -2353,19 +2474,12 @@
     }
 
     function rotationApiUrl() {
-      const params = new URLSearchParams();
+      const params = commonSideParams();
 
-      params.set("side", ONLY_SIDE);
-      params.set("tradeSide", ONLY_SIDE);
-      params.set("targetTradeSide", ONLY_SIDE);
-      params.set("dashboardSide", DASHBOARD_SIDE);
-      params.set("weekKey", PERSISTENT_LEARNING_KEY);
-      params.set("trueMicroFamilySchema", TRUE_MICRO_SCHEMA);
-      params.set("parentTrueMicroFamilySchema", PARENT_TRUE_MICRO_SCHEMA);
-      params.set("selectionGranularity", "EXACT_75_CHILD");
       params.set("includeAvailable", "1");
       params.set("includeAdaptive", "1");
       params.set("includeCurrentFit", "1");
+      params.set("includeCleanMeasurement", "1");
       params.set("activeRowsLimit", "160");
       params.set("availableLimit", "240");
 
@@ -2373,12 +2487,8 @@
     }
 
     function marketApiUrl() {
-      const params = new URLSearchParams();
+      const params = commonSideParams();
 
-      params.set("side", ONLY_SIDE);
-      params.set("tradeSide", ONLY_SIDE);
-      params.set("targetTradeSide", ONLY_SIDE);
-      params.set("dashboardSide", DASHBOARD_SIDE);
       params.set("includeUniverse", "1");
       params.set("includeBreadth", "1");
       params.set("includeCurrentFit", "1");
@@ -2387,21 +2497,28 @@
     }
 
     function scannerApiUrl() {
-      const params = new URLSearchParams();
+      const params = commonSideParams();
 
-      params.set("side", ONLY_SIDE);
-      params.set("tradeSide", ONLY_SIDE);
-      params.set("targetTradeSide", ONLY_SIDE);
-      params.set("dashboardSide", DASHBOARD_SIDE);
-      params.set("redisNamespace", SHORT_NAMESPACE);
-      params.set("redisKeyPrefix", SHORT_KEY_PREFIX);
-      params.set("persistentLearningKey", PERSISTENT_LEARNING_KEY);
+      params.set("scannerSide", DASHBOARD_SIDE);
       params.set("includeSnapshot", "1");
       params.set("includeCandidates", "1");
       params.set("includeLatest", "1");
       params.set("compact", "1");
 
       return `${endpoints.scanner}?${params.toString()}`;
+    }
+
+    function tradeApiUrl() {
+      const params = commonSideParams();
+
+      params.set("includeOpenPositions", "1");
+      params.set("includePositions", "1");
+      params.set("includeRunMeta", "1");
+      params.set("includeRiskPlan", "1");
+      params.set("includeCandleFirstTouch", "1");
+      params.set("compact", "1");
+
+      return `${endpoints.trade}?${params.toString()}`;
     }
 
     function extractMarketData(data = {}) {
@@ -2506,9 +2623,9 @@
       };
     }
 
-    // ---- NIEUWE HELPERS ----
     function compactMarketApiOutput(market = {}) {
       const raw = market.raw || {};
+
       return {
         ok: market.ok !== false,
         available: Boolean(market.ok),
@@ -2519,6 +2636,7 @@
         persistentLearningKey: PERSISTENT_LEARNING_KEY,
         file: "src/market/marketWeather.js",
         apiRoute: "/api/admin/market-weather",
+        versions: identityVersions(),
         timestamp: {
           createdAt: market.createdAt || null,
           ageText: market.ageText || "-",
@@ -2544,15 +2662,7 @@
           learningRemainsBroad: true,
           discordCanBeStrict: true
         },
-        riskContext: {
-          side: "SHORT",
-          riskGeometryRule: "tp < entry < sl",
-          tpHitRule: "price <= tp",
-          slHitRule: "price >= sl",
-          grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
-          currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
-          defaultPositionTimeStopMin: DEFAULT_POSITION_TIME_STOP_MIN
-        },
+        riskContext: riskPolicyObject(),
         usedFor: [
           "micro-family ranking",
           "manual rotation context",
@@ -2588,24 +2698,23 @@
         data.activeRotation?.microFamilyIds || [],
         data.activeRotation?.trueMicroFamilyIds || [],
         microData?.activeMicroFamilyIds || []
-      ])
-        .filter(idAllowedInShortOnly)
-        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+
       const parentIds = uniqueStrings([
         data.activeMacroFamilyIds || [],
         data.activeRotation?.activeMacroFamilyIds || [],
         data.activeRotation?.macroFamilyIds || [],
         microData?.activeMacroFamilyIds || []
       ]).filter(parentIdAllowedInShortOnly);
+
       const observing = microRows.filter((row) => learningStatus(row) === "OBSERVING").length;
       const early = microRows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES").length;
       const active = microRows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING").length;
-      const averageCostR = microRows.length
-        ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length
-        : 0;
-      const averageDirectSL = microRows.length
-        ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length
-        : 0;
+      const cleanRows = microRows.filter(isCleanMeasurementRow).length;
+      const legacyRows = Math.max(0, microRows.length - cleanRows);
+      const averageCostR = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
+      const averageDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
+
       return {
         ok: data.ok !== false,
         side: ONLY_SIDE,
@@ -2613,8 +2722,11 @@
         namespace: SHORT_NAMESPACE,
         redisKeyPrefix: SHORT_KEY_PREFIX,
         persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        versions: identityVersions(),
         counts: {
           analyze75ChildRows: microRows.length,
+          cleanMeasurementRows: cleanRows,
+          legacyMeasurementRows: legacyRows,
           selectedDiscord75ChildIds: activeIds.length,
           selectedParent15ContextIds: parentIds.length,
           openVirtualPositions: Number(data.openPositions || data.positionsCount || 0),
@@ -2636,7 +2748,8 @@
           avgDirectSLPct: averageDirectSL,
           scoring: "netR after costs",
           completedDefinition: "closed virtual/shadow outcomes only",
-          seenDefinition: "unique observation dedupe key"
+          seenDefinition: "unique observation dedupe key",
+          cleanMeasurementRequiredForPrimaryRanking: true
         },
         selectedDiscordIds: activeIds,
         selectedParentContextIds: parentIds,
@@ -2653,8 +2766,6 @@
           scannerFingerprintsUsedAsLearningFamily: false,
           executionFingerprintsUsedAsLearningFamily: false,
           learningIdentitySource: "ANALYZE_TRUE_MICRO_FAMILY",
-          trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-          parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
           selectionGranularity: "EXACT_75_CHILD",
           discordMatch: "candidate.trueMicroFamilyId === manuallySelected75ChildId",
           parentMatchTriggersDiscord: false,
@@ -2664,14 +2775,7 @@
           currentFitCanBlockDiscord: true,
           realOrdersDisabled: true
         },
-        shortRisk: {
-          riskGeometryRule: "tp < entry < sl",
-          tpHitRule: "price <= tp",
-          slHitRule: "price >= sl",
-          grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
-          currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
-          defaultPositionTimeStopMin: DEFAULT_POSITION_TIME_STOP_MIN
-        },
+        shortRisk: riskPolicyObject(),
         warnings: data.runtimeWarnings || data.warnings || [],
         error: data.error || data.reason || null,
         omitted: {
@@ -2683,19 +2787,14 @@
         }
       };
     }
-    // ---- EINDE NIEUWE HELPERS ----
 
     async function fetchMarket() {
       const url = marketApiUrl();
 
       try {
-        const data = await api(url, {
-          timeoutMs: 18000
-        });
-
+        const data = await api(url, { timeoutMs: 18000 });
         const market = extractMarketData(data || {});
         state.market = market;
-
         return market;
       } catch (error) {
         const data = {
@@ -2747,9 +2846,7 @@
         state.micros?.activeRotation?.trueMicroFamilyIds || [],
         state.overview?.activeMicroFamilyIds || [],
         state.trade?.activeMicroFamilyIds || []
-      ])
-        .filter(idAllowedInShortOnly)
-        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
     }
 
     function activeParentIds() {
@@ -2836,6 +2933,7 @@
             <span class="pill purple">VIRTUAL</span>
             <span class="pill ${currentR >= 0 ? "active" : "danger"}">${escapeHtml(fmt(currentR, 2))}R</span>
             ${currentFitPill(row)}
+            ${measurementPill(row)}
           </div>
 
           <div class="coin-stats">
@@ -2873,6 +2971,7 @@
           <tr>
             <td><strong>${escapeHtml(row.rank ?? index + 1)}</strong></td>
             <td><span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span></td>
+            <td>${measurementPill(row)}</td>
             <td class="micro-id-cell">
               <button class="small" type="button" data-open-micro="${escapeAttr(id)}">
                 <code>${escapeHtml(id || "NO_75_CHILD")}</code>
@@ -2889,8 +2988,8 @@
             <td>${fmtInt(obs)}</td>
             <td>${fmt(completed(row), 2)}</td>
             <td>${fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound)}</td>
-            <td>${fmt(row.avgR, 3)}</td>
-            <td>${fmt(row.totalR, 3)}</td>
+            <td>${fmt(netAvgR(row), 3)}</td>
+            <td>${fmt(netTotalR(row), 3)}</td>
             <td>${fmt(avgCostR(row), 3)}</td>
             <td>${fmtPct(directSLPct(row))}</td>
             <td>${currentFitPill(row)}</td>
@@ -2922,6 +3021,7 @@
               <div class="toolbar" style="margin:0">
                 <span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span>
                 <span class="pill short">SHORT</span>
+                ${measurementPill(row)}
               </div>
             </div>
 
@@ -2946,8 +3046,8 @@
               <div class="micro-stat-box"><span>Seen</span><strong>${escapeHtml(fmtInt(obs))}</strong></div>
               <div class="micro-stat-box"><span>Completed</span><strong>${escapeHtml(fmt(completed(row), 2))}</strong></div>
               <div class="micro-stat-box"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound))}</strong></div>
-              <div class="micro-stat-box"><span>AvgR net</span><strong>${escapeHtml(fmt(row.avgR, 3))}</strong></div>
-              <div class="micro-stat-box"><span>TotalR net</span><strong>${escapeHtml(fmt(row.totalR, 3))}</strong></div>
+              <div class="micro-stat-box"><span>AvgR net</span><strong>${escapeHtml(fmt(netAvgR(row), 3))}</strong></div>
+              <div class="micro-stat-box"><span>TotalR net</span><strong>${escapeHtml(fmt(netTotalR(row), 3))}</strong></div>
               <div class="micro-stat-box"><span>AvgCostR</span><strong>${escapeHtml(fmt(avgCostR(row), 3))}</strong></div>
               <div class="micro-stat-box"><span>DirectSL</span><strong>${escapeHtml(fmtPct(directSLPct(row)))}</strong></div>
               <div class="micro-stat-box"><span>FitScore</span><strong>${escapeHtml(fmt(currentFitScore(row), 1))}</strong></div>
@@ -2971,6 +3071,7 @@
               <tr>
                 <th>Rank</th>
                 <th>Discord</th>
+                <th>Meetlat</th>
                 <th>75-child true micro</th>
                 <th>Parent 15</th>
                 <th>Side</th>
@@ -3067,15 +3168,14 @@
       return {
         ok: data.ok !== false,
         health: scannerHealthStatus({ data, snapshot, candidates }),
-
         side: ONLY_SIDE,
         dashboardSide: DASHBOARD_SIDE,
         namespace: SHORT_NAMESPACE,
         redisKeyPrefix: SHORT_KEY_PREFIX,
-
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        versions: identityVersions(),
         apiRoute: endpoints.scanner,
         runRoute: endpoints.runScanner,
-
         snapshot: {
           snapshotId,
           createdAt: createdAt || null,
@@ -3084,7 +3184,6 @@
           source: data.selectedSnapshotSource || snapshot.selectedSnapshotSource || data.source || null,
           reason: data.selectedSnapshotReason || snapshot.selectedSnapshotReason || data.reason || null
         },
-
         counts: {
           rawCandidates: Array.isArray(rawCandidates) ? rawCandidates.length : 0,
           shortCandidates: candidates.length,
@@ -3094,7 +3193,6 @@
           filteredUniverse: Number(snapshot.filteredUniverse || data.filteredUniverse || data.scannerSnapshotStats?.filteredUniverse || 0) || null,
           rawUniverse: Number(snapshot.rawCount || data.rawCount || data.scannerSnapshotStats?.rawCount || 0) || null
         },
-
         scannerRules: {
           scannerWritesLearning: false,
           scannerWritesTrade: false,
@@ -3103,7 +3201,6 @@
           scannerFingerprintsUsedAsLearningFamily: false,
           learningIdentitySource: "ANALYZE_TRUE_MICRO_FAMILY"
         },
-
         market: {
           regime: data.marketContext?.regime || data.currentMarketWeather?.regime || data.currentMarketWeather?.currentRegime || null,
           trendSide: data.marketContext?.trendSide || data.currentMarketWeather?.trendSide || data.currentMarketWeather?.currentTrendSide || null,
@@ -3112,14 +3209,9 @@
           bearishPct: data.marketContext?.bearishPct || data.currentMarketWeather?.bearishPct || null,
           squeezePct: data.marketContext?.squeezePct || data.currentMarketWeather?.squeezePct || null
         },
-
         warnings,
         errors,
-
-        topCandidates: candidates
-          .slice(0, 12)
-          .map(compactScannerCandidate),
-
+        topCandidates: candidates.slice(0, 12).map(compactScannerCandidate),
         omitted: {
           fullCandidatesArray: true,
           rawUniverseRows: true,
@@ -3131,15 +3223,63 @@
       };
     }
 
+    function compactTradeApiOutput(data = {}) {
+      const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
+      const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
+
+      return {
+        ok: data.ok !== false,
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        versions: identityVersions(),
+        riskPolicy: riskPolicyObject(),
+        counts: {
+          openVirtualShortPositions: positions.length,
+          cleanMeasurementPositions: positions.filter(isCleanMeasurementRow).length,
+          legacyMeasurementPositions: positions.filter((row) => !isCleanMeasurementRow(row)).length,
+          active75ChildIds: (data.activeMicroFamilyIds || []).filter(idAllowedInShortOnly).length,
+          parentContextIds: (data.activeMacroFamilyIds || []).filter(parentIdAllowedInShortOnly).length
+        },
+        sync: {
+          scannerAndTradeInSync: Boolean(data.scannerAndTradeInSync),
+          lastProcessedSnapshotId: data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || null,
+          latestScannerSnapshotId: data.latestScannerSnapshotId || null
+        },
+        runMeta,
+        topPositions: positions.slice(0, 12).map((row) => ({
+          symbol: baseSymbol(row),
+          contractSymbol: row.contractSymbol || `${baseSymbol(row)}USDT`,
+          trueMicroFamilyId: microId(row) || null,
+          parentTrueMicroFamilyId: parentMicroId(row) || null,
+          entry: row.entry ?? null,
+          sl: row.sl ?? row.stopLoss ?? null,
+          tp: row.tp ?? row.takeProfit ?? null,
+          rr: row.rr ?? null,
+          currentR: row.currentR ?? row.shortCurrentR ?? null,
+          mfeR: row.mfeR ?? null,
+          maeR: row.maeR ?? null,
+          costR: row.costR ?? row.avgCostR ?? null,
+          directSL: Boolean(row.directSL || row.directToSL),
+          cleanMeasurement: isCleanMeasurementRow(row)
+        })),
+        omitted: {
+          fullPositionsArray: true,
+          verboseDebugFields: true,
+          reason: "COMPACT_TRADE_OUTPUT_FOR_CHATGPT_UPLOAD"
+        }
+      };
+    }
+
     function currentManualSelectionSlots() {
       const active = activeMicroIds()
         .map((id) => String(id || "").trim().toUpperCase())
         .filter(idAllowedInShortOnly)
         .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
-      while (active.length < MAX_ACTIVE_DISCORD_MICRO_FAMILIES) {
-        active.push("");
-      }
+      while (active.length < MAX_ACTIVE_DISCORD_MICRO_FAMILIES) active.push("");
 
       return active;
     }
@@ -3149,9 +3289,7 @@
       const cleanId = String(id || "").trim().toUpperCase();
       const index = Number(slotNumber) === 2 ? 1 : 0;
 
-      if (!idAllowedInShortOnly(cleanId)) {
-        return slots.filter(Boolean);
-      }
+      if (!idAllowedInShortOnly(cleanId)) return slots.filter(Boolean);
 
       slots[index] = cleanId;
 
@@ -3214,10 +3352,7 @@
     }
 
     function downloadJson(filename, data) {
-      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], {
-        type: "application/json"
-      });
-
+      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
 
@@ -3229,10 +3364,7 @@
     }
 
     async function fetchMicros() {
-      const data = await api(microApiUrl(), {
-        timeoutMs: 22000
-      });
-
+      const data = await api(microApiUrl(), { timeoutMs: 22000 });
       const rawRows = extractMicroRowsFromApiPayload(data);
       const rows = rankMicroRows(rawRows, state.microMode);
 
@@ -3246,9 +3378,7 @@
           data.activeRotation?.activeMicroFamilyIds || [],
           data.activeRotation?.microFamilyIds || [],
           data.activeRotation?.trueMicroFamilyIds || []
-        ])
-          .filter(idAllowedInShortOnly)
-          .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES),
+        ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES),
         activeMacroFamilyIds: uniqueStrings([
           data.activeMacroFamilyIds || [],
           data.selectedMacroFamilyIds || [],
@@ -3281,15 +3411,11 @@
       return state.micros;
     }
 
-    // ---- NIEUWE renderOverview ----
     async function renderOverview() {
       showLoading("overview");
 
       const [data, microData, market] = await Promise.all([
-        api(endpoints.overview).catch((error) => ({
-          ok: false,
-          error: friendlyApiMessage(error)
-        })),
+        api(endpoints.overview).catch((error) => ({ ok: false, error: friendlyApiMessage(error) })),
         ensureMicrosLoaded(),
         fetchMarket()
       ]);
@@ -3298,6 +3424,8 @@
       state.market = market;
 
       const microRows = microData?.rows || [];
+      const cleanRows = microRows.filter(isCleanMeasurementRow).length;
+      const legacyRows = Math.max(0, microRows.length - cleanRows);
       const activeCount = uniqueStrings([
         data.activeMicroFamilyIds || [],
         data.activeRotation?.activeMicroFamilyIds || [],
@@ -3321,22 +3449,23 @@
           ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
           ${metricCard("Selectable children", "75", "5 setups × 3 regimes × 5 confirmations")}
           ${metricCard("Parent families", "15", "metadata/context, not Discord match")}
+          ${metricCard("Clean rows", fmtInt(cleanRows), `${fmtInt(legacyRows)} legacy/polluted rows zichtbaar`)}
           ${metricCard("Discord selected 75-child IDs", fmtInt(activeCount))}
           ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
           ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
           ${metricCard("Analyze 75-child rows", fmtInt(microRows.length || data.currentWeekMicroFamilies))}
-          ${metricCard("Default top N per side", "2", "engine selecteert minimaal 2 microfamilies")}
+          ${metricCard("Default top N per side", "2", "manual Discord limiet")}
         </div>
 
         <div class="grid">
           ${metricCard("OBSERVING", fmtInt(observing), "completed = 0")}
           ${metricCard("EARLY_OUTCOMES", fmtInt(early), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1}`)}
           ${metricCard("ACTIVE_LEARNING", fmtInt(active), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
-          ${metricCard("Ranking", "adaptive", "adaptive → balanced → fair → netR → cost")}
+          ${metricCard("Ranking", state.microMode, "clean → adaptive → fair → netR → cost")}
           ${metricCard("AvgCostR", fmt(avgCost, 3), "gemiddelde over zichtbare 75-child rows")}
-          ${metricCard("Avg DirectSL", fmtPct(avgDirectSL), "directSL hoort correct te tellen")}
+          ${metricCard("Avg DirectSL", fmtPct(avgDirectSL), "directSL hoort laag te blijven")}
           ${metricCard("Market regime", market.regime || "UNKNOWN", market.ageText)}
-          ${metricCard("Trend side", market.trendSide || "UNKNOWN", "CurrentFit is soft")}
+          ${metricCard("Trend side", market.trendSide || "UNKNOWN", "CurrentFit is soft voor learning")}
         </div>
 
         <div class="grid-3">
@@ -3347,33 +3476,31 @@
               <span class="pill info">Selection adaptief</span>
               <span class="pill danger">Discord streng</span>
               <span class="pill soft">CurrentFit soft</span>
+              <span class="pill clean">Clean rows first</span>
             </div>
             <div class="metric-extra">
               CurrentFit blokkeert geen virtual/shadow learning. Het beïnvloedt ranking, rotation en Discord-eligibility.
+              Legacy meetdata wordt zichtbaar gehouden, maar lager gerankt.
             </div>
           </div>
 
           <div class="card">
             <h3>Meetlat</h3>
             ${jsonBlock({
-              measurementFixVersion: MEASUREMENT_FIX_VERSION,
+              versions: identityVersions(),
               completed: "closed virtual/shadow outcomes only",
               scoring: "netR after costs",
               avgCostR: "costR",
               directSL: "directToSL/directSL/SL before meaningful favorable excursion",
               seen: "deduped unique observation key",
               rawWinrateRanking: "disabled",
-              riskGeometryRule: "SHORT: tp < entry < sl",
-              grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
-              currentRFormula: "(entry - currentPrice) / (initialSl - entry)"
+              risk: riskPolicyObject()
             })}
           </div>
 
           <div class="card">
             <h3>Identity</h3>
             ${jsonBlock({
-              trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-              parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
               selectionGranularity: "EXACT_75_CHILD",
               discordMatch: "candidate.trueMicroFamilyId === manuallySelected75ChildId",
               parentMatchTriggersDiscord: false,
@@ -3405,7 +3532,6 @@
       $("selectOverviewOutputBtn")?.addEventListener("click", () => {
         const box = $("overviewApiOutput");
         if (!box) return;
-
         box.focus();
         box.select();
         box.setSelectionRange(0, box.value.length);
@@ -3417,7 +3543,6 @@
       });
     }
 
-    // ---- NIEUWE renderMarket ----
     async function renderMarket() {
       showLoading("market");
 
@@ -3470,7 +3595,7 @@
             <span class="pill danger">discord strict later</span>
           </div>
           <div class="metric-extra">
-            MarketWeather is alleen context. Learning blijft gewoon doorlopen.
+            MarketWeather is context. Learning blijft breed doorlopen.
           </div>
         </div>
 
@@ -3490,37 +3615,26 @@
 
       $("copyMarketOutputBtn")?.addEventListener("click", copyMarketOutput);
       $("copyMarketOutputBtn2")?.addEventListener("click", copyMarketOutput);
-
-      $("copyMarketUrlBtn")?.addEventListener("click", () => {
-        copyText(endpointUrl, "marketWeather.js API URL gekopieerd.");
-      });
+      $("copyMarketUrlBtn")?.addEventListener("click", () => copyText(endpointUrl, "marketWeather.js API URL gekopieerd."));
 
       $("selectMarketOutputBtn")?.addEventListener("click", () => {
         const box = $("marketApiOutput");
         if (!box) return;
-
         box.focus();
         box.select();
         box.setSelectionRange(0, box.value.length);
         setMessage("Compacte marketWeather output geselecteerd. Je kunt nu kopiëren.", "ok");
       });
 
-      $("openMarketApiBtn")?.addEventListener("click", () => {
-        window.open(endpointUrl, "_blank", "noopener,noreferrer");
-      });
-
-      $("exportMarketBtn")?.addEventListener("click", () => {
-        downloadJson("marketWeather-compact-short.json", compactOutput);
-      });
+      $("openMarketApiBtn")?.addEventListener("click", () => window.open(endpointUrl, "_blank", "noopener,noreferrer"));
+      $("exportMarketBtn")?.addEventListener("click", () => downloadJson("marketWeather-compact-short.json", compactOutput));
     }
 
     async function renderScanner() {
       showLoading("scanner");
 
       const endpointUrl = scannerApiUrl();
-      const data = await api(endpointUrl, {
-        timeoutMs: 22000
-      });
+      const data = await api(endpointUrl, { timeoutMs: 22000 });
 
       state.scanner = data;
 
@@ -3606,30 +3720,20 @@
       }
 
       $("runScannerBtn")?.addEventListener("click", runScannerNow);
-
       $("copyScannerBtn")?.addEventListener("click", copyScannerOutput);
       $("copyScannerOutputBtn2")?.addEventListener("click", copyScannerOutput);
-
-      $("copyScannerUrlBtn")?.addEventListener("click", () => {
-        copyText(endpointUrl, "Scanner API URL gekopieerd.");
-      });
+      $("copyScannerUrlBtn")?.addEventListener("click", () => copyText(endpointUrl, "Scanner API URL gekopieerd."));
 
       $("selectScannerOutputBtn")?.addEventListener("click", () => {
         const box = $("scannerApiOutput");
         if (!box) return;
-
         box.focus();
         box.select();
         setMessage("Compacte scanner output geselecteerd. Je kunt nu kopiëren.", "ok");
       });
 
-      $("openScannerApiBtn")?.addEventListener("click", () => {
-        window.open(endpointUrl, "_blank", "noopener,noreferrer");
-      });
-
-      $("exportScannerBtn")?.addEventListener("click", () => {
-        downloadJson("scanner-health-compact-short.json", compactOutput);
-      });
+      $("openScannerApiBtn")?.addEventListener("click", () => window.open(endpointUrl, "_blank", "noopener,noreferrer"));
+      $("exportScannerBtn")?.addEventListener("click", () => downloadJson("scanner-health-compact-short.json", compactOutput));
     }
 
     async function runScannerNow() {
@@ -3661,7 +3765,14 @@
             noMicroFamilySelection: true,
             persistentLearningKey: PERSISTENT_LEARNING_KEY,
             redisNamespace: SHORT_NAMESPACE,
-            redisKeyPrefix: SHORT_KEY_PREFIX
+            redisKeyPrefix: SHORT_KEY_PREFIX,
+            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+            riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+            costModelVersion: POSITION_COST_MODEL_VERSION,
+            measurementFixVersion: MEASUREMENT_FIX_VERSION,
+            observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+            outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION
           })
         });
 
@@ -3675,20 +3786,34 @@
     async function renderTrade() {
       showLoading("trade");
 
-      const data = await api(endpoints.trade);
+      const endpointUrl = tradeApiUrl();
+      const data = await api(endpointUrl);
       state.trade = data;
 
       const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
+      const cleanPositions = positions.filter(isCleanMeasurementRow).length;
+      const legacyPositions = positions.length - cleanPositions;
       const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
+      const compactOutput = compactTradeApiOutput(data);
+      const compactOutputJson = JSON.stringify(compactOutput, null, 2);
 
       $("trade").innerHTML = `
         <div class="toolbar">
           <button type="button" class="primary" id="runTradeBtn">Run TradeSystem now</button>
           <button type="button" id="copyTradeBtn">Copy JSON</button>
+          <button type="button" id="copyTradeUrlBtn">Copy API URL</button>
+          <button type="button" id="selectTradeOutputBtn">Select compact output</button>
+          <button type="button" id="exportTradeBtn">Export compact JSON</button>
+        </div>
+
+        <div class="api-url-box">
+          <strong>API URL:</strong>
+          <code>${escapeHtml(endpointUrl)}</code>
         </div>
 
         <div class="grid">
           ${metricCard("Open virtual SHORT", fmtInt(positions.length))}
+          ${metricCard("Clean positions", fmtInt(cleanPositions), `${fmtInt(legacyPositions)} legacy`)}
           ${metricCard("Scanner/trade sync", data.scannerAndTradeInSync ? "YES" : "NO")}
           ${metricCard("Last processed", data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || "-")}
           ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
@@ -3701,7 +3826,7 @@
         <div class="section-title">
           <div>
             <h2>Open virtual SHORT positions</h2>
-            <p>Risk moet zijn: tp &lt; entry &lt; sl. Exit: price &lt;= tp, price &gt;= sl, of TIME_STOP.</p>
+            <p>Risk: tp &lt; entry &lt; sl. Exit: candle.low &lt;= tp, candle.high &gt;= sl, of TIME_STOP. Als beide in dezelfde candle vallen: conservatief SL.</p>
           </div>
         </div>
 
@@ -3713,6 +3838,7 @@
           { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
           { label: "Source", render: () => '<span class="pill purple">VIRTUAL</span>' },
           { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+          { label: "Meetlat", render: (row) => measurementPill(row) },
           { label: "Entry", render: (row) => fmtPrice(row.entry) },
           { label: "SL", render: (row) => fmtPrice(row.sl || row.stopLoss) },
           { label: "TP", render: (row) => fmtPrice(row.tp || row.takeProfit) },
@@ -3723,7 +3849,9 @@
           { label: "CostR", render: (row) => fmt(row.costR || row.avgCostR, 3) },
           { label: "DirectSL", render: (row) => row.directSL || row.directToSL ? '<span class="pill danger">YES</span>' : '<span class="pill active">NO</span>' },
           { label: "CurrentFit", render: (row) => currentFitPill(row) },
-          { label: "Exit flags", render: (row) => `
+          { label: "First-touch", render: (row) => `
+            ${row.candleFirstTouch || row.firstTouchExit ? '<span class="pill clean">CANDLE</span>' : ""}
+            ${row.conservativeExit ? '<span class="pill danger">CONSERVATIVE</span>' : ""}
             ${row.tpHitNow || row.tpExitArmed || row.shortTpHit ? '<span class="pill active">TP</span>' : ""}
             ${row.slHitNow || row.slExitArmed || row.shortSlHit ? '<span class="pill danger">SL</span>' : ""}
             ${row.timeStopHitNow || row.timeStopExitArmed ? '<span class="pill warn">TIME</span>' : ""}
@@ -3734,13 +3862,39 @@
         ], "Geen open virtual SHORT posities.")}
 
         <div class="card">
+          <div class="api-output-head">
+            <h3>Trade output — compact</h3>
+            <button type="button" class="copy-big" id="copyTradeOutputBtn2">Kopieer compact</button>
+          </div>
+          <textarea id="tradeApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactOutputJson)}</textarea>
+        </div>
+
+        <div class="card">
           <h3>Run meta</h3>
           ${jsonBlock(runMeta)}
         </div>
       `;
 
+      function copyTradeOutput() {
+        const box = $("tradeApiOutput");
+        copyText(box?.value || compactOutputJson, "Compacte Trade output gekopieerd.");
+      }
+
       $("runTradeBtn")?.addEventListener("click", runTradeNow);
-      $("copyTradeBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Trade JSON gekopieerd."));
+      $("copyTradeBtn")?.addEventListener("click", copyTradeOutput);
+      $("copyTradeOutputBtn2")?.addEventListener("click", copyTradeOutput);
+      $("copyTradeUrlBtn")?.addEventListener("click", () => copyText(endpointUrl, "Trade API URL gekopieerd."));
+
+      $("selectTradeOutputBtn")?.addEventListener("click", () => {
+        const box = $("tradeApiOutput");
+        if (!box) return;
+        box.focus();
+        box.select();
+        box.setSelectionRange(0, box.value.length);
+        setMessage("Compacte trade output geselecteerd. Je kunt nu kopiëren.", "ok");
+      });
+
+      $("exportTradeBtn")?.addEventListener("click", () => downloadJson("trade-compact-short.json", compactOutput));
     }
 
     async function runTradeNow() {
@@ -3793,12 +3947,19 @@
             currentFitBlocksLearning: false,
             currentFitBlocksVirtualLearning: false,
             currentFitBlocksShadowLearning: false,
-            shortRiskShape: {
-              expression: "tp < entry < sl"
-            },
+            riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+            costModelVersion: POSITION_COST_MODEL_VERSION,
+            measurementFixVersion: MEASUREMENT_FIX_VERSION,
+            observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+            outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+            monitorCandleRangeEnabled: true,
+            candleFirstTouchEnabled: true,
+            conservativeSameCandleExit: true,
+            shortRiskShape: { expression: "tp < entry < sl" },
             riskGeometryRule: "SHORT: tp < entry < sl",
-            tpHitRule: "SHORT: price <= tp",
-            slHitRule: "SHORT: price >= sl",
+            tpHitRule: "SHORT: candle.low <= tp",
+            slHitRule: "SHORT: candle.high >= sl",
+            sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
             grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
             currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
             discordOnlyForSelectedMicroFamilies: true,
@@ -3845,6 +4006,7 @@
           <div class="toolbar">
             <span class="pill short">SHORT</span>
             <span class="pill dark">75-child exact</span>
+            ${measurementPill(row)}
             ${isActive ? '<span class="pill active">DISCORD ACTIVE</span>' : '<span class="pill info">NOT SELECTED</span>'}
             ${tierPill(tier(row))}
             ${statusPill(row)}
@@ -3868,7 +4030,7 @@
             <div class="manual-stat"><span>Status</span><strong>${escapeHtml(learningStatus(row))}</strong></div>
             <div class="manual-stat"><span>Sample</span><strong>${tooEarly(row) ? `TE VROEG ${fmt(completed(row), 0)}/${MIN_COMPLETED_ACTIVE_LEARNING}` : "OK"}</strong></div>
             <div class="manual-stat"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}</strong></div>
-            <div class="manual-stat"><span>Net TotalR</span><strong>${escapeHtml(fmt(row.totalR, 3))}</strong></div>
+            <div class="manual-stat"><span>Net TotalR</span><strong>${escapeHtml(fmt(netTotalR(row), 3))}</strong></div>
             <div class="manual-stat"><span>AvgCostR</span><strong>${escapeHtml(fmt(avgCostR(row), 3))}</strong></div>
             <div class="manual-stat"><span>DirectSL</span><strong>${escapeHtml(fmtPct(directSLPct(row)))}</strong></div>
             <div class="manual-stat"><span>CurrentFit</span><strong>${escapeHtml(currentFit(row))}</strong></div>
@@ -3899,11 +4061,7 @@
       try {
         state.micros = await fetchMicros();
       } catch (error) {
-        state.micros = {
-          rows: [],
-          error: friendlyApiMessage(error)
-        };
-
+        state.micros = { rows: [], error: friendlyApiMessage(error) };
         setMessage(state.micros.error, "warn");
       }
 
@@ -3913,6 +4071,8 @@
       const observingRows = rows.filter((row) => learningStatus(row) === "OBSERVING");
       const earlyRows = rows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES");
       const activeRows = rows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING");
+      const cleanRows = rows.filter(isCleanMeasurementRow);
+      const legacyRows = rows.filter((row) => !isCleanMeasurementRow(row));
       const misfitRows = rows.filter((row) => currentFit(row) === "MISFIT");
 
       $("micros").innerHTML = `
@@ -3935,7 +4095,7 @@
           <h3>MicroFamilies ranking policy</h3>
           <div class="toolbar">
             <span class="pill dark">75 selectable children</span>
-            <span class="pill dark">15 parent context rows</span>
+            <span class="pill clean">clean rows first</span>
             <span class="pill dark">adaptive/balanced/fair/netR/cost</span>
             <span class="pill observation">OBSERVING = completed 0</span>
             <span class="pill soft">EARLY_OUTCOMES = completed 1-19</span>
@@ -3945,7 +4105,7 @@
           </div>
           <div class="metric-extra">
             Dashboard toont alleen echte Analyze 75-child trueMicroFamilyIds.
-            Scanner fingerprints, execution fingerprints, oude 25 buckets en coinnamen worden niet als leerfamilie getoond.
+            Legacy/polluted rows worden niet weggegooid, maar wel lager gerankt zodat nieuwe candle first-touch data leidend wordt.
           </div>
         </div>
 
@@ -3960,6 +4120,7 @@
 
         <div class="grid">
           ${metricCard("Analyze 75-child rows", fmtInt(rows.length), `API totalAvailable=${fmtInt(state.micros?.totalAvailable || rows.length)}`)}
+          ${metricCard("Clean measurement", fmtInt(cleanRows.length), `${fmtInt(legacyRows.length)} legacy`)}
           ${metricCard("OBSERVING", fmtInt(observingRows.length), "completed = 0")}
           ${metricCard("EARLY_OUTCOMES", fmtInt(earlyRows.length), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1}`)}
           ${metricCard("ACTIVE_LEARNING", fmtInt(activeRows.length), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
@@ -3976,6 +4137,8 @@
           ${jsonBlock({
             ok: state.micros?.ok,
             rowsRendered: rows.length,
+            cleanRows: cleanRows.length,
+            legacyRows: legacyRows.length,
             rawExtractedRows: state.micros?.rawExtractedRows || 0,
             best75Count: state.micros?.best75Count ?? null,
             best25CountLegacyIgnored: state.micros?.best25Count ?? null,
@@ -3983,13 +4146,10 @@
             weekRows: state.micros?.weekRows ?? null,
             primaryWeekRows: state.micros?.primaryWeekRows ?? null,
             rawScannerFingerprintRowsHidden: state.micros?.rawScannerFingerprintRowsHidden ?? null,
-            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-            rankingPolicy: "adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR",
-            measurementFixVersion: MEASUREMENT_FIX_VERSION,
-            adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+            versions: identityVersions(),
+            rankingPolicy: "cleanMeasurement|adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR",
             currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
-            riskGeometryRule: "SHORT: tp < entry < sl",
+            risk: riskPolicyObject(),
             warnings: state.micros?.warnings || [],
             error: state.micros?.error || null
           })}
@@ -4025,13 +4185,8 @@
         activateSelectedMicroFamilies(ids);
       });
 
-      $("activateTopTwoBtn")?.addEventListener("click", () => {
-        activateTopN(2);
-      });
-
-      $("exportMicrosBtn")?.addEventListener("click", () => {
-        downloadJson("short-75-child-micro-families.json", state.micros);
-      });
+      $("activateTopTwoBtn")?.addEventListener("click", () => activateTopN(2));
+      $("exportMicrosBtn")?.addEventListener("click", () => downloadJson("short-75-child-micro-families.json", state.micros));
 
       bindMicroEvents();
     }
@@ -4048,9 +4203,7 @@
     async function renderRotation() {
       showLoading("rotation");
 
-      const data = await api(rotationApiUrl(), {
-        timeoutMs: 22000
-      });
+      const data = await api(rotationApiUrl(), { timeoutMs: 22000 });
 
       state.rotation = data;
 
@@ -4060,9 +4213,7 @@
         active.microFamilyIds || [],
         active.trueMicroFamilyIds || [],
         data.activeMicroFamilyIds || []
-      ])
-        .filter(idAllowedInShortOnly)
-        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
       const parentIds = uniqueStrings([
         active.activeMacroFamilyIds || [],
@@ -4084,7 +4235,13 @@
             side: DASHBOARD_SIDE,
             selectedTier: "MANUAL",
             shortOnly: true,
-            longDisabled: true
+            longDisabled: true,
+            riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+            costModelVersion: POSITION_COST_MODEL_VERSION,
+            measurementFixVersion: MEASUREMENT_FIX_VERSION,
+            observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+            outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+            measurementClean: true
           }))
         )
         .filter((row, index, arr) => arr.findIndex((candidate) => microId(candidate) === microId(row)) === index);
@@ -4137,7 +4294,11 @@
 
         <div class="card">
           <h3>Raw rotation dashboard</h3>
-          ${jsonBlock(data)}
+          ${jsonBlock({
+            ...data,
+            versions: identityVersions(),
+            risk: riskPolicyObject()
+          })}
         </div>
       `;
 
@@ -4146,21 +4307,10 @@
         activateSelectedMicroFamilies(ids);
       });
 
-      $("activateTopTwoRotationBtn")?.addEventListener("click", () => {
-        activateTopN(2);
-      });
-
-      $("clearManualBtn")?.addEventListener("click", () => {
-        $("manualMicroIds").value = "";
-      });
-
-      $("copyActiveBtn")?.addEventListener("click", () => {
-        copyText(JSON.stringify(activeIds, null, 2), "Active 75-child IDs gekopieerd.");
-      });
-
-      $("exportRotationBtn")?.addEventListener("click", () => {
-        downloadJson("manual-discord-selection-short-75-child.json", data);
-      });
+      $("activateTopTwoRotationBtn")?.addEventListener("click", () => activateTopN(2));
+      $("clearManualBtn")?.addEventListener("click", () => { $("manualMicroIds").value = ""; });
+      $("copyActiveBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), "Active 75-child IDs gekopieerd."));
+      $("exportRotationBtn")?.addEventListener("click", () => downloadJson("manual-discord-selection-short-75-child.json", data));
 
       bindMicroEvents();
     }
@@ -4227,9 +4377,15 @@
           currentFitSoftOnly: true,
           currentFitBlocksLearning: false,
           selectionIsAdaptive: true,
+          riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+          costModelVersion: POSITION_COST_MODEL_VERSION,
+          measurementFixVersion: MEASUREMENT_FIX_VERSION,
+          observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+          outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
           riskGeometryRule: "SHORT: tp < entry < sl",
-          tpHitRule: "SHORT: price <= tp",
-          slHitRule: "SHORT: price >= sl",
+          tpHitRule: "SHORT: candle.low <= tp",
+          slHitRule: "SHORT: candle.high >= sl",
+          sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
           grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
           currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
           discordOnlyForSelectedMicroFamilies: true,
@@ -4246,9 +4402,7 @@
         active.microFamilyIds || [],
         active.trueMicroFamilyIds || [],
         data.activeMicroFamilyIds || []
-      ])
-        .filter(idAllowedInShortOnly)
-        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
       state.rotation = {
         ...(state.rotation || {}),
@@ -4286,10 +4440,8 @@
       $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
 
       try {
-        const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}`, {
-          timeoutMs: 18000
-        });
-
+        const params = commonSideParams();
+        const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}?${params.toString()}`, { timeoutMs: 18000 });
         const row = normalizeMicroRowForUi(data.row || data.microFamily || data);
 
         drawer.innerHTML = `
@@ -4304,6 +4456,7 @@
           <div class="toolbar">
             <span class="pill short">SHORT</span>
             <span class="pill dark">75-child exact</span>
+            ${measurementPill(row)}
             ${statusPill(row)}
             ${currentFitPill(row)}
             ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
@@ -4319,12 +4472,28 @@
             ${metricCard("Completed", fmt(completed(row), 2), tooEarly(row) ? `minimum ${MIN_COMPLETED_ACTIVE_LEARNING}` : "active learning")}
             ${metricCard("Winrate raw", fmtPct(row.winrate))}
             ${metricCard("Fair WR", fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}
-            ${metricCard("AvgR net", fmt(row.avgR, 3))}
-            ${metricCard("TotalR net", fmt(row.totalR, 3))}
+            ${metricCard("AvgR net", fmt(netAvgR(row), 3))}
+            ${metricCard("TotalR net", fmt(netTotalR(row), 3))}
             ${metricCard("AvgCostR", fmt(avgCostR(row), 3))}
             ${metricCard("DirectSL", fmtPct(directSLPct(row)))}
             ${metricCard("CurrentFit", currentFit(row))}
             ${metricCard("Adaptive", fmt(adaptiveScore(row), 2))}
+          </div>
+
+          <div class="card">
+            <h3>Measurement identity</h3>
+            ${jsonBlock({
+              cleanMeasurement: isCleanMeasurementRow(row),
+              rowVersions: {
+                riskPlanVersion: rowRiskPlanVersion(row),
+                costModelVersion: rowCostModelVersion(row),
+                measurementFixVersion: rowMeasurementFixVersion(row),
+                observationDedupeVersion: rowObservationDedupeVersion(row),
+                outcomeDedupeVersion: rowOutcomeDedupeVersion(row)
+              },
+              expectedVersions: identityVersions(),
+              riskPolicy: riskPolicyObject()
+            })}
           </div>
 
           <div class="card">
@@ -4360,9 +4529,9 @@
     async function renderDiscord() {
       showLoading("discord");
 
-      const data = await api(`${endpoints.discord}?limit=60`, {
-        timeoutMs: 18000
-      });
+      const params = commonSideParams();
+      params.set("limit", "60");
+      const data = await api(`${endpoints.discord}?${params.toString()}`, { timeoutMs: 18000 });
 
       state.discord = data;
 
@@ -4421,6 +4590,7 @@
             <h3>Reset learning only</h3>
             <p class="metric-extra">
               Wist SHORT learning data onder ${SHORT_KEY_PREFIX}. Manual Discord selection, open virtual positions en scanner snapshots blijven staan.
+              Gebruik dit na meetlat-fixes als oude data vervuild is.
             </p>
             <button type="button" class="warn" id="resetLearningBtn">Reset learning</button>
           </div>
@@ -4448,6 +4618,14 @@
         </div>
 
         <div class="card">
+          <h3>Actieve versies</h3>
+          ${jsonBlock({
+            versions: identityVersions(),
+            riskPolicy: riskPolicyObject()
+          })}
+        </div>
+
+        <div class="card">
           <h3>Reset result</h3>
           <pre id="resetResult">Nog geen reset uitgevoerd.</pre>
         </div>
@@ -4456,6 +4634,30 @@
       $("resetLearningBtn")?.addEventListener("click", postResetLearning);
       $("resetRotationBtn")?.addEventListener("click", postResetRotation);
       $("factoryResetBtn")?.addEventListener("click", postFactoryReset);
+    }
+
+    function resetPayload(confirmText, extra = {}) {
+      return {
+        confirm: confirmText,
+        confirmed: confirmText,
+        confirmation: confirmText,
+        side: DASHBOARD_SIDE,
+        tradeSide: ONLY_SIDE,
+        targetTradeSide: ONLY_SIDE,
+        shortOnly: true,
+        longDisabled: true,
+        trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+        parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        redisNamespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+        costModelVersion: POSITION_COST_MODEL_VERSION,
+        measurementFixVersion: MEASUREMENT_FIX_VERSION,
+        observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+        outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+        ...extra
+      };
     }
 
     async function postResetLearning() {
@@ -4467,21 +4669,7 @@
         const data = await api(endpoints.resetLearning, {
           method: "POST",
           timeoutMs: 30000,
-          body: JSON.stringify({
-            confirm: "RESET_LEARNING_SHORT",
-            confirmed: "RESET_LEARNING_SHORT",
-            confirmation: "RESET_LEARNING_SHORT",
-            side: DASHBOARD_SIDE,
-            tradeSide: ONLY_SIDE,
-            targetTradeSide: ONLY_SIDE,
-            shortOnly: true,
-            longDisabled: true,
-            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-            persistentLearningKey: PERSISTENT_LEARNING_KEY,
-            redisNamespace: SHORT_NAMESPACE,
-            redisKeyPrefix: SHORT_KEY_PREFIX
-          })
+          body: JSON.stringify(resetPayload("RESET_LEARNING_SHORT"))
         });
 
         $("resetResult").textContent = JSON.stringify(data, null, 2);
@@ -4500,21 +4688,7 @@
         const data = await api(endpoints.resetRotation, {
           method: "POST",
           timeoutMs: 30000,
-          body: JSON.stringify({
-            confirm: "RESET_ROTATION_SHORT",
-            confirmed: "RESET_ROTATION_SHORT",
-            confirmation: "RESET_ROTATION_SHORT",
-            side: DASHBOARD_SIDE,
-            tradeSide: ONLY_SIDE,
-            targetTradeSide: ONLY_SIDE,
-            shortOnly: true,
-            longDisabled: true,
-            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-            persistentLearningKey: PERSISTENT_LEARNING_KEY,
-            redisNamespace: SHORT_NAMESPACE,
-            redisKeyPrefix: SHORT_KEY_PREFIX
-          })
+          body: JSON.stringify(resetPayload("RESET_ROTATION_SHORT"))
         });
 
         $("resetResult").textContent = JSON.stringify(data, null, 2);
@@ -4539,23 +4713,10 @@
         const data = await api(endpoints.factoryReset, {
           method: "POST",
           timeoutMs: 30000,
-          body: JSON.stringify({
-            confirm: "SHORT_FACTORY_RESET_CONFIRMED",
-            confirmed: "SHORT_FACTORY_RESET_CONFIRMED",
-            confirmation: "SHORT_FACTORY_RESET_CONFIRMED",
+          body: JSON.stringify(resetPayload("SHORT_FACTORY_RESET_CONFIRMED", {
             force,
-            forceClosePositions: force,
-            side: DASHBOARD_SIDE,
-            tradeSide: ONLY_SIDE,
-            targetTradeSide: ONLY_SIDE,
-            shortOnly: true,
-            longDisabled: true,
-            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-            persistentLearningKey: PERSISTENT_LEARNING_KEY,
-            redisNamespace: SHORT_NAMESPACE,
-            redisKeyPrefix: SHORT_KEY_PREFIX
-          })
+            forceClosePositions: force
+          }))
         });
 
         $("resetResult").textContent = JSON.stringify(data, null, 2);
@@ -4595,7 +4756,7 @@
 
     async function refresh(tab = state.activeTab) {
       setMessage("");
-      $("liveLabel").textContent = `SHORT-only · broad learning · adaptive selection · ${new Date().toLocaleTimeString()}`;
+      $("liveLabel").textContent = `SHORT-only · clean measurement · adaptive selection · ${new Date().toLocaleTimeString()}`;
 
       try {
         if (tab === "overview") return await renderOverview();
