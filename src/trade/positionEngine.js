@@ -40,8 +40,8 @@ const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const POSITION_SOURCE = 'VIRTUAL';
 const OUTCOME_SOURCE = 'VIRTUAL';
 
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V10';
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_FAST_OPEN_POSITION_MONITOR_V3';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V11';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_V4';
 
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
@@ -55,11 +55,18 @@ const DEFAULT_OPEN_POSITION_READ_TIMEOUT_MS = 750;
 const DEFAULT_MONITOR_POSITION_LIMIT = 30;
 const DEFAULT_MONITOR_BATCH_SIZE = 30;
 const DEFAULT_MONITOR_CONCURRENCY = 2;
-const DEFAULT_MONITOR_RUNTIME_MS = 3000;
-const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 650;
+const DEFAULT_MONITOR_RUNTIME_MS = 6000;
+const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 1800;
 const DEFAULT_PRICE_FETCH_TIMEOUT_MS = 350;
+const DEFAULT_CANDLE_FETCH_TIMEOUT_MS = 1200;
 const DEFAULT_RECORD_OUTCOME_TIMEOUT_MS = 1200;
-const DEFAULT_DISCORD_EXIT_TIMEOUT_MS = 900;
+const DEFAULT_DISCORD_EXIT_TIMEOUT_MS = 1200;
+
+const BITGET_BASE_URL = 'https://api.bitget.com';
+const BITGET_PRODUCT_TYPE = 'USDT-FUTURES';
+const BITGET_CANDLE_GRANULARITY = '1m';
+const DEFAULT_RANGE_LOOKBACK_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_RANGE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -362,8 +369,8 @@ function tradeConfig(options = {}) {
         CONFIG.short?.trade?.monitorOnePositionTimeoutMs ??
         CONFIG.trade?.monitorOnePositionTimeoutMs,
       DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS,
-      100,
-      3000
+      250,
+      5000
     ),
 
     priceFetchTimeoutMs: clampInt(
@@ -374,6 +381,47 @@ function tradeConfig(options = {}) {
       DEFAULT_PRICE_FETCH_TIMEOUT_MS,
       50,
       2000
+    ),
+
+    candleFetchTimeoutMs: clampInt(
+      options.candleFetchTimeoutMs ??
+        options.monitorCandleFetchTimeoutMs ??
+        CONFIG.short?.trade?.candleFetchTimeoutMs ??
+        CONFIG.short?.trade?.monitorCandleFetchTimeoutMs ??
+        CONFIG.trade?.candleFetchTimeoutMs ??
+        CONFIG.trade?.monitorCandleFetchTimeoutMs,
+      DEFAULT_CANDLE_FETCH_TIMEOUT_MS,
+      150,
+      5000
+    ),
+
+    monitorCandleRangeEnabled:
+      options.monitorCandleRangeEnabled !== false &&
+      CONFIG.short?.trade?.monitorCandleRangeEnabled !== false &&
+      CONFIG.trade?.monitorCandleRangeEnabled !== false,
+
+    rangeLookbackMs: clampInt(
+      options.rangeLookbackMs ??
+        options.monitorRangeLookbackMs ??
+        CONFIG.short?.trade?.rangeLookbackMs ??
+        CONFIG.short?.trade?.monitorRangeLookbackMs ??
+        CONFIG.trade?.rangeLookbackMs ??
+        CONFIG.trade?.monitorRangeLookbackMs,
+      DEFAULT_RANGE_LOOKBACK_MS,
+      60 * 1000,
+      DEFAULT_MAX_RANGE_LOOKBACK_MS
+    ),
+
+    maxRangeLookbackMs: clampInt(
+      options.maxRangeLookbackMs ??
+        options.monitorMaxRangeLookbackMs ??
+        CONFIG.short?.trade?.maxRangeLookbackMs ??
+        CONFIG.short?.trade?.monitorMaxRangeLookbackMs ??
+        CONFIG.trade?.maxRangeLookbackMs ??
+        CONFIG.trade?.monitorMaxRangeLookbackMs,
+      DEFAULT_MAX_RANGE_LOOKBACK_MS,
+      5 * 60 * 1000,
+      24 * 60 * 60 * 1000
     ),
 
     persistNoPriceFailures: options.persistNoPriceFailures === true
@@ -1570,13 +1618,420 @@ function fallbackExitPrice(position = {}) {
   return price > 0 ? price : safeNumber(position.entry, 0);
 }
 
-function detectExit({
+function bitgetSymbol(position = {}) {
+  const raw = String(
+    position.contractSymbol ||
+      position.symbol ||
+      position.baseSymbol ||
+      ''
+  )
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+  if (!raw) return '';
+
+  return raw.endsWith('USDT') ? raw : `${raw}USDT`;
+}
+
+function normalizePriceProbe(value, fallbackSource = 'UNKNOWN') {
+  if (typeof value === 'number') {
+    const n = safeNumber(value, 0);
+
+    return {
+      ok: n > 0,
+      last: n,
+      high: n,
+      low: n,
+      source: fallbackSource,
+      firstTouch: null,
+      rangeStart: null,
+      rangeEnd: null,
+      candles: 0
+    };
+  }
+
+  if (!value || typeof value !== 'object') {
+    return {
+      ok: false,
+      last: 0,
+      high: 0,
+      low: 0,
+      source: fallbackSource,
+      firstTouch: null,
+      rangeStart: null,
+      rangeEnd: null,
+      candles: 0
+    };
+  }
+
+  const last = safeNumber(
+    value.last ??
+      value.price ??
+      value.currentPrice ??
+      value.close ??
+      value.markPrice,
+    0
+  );
+
+  const high = safeNumber(
+    value.high ??
+      value.highPrice ??
+      value.max ??
+      last,
+    last
+  );
+
+  const low = safeNumber(
+    value.low ??
+      value.lowPrice ??
+      value.min ??
+      last,
+    last
+  );
+
+  return {
+    ok: last > 0 || high > 0 || low > 0,
+    last,
+    high: high > 0 ? high : last,
+    low: low > 0 ? low : last,
+    source: value.source || fallbackSource,
+    firstTouch: value.firstTouch || null,
+    rangeStart: value.rangeStart || null,
+    rangeEnd: value.rangeEnd || null,
+    candles: safeNumber(value.candles, 0),
+    raw: value.raw || null,
+    error: value.error || null
+  };
+}
+
+function candleNumber(row, index) {
+  if (!Array.isArray(row)) return 0;
+  return safeNumber(row[index], 0);
+}
+
+function candleTs(row) {
+  return candleNumber(row, 0);
+}
+
+function normalizeBitgetCandles(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => Array.isArray(row) && row.length >= 5)
+    .map((row) => ({
+      ts: candleTs(row),
+      open: candleNumber(row, 1),
+      high: candleNumber(row, 2),
+      low: candleNumber(row, 3),
+      close: candleNumber(row, 4),
+      raw: row
+    }))
+    .filter((row) => (
+      row.ts > 0 &&
+      row.open > 0 &&
+      row.high > 0 &&
+      row.low > 0 &&
+      row.close > 0
+    ))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function findShortFirstTouchFromCandles({
+  candles = [],
+  tp,
+  sl
+} = {}) {
+  const target = safeNumber(tp, 0);
+  const stop = safeNumber(sl, 0);
+
+  if (target <= 0 || stop <= 0) return null;
+
+  for (const candle of candles) {
+    const tpTouched = candle.low <= target;
+    const slTouched = candle.high >= stop;
+
+    if (tpTouched && slTouched) {
+      return {
+        reason: 'SL',
+        conservative: true,
+        sameCandleBothTouched: true,
+        ts: candle.ts,
+        candle
+      };
+    }
+
+    if (slTouched) {
+      return {
+        reason: 'SL',
+        conservative: false,
+        sameCandleBothTouched: false,
+        ts: candle.ts,
+        candle
+      };
+    }
+
+    if (tpTouched) {
+      return {
+        reason: 'TP',
+        conservative: false,
+        sameCandleBothTouched: false,
+        ts: candle.ts,
+        candle
+      };
+    }
+  }
+
+  return null;
+}
+
+function monitorRangeStart(position = {}, timestamp = now(), options = {}) {
+  const cfg = tradeConfig(options);
+
+  const lastMonitorAt = safeNumber(
+    position.lastMonitorAt ??
+      position.lastCheckedAt ??
+      position.updatedAt,
+    0
+  );
+
+  const openedAt = safeNumber(position.openedAt || position.createdAt, 0);
+
+  const rawStart =
+    lastMonitorAt > 0
+      ? lastMonitorAt - 60 * 1000
+      : openedAt > 0
+        ? openedAt
+        : timestamp - cfg.rangeLookbackMs;
+
+  return Math.max(
+    timestamp - cfg.maxRangeLookbackMs,
+    rawStart
+  );
+}
+
+async function fetchBitgetCandleRange(position = {}, timestamp = now(), options = {}) {
+  const symbol = bitgetSymbol(position);
+
+  if (!symbol) {
+    return normalizePriceProbe(null, 'BITGET_CANDLES_NO_SYMBOL');
+  }
+
+  const startTime = monitorRangeStart(position, timestamp, options);
+  const endTime = timestamp;
+
+  const params = new URLSearchParams({
+    symbol,
+    productType: BITGET_PRODUCT_TYPE,
+    granularity: BITGET_CANDLE_GRANULARITY,
+    startTime: String(Math.floor(startTime)),
+    endTime: String(Math.floor(endTime)),
+    limit: '200'
+  });
+
+  const url = `${BITGET_BASE_URL}/api/v2/mix/market/candles?${params.toString()}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        last: 0,
+        high: 0,
+        low: 0,
+        source: `BITGET_CANDLES_HTTP_${response.status}`,
+        firstTouch: null,
+        rangeStart: startTime,
+        rangeEnd: endTime,
+        candles: 0
+      };
+    }
+
+    const json = await response.json().catch(() => null);
+    const rows = Array.isArray(json?.data) ? json.data : [];
+    const candles = normalizeBitgetCandles(rows);
+
+    if (!candles.length) {
+      return {
+        ok: false,
+        last: 0,
+        high: 0,
+        low: 0,
+        source: 'BITGET_CANDLES_EMPTY',
+        firstTouch: null,
+        rangeStart: startTime,
+        rangeEnd: endTime,
+        candles: 0
+      };
+    }
+
+    const highs = candles.map((row) => row.high).filter((value) => value > 0);
+    const lows = candles.map((row) => row.low).filter((value) => value > 0);
+    const lastCandle = candles[candles.length - 1];
+
+    const high = Math.max(...highs);
+    const low = Math.min(...lows);
+    const last = lastCandle.close;
+
+    const firstTouch = findShortFirstTouchFromCandles({
+      candles,
+      tp: position.tp,
+      sl: position.sl
+    });
+
+    return {
+      ok: true,
+      last,
+      high,
+      low,
+      source: 'BITGET_1M_CANDLE_RANGE',
+      firstTouch,
+      rangeStart: startTime,
+      rangeEnd: endTime,
+      candles: candles.length
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      last: 0,
+      high: 0,
+      low: 0,
+      source: 'BITGET_CANDLES_ERROR',
+      error: error?.message || String(error),
+      firstTouch: null,
+      rangeStart: startTime,
+      rangeEnd: endTime,
+      candles: 0
+    };
+  }
+}
+
+async function resolveMonitorPriceProbe({
   position,
-  price,
+  priceFetcher,
   timestamp,
   options = {}
 } = {}) {
-  const current = safeNumber(price, 0);
+  const cfg = tradeConfig(options);
+
+  const externalRaw = await withTimeout(
+    Promise.resolve(priceFetcher(position.contractSymbol || position.symbol)).catch(() => 0),
+    cfg.priceFetchTimeoutMs,
+    'POSITION_PRICE_FETCH_TIMEOUT',
+    0
+  );
+
+  const externalProbe = normalizePriceProbe(externalRaw, 'EXTERNAL_PRICE_FETCHER');
+
+  if (!cfg.monitorCandleRangeEnabled) {
+    return externalProbe;
+  }
+
+  const candleProbe = await withTimeout(
+    fetchBitgetCandleRange(position, timestamp, options),
+    cfg.candleFetchTimeoutMs,
+    'BITGET_CANDLE_RANGE_TIMEOUT',
+    normalizePriceProbe(null, 'BITGET_CANDLE_RANGE_TIMEOUT')
+  );
+
+  if (candleProbe?.ok) {
+    return {
+      ...candleProbe,
+      externalLast: externalProbe.last || null,
+      externalSource: externalProbe.source || null
+    };
+  }
+
+  return {
+    ...externalProbe,
+    source: externalProbe.ok
+      ? `FALLBACK_${externalProbe.source}`
+      : candleProbe?.source || externalProbe.source || 'NO_PRICE',
+    candleRangeFailed: true,
+    candleRangeFailureReason: candleProbe?.source || null,
+    candleRangeError: candleProbe?.error || null
+  };
+}
+
+function updatePathMetricsWithProbe(position, probe = {}) {
+  const normalized = normalizePriceProbe(probe, 'PATH_METRICS_PROBE');
+
+  if (!normalized.ok) return position;
+
+  updatePathMetrics(position, normalized.last);
+
+  const entry = safeNumber(position.entry, 0);
+  const initialSl = safeNumber(position.initialSl || position.sl, 0);
+  const tp = safeNumber(position.tp, 0);
+  const high = safeNumber(normalized.high, 0);
+  const low = safeNumber(normalized.low, 0);
+
+  if (entry <= 0 || initialSl <= entry || tp <= 0 || tp >= entry) {
+    return position;
+  }
+
+  const riskDist = initialSl - entry;
+  const rewardDist = entry - tp;
+
+  if (low > 0) {
+    const favorableR = (entry - low) / riskDist;
+    const tpProgress = (entry - low) / rewardDist;
+
+    position.mfeR = round4(Math.max(
+      safeNumber(position.mfeR, 0),
+      favorableR
+    ));
+
+    position.maxTpProgress = round4(Math.max(
+      safeNumber(position.maxTpProgress, 0),
+      tpProgress
+    ));
+
+    if (position.mfeR >= 0.5) position.reachedHalfR = true;
+    if (position.mfeR >= 1.0) position.reachedOneR = true;
+    if (tpProgress >= 0.8) position.nearTpSeen = true;
+  }
+
+  if (high > 0) {
+    const adverseR = (entry - high) / riskDist;
+
+    position.maeR = round4(Math.min(
+      safeNumber(position.maeR, 0),
+      adverseR
+    ));
+  }
+
+  position.lastMonitorAt = now();
+  position.lastCheckedAt = position.lastMonitorAt;
+  position.lastMonitorPriceSource = normalized.source;
+  position.lastMonitorRangeStart = normalized.rangeStart || null;
+  position.lastMonitorRangeEnd = normalized.rangeEnd || null;
+  position.lastMonitorCandles = normalized.candles || 0;
+  position.lastMonitorHigh = normalized.high || null;
+  position.lastMonitorLow = normalized.low || null;
+
+  return position;
+}
+
+function detectExit({
+  position,
+  price,
+  priceProbe,
+  timestamp,
+  options = {}
+} = {}) {
+  const probe = normalizePriceProbe(
+    priceProbe ?? price,
+    priceProbe ? 'PRICE_PROBE' : 'LEGACY_PRICE'
+  );
+
+  const current = safeNumber(probe.last, 0);
+  const high = safeNumber(probe.high, current);
+  const low = safeNumber(probe.low, current);
+
   const tp = safeNumber(position.tp, 0);
   const sl = safeNumber(position.sl, 0);
   const expired = isTimeStopExpired(position, timestamp, options);
@@ -1590,23 +2045,75 @@ function detectExit({
     };
   }
 
-  if (current > 0 && tp > 0 && current <= tp) {
-    return {
-      shouldExit: true,
-      reason: 'TP',
-      trigger: 'price <= tp',
-      exitPrice: current,
-      priceSource: 'LIVE_OR_HINT_PRICE'
-    };
-  }
+  const tpTouched = low > 0 && tp > 0 && low <= tp;
+  const slTouched = high > 0 && sl > 0 && high >= sl;
 
-  if (current > 0 && sl > 0 && current >= sl) {
+  if (probe.firstTouch?.reason === 'SL') {
     return {
       shouldExit: true,
       reason: 'SL',
-      trigger: 'price >= sl',
-      exitPrice: current,
-      priceSource: 'LIVE_OR_HINT_PRICE'
+      trigger: probe.firstTouch.sameCandleBothTouched
+        ? 'SHORT_RANGE_BOTH_TOUCHED_CONSERVATIVE_SL'
+        : 'SHORT_RANGE_FIRST_TOUCH_SL',
+      exitPrice: sl,
+      priceSource: probe.source,
+      firstTouch: probe.firstTouch,
+      rangeStart: probe.rangeStart,
+      rangeEnd: probe.rangeEnd,
+      conservativeExit: Boolean(probe.firstTouch.conservative)
+    };
+  }
+
+  if (probe.firstTouch?.reason === 'TP') {
+    return {
+      shouldExit: true,
+      reason: 'TP',
+      trigger: 'SHORT_RANGE_FIRST_TOUCH_TP',
+      exitPrice: tp,
+      priceSource: probe.source,
+      firstTouch: probe.firstTouch,
+      rangeStart: probe.rangeStart,
+      rangeEnd: probe.rangeEnd,
+      conservativeExit: false
+    };
+  }
+
+  if (slTouched && tpTouched) {
+    return {
+      shouldExit: true,
+      reason: 'SL',
+      trigger: 'SHORT_RANGE_BOTH_TOUCHED_UNKNOWN_ORDER_CONSERVATIVE_SL',
+      exitPrice: sl,
+      priceSource: probe.source,
+      rangeStart: probe.rangeStart,
+      rangeEnd: probe.rangeEnd,
+      conservativeExit: true
+    };
+  }
+
+  if (slTouched) {
+    return {
+      shouldExit: true,
+      reason: 'SL',
+      trigger: 'SHORT_RANGE_HIGH >= sl',
+      exitPrice: sl,
+      priceSource: probe.source,
+      rangeStart: probe.rangeStart,
+      rangeEnd: probe.rangeEnd,
+      conservativeExit: false
+    };
+  }
+
+  if (tpTouched) {
+    return {
+      shouldExit: true,
+      reason: 'TP',
+      trigger: 'SHORT_RANGE_LOW <= tp',
+      exitPrice: tp,
+      priceSource: probe.source,
+      rangeStart: probe.rangeStart,
+      rangeEnd: probe.rangeEnd,
+      conservativeExit: false
     };
   }
 
@@ -1617,10 +2124,12 @@ function detectExit({
       shouldExit: fallback > 0,
       reason: 'TIME_STOP',
       trigger: current > 0
-        ? 'TIME_STOP_WITH_LIVE_OR_HINT_PRICE'
+        ? 'TIME_STOP_WITH_LIVE_OR_RANGE_PRICE'
         : 'TIME_STOP_WITH_POSITION_PRICE_FALLBACK',
       exitPrice: fallback,
-      priceSource: current > 0 ? 'LIVE_OR_HINT_PRICE' : 'POSITION_FALLBACK_PRICE'
+      priceSource: current > 0 ? probe.source : 'POSITION_FALLBACK_PRICE',
+      rangeStart: probe.rangeStart,
+      rangeEnd: probe.rangeEnd
     };
   }
 
@@ -1629,7 +2138,8 @@ function detectExit({
       shouldExit: false,
       reason: null,
       trigger: null,
-      exitPrice: 0
+      exitPrice: 0,
+      priceSource: probe.source
     };
   }
 
@@ -1637,7 +2147,10 @@ function detectExit({
     shouldExit: false,
     reason: null,
     trigger: null,
-    exitPrice: current
+    exitPrice: current,
+    priceSource: probe.source,
+    rangeStart: probe.rangeStart,
+    rangeEnd: probe.rangeEnd
   };
 }
 
@@ -2278,6 +2791,15 @@ export function buildOpenPositionFromEntry(entry) {
     trailLiveApplied: false,
     slManagementSource: null,
 
+    lastMonitorAt: openedAt,
+    lastCheckedAt: openedAt,
+    lastMonitorPriceSource: null,
+    lastMonitorRangeStart: null,
+    lastMonitorRangeEnd: null,
+    lastMonitorCandles: 0,
+    lastMonitorHigh: null,
+    lastMonitorLow: null,
+
     entryMarketWeather: normalizedEntry.entryMarketWeather || normalizedEntry.currentMarketWeather || null,
     entryCurrentRegime: normalizedEntry.entryCurrentRegime || normalizedEntry.currentRegime || null,
     entryCurrentTrendSide: normalizedEntry.entryCurrentTrendSide || normalizedEntry.currentTrendSide || null,
@@ -2402,8 +2924,8 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     outcomeIdentity,
     outcomeIdentityHashSource: 'TRADE_ID_SYMBOL_OPEN_CLOSE_REASON_EXIT_TRUE_MICRO',
 
-    activeRotationId: position.activeRotationId || null,
-    selectedRotationId: position.selectedRotationId || position.activeRotationId || null,
+    activeRotationId: position.activeRotationId || outcome.activeRotationId || null,
+    selectedRotationId: position.selectedRotationId || position.activeRotationId || outcome.selectedRotationId || outcome.activeRotationId || null,
 
     activeMacroFamilyId:
       position.activeMacroFamilyId ||
@@ -2423,7 +2945,21 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
       position.discordAlertEligible ||
       position.selectedMicroFamilyAlert
     ),
-    rotationMatchType: position.rotationMatchType || outcome.rotationMatchType || null,
+    rotationMatchType: position.rotationMatchType || outcome.rotationMatchType || 'EXACT_75_CHILD_TRUE_MICRO',
+    matchType: position.matchType || outcome.matchType || 'EXACT_75_CHILD_TRUE_MICRO',
+
+    selectedTrueMicroFamilyId: identity.microFamilyId,
+    selectedMicroFamilyId: identity.microFamilyId,
+    activeTrueMicroFamilyId: identity.microFamilyId,
+    activeMicroFamilyId: identity.microFamilyId,
+
+    selectedTrueMicroFamilyIds: [identity.microFamilyId],
+    selectedMicroFamilyIds: [identity.microFamilyId],
+    activeTrueMicroFamilyIds: [identity.microFamilyId],
+    activeMicroFamilyIds: [identity.microFamilyId],
+    trueMicroFamilyIds: [identity.microFamilyId],
+    childTrueMicroFamilyIds: [identity.microFamilyId],
+    microFamilyIds: [identity.microFamilyId],
 
     weeklyStats: compactWeeklyStats(position.weeklyStats),
 
@@ -2563,11 +3099,33 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
   }
 
   return withTimeout(
-    sendExitAlert(outcome).then(() => ({
-      sent: true,
-      skipped: false,
-      reason: 'DISCORD_EXIT_ALERT_SENT'
-    })),
+    sendExitAlert(outcome).then((result) => {
+      if (result?.skipped) {
+        return {
+          sent: false,
+          skipped: true,
+          reason: result.reason || 'DISCORD_EXIT_ALERT_SKIPPED_BY_DISCORD_FILTER',
+          result
+        };
+      }
+
+      if (result?.ok) {
+        return {
+          sent: true,
+          skipped: false,
+          reason: 'DISCORD_EXIT_ALERT_SENT',
+          result
+        };
+      }
+
+      return {
+        sent: false,
+        skipped: false,
+        failed: true,
+        reason: result?.error || result?.reason || 'DISCORD_EXIT_ALERT_FAILED',
+        result
+      };
+    }),
     options.discordExitTimeoutMs || DEFAULT_DISCORD_EXIT_TIMEOUT_MS,
     'DISCORD_EXIT_ALERT_TIMEOUT',
     {
@@ -2625,6 +3183,10 @@ async function closePosition({
     exitReason: exit.reason,
     exitTrigger: exit.trigger,
     exitPriceSource: exit.priceSource || null,
+    exitRangeStart: exit.rangeStart || null,
+    exitRangeEnd: exit.rangeEnd || null,
+    firstTouch: exit.firstTouch || null,
+    conservativeExit: Boolean(exit.conservativeExit),
     outcomeSource: OUTCOME_SOURCE,
     source: POSITION_SOURCE,
     directToSL: directSL,
@@ -2648,6 +3210,10 @@ async function closePosition({
       exitReason: exit.reason,
       exitTrigger: exit.trigger,
       exitPriceSource: exit.priceSource || null,
+      exitRangeStart: exit.rangeStart || null,
+      exitRangeEnd: exit.rangeEnd || null,
+      firstTouch: exit.firstTouch || null,
+      conservativeExit: Boolean(exit.conservativeExit),
       source: OUTCOME_SOURCE,
       outcomeSource: OUTCOME_SOURCE,
       directToSL: directSL,
@@ -2722,27 +3288,25 @@ async function monitorOnePosition({
       };
     }
 
-    const fetchSymbol = position.contractSymbol || position.symbol;
+    const priceProbe = await resolveMonitorPriceProbe({
+      position,
+      priceFetcher,
+      timestamp,
+      options
+    });
 
-    const price = await withTimeout(
-      Promise.resolve(priceFetcher(fetchSymbol)).catch(() => 0),
-      cfg.priceFetchTimeoutMs,
-      'POSITION_PRICE_FETCH_TIMEOUT',
-      0
-    );
+    const currentPrice = safeNumber(priceProbe.last, 0);
 
-    const currentPrice = safeNumber(price, 0);
-
-    if (currentPrice > 0) {
+    if (priceProbe.ok && currentPrice > 0) {
       position.priceFetchFailures = 0;
       position.lastPriceFetchFailedAt = null;
 
-      updatePathMetrics(position, currentPrice);
+      updatePathMetricsWithProbe(position, priceProbe);
     }
 
     const exit = detectExit({
       position,
-      price: currentPrice,
+      priceProbe,
       timestamp,
       options
     });
@@ -2756,7 +3320,7 @@ async function monitorOnePosition({
       });
     }
 
-    if (currentPrice <= 0) {
+    if (!priceProbe.ok || currentPrice <= 0) {
       await markPriceFetchFailed(position, {
         persist: cfg.persistNoPriceFailures
       });
@@ -2764,7 +3328,8 @@ async function monitorOnePosition({
       return {
         type: 'NO_PRICE',
         position,
-        outcome: null
+        outcome: null,
+        priceProbe
       };
     }
 
@@ -2776,7 +3341,8 @@ async function monitorOnePosition({
     return {
       type: 'UPDATED',
       position,
-      outcome: null
+      outcome: null,
+      priceProbe
     };
   } catch (error) {
     return {
