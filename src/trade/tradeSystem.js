@@ -75,13 +75,13 @@ const DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC = 15 * 60;
 
 const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 800;
 const DEFAULT_MONITOR_TIMEOUT_MS = 2500;
-const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 250;
+const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 800;
 const DEFAULT_CANDIDATE_TIMEOUT_MS = 1800;
 const DEFAULT_ANALYZE_TIMEOUT_MS = 3500;
 const DEFAULT_ROTATION_TIMEOUT_MS = 800;
 const DEFAULT_MAX_RUNTIME_MS = 24000;
 
-const DEFAULT_MONITOR_LIVE_PRICE_FETCH_ENABLED = false;
+const DEFAULT_MONITOR_LIVE_PRICE_FETCH_ENABLED = true;
 const DEFAULT_MONITOR_BATCH_SIZE = 40;
 const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 80;
 
@@ -89,6 +89,12 @@ const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 3;
 const DEFAULT_ENTRY_LOOP_RESERVE_MS = 900;
 const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 900;
 const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 1200;
+
+const BITGET_BASE_URL = 'https://api.bitget.com';
+const BITGET_PRODUCT_TYPE = 'USDT-FUTURES';
+const LIVE_PRICE_CACHE_TTL_MS = 2500;
+
+const livePriceCache = new Map();
 
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
@@ -820,7 +826,12 @@ function tradeConfig() {
   const monitorLivePriceFetchEnabled = cfgBoolean(
     firstDefined(
       options.monitorLivePriceFetchEnabled,
-      options.allowMonitorLivePriceFetch
+      options.allowMonitorLivePriceFetch,
+      CONFIG.short?.trade?.monitorLivePriceFetchEnabled,
+      CONFIG.short?.trade?.allowMonitorLivePriceFetch,
+      CONFIG.trade?.shortMonitorLivePriceFetchEnabled,
+      CONFIG.trade?.monitorLivePriceFetchEnabled,
+      CONFIG.trade?.allowMonitorLivePriceFetch
     ),
     DEFAULT_MONITOR_LIVE_PRICE_FETCH_ENABLED
   );
@@ -998,8 +1009,8 @@ function tradeConfig() {
         CONFIG.trade?.monitorPriceFetchTimeoutMs
       ),
       DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS,
-      50,
-      400
+      100,
+      1200
     ),
 
     monitorLivePriceFetchEnabled,
@@ -3438,6 +3449,8 @@ function baseEarlyReturnPayload({
   priceHints = new Map(),
   extra = {}
 }) {
+  const cfg = tradeConfig();
+
   return {
     runId,
     startedAt,
@@ -3469,9 +3482,9 @@ function baseEarlyReturnPayload({
     monitorOpenPositionsFirst: true,
     processScannerSnapshot,
     monitorPriceHintCount: priceHints.size,
-    monitorLivePriceFetchEnabled: tradeConfig().monitorLivePriceFetchEnabled,
-    monitorPriceSource: tradeConfig().monitorLivePriceFetchEnabled
-      ? 'SCANNER_SNAPSHOT_HINTS_THEN_LIVE_FETCH'
+    monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+    monitorPriceSource: cfg.monitorLivePriceFetchEnabled
+      ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
       : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
     ...sideFlags(),
     ...virtualFlags(),
@@ -3523,7 +3536,110 @@ function priceHintForSymbol(symbol, priceHints = new Map()) {
   return 0;
 }
 
+function normalizeBitgetSymbol(symbol = '') {
+  const contract = normalizeContractSymbol(symbol);
+  const base = normalizeBaseSymbol(symbol || contract);
+  const raw = String(contract || symbol || base || '').trim().toUpperCase();
+
+  if (!raw) return '';
+
+  const cleaned = raw
+    .replace(/[^A-Z0-9]/g, '')
+    .replace(/USDTM$/u, 'USDT')
+    .replace(/PERP$/u, '')
+    .replace(/SWAP$/u, '');
+
+  if (cleaned.endsWith('USDT')) return cleaned;
+
+  return `${base || cleaned}USDT`;
+}
+
+function livePriceCacheKey(symbol = '') {
+  return normalizeBitgetSymbol(symbol);
+}
+
+function getCachedLivePrice(symbol = '') {
+  const key = livePriceCacheKey(symbol);
+  if (!key) return 0;
+
+  const cached = livePriceCache.get(key);
+  if (!cached) return 0;
+
+  if (now() - safeNumber(cached.ts, 0) > LIVE_PRICE_CACHE_TTL_MS) {
+    livePriceCache.delete(key);
+    return 0;
+  }
+
+  return safeNumber(cached.price, 0);
+}
+
+function setCachedLivePrice(symbol = '', price = 0) {
+  const key = livePriceCacheKey(symbol);
+  const value = safeNumber(price, 0);
+
+  if (!key || value <= 0) return;
+
+  livePriceCache.set(key, {
+    price: value,
+    ts: now()
+  });
+}
+
+async function fetchBitgetTickerPrice(symbol = '') {
+  const bitgetSymbol = normalizeBitgetSymbol(symbol);
+  if (!bitgetSymbol) return 0;
+
+  const cached = getCachedLivePrice(bitgetSymbol);
+  if (cached > 0) return cached;
+
+  const url = `${BITGET_BASE_URL}/api/v2/mix/market/ticker?symbol=${encodeURIComponent(bitgetSymbol)}&productType=${encodeURIComponent(BITGET_PRODUCT_TYPE)}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      accept: 'application/json'
+    }
+  });
+
+  if (!response.ok) return 0;
+
+  const json = await response.json().catch(() => null);
+  const data = Array.isArray(json?.data) ? json.data[0] : json?.data;
+
+  const price = safeNumber(
+    data?.lastPr ??
+      data?.last ??
+      data?.markPrice ??
+      data?.indexPrice ??
+      data?.bidPr ??
+      data?.askPr,
+    0
+  );
+
+  if (price > 0) {
+    setCachedLivePrice(bitgetSymbol, price);
+    return price;
+  }
+
+  return 0;
+}
+
 async function fetchMidPriceFast(symbol, priceHints = new Map()) {
+  const cfg = tradeConfig();
+
+  if (cfg.monitorLivePriceFetchEnabled) {
+    const liveResult = await withTimeout(
+      fetchBitgetTickerPrice(symbol).catch(() => 0),
+      cfg.monitorPriceFetchTimeoutMs,
+      'LIVE_PRICE_FETCH_TIMEOUT'
+    );
+
+    if (!isTimeoutResult(liveResult)) {
+      const livePrice = safeNumber(liveResult, 0);
+      if (livePrice > 0) return livePrice;
+    }
+  }
+
   const hinted = priceHintForSymbol(symbol, priceHints);
   if (hinted > 0) return hinted;
 
@@ -4344,7 +4460,7 @@ export async function runTradeSystem(options = {}) {
       monitorOpenPositionsFirst: true,
       monitorPriceHintCount: priceHints.size,
       monitorPriceSource: cfg.monitorLivePriceFetchEnabled
-        ? 'SCANNER_SNAPSHOT_HINTS_THEN_LIVE_FETCH'
+        ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
         : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
       processScannerSnapshot: true,
       skipped: false,
