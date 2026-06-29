@@ -9,6 +9,8 @@
 // - completed = alleen gesloten virtual/shadow outcomes.
 // - scoring gebruikt netR na kosten.
 // - wins/losses/flats worden bepaald op netR.
+// - outcome dedupe gebruikt stabiele close identity, niet random outcomeId.
+// - first-touch / conservative SL metadata uit positionEngine blijft bewaard.
 //
 // Architectuur:
 // - Learning blijft breed.
@@ -68,12 +70,13 @@ const EXECUTION_MICRO_HASH_LEN = 10;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_STABLE_OUTCOME_DEDUPE_V2';
+const POSITION_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_V4';
 const CLASSIFIER_VERSION = 'SHORT_STRICT_EVIDENCE_DISTRIBUTION_V2';
 
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V2';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_STABLE_CLOSED_POSITION_V3';
 
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
@@ -1392,6 +1395,7 @@ function analyzeIdentityFlags() {
     avgCostRShown: true,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     adaptiveShortRiskExpected: true,
 
@@ -1402,6 +1406,8 @@ function analyzeIdentityFlags() {
     observationAlwaysCounted: false,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     outcomeDedupeRequired: true,
+    stableOutcomeIdentityRequired: true,
+    randomOutcomeIdNotUsedForPrimaryDedupe: true,
     completedOnlyClosedVirtualOrShadow: true,
 
     currentFitSoftOnly: true,
@@ -1445,6 +1451,10 @@ function analyzeIdentityFlags() {
       sl: 'price >= sl',
       timeStop: 'TIME_STOP'
     },
+
+    firstTouchPreserved: true,
+    conservativeExitPreserved: true,
+    candleFirstTouchCompatible: true,
 
     shortOnly: true,
     longDisabled: true,
@@ -1952,6 +1962,7 @@ function compactRecentOutcomes(outcomes = [], maxItems = 8) {
         positionSource: outcome.positionSource || null,
 
         tradeId: outcome.tradeId || null,
+        outcomeIdentity: outcome.outcomeIdentity || null,
         outcomeDedupeKey: outcome.outcomeDedupeKey || null,
 
         symbol: outcome.symbol || outcome.baseSymbol || outcome.contractSymbol || null,
@@ -1961,6 +1972,12 @@ function compactRecentOutcomes(outcomes = [], maxItems = 8) {
         tradeSide: TARGET_TRADE_SIDE,
 
         exitReason: outcome.exitReason || outcome.reason || null,
+        exitTrigger: outcome.exitTrigger || null,
+        exitPriceSource: outcome.exitPriceSource || null,
+        exitRangeStart: outcome.exitRangeStart || null,
+        exitRangeEnd: outcome.exitRangeEnd || null,
+        firstTouch: outcome.firstTouch || null,
+        conservativeExit: Boolean(outcome.conservativeExit),
 
         exitR: safeNumber(outcome.exitR ?? outcome.netR, 0),
         netR: safeNumber(outcome.netR ?? outcome.exitR, 0),
@@ -2000,6 +2017,12 @@ function compactRecentOutcomes(outcomes = [], maxItems = 8) {
         riskPct: safeNumber(outcome.riskPct, 0),
         rewardPct: safeNumber(outcome.rewardPct, 0),
         riskToRewardDistanceRatio: safeNumber(outcome.riskToRewardDistanceRatio, 999),
+
+        measurementFixVersion: outcome.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+        positionMeasurementFixVersion:
+          outcome.positionMeasurementFixVersion ||
+          outcome.monitorMeasurementFixVersion ||
+          POSITION_MEASUREMENT_FIX_VERSION,
 
         currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
         currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
@@ -2177,9 +2200,11 @@ function buildFixedTaxonomyDefinitionParts(row = {}, classified = {}, taxonomy =
     'CURRENT_FIT_SOFT_ONLY=true',
     'CURRENT_FIT_BLOCKS_LEARNING=false',
     'LEARNING_REMAINS_BROAD=true',
-    'MEASUREMENT_FIX=avgCostR_directSL_seenDedupe',
+    `MEASUREMENT_FIX=${MEASUREMENT_FIX_VERSION}`,
+    `POSITION_MEASUREMENT_FIX=${POSITION_MEASUREMENT_FIX_VERSION}`,
     `RISK_PLAN=${SHORT_RISK_PLAN_VERSION}`,
-    'RISK_GEOMETRY=SHORT:tp<entry<sl'
+    'RISK_GEOMETRY=SHORT:tp<entry<sl',
+    'OUTCOME_DEDUPE=STABLE_CLOSE_IDENTITY'
   ]);
 }
 
@@ -2535,6 +2560,12 @@ function compactMicroForStorage(row = {}) {
     riskPlanVersion: refreshed.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
     adaptiveShortRiskExpected: true,
 
+    measurementFixVersion: refreshed.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      refreshed.positionMeasurementFixVersion ||
+      refreshed.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
@@ -2782,8 +2813,11 @@ export async function saveWeekMicros(
     observationDedupeRequired: true,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     outcomeDedupeRequired: true,
+    stableOutcomeIdentityRequired: true,
+    randomOutcomeIdNotUsedForPrimaryDedupe: true,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     adaptiveShortRiskExpected: true,
     observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
@@ -2803,6 +2837,10 @@ export async function saveWeekMicros(
     slHitRule: 'SHORT: price >= sl',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    firstTouchPreserved: true,
+    conservativeExitPreserved: true,
+    candleFirstTouchCompatible: true,
 
     classifierVersion: CLASSIFIER_VERSION,
     noDefaultRetestSqueezeB: true,
@@ -2826,6 +2864,7 @@ export async function saveWeekMicros(
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     classifierVersion: CLASSIFIER_VERSION,
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
     outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
@@ -2876,8 +2915,11 @@ export async function saveWeekMicros(
     observationDedupeRequired: true,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     outcomeDedupeRequired: true,
+    stableOutcomeIdentityRequired: true,
+    randomOutcomeIdNotUsedForPrimaryDedupe: true,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     adaptiveShortRiskExpected: true,
     observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
@@ -2897,6 +2939,10 @@ export async function saveWeekMicros(
     slHitRule: 'SHORT: price >= sl',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    firstTouchPreserved: true,
+    conservativeExitPreserved: true,
+    candleFirstTouchCompatible: true,
 
     classifierVersion: CLASSIFIER_VERSION,
     noDefaultRetestSqueezeB: true,
@@ -3056,11 +3102,14 @@ function getOrCreateMicro(micros, classified, side) {
   micro.classifierVersion = CLASSIFIER_VERSION;
   micro.noDefaultRetestSqueezeB = true;
   micro.measurementFixVersion = MEASUREMENT_FIX_VERSION;
+  micro.positionMeasurementFixVersion = POSITION_MEASUREMENT_FIX_VERSION;
   micro.observationDedupeRequired = true;
   micro.observationDedupeVersion = OBSERVATION_DEDUPE_VERSION;
   micro.seenDefinition = 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY';
   micro.outcomeDedupeRequired = true;
   micro.outcomeDedupeVersion = OUTCOME_DEDUPE_VERSION;
+  micro.stableOutcomeIdentityRequired = true;
+  micro.randomOutcomeIdNotUsedForPrimaryDedupe = true;
 
   micro.currentFitSoftOnly = true;
   micro.currentFitBlocksLearning = false;
@@ -3309,6 +3358,9 @@ export async function analyzeCandidatesBatch(
           currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
           currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
+          measurementFixVersion: MEASUREMENT_FIX_VERSION,
+          positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
+
           createdAt: batch.metrics.createdAt || now()
         }));
 
@@ -3383,6 +3435,9 @@ export async function analyzeCandidatesBatch(
           currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
           currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
+          measurementFixVersion: MEASUREMENT_FIX_VERSION,
+          positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
+
           weekKey,
           strategyVersion: CONFIG.strategyVersion
         }));
@@ -3438,7 +3493,9 @@ function buildLockedOutcomeRow(outcome = {}) {
       `LOCKED_TRUE_MICRO=${microFamilyId}`,
       `LOCKED_PARENT_TRUE_MICRO=${parentTrueMicroFamilyId}`,
       'OUTCOME_IDENTITY=POSITION_LOCKED',
-      `RISK_PLAN=${outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`
+      `RISK_PLAN=${outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`,
+      `MEASUREMENT_FIX=${MEASUREMENT_FIX_VERSION}`,
+      `POSITION_MEASUREMENT_FIX=${outcome.positionMeasurementFixVersion || POSITION_MEASUREMENT_FIX_VERSION}`
     ]
   );
 
@@ -3524,6 +3581,19 @@ function buildLockedOutcomeRow(outcome = {}) {
     riskPct: safeNumber(outcome.riskPct, 0),
     rewardPct: safeNumber(outcome.rewardPct, 0),
     riskToRewardDistanceRatio: safeNumber(outcome.riskToRewardDistanceRatio, 999),
+
+    exitTrigger: outcome.exitTrigger || null,
+    exitPriceSource: outcome.exitPriceSource || null,
+    exitRangeStart: outcome.exitRangeStart || null,
+    exitRangeEnd: outcome.exitRangeEnd || null,
+    firstTouch: outcome.firstTouch || null,
+    conservativeExit: Boolean(outcome.conservativeExit),
+
+    measurementFixVersion: outcome.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      outcome.positionMeasurementFixVersion ||
+      outcome.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
 
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3696,6 +3766,19 @@ function ensureNetOutcome(outcome = {}) {
       riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
       rr: safeNumber(outcome.rr, 0),
 
+      exitTrigger: outcome.exitTrigger || null,
+      exitPriceSource: outcome.exitPriceSource || null,
+      exitRangeStart: outcome.exitRangeStart || null,
+      exitRangeEnd: outcome.exitRangeEnd || null,
+      firstTouch: outcome.firstTouch || null,
+      conservativeExit: Boolean(outcome.conservativeExit),
+
+      measurementFixVersion: outcome.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+      positionMeasurementFixVersion:
+        outcome.positionMeasurementFixVersion ||
+        outcome.monitorMeasurementFixVersion ||
+        POSITION_MEASUREMENT_FIX_VERSION,
+
       riskTradeSide: TARGET_TRADE_SIDE,
       riskGeometryRule: 'SHORT: tp < entry < sl',
       tpHitRule: 'SHORT: price <= tp',
@@ -3752,6 +3835,19 @@ function ensureNetOutcome(outcome = {}) {
     rewardPct,
     riskToRewardDistanceRatio,
 
+    exitTrigger: outcome.exitTrigger || null,
+    exitPriceSource: outcome.exitPriceSource || null,
+    exitRangeStart: outcome.exitRangeStart || null,
+    exitRangeEnd: outcome.exitRangeEnd || null,
+    firstTouch: outcome.firstTouch || null,
+    conservativeExit: Boolean(outcome.conservativeExit),
+
+    measurementFixVersion: outcome.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      outcome.positionMeasurementFixVersion ||
+      outcome.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
+
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
@@ -3765,19 +3861,67 @@ function ensureNetOutcome(outcome = {}) {
   });
 }
 
-function buildOutcomeDedupeIdentity(outcome = {}, microFamilyId = '') {
-  const direct = String(
-    outcome.outcomeId ||
-      outcome.learningOutcomeId ||
-      outcome.closeEventId ||
-      outcome.tradeCloseId ||
-      outcome.tradeId ||
-      outcome.positionId ||
-      ''
-  ).trim();
+function isLikelyRandomOutcomeId(value = '') {
+  const raw = String(value || '').trim();
 
-  if (direct) {
-    return hashText(`${TARGET_TRADE_SIDE}|${direct}|${microFamilyId}`, 24);
+  if (!raw) return false;
+
+  const upperRaw = upper(raw);
+
+  return (
+    upperRaw.startsWith('OUTCOME_SHORT_') ||
+    upperRaw.startsWith('OUTCOME_TRADE_SHORT_') ||
+    (
+      upperRaw.startsWith('OUTCOME_') &&
+      upperRaw.length >= 20 &&
+      /[A-Z0-9]{8,}$/u.test(upperRaw)
+    )
+  );
+}
+
+function buildStableTradeCloseIdentity(outcome = {}) {
+  const tradeId = String(outcome.tradeId || '').trim();
+  const symbol = String(outcome.symbol || outcome.contractSymbol || 'UNKNOWN').toUpperCase();
+  const openedAt = String(outcome.openedAt || outcome.createdAt || 'NO_OPEN').trim();
+  const closedAt = String(outcome.closedAt || outcome.completedAt || outcome.ts || 'NO_CLOSE').trim();
+  const exitReason = String(outcome.exitReason || outcome.reason || 'NO_REASON').trim().toUpperCase();
+  const exitPrice = safeNumber(outcome.exit ?? outcome.exitPrice, 0).toFixed(8);
+
+  if (!tradeId || openedAt === 'NO_OPEN' || closedAt === 'NO_CLOSE') {
+    return '';
+  }
+
+  return [
+    TARGET_TRADE_SIDE,
+    tradeId,
+    symbol,
+    openedAt,
+    closedAt,
+    exitReason,
+    exitPrice
+  ].join('|');
+}
+
+function buildOutcomeDedupeIdentity(outcome = {}, microFamilyId = '') {
+  const stableTradeCloseIdentity = buildStableTradeCloseIdentity(outcome);
+
+  const directCandidates = [
+    outcome.outcomeIdentity,
+    outcome.stableOutcomeIdentity,
+    outcome.learningOutcomeId,
+    outcome.closeEventId,
+    outcome.tradeCloseId,
+    stableTradeCloseIdentity,
+    outcome.positionId,
+    isLikelyRandomOutcomeId(outcome.outcomeId) ? null : outcome.outcomeId
+  ];
+
+  for (const candidate of directCandidates) {
+    const direct = String(candidate || '').trim();
+
+    if (direct) {
+      return hashText(`${TARGET_TRADE_SIDE}|${direct}|${microFamilyId}`, 24);
+    }
   }
 
   const symbol = String(outcome.symbol || outcome.contractSymbol || 'UNKNOWN').toUpperCase();
@@ -3847,7 +3991,13 @@ export async function recordOutcome(
     realTrade: false,
     realOrder: false,
     exchangeOrder: false,
-    bitgetOrderPlaced: false
+    bitgetOrderPlaced: false,
+
+    measurementFixVersion: outcome.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      outcome.positionMeasurementFixVersion ||
+      outcome.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION
   }));
 
   const row = hasLockedOutcomeIdentity(netOutcome)
@@ -3942,6 +4092,8 @@ export async function recordOutcome(
       outcomeDedupeKey,
       outcomeDedupeMethod: outcomeClaim.method,
       outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+      stableOutcomeIdentityRequired: true,
+      randomOutcomeIdNotUsedForPrimaryDedupe: true,
 
       recordedAt: now(),
       mirrorOutcomeRecorded: false,
@@ -4012,6 +4164,19 @@ export async function recordOutcome(
     directToSL: Boolean(row.directToSL),
     directSL: Boolean(row.directSL || row.directToSL),
 
+    exitTrigger: row.exitTrigger || null,
+    exitPriceSource: row.exitPriceSource || null,
+    exitRangeStart: row.exitRangeStart || null,
+    exitRangeEnd: row.exitRangeEnd || null,
+    firstTouch: row.firstTouch || null,
+    conservativeExit: Boolean(row.conservativeExit),
+
+    measurementFixVersion: row.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      row.positionMeasurementFixVersion ||
+      row.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
+
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
@@ -4027,6 +4192,8 @@ export async function recordOutcome(
     outcomeDedupeKey,
     outcomeDedupeMethod: outcomeClaim.method,
     outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+    stableOutcomeIdentityRequired: true,
+    randomOutcomeIdNotUsedForPrimaryDedupe: true,
 
     outcomeIdentityLocked: true,
     outcomeIdentitySource: row.outcomeIdentitySource || 'POSITION_MICRO_IDENTITY'
@@ -4065,12 +4232,27 @@ export async function recordOutcome(
     outcomeDedupeKey,
     outcomeDedupeMethod: outcomeClaim.method,
     outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+    stableOutcomeIdentityRequired: true,
+    randomOutcomeIdNotUsedForPrimaryDedupe: true,
 
     riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
     rr: safeNumber(row.rr, 0),
     riskPct: safeNumber(row.riskPct, 0),
     rewardPct: safeNumber(row.rewardPct, 0),
     riskToRewardDistanceRatio: safeNumber(row.riskToRewardDistanceRatio, 999),
+
+    exitTrigger: row.exitTrigger || null,
+    exitPriceSource: row.exitPriceSource || null,
+    exitRangeStart: row.exitRangeStart || null,
+    exitRangeEnd: row.exitRangeEnd || null,
+    firstTouch: row.firstTouch || null,
+    conservativeExit: Boolean(row.conservativeExit),
+
+    measurementFixVersion: row.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      row.positionMeasurementFixVersion ||
+      row.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
 
     mirrorOutcomeRecorded: false,
     mirrorMicroFamilyId: null
@@ -4287,6 +4469,13 @@ function copyMicroClassificationFields(position = {}) {
     rewardPct: safeNumber(position.rewardPct, 0),
     riskToRewardDistanceRatio: safeNumber(position.riskToRewardDistanceRatio, 999),
 
+    exitTrigger: position.exitTrigger || null,
+    exitPriceSource: position.exitPriceSource || null,
+    exitRangeStart: position.exitRangeStart || null,
+    exitRangeEnd: position.exitRangeEnd || null,
+    firstTouch: position.firstTouch || null,
+    conservativeExit: Boolean(position.conservativeExit),
+
     entryMarketWeather: position.entryMarketWeather || null,
     entryCurrentRegime: position.entryCurrentRegime || position.currentRegime || null,
     entryCurrentTrendSide: position.entryCurrentTrendSide || position.currentTrendSide || null,
@@ -4297,6 +4486,10 @@ function copyMicroClassificationFields(position = {}) {
     classifierVersion: CLASSIFIER_VERSION,
     noDefaultRetestSqueezeB: true,
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      position.positionMeasurementFixVersion ||
+      position.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -4391,13 +4584,24 @@ export function buildOutcomeFromPosition({
     grossR - costR
   );
 
-  const closedAt = now();
+  const closedAt = safeNumber(position.closedAt || position.completedAt, now());
   const src = normalizeSource(source);
   const classification = copyMicroClassificationFields(position);
   const directToSL = inferDirectToSL({
     position,
     exitReason
   });
+
+  const stableOutcomeIdentity = [
+    TARGET_TRADE_SIDE,
+    position.tradeId || '',
+    position.symbol || position.contractSymbol || '',
+    position.openedAt || position.createdAt || '',
+    closedAt || '',
+    exitReason || '',
+    exit,
+    classification.trueMicroFamilyId || classification.microFamilyId || ''
+  ].join('|');
 
   return withAnalyzeIdentityFlags({
     type: 'OUTCOME',
@@ -4409,6 +4613,10 @@ export function buildOutcomeFromPosition({
 
     tradeId: position.tradeId,
     positionId: position.positionId || position.id || null,
+
+    outcomeIdentity: position.outcomeIdentity || stableOutcomeIdentity,
+    stableOutcomeIdentity,
+    outcomeIdentityHashSource: 'TRADE_ID_SYMBOL_OPEN_CLOSE_REASON_EXIT_TRUE_MICRO',
 
     symbol: position.symbol,
     contractSymbol: position.contractSymbol,
@@ -4453,6 +4661,13 @@ export function buildOutcomeFromPosition({
     validShortGeometry: validShortRiskShape,
     shortValidGeometry: validShortRiskShape,
     exitReason,
+
+    exitTrigger: position.exitTrigger || null,
+    exitPriceSource: position.exitPriceSource || null,
+    exitRangeStart: position.exitRangeStart || null,
+    exitRangeEnd: position.exitRangeEnd || null,
+    firstTouch: position.firstTouch || null,
+    conservativeExit: Boolean(position.conservativeExit),
 
     grossMovePct,
 
@@ -4518,6 +4733,15 @@ export function buildOutcomeFromPosition({
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
     learningRemainsBroad: true,
+
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    positionMeasurementFixVersion:
+      position.positionMeasurementFixVersion ||
+      position.monitorMeasurementFixVersion ||
+      POSITION_MEASUREMENT_FIX_VERSION,
+
+    stableOutcomeIdentityRequired: true,
+    randomOutcomeIdNotUsedForPrimaryDedupe: true,
 
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
