@@ -41,7 +41,7 @@ const POSITION_SOURCE = 'VIRTUAL';
 const OUTCOME_SOURCE = 'VIRTUAL';
 
 const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V11';
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_V4';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_NO_PRE_ENTRY_V5';
 
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
@@ -65,8 +65,12 @@ const DEFAULT_DISCORD_EXIT_TIMEOUT_MS = 1200;
 const BITGET_BASE_URL = 'https://api.bitget.com';
 const BITGET_PRODUCT_TYPE = 'USDT-FUTURES';
 const BITGET_CANDLE_GRANULARITY = '1m';
+const BITGET_CANDLE_MS = 60 * 1000;
+
 const DEFAULT_RANGE_LOOKBACK_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_RANGE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_RANGE_OVERLAP_MS = 15 * 1000;
+const DEFAULT_CANDLE_FIRST_TOUCH_MIN_AGE_MS = 2 * 60 * 1000;
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
   'BREAKOUT',
@@ -422,6 +426,30 @@ function tradeConfig(options = {}) {
       DEFAULT_MAX_RANGE_LOOKBACK_MS,
       5 * 60 * 1000,
       24 * 60 * 60 * 1000
+    ),
+
+    rangeOverlapMs: clampInt(
+      options.rangeOverlapMs ??
+        options.monitorRangeOverlapMs ??
+        CONFIG.short?.trade?.rangeOverlapMs ??
+        CONFIG.short?.trade?.monitorRangeOverlapMs ??
+        CONFIG.trade?.rangeOverlapMs ??
+        CONFIG.trade?.monitorRangeOverlapMs,
+      DEFAULT_RANGE_OVERLAP_MS,
+      0,
+      60 * 1000
+    ),
+
+    candleFirstTouchMinAgeMs: clampInt(
+      options.candleFirstTouchMinAgeMs ??
+        options.monitorCandleFirstTouchMinAgeMs ??
+        CONFIG.short?.trade?.candleFirstTouchMinAgeMs ??
+        CONFIG.short?.trade?.monitorCandleFirstTouchMinAgeMs ??
+        CONFIG.trade?.candleFirstTouchMinAgeMs ??
+        CONFIG.trade?.monitorCandleFirstTouchMinAgeMs,
+      DEFAULT_CANDLE_FIRST_TOUCH_MIN_AGE_MS,
+      0,
+      10 * 60 * 1000
     ),
 
     persistNoPriceFailures: options.persistNoPriceFailures === true
@@ -1700,7 +1728,16 @@ function normalizePriceProbe(value, fallbackSource = 'UNKNOWN') {
     rangeEnd: value.rangeEnd || null,
     candles: safeNumber(value.candles, 0),
     raw: value.raw || null,
-    error: value.error || null
+    error: value.error || null,
+    externalLast: value.externalLast || null,
+    externalSource: value.externalSource || null,
+    candleRangeFreshPositionSuppressed: Boolean(value.candleRangeFreshPositionSuppressed),
+    candleRangeSuppressedReason: value.candleRangeSuppressedReason || null,
+    candleRangeFailed: Boolean(value.candleRangeFailed),
+    candleRangeFailureReason: value.candleRangeFailureReason || null,
+    candleRangeError: value.candleRangeError || null,
+    candlesExcludedBeforeOpen: safeNumber(value.candlesExcludedBeforeOpen, 0),
+    firstFullCandleTs: value.firstFullCandleTs || null
   };
 }
 
@@ -1732,6 +1769,36 @@ function normalizeBitgetCandles(rows = []) {
       row.close > 0
     ))
     .sort((a, b) => a.ts - b.ts);
+}
+
+function firstFullCandleStartAfter(timestamp = 0) {
+  const ts = safeNumber(timestamp, 0);
+
+  if (ts <= 0) return 0;
+  if (ts % BITGET_CANDLE_MS === 0) return ts;
+
+  return Math.floor(ts / BITGET_CANDLE_MS) * BITGET_CANDLE_MS + BITGET_CANDLE_MS;
+}
+
+function filterCandlesAfterPositionOpen(candles = [], position = {}) {
+  const openedAt = safeNumber(position.openedAt || position.createdAt, 0);
+
+  if (openedAt <= 0) {
+    return {
+      candles,
+      excluded: 0,
+      firstFullCandleTs: null
+    };
+  }
+
+  const firstFullCandleTs = firstFullCandleStartAfter(openedAt);
+  const filtered = candles.filter((candle) => safeNumber(candle.ts, 0) >= firstFullCandleTs);
+
+  return {
+    candles: filtered,
+    excluded: Math.max(0, candles.length - filtered.length),
+    firstFullCandleTs
+  };
 }
 
 function findShortFirstTouchFromCandles({
@@ -1796,15 +1863,28 @@ function monitorRangeStart(position = {}, timestamp = now(), options = {}) {
 
   const rawStart =
     lastMonitorAt > 0
-      ? lastMonitorAt - 60 * 1000
+      ? lastMonitorAt - cfg.rangeOverlapMs
       : openedAt > 0
         ? openedAt
         : timestamp - cfg.rangeLookbackMs;
 
+  const clampedToOpen = openedAt > 0
+    ? Math.max(openedAt, rawStart)
+    : rawStart;
+
   return Math.max(
     timestamp - cfg.maxRangeLookbackMs,
-    rawStart
+    clampedToOpen
   );
+}
+
+function isFreshPositionForCandleRange(position = {}, timestamp = now(), options = {}) {
+  const cfg = tradeConfig(options);
+  const openedAt = safeNumber(position.openedAt || position.createdAt, 0);
+
+  if (openedAt <= 0) return false;
+
+  return timestamp - openedAt < cfg.candleFirstTouchMinAgeMs;
 }
 
 async function fetchBitgetCandleRange(position = {}, timestamp = now(), options = {}) {
@@ -1852,7 +1932,9 @@ async function fetchBitgetCandleRange(position = {}, timestamp = now(), options 
 
     const json = await response.json().catch(() => null);
     const rows = Array.isArray(json?.data) ? json.data : [];
-    const candles = normalizeBitgetCandles(rows);
+    const rawCandles = normalizeBitgetCandles(rows);
+    const filtered = filterCandlesAfterPositionOpen(rawCandles, position);
+    const candles = filtered.candles;
 
     if (!candles.length) {
       return {
@@ -1860,11 +1942,15 @@ async function fetchBitgetCandleRange(position = {}, timestamp = now(), options 
         last: 0,
         high: 0,
         low: 0,
-        source: 'BITGET_CANDLES_EMPTY',
+        source: rawCandles.length
+          ? 'BITGET_CANDLES_ONLY_PRE_ENTRY_OR_ENTRY_CANDLE'
+          : 'BITGET_CANDLES_EMPTY',
         firstTouch: null,
         rangeStart: startTime,
         rangeEnd: endTime,
-        candles: 0
+        candles: 0,
+        candlesExcludedBeforeOpen: filtered.excluded,
+        firstFullCandleTs: filtered.firstFullCandleTs
       };
     }
 
@@ -1887,11 +1973,13 @@ async function fetchBitgetCandleRange(position = {}, timestamp = now(), options 
       last,
       high,
       low,
-      source: 'BITGET_1M_CANDLE_RANGE',
+      source: 'BITGET_1M_CANDLE_RANGE_FULL_CANDLES_AFTER_ENTRY_ONLY',
       firstTouch,
       rangeStart: startTime,
       rangeEnd: endTime,
-      candles: candles.length
+      candles: candles.length,
+      candlesExcludedBeforeOpen: filtered.excluded,
+      firstFullCandleTs: filtered.firstFullCandleTs
     };
   } catch (error) {
     return {
@@ -1937,6 +2025,37 @@ async function resolveMonitorPriceProbe({
     normalizePriceProbe(null, 'BITGET_CANDLE_RANGE_TIMEOUT')
   );
 
+  const freshPosition = isFreshPositionForCandleRange(position, timestamp, options);
+
+  if (freshPosition) {
+    const last = safeNumber(externalProbe.last || candleProbe?.last, 0);
+
+    return {
+      ok: last > 0,
+      last,
+      high: last,
+      low: last,
+      source: externalProbe.ok
+        ? `FRESH_POSITION_LAST_ONLY_${externalProbe.source}`
+        : candleProbe?.ok
+          ? 'FRESH_POSITION_LAST_ONLY_BITGET_CANDLE_CLOSE'
+          : candleProbe?.source || 'FRESH_POSITION_NO_PRICE',
+      firstTouch: null,
+      rangeStart: candleProbe?.rangeStart || null,
+      rangeEnd: candleProbe?.rangeEnd || null,
+      candles: candleProbe?.candles || 0,
+      externalLast: externalProbe.last || null,
+      externalSource: externalProbe.source || null,
+      candleRangeFreshPositionSuppressed: true,
+      candleRangeSuppressedReason: 'AVOID_PRE_ENTRY_1M_CANDLE_CONTAMINATION',
+      candleRangeFailed: !candleProbe?.ok,
+      candleRangeFailureReason: candleProbe?.ok ? null : candleProbe?.source || null,
+      candleRangeError: candleProbe?.error || null,
+      candlesExcludedBeforeOpen: candleProbe?.candlesExcludedBeforeOpen || 0,
+      firstFullCandleTs: candleProbe?.firstFullCandleTs || null
+    };
+  }
+
   if (candleProbe?.ok) {
     return {
       ...candleProbe,
@@ -1952,7 +2071,9 @@ async function resolveMonitorPriceProbe({
       : candleProbe?.source || externalProbe.source || 'NO_PRICE',
     candleRangeFailed: true,
     candleRangeFailureReason: candleProbe?.source || null,
-    candleRangeError: candleProbe?.error || null
+    candleRangeError: candleProbe?.error || null,
+    candlesExcludedBeforeOpen: candleProbe?.candlesExcludedBeforeOpen || 0,
+    firstFullCandleTs: candleProbe?.firstFullCandleTs || null
   };
 }
 
@@ -2012,6 +2133,9 @@ function updatePathMetricsWithProbe(position, probe = {}) {
   position.lastMonitorCandles = normalized.candles || 0;
   position.lastMonitorHigh = normalized.high || null;
   position.lastMonitorLow = normalized.low || null;
+  position.lastMonitorCandlesExcludedBeforeOpen = normalized.candlesExcludedBeforeOpen || 0;
+  position.lastMonitorFirstFullCandleTs = normalized.firstFullCandleTs || null;
+  position.lastMonitorFreshPositionSuppressed = Boolean(normalized.candleRangeFreshPositionSuppressed);
 
   return position;
 }
@@ -2799,6 +2923,9 @@ export function buildOpenPositionFromEntry(entry) {
     lastMonitorCandles: 0,
     lastMonitorHigh: null,
     lastMonitorLow: null,
+    lastMonitorCandlesExcludedBeforeOpen: 0,
+    lastMonitorFirstFullCandleTs: null,
+    lastMonitorFreshPositionSuppressed: false,
 
     entryMarketWeather: normalizedEntry.entryMarketWeather || normalizedEntry.currentMarketWeather || null,
     entryCurrentRegime: normalizedEntry.entryCurrentRegime || normalizedEntry.currentRegime || null,
