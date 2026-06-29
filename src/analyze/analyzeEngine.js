@@ -71,6 +71,10 @@ const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
 const CLASSIFIER_VERSION = 'SHORT_STRICT_EVIDENCE_DISTRIBUTION_V2';
 
+const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
+const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V2';
+
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
 
@@ -1388,6 +1392,12 @@ function analyzeIdentityFlags() {
     avgCostRShown: true,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    adaptiveShortRiskExpected: true,
+
+    observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+
     observationDedupeRequired: true,
     observationAlwaysCounted: false,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
@@ -1694,11 +1704,28 @@ function getWeekMetaKey(weekKey) {
   return shortKey(KEYS.analyze.weekMeta(weekKey), `ANALYZE:WEEK_META:${weekKey}`);
 }
 
-function getObsLastKey(snapshotId, symbol, microFamilyId) {
-  return shortKey(
-    KEYS.analyze.obsLast(snapshotId, symbol, microFamilyId),
+function normalizeEntryDedupeBucket(entry = 0) {
+  const n = safeNumber(entry, 0);
+
+  if (n <= 0) return 'NO_ENTRY';
+
+  return n.toFixed(8);
+}
+
+function getObsLastKey(snapshotId, symbol, microFamilyId, entry = 0) {
+  const entryBucket = normalizeEntryDedupeBucket(entry);
+
+  const baseFromKeys =
+    typeof KEYS.analyze?.obsLast === 'function'
+      ? KEYS.analyze.obsLast(snapshotId, symbol, microFamilyId)
+      : null;
+
+  const baseKey = shortKey(
+    baseFromKeys,
     `ANALYZE:OBS_LAST:${snapshotId}:${symbol}:${microFamilyId}`
   );
+
+  return `${baseKey}:ENTRY:${entryBucket}`;
 }
 
 function getOutcomeLastKey(weekKey, outcomeIdentity, microFamilyId) {
@@ -1968,6 +1995,12 @@ function compactRecentOutcomes(outcomes = [], maxItems = 8) {
         entryCurrentFit: outcome.entryCurrentFit ?? outcome.currentFit ?? null,
         entryCurrentFitConfidence: safeNumber(outcome.entryCurrentFitConfidence ?? outcome.currentMarketFitConfidence, null),
 
+        riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+        rr: safeNumber(outcome.rr, 0),
+        riskPct: safeNumber(outcome.riskPct, 0),
+        rewardPct: safeNumber(outcome.rewardPct, 0),
+        riskToRewardDistanceRatio: safeNumber(outcome.riskToRewardDistanceRatio, 999),
+
         currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
         currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
@@ -2145,6 +2178,7 @@ function buildFixedTaxonomyDefinitionParts(row = {}, classified = {}, taxonomy =
     'CURRENT_FIT_BLOCKS_LEARNING=false',
     'LEARNING_REMAINS_BROAD=true',
     'MEASUREMENT_FIX=avgCostR_directSL_seenDedupe',
+    `RISK_PLAN=${SHORT_RISK_PLAN_VERSION}`,
     'RISK_GEOMETRY=SHORT:tp<entry<sl'
   ]);
 }
@@ -2184,6 +2218,7 @@ function buildExecutionFingerprintParts(row = {}, classified = {}, taxonomy = {}
     `FAKE_BREAKOUT=${bool(row.fakeBreakout, false) ? 'YES' : 'NO'}`,
     `FAKE_RISK=${bool(row.fakeBreakoutRisk, false) ? 'YES' : 'NO'}`,
 
+    `RISK_PLAN=${row.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`,
     'EXECUTION_FINGERPRINT_ROLE=METADATA_ONLY',
     'EXECUTION_FINGERPRINT_USED_AS_LEARNING_FAMILY=false'
   ]);
@@ -2389,6 +2424,12 @@ function enrichWithMicroFamily(row = {}, { forcedSide = null } = {}) {
     structureEvidence: structureEvidence(classifyInput, classified),
     contraEvidence: contraEvidence(classifyInput, classified),
 
+    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: safeNumber(row.rr, 0),
+    riskPct: safeNumber(row.riskPct, 0),
+    rewardPct: safeNumber(row.rewardPct, 0),
+    riskToRewardDistanceRatio: safeNumber(row.riskToRewardDistanceRatio, 999),
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
@@ -2490,6 +2531,9 @@ function compactMicroForStorage(row = {}) {
     setupType: taxonomy.setup,
     regimeBucket: taxonomy.regime,
     confirmationProfile: taxonomy.confirmationProfile,
+
+    riskPlanVersion: refreshed.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    adaptiveShortRiskExpected: true,
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -2739,6 +2783,12 @@ export async function saveWeekMicros(
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     outcomeDedupeRequired: true,
 
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    adaptiveShortRiskExpected: true,
+    observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
     currentFitBlocksVirtualLearning: false,
@@ -2755,7 +2805,6 @@ export async function saveWeekMicros(
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     classifierVersion: CLASSIFIER_VERSION,
-    measurementFixVersion: MEASUREMENT_FIX_VERSION,
     noDefaultRetestSqueezeB: true,
 
     redisNamespace: SHORT_NAMESPACE,
@@ -2777,6 +2826,9 @@ export async function saveWeekMicros(
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     classifierVersion: CLASSIFIER_VERSION,
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     redisKeysSeparatedFromLongRoot: true,
@@ -2825,6 +2877,12 @@ export async function saveWeekMicros(
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     outcomeDedupeRequired: true,
 
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    adaptiveShortRiskExpected: true,
+    observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
     currentFitBlocksVirtualLearning: false,
@@ -2841,7 +2899,6 @@ export async function saveWeekMicros(
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
     classifierVersion: CLASSIFIER_VERSION,
-    measurementFixVersion: MEASUREMENT_FIX_VERSION,
     noDefaultRetestSqueezeB: true,
 
     redisNamespace: SHORT_NAMESPACE,
@@ -2993,12 +3050,17 @@ function getOrCreateMicro(micros, classified, side) {
     micro.spreadBps = classified.spreadBps;
   }
 
+  micro.riskPlanVersion = classified.riskPlanVersion || micro.riskPlanVersion || SHORT_RISK_PLAN_VERSION;
+  micro.adaptiveShortRiskExpected = true;
+
   micro.classifierVersion = CLASSIFIER_VERSION;
   micro.noDefaultRetestSqueezeB = true;
   micro.measurementFixVersion = MEASUREMENT_FIX_VERSION;
   micro.observationDedupeRequired = true;
+  micro.observationDedupeVersion = OBSERVATION_DEDUPE_VERSION;
   micro.seenDefinition = 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY';
   micro.outcomeDedupeRequired = true;
+  micro.outcomeDedupeVersion = OUTCOME_DEDUPE_VERSION;
 
   micro.currentFitSoftOnly = true;
   micro.currentFitBlocksLearning = false;
@@ -3148,7 +3210,8 @@ export async function analyzeCandidatesBatch(
       const observationKey = getObsLastKey(
         observationIdentity.snapshotId,
         observationIdentity.symbol,
-        observationIdentity.microFamilyId
+        observationIdentity.microFamilyId,
+        observationIdentity.entry
       );
 
       const observationClaim = await claimDedupeKey(
@@ -3176,71 +3239,82 @@ export async function analyzeCandidatesBatch(
         TARGET_DASHBOARD_SIDE
       );
 
-      updateObservation(micro, withAnalyzeIdentityFlags({
-        ...batch.metrics,
-        ...classified,
+      if (observationRecorded) {
+        updateObservation(micro, withAnalyzeIdentityFlags({
+          ...batch.metrics,
+          ...classified,
 
-        microFamilyId,
-        trueMicroFamilyId: microFamilyId,
-        childTrueMicroFamilyId: microFamilyId,
-        coarseMicroFamilyId: parentTrueMicroFamilyId,
-        parentTrueMicroFamilyId,
-        parentMicroFamilyId: parentTrueMicroFamilyId,
-        macroFamilyId: parentTrueMicroFamilyId,
-        parentMacroFamilyId: parentTrueMicroFamilyId,
+          microFamilyId,
+          trueMicroFamilyId: microFamilyId,
+          childTrueMicroFamilyId: microFamilyId,
+          coarseMicroFamilyId: parentTrueMicroFamilyId,
+          parentTrueMicroFamilyId,
+          parentMicroFamilyId: parentTrueMicroFamilyId,
+          macroFamilyId: parentTrueMicroFamilyId,
+          parentMacroFamilyId: parentTrueMicroFamilyId,
 
-        side: TARGET_DASHBOARD_SIDE,
-        tradeSide: TARGET_TRADE_SIDE,
-        positionSide: TARGET_TRADE_SIDE,
-        direction: TARGET_TRADE_SIDE,
+          side: TARGET_DASHBOARD_SIDE,
+          tradeSide: TARGET_TRADE_SIDE,
+          positionSide: TARGET_TRADE_SIDE,
+          direction: TARGET_TRADE_SIDE,
 
-        targetTradeSide: TARGET_TRADE_SIDE,
-        dashboardSide: TARGET_DASHBOARD_SIDE,
+          targetTradeSide: TARGET_TRADE_SIDE,
+          dashboardSide: TARGET_DASHBOARD_SIDE,
 
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false,
+          shortOnly: true,
+          longDisabled: true,
+          longOnly: false,
+          shortDisabled: false,
 
-        weekKey,
-        strategyVersion: CONFIG.strategyVersion,
+          weekKey,
+          strategyVersion: CONFIG.strategyVersion,
 
-        source: OBSERVATION_SOURCE,
-        analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
+          source: OBSERVATION_SOURCE,
+          analysisType: 'VIRTUAL_TRADE_SETUP_OBSERVATION',
 
-        virtualOnly: true,
-        virtualTracked: true,
-        shadowOnly: true,
+          virtualOnly: true,
+          virtualTracked: true,
+          shadowOnly: false,
 
-        realTrade: false,
-        realOrder: false,
-        exchangeOrder: false,
-        bitgetOrderPlaced: false,
+          realTrade: false,
+          realOrder: false,
+          exchangeOrder: false,
+          bitgetOrderPlaced: false,
 
-        observationRecorded,
-        observationDuplicate,
-        observationAlreadyCounted: observationDuplicate,
-        observationCounted: observationRecorded,
-        countObservation: observationRecorded,
-        skipObservationCount: observationDuplicate,
-        observationAlwaysCounted: false,
-        observationDedupeKey: observationKey,
-        observationDedupeMethod: observationClaim.method,
-        observationDedupeType: observationClaim.type,
-        observationSnapshotId: observationIdentity.snapshotId,
-        observationEntry: observationIdentity.entry,
+          observationRecorded: true,
+          observationDuplicate: false,
+          observationAlreadyCounted: false,
+          observationCounted: true,
+          countObservation: true,
+          skipObservationCount: false,
+          observationAlwaysCounted: false,
+          observationDedupeKey: observationKey,
+          observationDedupeMethod: observationClaim.method,
+          observationDedupeType: observationClaim.type,
+          observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+          observationSnapshotId: observationIdentity.snapshotId,
+          observationEntry: observationIdentity.entry,
 
-        riskTradeSide: TARGET_TRADE_SIDE,
-        riskGeometryRule: 'SHORT: tp < entry < sl',
-        currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-        currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+          riskPlanVersion: batch.metrics.riskPlanVersion || classified.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+          rr: batch.metrics.rr ?? classified.rr ?? null,
+          riskPct: batch.metrics.riskPct ?? classified.riskPct ?? null,
+          rewardPct: batch.metrics.rewardPct ?? classified.rewardPct ?? null,
+          riskToRewardDistanceRatio:
+            batch.metrics.riskToRewardDistanceRatio ??
+            classified.riskToRewardDistanceRatio ??
+            null,
 
-        createdAt: batch.metrics.createdAt || now()
-      }));
+          riskTradeSide: TARGET_TRADE_SIDE,
+          riskGeometryRule: 'SHORT: tp < entry < sl',
+          currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+          currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
-      Object.assign(micro, analyzeIdentityFlags());
+          createdAt: batch.metrics.createdAt || now()
+        }));
 
-      actuallyTouchedIds.add(microFamilyId);
+        Object.assign(micro, analyzeIdentityFlags());
+        actuallyTouchedIds.add(microFamilyId);
+      }
 
       if (item.returnToCaller) {
         analyzed.push(withAnalyzeIdentityFlags({
@@ -3281,18 +3355,28 @@ export async function analyzeCandidatesBatch(
           observationAlwaysCounted: false,
           observationDedupeKey: observationKey,
           observationDedupeMethod: observationClaim.method,
+          observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
 
           mirrorMicroFamiliesCreated: 0,
           mirrorMicroFamilyIds: [],
 
           virtualOnly: true,
           virtualTracked: true,
-          shadowOnly: true,
+          shadowOnly: false,
 
           realTrade: false,
           realOrder: false,
           exchangeOrder: false,
           bitgetOrderPlaced: false,
+
+          riskPlanVersion: batch.metrics.riskPlanVersion || classified.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+          rr: batch.metrics.rr ?? classified.rr ?? null,
+          riskPct: batch.metrics.riskPct ?? classified.riskPct ?? null,
+          rewardPct: batch.metrics.rewardPct ?? classified.rewardPct ?? null,
+          riskToRewardDistanceRatio:
+            batch.metrics.riskToRewardDistanceRatio ??
+            classified.riskToRewardDistanceRatio ??
+            null,
 
           riskTradeSide: TARGET_TRADE_SIDE,
           riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3353,7 +3437,8 @@ function buildLockedOutcomeRow(outcome = {}) {
       `LOCKED_MICRO=${microFamilyId}`,
       `LOCKED_TRUE_MICRO=${microFamilyId}`,
       `LOCKED_PARENT_TRUE_MICRO=${parentTrueMicroFamilyId}`,
-      'OUTCOME_IDENTITY=POSITION_LOCKED'
+      'OUTCOME_IDENTITY=POSITION_LOCKED',
+      `RISK_PLAN=${outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`
     ]
   );
 
@@ -3418,7 +3503,7 @@ function buildLockedOutcomeRow(outcome = {}) {
     shortDisabled: false,
 
     source: outcome.source || OUTCOME_SOURCE,
-    outcomeSource: OUTCOME_SOURCE,
+    outcomeSource: outcome.outcomeSource || outcome.source || OUTCOME_SOURCE,
     virtualOnly: true,
     virtualTracked: true,
     shadowOnly: true,
@@ -3433,6 +3518,12 @@ function buildLockedOutcomeRow(outcome = {}) {
     scannerDefinition: outcome.scannerDefinition || null,
     scannerDefinitionParts: outcome.scannerDefinitionParts || [],
     scannerFingerprintRole: 'METADATA_ONLY',
+
+    riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: safeNumber(outcome.rr, 0),
+    riskPct: safeNumber(outcome.riskPct, 0),
+    rewardPct: safeNumber(outcome.rewardPct, 0),
+    riskToRewardDistanceRatio: safeNumber(outcome.riskToRewardDistanceRatio, 999),
 
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3510,6 +3601,20 @@ function ensureNetOutcome(outcome = {}) {
       sl: initialSl
     });
 
+  const rewardPct =
+    safeNumber(outcome.rewardPct, 0) ||
+    (
+      entry > 0 && tp > 0
+        ? Math.max(0, (entry - tp) / entry)
+        : 0
+    );
+
+  const riskToRewardDistanceRatio =
+    safeNumber(
+      outcome.riskToRewardDistanceRatio,
+      rewardPct > 0 ? riskPct / rewardPct : 999
+    );
+
   const grossMovePct = safeNumber(
     outcome.grossMovePct,
     entry > 0 && exit > 0
@@ -3519,6 +3624,15 @@ function ensureNetOutcome(outcome = {}) {
         exit
       })
       : null
+  );
+
+  const directToSL = Boolean(
+    outcome.directToSL ||
+    outcome.directSL ||
+    inferDirectToSL({
+      position: outcome,
+      exitReason: outcome.exitReason || outcome.reason
+    })
   );
 
   if (
@@ -3547,6 +3661,8 @@ function ensureNetOutcome(outcome = {}) {
 
       grossMovePct,
       riskPct,
+      rewardPct,
+      riskToRewardDistanceRatio,
 
       grossR,
       shortGrossR: grossR,
@@ -3573,6 +3689,12 @@ function ensureNetOutcome(outcome = {}) {
       loss: netR < 0,
       flat: netR === 0,
       isWin: netR > 0,
+
+      directToSL,
+      directSL: directToSL,
+
+      riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+      rr: safeNumber(outcome.rr, 0),
 
       riskTradeSide: TARGET_TRADE_SIDE,
       riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3620,6 +3742,15 @@ function ensureNetOutcome(outcome = {}) {
     loss: fallbackNetR < 0,
     flat: fallbackNetR === 0,
     isWin: fallbackNetR > 0,
+
+    directToSL,
+    directSL: directToSL,
+
+    riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: safeNumber(outcome.rr, 0),
+    riskPct,
+    rewardPct,
+    riskToRewardDistanceRatio,
 
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3785,39 +3916,6 @@ export async function recordOutcome(
   );
 
   if (outcomeClaim.duplicate === true) {
-    updateOutcome(micro, withAnalyzeIdentityFlags({
-      ...row,
-
-      microFamilyId,
-      trueMicroFamilyId: microFamilyId,
-      childTrueMicroFamilyId: microFamilyId,
-      coarseMicroFamilyId: parentTrueMicroFamilyId,
-      parentTrueMicroFamilyId,
-      parentMicroFamilyId: parentTrueMicroFamilyId,
-      macroFamilyId: parentTrueMicroFamilyId,
-      parentMacroFamilyId: parentTrueMicroFamilyId,
-
-      source: src,
-      outcomeSource: OUTCOME_SOURCE,
-      outcomeDuplicate: true,
-      outcomeAlreadyRecorded: true,
-      outcomeCounted: false,
-      countOutcome: false,
-      skipOutcomeCount: true,
-      outcomeDedupeKey,
-      outcomeDedupeMethod: outcomeClaim.method
-    }), src);
-
-    Object.assign(micro, analyzeIdentityFlags());
-
-    await saveWeekMicros(
-      weekKey,
-      micros,
-      {
-        onlyIds: [microFamilyId]
-      }
-    );
-
     return withAnalyzeIdentityFlags({
       ...row,
       microFamilyId,
@@ -3828,11 +3926,14 @@ export async function recordOutcome(
       parentMicroFamilyId: parentTrueMicroFamilyId,
       macroFamilyId: parentTrueMicroFamilyId,
       parentMacroFamilyId: parentTrueMicroFamilyId,
+
       source: src,
-      outcomeSource: OUTCOME_SOURCE,
+      outcomeSource: src,
       weekKey,
+
       skipped: true,
-      reason: 'DUPLICATE_OUTCOME_SKIPPED',
+      reason: 'DUPLICATE_OUTCOME_SKIPPED_NO_STATS_UPDATE',
+
       outcomeDuplicate: true,
       outcomeAlreadyRecorded: true,
       outcomeCounted: false,
@@ -3840,6 +3941,8 @@ export async function recordOutcome(
       skipOutcomeCount: true,
       outcomeDedupeKey,
       outcomeDedupeMethod: outcomeClaim.method,
+      outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+
       recordedAt: now(),
       mirrorOutcomeRecorded: false,
       mirrorMicroFamilyId: null
@@ -3859,7 +3962,13 @@ export async function recordOutcome(
     parentMacroFamilyId: parentTrueMicroFamilyId,
 
     source: src,
-    outcomeSource: OUTCOME_SOURCE,
+    outcomeSource: src,
+
+    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: safeNumber(row.rr, 0),
+    riskPct: safeNumber(row.riskPct, 0),
+    rewardPct: safeNumber(row.rewardPct, 0),
+    riskToRewardDistanceRatio: safeNumber(row.riskToRewardDistanceRatio, 999),
 
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -3917,6 +4026,7 @@ export async function recordOutcome(
     skipOutcomeCount: false,
     outcomeDedupeKey,
     outcomeDedupeMethod: outcomeClaim.method,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
 
     outcomeIdentityLocked: true,
     outcomeIdentitySource: row.outcomeIdentitySource || 'POSITION_MICRO_IDENTITY'
@@ -3943,9 +4053,10 @@ export async function recordOutcome(
     macroFamilyId: parentTrueMicroFamilyId,
     parentMacroFamilyId: parentTrueMicroFamilyId,
     source: src,
-    outcomeSource: OUTCOME_SOURCE,
+    outcomeSource: src,
     weekKey,
     recordedAt: now(),
+
     outcomeDuplicate: false,
     outcomeAlreadyRecorded: false,
     outcomeCounted: true,
@@ -3953,6 +4064,14 @@ export async function recordOutcome(
     skipOutcomeCount: false,
     outcomeDedupeKey,
     outcomeDedupeMethod: outcomeClaim.method,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+
+    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: safeNumber(row.rr, 0),
+    riskPct: safeNumber(row.riskPct, 0),
+    rewardPct: safeNumber(row.rewardPct, 0),
+    riskToRewardDistanceRatio: safeNumber(row.riskToRewardDistanceRatio, 999),
+
     mirrorOutcomeRecorded: false,
     mirrorMicroFamilyId: null
   });
@@ -4162,6 +4281,12 @@ function copyMicroClassificationFields(position = {}) {
     avgCostR: position.avgCostR ?? null,
     estimatedCostR: position.estimatedCostR ?? null,
 
+    riskPlanVersion: position.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rr: safeNumber(position.rr, 0),
+    riskPct: safeNumber(position.riskPct, 0),
+    rewardPct: safeNumber(position.rewardPct, 0),
+    riskToRewardDistanceRatio: safeNumber(position.riskToRewardDistanceRatio, 999),
+
     entryMarketWeather: position.entryMarketWeather || null,
     entryCurrentRegime: position.entryCurrentRegime || position.currentRegime || null,
     entryCurrentTrendSide: position.entryCurrentTrendSide || position.currentTrendSide || null,
@@ -4226,6 +4351,16 @@ export function buildOutcomeFromPosition({
       sl: initialSl
     });
 
+  const rewardPct =
+    entry > 0 && tp > 0
+      ? Math.max(0, (entry - tp) / entry)
+      : 0;
+
+  const riskToRewardDistanceRatio =
+    rewardPct > 0
+      ? safeNumber(riskPct / rewardPct, 999)
+      : 999;
+
   const grossMovePct = calcGrossMovePct({
     side: TARGET_TRADE_SIDE,
     entry,
@@ -4267,7 +4402,7 @@ export function buildOutcomeFromPosition({
   return withAnalyzeIdentityFlags({
     type: 'OUTCOME',
     source: src,
-    outcomeSource: OUTCOME_SOURCE,
+    outcomeSource: src,
     positionSource: position.source || 'VIRTUAL',
 
     strategyVersion: CONFIG.strategyVersion,
@@ -4310,6 +4445,9 @@ export function buildOutcomeFromPosition({
     tp,
     rr: safeNumber(position.rr, 0),
     riskPct,
+    rewardPct,
+    riskToRewardDistanceRatio,
+    riskPlanVersion: position.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
 
     validShortRiskShape,
     validShortGeometry: validShortRiskShape,
