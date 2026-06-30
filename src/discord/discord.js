@@ -3,24 +3,24 @@
 // SHORT-only Discord router.
 //
 // Aangepast op nieuwe laagstructuur:
-// - Parent 15      = context / metadata
-// - Micro 75       = selecteerbare fallback
-// - Micro-micro MM = voorkeurselectie / strengste Discord-match
+// - Parent 15      = context / metadata only
+// - Micro 75       = hoofd-learning / context only voor Discord
+// - Micro-micro MM = ENIGE handmatige Discord-selectie
 //
-// Selecteerbaar:
-// - MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}
+// Discord-selecteerbaar:
 // - MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}
 //
-// Niet selecteerbaar:
+// Niet Discord-selecteerbaar:
 // - Parent 15
+// - Micro 75 child
 // - Scanner buckets
-// - XR execution fingerprint raw ids
+// - Raw XR execution fingerprint ids
 // - LONG ids
 //
 // Discord stuurt alleen:
 // - SHORT
 // - virtual/shadow/paper payloads
-// - exact manual selected micro-family match
+// - exact manual selected micro-micro match
 // - geldige SHORT geometry: tp < entry < sl
 
 import { CONFIG } from '../config.js';
@@ -57,6 +57,9 @@ const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_STABLE_O
 const POSITION_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_V4';
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_MICRO_MICRO_LAYERING_V1';
+
+const SELECTION_GRANULARITY = 'EXACT_MICRO_MICRO_ONLY';
+const DISCORD_SELECTION_RULE = 'EXACT_MICRO_MICRO_FAMILY_ID_ONLY';
 
 const SOURCE_VIRTUAL = 'VIRTUAL';
 const SOURCE_REAL = 'REAL';
@@ -166,7 +169,9 @@ function discordConfig() {
 
 function truncate(value, max = 1024) {
   const text = String(value ?? '');
+
   if (text.length <= max) return text;
+
   return `${text.slice(0, Math.max(0, max - 3))}...`;
 }
 
@@ -475,8 +480,14 @@ function isScannerFamilyId(id = '') {
   );
 }
 
+function isMicroMicroIdPattern(id = '') {
+  return /^(MICRO_SHORT_.+)_MM_([A-Z0-9]{6,24})$/u.test(upper(id));
+}
+
 function isExecutionFingerprintId(id = '') {
   const value = upper(id);
+
+  if (isMicroMicroIdPattern(value)) return false;
 
   return (
     value.includes('_XR_') ||
@@ -497,6 +508,7 @@ function parseShortTaxonomyMicroId(id = '') {
     return {
       valid: false,
       selectable: false,
+      discordSelectable: false,
       isParent: false,
       isChild: false,
       isMicroMicro: false,
@@ -508,6 +520,7 @@ function parseShortTaxonomyMicroId(id = '') {
     return {
       valid: false,
       selectable: false,
+      discordSelectable: false,
       isParent: false,
       isChild: false,
       isMicroMicro: false,
@@ -523,6 +536,7 @@ function parseShortTaxonomyMicroId(id = '') {
     return {
       valid: false,
       selectable: false,
+      discordSelectable: false,
       isParent: false,
       isChild: false,
       isMicroMicro: false,
@@ -588,9 +602,24 @@ function parseShortTaxonomyMicroId(id = '') {
   const isChild = validChild && !isMicroMicro;
   const isParent = validParent && !validChild && !isMicroMicro;
 
+  const schema = isMicroMicro
+    ? MICRO_MICRO_SCHEMA
+    : isChild
+      ? TRUE_MICRO_SCHEMA
+      : isParent
+        ? PARENT_TRUE_MICRO_SCHEMA
+        : null;
+
+  const learningGranularity = isMicroMicro
+    ? MICRO_MICRO_LEARNING_GRANULARITY
+    : isParent
+      ? PARENT_LEARNING_GRANULARITY
+      : LEARNING_GRANULARITY;
+
   return {
     valid: validParent || validChild || isMicroMicro,
     selectable: isChild || isMicroMicro,
+    discordSelectable: isMicroMicro,
 
     isParent,
     isChild,
@@ -598,6 +627,8 @@ function parseShortTaxonomyMicroId(id = '') {
     isExactChild: validChild,
 
     rawId,
+    id: microMicroFamilyId || childId || parentId || value,
+
     setup,
     regime,
     setupType: setup,
@@ -613,7 +644,7 @@ function parseShortTaxonomyMicroId(id = '') {
     exactMicroMicroFamilyId: microMicroFamilyId,
     microMicroHash,
 
-    trueMicroFamilySchema: isMicroMicro ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: schema,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
@@ -626,12 +657,7 @@ function parseShortTaxonomyMicroId(id = '') {
           ? 'PARENT_15'
           : 'UNKNOWN',
 
-    learningGranularity: isMicroMicro
-      ? MICRO_MICRO_LEARNING_GRANULARITY
-      : isParent
-        ? PARENT_LEARNING_GRANULARITY
-        : LEARNING_GRANULARITY,
-
+    learningGranularity,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY
   };
@@ -651,14 +677,18 @@ function isParentTrueMicroFamilyId(id = '') {
   return parseShortTaxonomyMicroId(id).isParent === true;
 }
 
-function validLearningChildId(id = '') {
+function isDiscordSelectableMicroMicroId(id = '') {
   const value = String(id || '').trim();
 
   if (!value) return false;
   if (isScannerFamilyId(value)) return false;
   if (isExecutionFingerprintId(value)) return false;
 
-  return isSelectableTrueMicroFamilyId(value);
+  return isMicroMicroFamilyId(value);
+}
+
+function validLearningChildId(id = '') {
+  return isDiscordSelectableMicroMicroId(id);
 }
 
 function definitionParts(payload = {}) {
@@ -1018,6 +1048,13 @@ function selectedLearningId(payload = {}) {
     payload.trueMicroMicroFamilyId,
     payload.exactMicroMicroFamilyId,
 
+    payload.selectedMicroMicroFamilyId,
+    payload.selectedTrueMicroMicroFamilyId,
+    payload.activeMicroMicroFamilyId,
+    payload.activeTrueMicroMicroFamilyId,
+    payload.rotationMicroMicroFamilyId,
+    payload.rotationTrueMicroMicroFamilyId,
+
     payload.trueMicroFamilyId,
     payload.childTrueMicroFamilyId,
     payload.microFamilyId,
@@ -1028,10 +1065,10 @@ function selectedLearningId(payload = {}) {
   for (const candidate of candidates) {
     const value = upper(candidate);
 
-    if (validLearningChildId(value)) {
+    if (isDiscordSelectableMicroMicroId(value)) {
       const parsed = parseShortTaxonomyMicroId(value);
 
-      return parsed.trueMicroFamilyId;
+      return parsed.microMicroFamilyId;
     }
   }
 
@@ -1285,10 +1322,7 @@ function isVirtualSource(payload = {}) {
 }
 
 function isMirrorPayload(payload = {}) {
-  const source = normalizeSource(payload.source);
-
   return Boolean(
-    source === SOURCE_SHADOW ||
     payload.observationMirror === true ||
     payload.analysisMirror === true ||
     payload.mirrorAnalysisOnly === true ||
@@ -1315,13 +1349,6 @@ function hasValidShortTradeShape(entry = {}) {
 
 function selectedTrueMicroIdsFromPayload(payload = {}) {
   return uniqueStrings([
-    payload.selectedTrueMicroFamilyId,
-    payload.selectedMicroFamilyId,
-    payload.activeTrueMicroFamilyId,
-    payload.activeMicroFamilyId,
-    payload.rotationTrueMicroFamilyId,
-    payload.rotationMicroFamilyId,
-
     payload.selectedMicroMicroFamilyId,
     payload.selectedTrueMicroMicroFamilyId,
     payload.activeMicroMicroFamilyId,
@@ -1329,30 +1356,55 @@ function selectedTrueMicroIdsFromPayload(payload = {}) {
     payload.rotationMicroMicroFamilyId,
     payload.rotationTrueMicroMicroFamilyId,
 
-    payload.selectedTrueMicroFamilyIds || [],
-    payload.selectedMicroFamilyIds || [],
-    payload.activeTrueMicroFamilyIds || [],
-    payload.activeMicroFamilyIds || [],
-    payload.trueMicroFamilyIds || [],
-    payload.microFamilyIds || [],
-
     payload.selectedMicroMicroFamilyIds || [],
     payload.selectedTrueMicroMicroFamilyIds || [],
     payload.activeMicroMicroFamilyIds || [],
     payload.activeTrueMicroMicroFamilyIds || [],
     payload.trueMicroMicroFamilyIds || [],
-    payload.microMicroFamilyIds || []
+    payload.microMicroFamilyIds || [],
+    payload.exactMicroMicroFamilyIds || [],
+
+    // legacy containers; inhoud moet MM zijn
+    payload.selectedTrueMicroFamilyIds || [],
+    payload.selectedMicroFamilyIds || [],
+    payload.activeTrueMicroFamilyIds || [],
+    payload.activeMicroFamilyIds || [],
+    payload.trueMicroFamilyIds || [],
+    payload.microFamilyIds || []
   ])
     .map(upper)
     .map((id) => {
       const parsed = parseShortTaxonomyMicroId(id);
-      return parsed.selectable ? parsed.trueMicroFamilyId : null;
+
+      return parsed.isMicroMicro ? parsed.microMicroFamilyId : null;
     })
     .filter(Boolean)
-    .filter(validLearningChildId);
+    .filter(isDiscordSelectableMicroMicroId);
+}
+
+function payloadRequestsMicroMicroOnly(entry = {}) {
+  const mode = upper(
+    entry.selectionGranularity ||
+      entry.manualSelectionMatchMode ||
+      entry.discordSelectionRule ||
+      ''
+  );
+
+  if (!mode) return true;
+
+  return (
+    mode.includes('EXACT_MICRO_MICRO') ||
+    mode.includes('MICRO_MICRO') ||
+    mode.includes('EXACT_MM') ||
+    mode.includes('MM_ONLY')
+  );
 }
 
 function matchTypeIsExactSelectedMicro(entry = {}) {
+  const selectedId = trueMicroFamilyId(entry);
+
+  if (!isDiscordSelectableMicroMicroId(selectedId)) return false;
+
   const matchType = upper(entry.rotationMatchType || entry.matchType || '');
 
   if (!matchType) {
@@ -1368,29 +1420,31 @@ function matchTypeIsExactSelectedMicro(entry = {}) {
     matchType.includes('PARENT') ||
     matchType.includes('COARSE') ||
     matchType.includes('SCANNER') ||
-    matchType.includes('EXECUTION') ||
     matchType.includes('XR')
   ) {
     return false;
   }
 
-  return (
-    matchType === 'TRUE_MICRO_EXACT' ||
-    matchType === 'EXACT_TRUE_MICRO' ||
-    matchType === 'EXACT_75_CHILD' ||
-    matchType === 'EXACT_75_CHILD_TRUE_MICRO' ||
-    matchType === 'SELECTED_TRUE_MICRO_EXACT' ||
+  if (
     matchType === 'MICRO_MICRO_EXACT' ||
     matchType === 'EXACT_MICRO_MICRO' ||
     matchType === 'EXACT_MM' ||
     matchType === 'SELECTED_MICRO_MICRO_EXACT' ||
-    matchType.includes('TRUE_MICRO_EXACT') ||
-    matchType.includes('EXACT_TRUE_MICRO') ||
-    matchType.includes('EXACT_75_CHILD') ||
-    matchType.includes('CHILD_TRUE_MICRO') ||
     matchType.includes('MICRO_MICRO_EXACT') ||
     matchType.includes('EXACT_MICRO_MICRO') ||
     matchType.includes('EXACT_MM')
+  ) {
+    return true;
+  }
+
+  // Backward compatibility: sommige oudere payloads noemen MM nog TRUE_MICRO_EXACT.
+  // Dit mag alleen door als de geselecteerde ID zelf een MM-id is.
+  return (
+    matchType === 'TRUE_MICRO_EXACT' ||
+    matchType === 'EXACT_TRUE_MICRO' ||
+    matchType === 'SELECTED_TRUE_MICRO_EXACT' ||
+    matchType.includes('TRUE_MICRO_EXACT') ||
+    matchType.includes('EXACT_TRUE_MICRO')
   );
 }
 
@@ -1398,7 +1452,8 @@ function hasSelectedMicroRotationMatch(entry = {}) {
   const selectedId = trueMicroFamilyId(entry);
 
   if (!selectedId) return false;
-  if (!validLearningChildId(selectedId)) return false;
+  if (!isDiscordSelectableMicroMicroId(selectedId)) return false;
+  if (!payloadRequestsMicroMicroOnly(entry)) return false;
 
   const selected = Boolean(
     entry.discordAlertEligible === true ||
@@ -1444,7 +1499,7 @@ function shouldSendExitAlert(outcome = {}) {
   const selectedId = trueMicroFamilyId(outcome);
 
   if (!selectedId) return false;
-  if (!validLearningChildId(selectedId)) return false;
+  if (!isDiscordSelectableMicroMicroId(selectedId)) return false;
   if (!hasSelectedMicroRotationMatch(outcome)) return false;
 
   return true;
@@ -1502,6 +1557,8 @@ function compactPayload(payload = {}) {
     selectedLearningMicroFamilyId: selectedId,
 
     childTrueMicroFamilyId: childId,
+    base75ChildTrueMicroFamilyId: childId,
+
     microMicroFamilyId: mmId,
     trueMicroMicroFamilyId: mmId,
     exactMicroMicroFamilyId: mmId,
@@ -1587,9 +1644,16 @@ function compactPayload(payload = {}) {
     executionFingerprintsMetadataOnly: !isMM,
     executionFingerprintsUsedAsLearningFamily: isMM,
 
-    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_PREFERRED_OR_EXACT_75_CHILD',
-    discordOnlyForExactTrueMicroMatch: true,
-    selectionGranularity: isMM ? 'EXACT_MICRO_MICRO' : 'EXACT_75_CHILD',
+    manualSelectionMatchMode: SELECTION_GRANULARITY,
+    discordOnlyForExactMicroMicroMatch: true,
+    discordOnlyForExactTrueMicroMatch: false,
+    discordSelectionRule: DISCORD_SELECTION_RULE,
+    selectionGranularity: SELECTION_GRANULARITY,
+
+    child75SelectionDisabled: true,
+    microFamilySelectionDisabled: true,
+    parentMatchDoesNotTriggerDiscord: true,
+    macroMatchDoesNotTriggerDiscord: true,
 
     trueMicroFamilySchema: isMM ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
@@ -1682,6 +1746,10 @@ async function logDiscord(type, payload, result) {
         persistentLearningKey: PERSISTENT_LEARNING_KEY,
         redisKeysSeparatedFromLongRoot: true,
         longRootTouched: false,
+        selectionGranularity: SELECTION_GRANULARITY,
+        discordSelectionRule: DISCORD_SELECTION_RULE,
+        discordOnlyForExactMicroMicroMatch: true,
+        discordOnlyForExactTrueMicroMatch: false,
         ts: Date.now()
       },
       cfg.logLimit
@@ -1708,8 +1776,10 @@ async function skipDiscord(type, payload = {}, reason = 'DISCORD_SKIPPED') {
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
     exchangeCallsDisabled: true,
-    discordOnlyForExactTrueMicroMatch: true,
-    selectionGranularity: isMM ? 'EXACT_MICRO_MICRO' : 'EXACT_75_CHILD',
+    discordOnlyForExactMicroMicroMatch: true,
+    discordOnlyForExactTrueMicroMatch: false,
+    selectionGranularity: SELECTION_GRANULARITY,
+    detectedSelectionLayer: isMM ? 'MICRO_MICRO' : 'NON_MICRO_MICRO',
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
@@ -1724,16 +1794,29 @@ async function skipDiscord(type, payload = {}, reason = 'DISCORD_SKIPPED') {
 
 function entrySkipReason(entry = {}) {
   const selectedId = trueMicroFamilyId(entry);
+  const rawCandidateId = upper(
+    entry.microMicroFamilyId ||
+      entry.trueMicroMicroFamilyId ||
+      entry.exactMicroMicroFamilyId ||
+      entry.trueMicroFamilyId ||
+      entry.childTrueMicroFamilyId ||
+      entry.microFamilyId ||
+      ''
+  );
 
   if (!isShortPayload(entry)) return 'DISCORD_SHORT_ONLY_SKIPPED_NON_SHORT';
   if (isMirrorPayload(entry)) return 'DISCORD_SKIPPED_MIRROR_PAYLOAD';
   if (isAnalysisOnlyPayload(entry)) return 'DISCORD_SKIPPED_ANALYSIS_ONLY';
   if (isRealOrderSource(entry)) return 'DISCORD_REAL_ORDER_SOURCE_BLOCKED';
-  if (!isVirtualSource(entry)) return 'DISCORD_VIRTUAL_SOURCE_REQUIRED';
+  if (!isVirtualSource(entry)) return 'DISCORD_VIRTUAL_OR_SHADOW_SOURCE_REQUIRED';
   if (entry.action && !isEntryAction(entry.action)) return 'DISCORD_SKIPPED_NOT_ENTRY_ACTION';
-  if (!selectedId) return 'ENTRY_EXACT_MICRO_MICRO_OR_75_CHILD_ID_MISSING';
-  if (!validLearningChildId(selectedId)) return 'ENTRY_ONLY_EXACT_MICRO_MICRO_OR_75_CHILD_ALLOWED';
-  if (!hasSelectedMicroRotationMatch(entry)) return 'ENTRY_NOT_SELECTED_MANUAL_EXACT_MICRO_MICRO_OR_75_CHILD_MATCH';
+  if (!rawCandidateId) return 'ENTRY_EXACT_MICRO_MICRO_ID_MISSING';
+  if (isSelectableTrueMicroFamilyId(rawCandidateId) && !isMicroMicroFamilyId(rawCandidateId)) {
+    return 'ENTRY_75_CHILD_CONTEXT_ONLY_MICRO_MICRO_REQUIRED';
+  }
+  if (!selectedId) return 'ENTRY_EXACT_MICRO_MICRO_ID_MISSING';
+  if (!isDiscordSelectableMicroMicroId(selectedId)) return 'ENTRY_ONLY_EXACT_MICRO_MICRO_ALLOWED';
+  if (!hasSelectedMicroRotationMatch(entry)) return 'ENTRY_NOT_SELECTED_MANUAL_EXACT_MICRO_MICRO_MATCH';
   if (!hasValidShortTradeShape(entry)) return 'ENTRY_INVALID_SHORT_TRADE_SHAPE_TP_ENTRY_SL_REQUIRED';
 
   return 'ENTRY_NOT_ELIGIBLE';
@@ -1741,15 +1824,28 @@ function entrySkipReason(entry = {}) {
 
 function exitSkipReason(outcome = {}) {
   const selectedId = trueMicroFamilyId(outcome);
+  const rawCandidateId = upper(
+    outcome.microMicroFamilyId ||
+      outcome.trueMicroMicroFamilyId ||
+      outcome.exactMicroMicroFamilyId ||
+      outcome.trueMicroFamilyId ||
+      outcome.childTrueMicroFamilyId ||
+      outcome.microFamilyId ||
+      ''
+  );
 
   if (!isShortPayload(outcome)) return 'DISCORD_SHORT_ONLY_SKIPPED_NON_SHORT';
   if (isMirrorPayload(outcome)) return 'DISCORD_SKIPPED_MIRROR_PAYLOAD';
   if (isAnalysisOnlyPayload(outcome)) return 'DISCORD_SKIPPED_ANALYSIS_ONLY';
   if (isRealOrderSource(outcome)) return 'DISCORD_REAL_ORDER_SOURCE_BLOCKED';
-  if (!isVirtualSource(outcome)) return 'DISCORD_VIRTUAL_SOURCE_REQUIRED';
-  if (!selectedId) return 'EXIT_EXACT_MICRO_MICRO_OR_75_CHILD_ID_MISSING';
-  if (!validLearningChildId(selectedId)) return 'EXIT_ONLY_EXACT_MICRO_MICRO_OR_75_CHILD_ALLOWED';
-  if (!hasSelectedMicroRotationMatch(outcome)) return 'EXIT_NOT_SELECTED_MANUAL_EXACT_MICRO_MICRO_OR_75_CHILD_MATCH';
+  if (!isVirtualSource(outcome)) return 'DISCORD_VIRTUAL_OR_SHADOW_SOURCE_REQUIRED';
+  if (!rawCandidateId) return 'EXIT_EXACT_MICRO_MICRO_ID_MISSING';
+  if (isSelectableTrueMicroFamilyId(rawCandidateId) && !isMicroMicroFamilyId(rawCandidateId)) {
+    return 'EXIT_75_CHILD_CONTEXT_ONLY_MICRO_MICRO_REQUIRED';
+  }
+  if (!selectedId) return 'EXIT_EXACT_MICRO_MICRO_ID_MISSING';
+  if (!isDiscordSelectableMicroMicroId(selectedId)) return 'EXIT_ONLY_EXACT_MICRO_MICRO_ALLOWED';
+  if (!hasSelectedMicroRotationMatch(outcome)) return 'EXIT_NOT_SELECTED_MANUAL_EXACT_MICRO_MICRO_MATCH';
 
   return 'EXIT_NOT_ELIGIBLE';
 }
@@ -1760,12 +1856,10 @@ function entryReasonText(entry = {}) {
   const avgR = statValue(entry, 'avgR');
   const totalR = statValue(entry, 'totalR');
   const avgCostR = statValue(entry, 'avgCostR');
-  const selectedId = trueMicroFamilyId(entry);
-  const isMM = isMicroMicroFamilyId(selectedId);
 
   return [
-    isMM ? 'MANUAL_MICRO_MICRO_EXACT_MATCH' : 'MANUAL_75_CHILD_TRUE_MICRO_MATCH',
-    `SOURCE=${SOURCE_VIRTUAL}`,
+    'MANUAL_MICRO_MICRO_EXACT_MATCH',
+    `SOURCE=${normalizeSource(entry.source || SOURCE_VIRTUAL)}`,
     `WR=${fmtPctSmart(wr)}`,
     `SAMPLE=${fmtNumber(statsSample, 2)}`,
     `AVG_R=${fmtR(avgR)}`,
@@ -1812,10 +1906,10 @@ export async function sendEntryAlert(entry = {}) {
   const result = await postDiscord(content);
   await logDiscord('ENTRY', {
     ...entry,
-    source: SOURCE_VIRTUAL,
-    outcomeSource: SOURCE_VIRTUAL,
-    virtualOnly: true,
-    virtualTracked: true,
+    source: entry.source || SOURCE_VIRTUAL,
+    outcomeSource: entry.outcomeSource || entry.source || SOURCE_VIRTUAL,
+    virtualOnly: entry.virtualOnly !== false,
+    virtualTracked: entry.virtualTracked !== false,
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
@@ -1823,10 +1917,15 @@ export async function sendEntryAlert(entry = {}) {
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
     exchangeCallsDisabled: true,
-    trueMicroFamilySchema: isMicroMicroFamilyId(trueMicroFamilyId(entry)) ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    selectionGranularity: SELECTION_GRANULARITY,
+    discordSelectionRule: DISCORD_SELECTION_RULE,
+    discordOnlyForExactMicroMicroMatch: true,
+    discordOnlyForExactTrueMicroMatch: false,
+    child75SelectionDisabled: true,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
     slHitRule: 'SHORT: price >= sl',
@@ -1881,10 +1980,10 @@ export async function sendExitAlert(outcome = {}) {
   const result = await postDiscord(content);
   await logDiscord('EXIT', {
     ...outcome,
-    source: SOURCE_VIRTUAL,
-    outcomeSource: SOURCE_VIRTUAL,
-    virtualOnly: true,
-    virtualTracked: true,
+    source: outcome.source || SOURCE_VIRTUAL,
+    outcomeSource: outcome.outcomeSource || outcome.source || SOURCE_VIRTUAL,
+    virtualOnly: outcome.virtualOnly !== false,
+    virtualTracked: outcome.virtualTracked !== false,
     shortOnly: true,
     longDisabled: true,
     longOnly: false,
@@ -1892,10 +1991,15 @@ export async function sendExitAlert(outcome = {}) {
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
     exchangeCallsDisabled: true,
-    trueMicroFamilySchema: isMicroMicroFamilyId(trueMicroFamilyId(outcome)) ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    selectionGranularity: SELECTION_GRANULARITY,
+    discordSelectionRule: DISCORD_SELECTION_RULE,
+    discordOnlyForExactMicroMicroMatch: true,
+    discordOnlyForExactTrueMicroMatch: false,
+    child75SelectionDisabled: true,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
     slHitRule: 'SHORT: price >= sl',
@@ -1914,17 +2018,20 @@ export async function sendExitAlert(outcome = {}) {
 
 function exactSelectedIdsFromRotation(rotation = {}) {
   return uniqueStrings([
-    rotation.trueMicroFamilyIds || [],
-    rotation.childTrueMicroFamilyIds || [],
-    rotation.microFamilyIds || [],
-    rotation.activeMicroFamilyIds || [],
-    rotation.activeTrueMicroFamilyIds || [],
-
     rotation.microMicroFamilyIds || [],
     rotation.trueMicroMicroFamilyIds || [],
     rotation.exactMicroMicroFamilyIds || [],
     rotation.activeMicroMicroFamilyIds || [],
     rotation.activeTrueMicroMicroFamilyIds || [],
+    rotation.selectedMicroMicroFamilyIds || [],
+    rotation.selectedTrueMicroMicroFamilyIds || [],
+
+    // legacy containers; inhoud moet MM zijn
+    rotation.trueMicroFamilyIds || [],
+    rotation.childTrueMicroFamilyIds || [],
+    rotation.microFamilyIds || [],
+    rotation.activeMicroFamilyIds || [],
+    rotation.activeTrueMicroFamilyIds || [],
 
     Array.isArray(rotation.microFamilies)
       ? rotation.microFamilies.map((row) => trueMicroFamilyId(row))
@@ -1933,17 +2040,16 @@ function exactSelectedIdsFromRotation(rotation = {}) {
     .map(upper)
     .map((id) => {
       const parsed = parseShortTaxonomyMicroId(id);
-      return parsed.selectable ? parsed.trueMicroFamilyId : null;
+
+      return parsed.isMicroMicro ? parsed.microMicroFamilyId : null;
     })
     .filter(Boolean)
-    .filter(validLearningChildId);
+    .filter(isDiscordSelectableMicroMicroId);
 }
 
 function bestShortId(rotation = {}) {
   const candidates = [
     trueMicroFamilyId(rotation.bestShort || {}),
-    rotation.selectedTrueMicroFamilyId,
-    rotation.selectedMicroFamilyId,
     rotation.selectedMicroMicroFamilyId,
     rotation.selectedTrueMicroMicroFamilyId,
     ...exactSelectedIdsFromRotation(rotation)
@@ -1952,7 +2058,7 @@ function bestShortId(rotation = {}) {
   for (const candidate of candidates) {
     const value = upper(candidate);
 
-    if (validLearningChildId(value)) return value;
+    if (isDiscordSelectableMicroMicroId(value)) return value;
   }
 
   return 'NA';
@@ -1998,7 +2104,7 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
         longOnly: false,
         shortDisabled: false
       },
-      'ROTATION_REPORT_DISABLED_OR_NOT_MANUAL_LIVE_SELECTABLE_EXACT_MICRO_MICRO_OR_75_CHILD'
+      'ROTATION_REPORT_DISABLED_OR_NOT_MANUAL_LIVE_SELECTABLE_EXACT_MICRO_MICRO_ONLY'
     );
   }
 
@@ -2028,19 +2134,19 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
     username: 'Micro-Family Trader',
     embeds: [
       {
-        title: `${label} SHORT MANUAL MICRO SET`,
+        title: `${label} SHORT MANUAL MICRO-MICRO SET`,
         color: 0x7c3aed,
         fields: [
-          field('Selected count', String(selectedIds.length), true),
-          field('Micro-micro count', String(microMicroIds.length), true),
-          field('75-child count', String(childIds.length), true),
-          field('Parent-15 count', String(parentIds.length), true),
+          field('Selected micro-micro count', String(microMicroIds.length), true),
+          field('75-child context count', String(childIds.length), true),
+          field('Parent-15 context count', String(parentIds.length), true),
           field('Mode', rotation.mode || 'NA', true),
           field('Week', week, true),
-          field('Best SHORT selected', bestShortId(rotation), false),
+          field('Best SHORT MM selected', bestShortId(rotation), false),
           field('Manual only', String(Boolean(rotation.manualOnly)), true),
           field('Live selectable', String(Boolean(rotation.liveSelectable)), true),
           field('Long disabled', 'true', true),
+          field('Selection rule', DISCORD_SELECTION_RULE, false),
           field('Schema', MICRO_MICRO_SCHEMA, true),
           field('Learning key', PERSISTENT_LEARNING_KEY, true)
         ],
@@ -2053,10 +2159,12 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
   await logDiscord('WEEKLY_ROTATION', {
     ...rotation,
     bestLong: null,
-    trueMicroFamilyIds: selectedIds,
+    trueMicroFamilyIds: microMicroIds,
     childTrueMicroFamilyIds: childIds,
+    base75ChildTrueMicroFamilyIds: childIds,
     microMicroFamilyIds: microMicroIds,
     trueMicroMicroFamilyIds: microMicroIds,
+    exactMicroMicroFamilyIds: microMicroIds,
     parentTrueMicroFamilyIds: parentIds,
     macroFamilyIds: parentIds,
     shortOnly: true,
@@ -2066,7 +2174,14 @@ export async function sendWeeklyRotationReport(rotationInput = {}, label = 'WEEK
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
     exchangeCallsDisabled: true,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    selectionGranularity: SELECTION_GRANULARITY,
+    discordSelectionRule: DISCORD_SELECTION_RULE,
+    discordOnlyForExactMicroMicroMatch: true,
+    discordOnlyForExactTrueMicroMatch: false,
+    child75SelectionDisabled: true,
+    parentMatchDoesNotTriggerDiscord: true,
+    macroMatchDoesNotTriggerDiscord: true,
+    trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
@@ -2130,6 +2245,10 @@ export async function sendResetReport(report = {}) {
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
     redisKeysSeparatedFromLongRoot: true,
     longRootTouched: false,
+    selectionGranularity: SELECTION_GRANULARITY,
+    discordSelectionRule: DISCORD_SELECTION_RULE,
+    discordOnlyForExactMicroMicroMatch: true,
+    discordOnlyForExactTrueMicroMatch: false,
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
     positionMeasurementFixVersion: POSITION_MEASUREMENT_FIX_VERSION,
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
