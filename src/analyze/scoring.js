@@ -29,6 +29,7 @@ const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 
 const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
 const MICRO_MICRO_SUFFIX = 'MM';
+const MICRO_MICRO_HASH_LEN = 10;
 const LEGACY_EXECUTION_SUFFIX = 'XR';
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
@@ -123,6 +124,10 @@ function normalizeHashToken(value = '') {
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '')
     .slice(0, 24);
+}
+
+function normalizeMicroMicroHash(value = '') {
+  return normalizeHashToken(value).slice(0, MICRO_MICRO_HASH_LEN);
 }
 
 function rotationNumber(key, fallback) {
@@ -326,7 +331,7 @@ function parseShortTaxonomyMicroId(id = '') {
 
   if (microMicroMatch) {
     baseValue = microMicroMatch[1];
-    microMicroHash = microMicroMatch[2];
+    microMicroHash = normalizeMicroMicroHash(microMicroMatch[2]);
   }
 
   let body = baseValue.slice('MICRO_SHORT_'.length);
@@ -373,7 +378,7 @@ function parseShortTaxonomyMicroId(id = '') {
     Boolean(confirmationProfile) &&
     SHORT_CONFIRMATION_PROFILES.has(confirmationProfile);
 
-  if (validChild && microMicroHash) {
+  if (validChild && microMicroHash && microMicroHash.length >= 6) {
     microMicroFamilyId = `${childId}_${MICRO_MICRO_SUFFIX}_${microMicroHash}`;
   }
 
@@ -431,13 +436,14 @@ function normalizeExecutionToMicroMicroId(value = '', fallbackChildId = '') {
 
   if (xrMatch) {
     const base = parseShortTaxonomyMicroId(xrMatch[1]);
+    const hash = normalizeMicroMicroHash(xrMatch[2]);
 
-    if (base.isChild) {
-      return `${base.childTrueMicroFamilyId}_${MICRO_MICRO_SUFFIX}_${xrMatch[2]}`;
+    if (base.isChild && hash.length >= 6) {
+      return `${base.childTrueMicroFamilyId}_${MICRO_MICRO_SUFFIX}_${hash}`;
     }
   }
 
-  const hash = normalizeHashToken(raw);
+  const hash = normalizeMicroMicroHash(raw);
 
   if (hash && fallbackChildId && hash.length >= 6) {
     const child = parseShortTaxonomyMicroId(fallbackChildId);
@@ -752,14 +758,45 @@ function isShortRow(row = {}) {
 }
 
 function rowSchema(row = {}) {
+  const microMicroCandidates = [
+    row.microMicroFamilyId,
+    row.trueMicroMicroFamilyId,
+    row.exactMicroMicroFamilyId,
+    row.microMicroId,
+    row.mmFamilyId
+  ];
+
+  for (const value of microMicroCandidates) {
+    const parsed = parseShortTaxonomyMicroId(value);
+
+    if (parsed.isMicroMicro) return MICRO_MICRO_SCHEMA;
+  }
+
+  const idCandidates = [
+    row.learningMicroFamilyId,
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.childTrueMicroFamilyId,
+    row.analyzeMicroFamilyId,
+    row.id,
+    row.key
+  ];
+
+  for (const value of idCandidates) {
+    const parsed = parseShortTaxonomyMicroId(value);
+
+    if (parsed.isMicroMicro) return MICRO_MICRO_SCHEMA;
+    if (parsed.isChild) return TRUE_MICRO_SCHEMA;
+    if (parsed.isParent) return PARENT_TRUE_MICRO_SCHEMA;
+  }
+
   return String(
-    row.microMicroFamilySchema ||
+    row.schema ||
+      row.microFamilySchema ||
       row.trueMicroFamilySchema ||
       row.childTrueMicroFamilySchema ||
       row.exactTrueMicroFamilySchema ||
       row.broadTrueMicroFamilySchema ||
-      row.microFamilySchema ||
-      row.schema ||
       row.versionSchema ||
       ''
   ).toUpperCase();
@@ -770,10 +807,10 @@ function candidateLearningValues(row = {}) {
     row.learningMicroFamilyId,
     row.microFamilyId,
     row.trueMicroFamilyId,
-    row.childTrueMicroFamilyId,
     row.microMicroFamilyId,
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId,
+    row.childTrueMicroFamilyId,
     row.analyzeMicroFamilyId,
     row.id,
     row.key
@@ -813,7 +850,7 @@ function rowMicroMicroId(row = {}) {
     return fromExecution;
   }
 
-  const hash = normalizeHashToken(
+  const hash = normalizeMicroMicroHash(
     firstValue(
       row.microMicroHash,
       row.executionFingerprintHash,
@@ -3676,6 +3713,8 @@ export function getLearningLayerIds(row = {}) {
     trueMicroFamilyId: childId || null,
     childTrueMicroFamilyId: childId || null,
     microMicroFamilyId: microMicroId || null,
+    trueMicroMicroFamilyId: microMicroId || null,
+    exactMicroMicroFamilyId: microMicroId || null,
     orderedLearningIds: [
       parentId,
       childId,
@@ -3692,15 +3731,35 @@ export function normalizeLearningIdentity(row = {}) {
   const learningId = rowMicroId(row);
   const parsed = parseShortTaxonomyMicroId(learningId);
 
+  const parentId =
+    parsed.parentTrueMicroFamilyId ||
+    rowParentTrueMicroId(row) ||
+    null;
+
+  const childId =
+    parsed.childTrueMicroFamilyId ||
+    rowChildTrueMicroId(row) ||
+    null;
+
+  const microMicroId =
+    parsed.microMicroFamilyId ||
+    rowMicroMicroId(row) ||
+    null;
+
   return {
     learningFamilyId: learningId || null,
     microFamilyId: learningId || null,
-    trueMicroFamilyId: learningId || null,
+
+    trueMicroFamilyId: childId || (parsed.isParent ? parentId : learningId) || null,
+    childTrueMicroFamilyId: childId,
+
+    microMicroFamilyId: microMicroId,
+    trueMicroMicroFamilyId: microMicroId,
+    exactMicroMicroFamilyId: microMicroId,
+
     learningLayer: parsed.learningLayer || 'UNKNOWN',
 
-    parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId || rowParentTrueMicroId(row) || null,
-    childTrueMicroFamilyId: parsed.childTrueMicroFamilyId || rowChildTrueMicroId(row) || null,
-    microMicroFamilyId: parsed.microMicroFamilyId || rowMicroMicroId(row) || null,
+    parentTrueMicroFamilyId: parentId,
 
     selectionGranularity: parsed.isMicroMicro
       ? SELECTION_EXACT_MICRO_MICRO
@@ -3710,10 +3769,11 @@ export function normalizeLearningIdentity(row = {}) {
           ? SELECTION_PARENT_CONTEXT
           : 'UNKNOWN',
 
-    trueMicroFamilySchema: parsed.isMicroMicro ? MICRO_MICRO_SCHEMA : parsed.isParent ? PARENT_TRUE_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: parsed.isParent ? PARENT_TRUE_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: parsed.isMicroMicro ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
 
     learningGranularity: parsed.isMicroMicro
       ? MICRO_MICRO_LEARNING_GRANULARITY
