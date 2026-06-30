@@ -70,6 +70,8 @@ const SHORT_FIXED_SETUP_TYPES = new Set(SETUP_ORDER);
 const SHORT_FIXED_REGIME_BUCKETS = new Set(REGIME_ORDER);
 const SHORT_CONFIRMATION_PROFILES = new Set(CONFIRMATION_PROFILE_ORDER);
 
+const DEFAULT_RANK_MODE = 'winrate';
+
 const VALID_MODES = new Set([
   'adaptive',
   'balanced',
@@ -488,6 +490,11 @@ function modePayload() {
     adaptiveUiVersion: ADAPTIVE_UI_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
 
+    rankingPrimary: 'FAIR_WINRATE_THEN_NET_TOTALR',
+    rankingDefaultMode: DEFAULT_RANK_MODE,
+    rankingPnlSource: 'totalR',
+    rankingWinrateSource: 'fairWinrate',
+
     shortRiskShape: 'tp < entry < sl',
     riskTradeSide: TARGET_TRADE_SIDE,
     riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -507,7 +514,7 @@ function modePayload() {
 }
 
 function normalizeMode(value) {
-  const raw = String(value || 'adaptive').trim();
+  const raw = String(value || DEFAULT_RANK_MODE).trim();
 
   if (VALID_MODES.has(raw)) return raw;
 
@@ -519,7 +526,7 @@ function normalizeMode(value) {
   if (rawLower === 'currentfit') return 'currentFit';
   if (rawLower === 'micromicro') return 'microMicro';
 
-  return VALID_MODES.has(rawLower) ? rawLower : 'adaptive';
+  return VALID_MODES.has(rawLower) ? rawLower : DEFAULT_RANK_MODE;
 }
 
 function normalizeRequestedTradeSide(value) {
@@ -3628,51 +3635,117 @@ function learningQualityRank(row = {}) {
   return 0;
 }
 
-function compareRowsBestData(a, b) {
+function getRankWinrate(row = {}) {
+  return num(
+    row.fairWinrate ??
+      row.sampleAdjustedWinrate ??
+      row.sampleWilsonLowerBound ??
+      row.wilsonLowerBound ??
+      row.sampleBayesianWinrate ??
+      row.bayesianWinrate ??
+      row.winrate,
+    0
+  );
+}
+
+function getRankPnl(row = {}) {
+  return getTotalR(row);
+}
+
+function getRankAvgR(row = {}) {
+  return getAvgR(row);
+}
+
+function positivePnlRank(row = {}) {
+  return getRankPnl(row) > 0 ? 1 : 0;
+}
+
+function compareRowsWinratePnl(a, b) {
+  const aCompleted = num(a.outcomeSample ?? getCompletedSample(a), 0);
+  const bCompleted = num(b.outcomeSample ?? getCompletedSample(b), 0);
+
+  const aActive = aCompleted >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 1 : 0;
+  const bActive = bCompleted >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 1 : 0;
+
   return (
-    compareNumberDesc(learningQualityRank(a), learningQualityRank(b)) ||
-    compareNumberDesc(a.adaptiveScore, b.adaptiveScore) ||
-    compareNumberDesc(a.dashboardBalancedScore ?? a.balancedScore, b.dashboardBalancedScore ?? b.balancedScore) ||
-    compareNumberDesc(a.outcomeSample ?? getCompletedSample(a), b.outcomeSample ?? getCompletedSample(b)) ||
-    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
-    compareNumberDesc(a.fairWinrate, b.fairWinrate) ||
-    compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
-    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
-    compareNumberDesc(getTotalR(a), getTotalR(b)) ||
-    compareNumberDesc(getAvgR(a), getAvgR(b)) ||
-    compareNumberAsc(getAvgCostR(a), getAvgCostR(b)) ||
+    compareNumberDesc(aActive, bActive) ||
+    compareNumberDesc(getRankWinrate(a), getRankWinrate(b)) ||
+    compareNumberDesc(positivePnlRank(a), positivePnlRank(b)) ||
+    compareNumberDesc(getRankPnl(a), getRankPnl(b)) ||
+    compareNumberDesc(getRankAvgR(a), getRankAvgR(b)) ||
+    compareNumberDesc(getProfitFactor(a), getProfitFactor(b)) ||
     compareNumberAsc(getDirectSLPct(a), getDirectSLPct(b)) ||
-    compareNumberDesc(a.currentFitScore ?? a.fitScore, b.currentFitScore ?? b.fitScore) ||
+    compareNumberAsc(getAvgCostR(a), getAvgCostR(b)) ||
+    compareNumberDesc(aCompleted, bCompleted) ||
+    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
     compareNumberDesc(a.observationSample ?? getObservationSample(a), b.observationSample ?? getObservationSample(b)) ||
     compareNumberDesc(a.seen, b.seen) ||
     compareIdAsc(a.trueMicroFamilyId, b.trueMicroFamilyId)
   );
 }
 
+function compareRowsBestData(a, b) {
+  return compareRowsWinratePnl(a, b);
+}
+
 function compareRowsWinrate(a, b) {
-  return (
-    compareNumberDesc(a.sampleAdjustedWinrate ?? a.fairWinrate, b.sampleAdjustedWinrate ?? b.fairWinrate) ||
-    compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
-    compareNumberDesc(a.sampleBayesianWinrate ?? a.bayesianWinrate, b.sampleBayesianWinrate ?? b.bayesianWinrate) ||
-    compareNumberDesc(a.sampleReliability, b.sampleReliability) ||
-    compareNumberDesc(a.outcomeSample, b.outcomeSample) ||
-    compareRowsBestData(a, b)
-  );
+  return compareRowsWinratePnl(a, b);
 }
 
-function compareRowsByMode(a, b, mode = 'adaptive') {
-  if (mode === 'winrate') return compareRowsWinrate(a, b);
-  if (mode === 'totalR') return compareNumberDesc(getTotalR(a), getTotalR(b)) || compareRowsBestData(a, b);
-  if (mode === 'avgR') return compareNumberDesc(getAvgR(a), getAvgR(b)) || compareRowsBestData(a, b);
-  if (mode === 'directSL') return compareNumberAsc(getDirectSLPct(a), getDirectSLPct(b)) || compareRowsBestData(a, b);
-  if (mode === 'observed') return compareNumberDesc(a.observationSample, b.observationSample) || compareRowsBestData(a, b);
-  if (mode === 'cost') return compareNumberAsc(getAvgCostR(a), getAvgCostR(b)) || compareRowsBestData(a, b);
-  if (mode === 'currentFit') return compareNumberDesc(a.currentFitScore ?? a.fitScore, b.currentFitScore ?? b.fitScore) || compareRowsBestData(a, b);
+function compareRowsByMode(a, b, mode = DEFAULT_RANK_MODE) {
+  if (mode === 'totalR') {
+    return (
+      compareNumberDesc(learningQualityRank(a), learningQualityRank(b)) ||
+      compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+      compareNumberDesc(getRankWinrate(a), getRankWinrate(b)) ||
+      compareRowsWinratePnl(a, b)
+    );
+  }
 
-  return compareRowsBestData(a, b);
+  if (mode === 'avgR') {
+    return (
+      compareNumberDesc(learningQualityRank(a), learningQualityRank(b)) ||
+      compareNumberDesc(getAvgR(a), getAvgR(b)) ||
+      compareNumberDesc(getRankWinrate(a), getRankWinrate(b)) ||
+      compareRowsWinratePnl(a, b)
+    );
+  }
+
+  if (mode === 'directSL') {
+    return (
+      compareNumberDesc(learningQualityRank(a), learningQualityRank(b)) ||
+      compareNumberAsc(getDirectSLPct(a), getDirectSLPct(b)) ||
+      compareNumberDesc(getRankWinrate(a), getRankWinrate(b)) ||
+      compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+      compareRowsWinratePnl(a, b)
+    );
+  }
+
+  if (mode === 'observed') {
+    return (
+      compareNumberDesc(a.observationSample, b.observationSample) ||
+      compareRowsWinratePnl(a, b)
+    );
+  }
+
+  if (mode === 'cost') {
+    return (
+      compareNumberAsc(getAvgCostR(a), getAvgCostR(b)) ||
+      compareRowsWinratePnl(a, b)
+    );
+  }
+
+  if (mode === 'currentFit') {
+    return (
+      compareNumberDesc(a.currentFitScore ?? a.fitScore, b.currentFitScore ?? b.fitScore) ||
+      compareRowsWinratePnl(a, b)
+    );
+  }
+
+  return compareRowsWinratePnl(a, b);
 }
 
-function sortRowsByMode(rows = [], mode = 'adaptive') {
+function sortRowsByMode(rows = [], mode = DEFAULT_RANK_MODE) {
   return [...rows]
     .filter(isMicroMicroAnalyzeRow)
     .sort((a, b) => compareRowsByMode(a, b, mode));
@@ -3816,13 +3889,17 @@ function buildParentSummaries(rows = []) {
 
         currentFitCounts: currentFitCounts(groupRows),
 
-        bestAdaptive: compactBestRow(bestBy(groupRows, compareRowsBestData)),
-        bestMicroMicro: compactBestRow(bestBy(groupRows, compareRowsBestData)),
+        bestAdaptive: compactBestRow(bestBy(groupRows, compareRowsWinratePnl)),
+        bestMicroMicro: compactBestRow(bestBy(groupRows, compareRowsWinratePnl)),
         bestCurrentFit: compactBestRow(bestBy(groupRows, (a, b) => (
           compareNumberDesc(a.currentFitScore ?? a.fitScore, b.currentFitScore ?? b.fitScore) ||
-          compareRowsBestData(a, b)
+          compareRowsWinratePnl(a, b)
         ))),
-        bestWinrate: compactBestRow(bestBy(groupRows, compareRowsWinrate))
+        bestWinrate: compactBestRow(bestBy(groupRows, compareRowsWinratePnl)),
+        bestPnl: compactBestRow(bestBy(groupRows, (a, b) => (
+          compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+          compareRowsWinratePnl(a, b)
+        )))
       };
     })
     .sort((a, b) => (
@@ -3905,39 +3982,49 @@ function buildSummary(rows = [], activeSet = new Set()) {
       ? round(totalCurrentFitScore / safeRows.length, 4)
       : 0,
 
-    bestAdaptive: compactBestRow(bestBy(safeRows, compareRowsBestData)),
-    bestMicroMicro: compactBestRow(bestBy(safeRows, compareRowsBestData)),
+    bestAdaptive: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
+    bestMicroMicro: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
+    bestWinratePnl: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
     bestCurrentFit: compactBestRow(bestBy(safeRows, (a, b) => (
       compareNumberDesc(a.currentFitScore ?? a.fitScore, b.currentFitScore ?? b.fitScore) ||
-      compareRowsBestData(a, b)
+      compareRowsWinratePnl(a, b)
     ))),
-    bestBalanced: compactBestRow(bestBy(safeRows, compareRowsBestData)),
+    bestBalanced: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
     bestTotalR: compactBestRow(bestBy(safeRows, (a, b) => (
       compareNumberDesc(getTotalR(a), getTotalR(b)) ||
-      compareRowsBestData(a, b)
+      compareRowsWinratePnl(a, b)
+    ))),
+    bestPnl: compactBestRow(bestBy(safeRows, (a, b) => (
+      compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+      compareRowsWinratePnl(a, b)
     ))),
     bestAvgR: compactBestRow(bestBy(safeRows, (a, b) => (
       compareNumberDesc(getAvgR(a), getAvgR(b)) ||
-      compareRowsBestData(a, b)
+      compareRowsWinratePnl(a, b)
     ))),
-    bestWinrate: compactBestRow(bestBy(safeRows, compareRowsWinrate)),
+    bestWinrate: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
     bestObserved: compactBestRow(bestBy(safeRows, (a, b) => (
       compareNumberDesc(a.observationSample, b.observationSample) ||
-      compareRowsBestData(a, b)
+      compareRowsWinratePnl(a, b)
     ))),
     lowestDirectSL: compactBestRow(bestBy(safeRows, (a, b) => (
       compareNumberAsc(getDirectSLPct(a), getDirectSLPct(b)) ||
-      compareRowsBestData(a, b)
+      compareRowsWinratePnl(a, b)
     ))),
 
     short: {
       rows: safeRows.length,
       layerCounts: layerCounts(safeRows),
-      bestAdaptive: compactBestRow(bestBy(safeRows, compareRowsBestData)),
-      bestMicroMicro: compactBestRow(bestBy(safeRows, compareRowsBestData)),
+      bestAdaptive: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
+      bestMicroMicro: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
+      bestWinratePnl: compactBestRow(bestBy(safeRows, compareRowsWinratePnl)),
+      bestPnl: compactBestRow(bestBy(safeRows, (a, b) => (
+        compareNumberDesc(getTotalR(a), getTotalR(b)) ||
+        compareRowsWinratePnl(a, b)
+      ))),
       lowestDirectSL: compactBestRow(bestBy(safeRows, (a, b) => (
         compareNumberAsc(getDirectSLPct(a), getDirectSLPct(b)) ||
-        compareRowsBestData(a, b)
+        compareRowsWinratePnl(a, b)
       )))
     },
 
@@ -4047,7 +4134,7 @@ async function getWeekMicrosCached(weekKey, timeoutMs) {
 
 function selectBestMicroMicroRows({
   rows = [],
-  mode = 'adaptive',
+  mode = DEFAULT_RANK_MODE,
   limit = DEFAULT_BEST_LIMIT
 } = {}) {
   const safeLimit = toSafeLimit(limit, DEFAULT_BEST_LIMIT, MAX_BEST_LIMIT);
@@ -4087,7 +4174,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-micro-micro-only-selection-v2');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-micro-micro-only-selection-v3-winrate-pnl-first');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -4119,7 +4206,10 @@ export default async function handler(req, res) {
   res.setHeader('X-True-Micro-Family-Schema', MICRO_MICRO_SCHEMA);
   res.setHeader('X-Learning-Granularity', MICRO_MICRO_LEARNING_GRANULARITY);
   res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
-  res.setHeader('X-Default-Sort', 'ADAPTIVE_BALANCED_SCORE_NOT_RAW_WINRATE');
+  res.setHeader('X-Default-Sort', 'FAIR_WINRATE_THEN_NET_TOTALR');
+  res.setHeader('X-Ranking-Primary', 'FAIR_WINRATE_THEN_NET_TOTALR');
+  res.setHeader('X-Ranking-Pnl-Source', 'totalR');
+  res.setHeader('X-Ranking-Winrate-Source', 'fairWinrate');
   res.setHeader('X-Measurement-Fix-Version', MEASUREMENT_FIX_VERSION);
   res.setHeader('X-Completed-Definition', 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES');
   res.setHeader('X-Scoring-R-Source', 'netR');
@@ -4138,7 +4228,7 @@ export default async function handler(req, res) {
       firstQueryValue(req.query?.weekKey, PERSISTENT_LEARNING_KEY) || PERSISTENT_LEARNING_KEY
     ).trim();
 
-    const requestedMode = String(firstQueryValue(req.query?.mode, 'adaptive') || 'adaptive');
+    const requestedMode = String(firstQueryValue(req.query?.mode, DEFAULT_RANK_MODE) || DEFAULT_RANK_MODE);
     const mode = normalizeMode(requestedMode);
 
     const requestedLimitRaw = firstQueryValue(req.query?.limit, DEFAULT_LIMIT);
@@ -4209,7 +4299,7 @@ export default async function handler(req, res) {
       };
     });
 
-    let filteredRows = mergedRows.filter((row) => (
+    const filteredRows = mergedRows.filter((row) => (
       rowPassesFilters(row, filters, activeSet, activeParentSet)
     ));
 
@@ -4462,14 +4552,19 @@ export default async function handler(req, res) {
       },
 
       rankingPolicy: {
-        defaultMode: 'adaptive',
+        defaultMode: DEFAULT_RANK_MODE,
         activeMode: mode,
-        defaultSort: 'adaptiveScore/dashboardBalancedScore/fairWinrate/totalR/avgR/avgCostR/directSL/completed',
+        defaultSort: 'fairWinrate/positivePnl/totalR/avgR/profitFactor/directSL/avgCostR/completed',
+        userIntent: 'highest winrate and pnl on top',
         bestDataFirst: true,
         completedBeforeRawScore: true,
+        activeSampleFirst: true,
         rawWinrateIsNeverDefault: true,
         rawWinrateIsNeverAlone: true,
-        scoreKeys: ['adaptiveScore', 'dashboardBalancedScore', 'balancedScore', 'fairWinrate', 'totalR', 'avgR', 'avgCostR', 'currentFitScore'],
+        adaptiveScoreIsNotPrimary: true,
+        pnlSource: 'totalR',
+        winrateSource: 'fairWinrate',
+        scoreKeys: ['fairWinrate', 'totalR', 'avgR', 'profitFactor', 'directSLPct', 'avgCostR', 'completed', 'adaptiveScore'],
         scannerFingerprintsExcludedFromRows: true,
         scannerFingerprintsMetadataOnly: true,
         rawScannerFingerprintRowsHidden,
@@ -4654,8 +4749,8 @@ export default async function handler(req, res) {
       childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
       trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
       microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-      rankingPolicyText: 'microMicroOnly|adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR|currentFitScore',
-      rankingPolicyShort: 'adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+      rankingPolicyText: 'microMicroOnly|fairWinrate|positivePnl|totalR|avgR|profitFactor|directSL|avgCostR|completed',
+      rankingPolicyShort: 'fairWinrate|totalR|avgR|profitFactor|directSL|avgCostR',
       measurementFixVersion: MEASUREMENT_FIX_VERSION,
       adaptiveUiVersion: ADAPTIVE_UI_VERSION,
       currentFitVersion: CURRENT_FIT_VERSION,
@@ -4670,7 +4765,7 @@ export default async function handler(req, res) {
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
         marketWeatherCacheHit: Boolean(marketWeather.cacheHit),
-        path: 'shortOnlyMicroMicroOnlyPersistentLearningNetOutcomeObservationFirstCurrentFitV2',
+        path: 'shortOnlyMicroMicroOnlyPersistentLearningNetOutcomeObservationFirstCurrentFitV3WinratePnlFirst',
         bestSource: 'microMicroRowsOnly'
       },
 
