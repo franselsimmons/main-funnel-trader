@@ -774,8 +774,9 @@
     const MICRO_MICRO_SCHEMA = "FIXED_TAXONOMY_MICRO_MICRO_V1";
     const MICRO_MICRO_VERSION = "SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1";
 
-    const MICRO_MICRO_MARKER = "_MM_";
+    const MICRO_SHORT_PREFIX = "MICRO_SHORT_";
     const MICRO_MICRO_PREFIX = "MM_SHORT_";
+    const MICRO_MICRO_MARKER = "_MM_";
 
     const LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1";
     const PARENT_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1";
@@ -888,6 +889,10 @@
 
     function upper(value) {
       return String(value || "").trim().toUpperCase();
+    }
+
+    function lower(value) {
+      return String(value || "").trim().toLowerCase();
     }
 
     function num(value, fallback = 0) {
@@ -1123,7 +1128,7 @@
       const value = upper(id);
 
       if (value.startsWith(MICRO_MICRO_PREFIX)) return false;
-      if (value.startsWith("MICRO_SHORT_") && value.includes(MICRO_MICRO_MARKER)) return false;
+      if (value.startsWith(MICRO_SHORT_PREFIX) && value.includes(MICRO_MICRO_MARKER)) return false;
 
       return (
         value.includes("_XR_") ||
@@ -1198,28 +1203,31 @@
       if (isScannerFingerprintId(raw)) return null;
       if (isExecutionFingerprintId(raw)) return null;
 
-      let mode = "UNKNOWN";
       let body = "";
       let microMicroContext = "";
+      let explicitMicroMicro = false;
+      let mode = "UNKNOWN";
 
       if (raw.startsWith(MICRO_MICRO_PREFIX)) {
-        mode = "MICRO_MICRO_PREFIX";
+        mode = "MM_SHORT_PREFIX";
+        explicitMicroMicro = true;
         body = raw.slice(MICRO_MICRO_PREFIX.length);
-      } else if (raw.startsWith("MICRO_SHORT_")) {
-        body = raw.slice("MICRO_SHORT_".length);
+      } else if (raw.startsWith(MICRO_SHORT_PREFIX)) {
+        mode = "MICRO_SHORT_BASE";
+        body = raw.slice(MICRO_SHORT_PREFIX.length);
 
-        const markerIndex = body.indexOf(MICRO_MICRO_MARKER.replace(/^_/, ""));
-        const fullMarkerIndex = raw.indexOf(MICRO_MICRO_MARKER);
+        const mmIndex = body.lastIndexOf(MICRO_MICRO_MARKER);
 
-        if (fullMarkerIndex > -1) {
+        if (mmIndex > -1) {
           mode = "MICRO_SHORT_SUFFIX_MM";
-          const base = raw.slice("MICRO_SHORT_".length, fullMarkerIndex - "MICRO_SHORT_".length);
-          microMicroContext = raw.slice(fullMarkerIndex + MICRO_MICRO_MARKER.length);
-          body = `${base}_${microMicroContext}`;
-        } else if (markerIndex > -1) {
-          mode = "MICRO_SHORT_SUFFIX_MM";
-        } else {
-          mode = "MICRO_SHORT_BASE";
+          explicitMicroMicro = true;
+
+          const baseBody = body.slice(0, mmIndex);
+          microMicroContext = body.slice(mmIndex + MICRO_MICRO_MARKER.length);
+
+          body = microMicroContext
+            ? `${baseBody}_${microMicroContext}`
+            : baseBody;
         }
       } else {
         return null;
@@ -1234,17 +1242,11 @@
         : "";
 
       const isParent = Boolean(!parsed.confirmation && mode === "MICRO_SHORT_BASE");
-      const isChild75 = Boolean(parsed.confirmation && mode === "MICRO_SHORT_BASE");
-
-      const isMicroMicro =
-        Boolean(parsed.confirmation) &&
-        (
-          raw.startsWith(MICRO_MICRO_PREFIX) ||
-          raw.includes(MICRO_MICRO_MARKER) ||
-          Boolean(parsed.rest)
-        );
+      const isChild75 = Boolean(parsed.confirmation && mode === "MICRO_SHORT_BASE" && !parsed.rest);
+      const isMicroMicro = Boolean(parsed.confirmation && (explicitMicroMicro || parsed.rest));
 
       const microMicroFamilyId = isMicroMicro ? raw : "";
+      const context = parsed.rest || microMicroContext || "";
 
       return {
         valid: true,
@@ -1252,13 +1254,15 @@
         setup: parsed.setup,
         regime: parsed.regime,
         confirmation: parsed.confirmation,
-        context: parsed.rest || microMicroContext || "",
+        confirmationProfile: parsed.confirmation,
+        context,
         parentTrueMicroFamilyId,
         childTrueMicroFamilyId,
         base75ChildTrueMicroFamilyId: childTrueMicroFamilyId,
         microMicroFamilyId,
         isParent,
         isChild75,
+        isChild: isChild75,
         isMicroMicro,
         selectionLayer: isMicroMicro ? "MICRO_MICRO" : isChild75 ? "CHILD_75" : isParent ? "PARENT_15" : "UNKNOWN",
         schema: isMicroMicro ? MICRO_MICRO_SCHEMA : isChild75 ? TRUE_MICRO_SCHEMA : PARENT_TRUE_MICRO_SCHEMA
@@ -1306,6 +1310,9 @@
         const direct = normalizeSide(input);
         if (direct !== "UNKNOWN") return direct;
 
+        const parsed = parseExactShortId(input);
+        if (parsed?.valid && !upper(input).includes("MICRO_LONG_")) return ONLY_SIDE;
+
         const shortSignal = hasShortSignal(input);
         const longSignal = hasLongSignal(input);
 
@@ -1350,6 +1357,8 @@
         input.microMicroFamilyId,
         input.trueMicroMicroFamilyId,
         input.selectedMicroMicroFamilyId,
+        input.exactMicroMicroFamilyId,
+        input.executionMicroMicroFamilyId,
         input.coarseMicroFamilyId,
         input.liveMicroFamilyId,
         input.realMicroFamilyId,
@@ -1382,6 +1391,9 @@
         Array.isArray(input.microMicroContextParts) ? input.microMicroContextParts.join("|") : ""
       ].join(" | ");
 
+      const parsedAny = parseExactShortId(haystack);
+      if (parsedAny?.valid && !haystack.includes("MICRO_LONG_")) return ONLY_SIDE;
+
       const shortSignal = hasShortSignal(haystack);
       const longSignal = hasLongSignal(haystack);
 
@@ -1406,17 +1418,34 @@
     }
 
     function microId(row = {}) {
-      return String(
-        row.microMicroFamilyId ||
-        row.trueMicroMicroFamilyId ||
-        row.selectedMicroMicroFamilyId ||
-        row.exactMicroMicroFamilyId ||
-        row.executionMicroMicroFamilyId ||
-        row.microMicroId ||
-        row.id ||
-        row.key ||
-        ""
-      ).trim().toUpperCase();
+      if (typeof row === "string") return upper(row);
+
+      const candidates = [
+        row.microMicroFamilyId,
+        row.trueMicroMicroFamilyId,
+        row.selectedMicroMicroFamilyId,
+        row.exactMicroMicroFamilyId,
+        row.executionMicroMicroFamilyId,
+        row.microMicroId,
+        row.trueMicroFamilyId,
+        row.learningMicroFamilyId,
+        row.analyzeMicroFamilyId,
+        row.microFamilyId,
+        row.id,
+        row.key
+      ];
+
+      for (const value of candidates) {
+        const id = upper(value);
+        if (id && isMicroMicroId(id)) return id;
+      }
+
+      for (const value of candidates) {
+        const id = upper(value);
+        if (id) return id;
+      }
+
+      return "";
     }
 
     function fallbackAnyMicroId(row = {}) {
@@ -1636,10 +1665,6 @@
         completed(row),
         0
       );
-    }
-
-    function minCompletedForRow() {
-      return MIN_COMPLETED_MICRO_MICRO_ACTIVE;
     }
 
     function learningStatus(row = {}) {
@@ -1884,15 +1909,6 @@
         row.currentMarketFitLabel ||
         row.fitLabel ||
         row.marketFitLabel ||
-        ""
-      );
-
-      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(label)) return "MATCH";
-      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(label)) return "WEAK_MATCH";
-      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(label)) return "MISFIT";
-      if (["NEUTRAL", "MIXED"].includes(label)) return "NEUTRAL";
-
-      const raw = upper(
         row.currentFit ||
         row.entryCurrentFit ||
         row.currentMarketFit ||
@@ -1901,10 +1917,10 @@
         ""
       );
 
-      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(raw)) return "MATCH";
-      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(raw)) return "WEAK_MATCH";
-      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(raw)) return "MISFIT";
-      if (["NEUTRAL", "MIXED"].includes(raw)) return "NEUTRAL";
+      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(label)) return "MATCH";
+      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(label)) return "WEAK_MATCH";
+      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(label)) return "MISFIT";
+      if (["NEUTRAL", "MIXED"].includes(label)) return "NEUTRAL";
 
       const score = currentFitScore(row);
 
@@ -2208,12 +2224,15 @@
         isBase75Child: false,
 
         trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
+        exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
         microMicroFamilySchema: MICRO_MICRO_SCHEMA,
         parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+        childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
 
         learningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
         microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
         parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+        child75LearningGranularity: LEARNING_GRANULARITY,
 
         selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
 
@@ -2273,6 +2292,7 @@
 
         learningRemainsBroad: true,
         child75RemainsPrimaryLearningLayer: true,
+        child75RemainsContextLayer: true,
         microMicroLayerEnabled: true,
         microMicroActsAsExecutionPreference: true,
         microMicroIsOnlySelectableLayerInAdmin: true,
@@ -2312,7 +2332,7 @@
       }
 
       function walk(value, depth = 0) {
-        if (!value || typeof value !== "object" || depth > 9) return;
+        if (!value || typeof value !== "object" || depth > 10) return;
         if (seenObjects.has(value)) return;
 
         seenObjects.add(value);
@@ -2335,12 +2355,10 @@
           "selectedMicroMicroFamilyRows",
           "activeMicroMicroFamilyRows",
           "shortMicroMicroRows",
-          "microMicro",
-          "microMicroStats",
+          "bestMicroFamilies",
+          "topMicroFamilies",
           "rows",
           "shortRows",
-          "microFamilies",
-          "micros",
           "items",
           "data",
           "result",
@@ -2348,6 +2366,9 @@
           "response",
           "activeRotation",
           "active",
+          "bestShort",
+          "summary",
+          "short",
           "balanced",
           "adaptive",
           "winrate",
@@ -2356,7 +2377,9 @@
           "directSL",
           "observed"
         ]) {
-          walk(value[key], depth + 1);
+          if (Object.prototype.hasOwnProperty.call(value, key)) {
+            walk(value[key], depth + 1);
+          }
         }
       }
 
@@ -2373,22 +2396,25 @@
         "microMicroFamilies",
         "selectedMicroMicroFamilyRows",
         "activeMicroMicroFamilyRows",
-        "shortMicroMicroRows"
+        "shortMicroMicroRows",
+        "rows",
+        "shortRows"
       ]);
 
       const nestedPreferred = [
-        ...extractObjectArrays(data.result || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "microMicroRows", "microMicroFamilies"]),
-        ...extractObjectArrays(data.payload || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "microMicroRows", "microMicroFamilies"]),
-        ...extractObjectArrays(data.activeRotation || {}, ["microMicroFamilies", "activeMicroMicroFamilyRows"])
+        ...extractObjectArrays(data.result || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "microMicroRows", "microMicroFamilies", "rows"]),
+        ...extractObjectArrays(data.payload || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "microMicroRows", "microMicroFamilies", "rows"]),
+        ...extractObjectArrays(data.activeRotation || {}, ["microMicroFamilies", "activeMicroMicroFamilyRows", "microFamilies"]),
+        ...extractObjectArrays(data.active || {}, ["microMicroFamilies", "activeMicroMicroFamilyRows", "microFamilies"])
       ];
 
       const deep = extractDeepMicroMicroRows(data);
 
-      const source = preferred.length
-        ? preferred
-        : nestedPreferred.length
-          ? nestedPreferred
-          : deep;
+      const source = [
+        ...preferred,
+        ...nestedPreferred,
+        ...deep
+      ];
 
       const byId = new Map();
 
@@ -2400,14 +2426,6 @@
         if (!id || byId.has(id)) continue;
 
         byId.set(id, normalized);
-      }
-
-      if (byId.size === 0) {
-        for (const row of deep) {
-          const id = microId(row);
-          if (!id || byId.has(id)) continue;
-          byId.set(id, row);
-        }
       }
 
       return [...byId.values()];
@@ -3177,7 +3195,19 @@
         ...data,
         rows,
         rawExtractedRows: rawRows.length,
-        activeMicroFamilyIds: activeMicroMicroIds(),
+        activeMicroFamilyIds: uniqueStrings([
+          data.activeMicroMicroFamilyIds || [],
+          data.selectedMicroMicroFamilyIds || [],
+          data.microMicroFamilyIds || [],
+          data.activeMicroFamilyIds || [],
+          data.selectedMicroFamilyIds || [],
+          data.activeRotation?.activeMicroMicroFamilyIds || [],
+          data.activeRotation?.selectedMicroMicroFamilyIds || [],
+          data.activeRotation?.microMicroFamilyIds || [],
+          data.activeRotation?.activeMicroFamilyIds || [],
+          data.activeRotation?.microFamilyIds || [],
+          data.activeRotation?.trueMicroFamilyIds || []
+        ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES),
         activeMicroMicroFamilyIds: uniqueStrings([
           data.activeMicroMicroFamilyIds || [],
           data.selectedMicroMicroFamilyIds || [],
@@ -4650,6 +4680,15 @@
         activeMicroMicroFamilyIds: activeIds,
         selectedMicroMicroFamilyIds: activeIds
       };
+
+      state.micros = state.micros
+        ? {
+          ...state.micros,
+          activeMicroFamilyIds: activeIds,
+          activeMicroMicroFamilyIds: activeIds,
+          selectedMicroMicroFamilyIds: activeIds
+        }
+        : state.micros;
 
       setMessage(
         `Manual Discord selection opgeslagen.\nActive micro-micro IDs: ${activeIds.length}/${MAX_ACTIVE_DISCORD_MICRO_FAMILIES}\nVirtual/shadow learning blijft breed doorlopen.`,
