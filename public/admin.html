@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SHORT 75 + Micro-Micro Learning Admin</title>
+  <title>SHORT Micro-Micro Learning Admin</title>
 
   <style>
     :root {
@@ -82,7 +82,7 @@
       min-height: 42px;
     }
 
-    input[type="search"] { min-width: 340px; }
+    input[type="search"] { min-width: 360px; }
 
     textarea {
       width: 100%;
@@ -371,7 +371,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1620px;
+      min-width: 1540px;
       background: white;
     }
 
@@ -469,10 +469,10 @@
       font-weight: 800;
     }
 
-    .micro-desktop-table table { min-width: 1620px; }
+    .micro-desktop-table table { min-width: 1540px; }
 
     .micro-id-cell {
-      max-width: 390px;
+      max-width: 420px;
       white-space: normal;
       word-break: break-word;
     }
@@ -713,9 +713,9 @@
       <div class="brand-title">
         <div class="brand-logo">MM</div>
         <div>
-          <strong>SHORT 75 + Micro-Micro Learning Admin</strong>
+          <strong>SHORT Micro-Micro Learning Admin</strong>
           <div class="brand-subtitle">
-            Parent 15 → 75-child trueMicroFamilyId → micro-micro exact execution profile → candle first-touch virtual outcomes → netR scoring → strict Discord selection
+            Parent 15 en 75-child blijven alleen context. Dashboard toont/selecteert uitsluitend micro-micro execution profiles.
           </div>
         </div>
       </div>
@@ -723,7 +723,7 @@
       <div class="header-actions">
         <div class="live-pill">
           <span class="live-dot"></span>
-          <span id="liveLabel">SHORT-only · 75-child + micro-micro · clean measurement</span>
+          <span id="liveLabel">SHORT-only · micro-micro only · clean measurement</span>
         </div>
         <button id="refreshBtn" type="button">Refresh</button>
       </div>
@@ -736,7 +736,7 @@
       <button type="button" class="tab" data-tab="market">marketWeather.js</button>
       <button type="button" class="tab" data-tab="scanner">Scanner</button>
       <button type="button" class="tab" data-tab="trade">TradeSystem</button>
-      <button type="button" class="tab" data-tab="micros">75 + MicroMicro</button>
+      <button type="button" class="tab" data-tab="micros">Micro-Micro</button>
       <button type="button" class="tab" data-tab="rotation">Manual Discord Selection</button>
       <button type="button" class="tab" data-tab="discord">Discord Logs</button>
       <button type="button" class="tab" data-tab="reset">Reset</button>
@@ -771,9 +771,11 @@
 
     const TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_75";
     const PARENT_TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_15";
-    const MICRO_MICRO_SCHEMA = "FIXED_TAXONOMY_75_MICRO_MICRO_V1";
-    const MICRO_MICRO_VERSION = "SHORT_PARENT_MICRO_MICRO_LAYERING_V1";
+    const MICRO_MICRO_SCHEMA = "FIXED_TAXONOMY_MICRO_MICRO_V1";
+    const MICRO_MICRO_VERSION = "SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1";
+
     const MICRO_MICRO_MARKER = "_MM_";
+    const MICRO_MICRO_PREFIX = "MM_SHORT_";
 
     const LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1";
     const PARENT_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1";
@@ -784,29 +786,33 @@
     const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1";
     const OBSERVATION_DEDUPE_VERSION = "SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2";
     const OUTCOME_DEDUPE_VERSION = "SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3";
-    const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_V2";
+    const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V3";
 
-    const SHORT_FIXED_SETUP_TYPES = new Set([
+    const SHORT_FIXED_SETUP_TYPES = [
       "BREAKOUT",
       "RETEST",
       "SWEEP_REVERSAL",
       "CONTINUATION",
       "COMPRESSION"
-    ]);
+    ];
 
-    const SHORT_FIXED_REGIME_BUCKETS = new Set([
+    const SHORT_FIXED_REGIME_BUCKETS = [
       "TREND",
       "CHOP",
       "SQUEEZE"
-    ]);
+    ];
 
-    const SHORT_FIXED_CONFIRMATION_PROFILES = new Set([
+    const SHORT_FIXED_CONFIRMATION_PROFILES = [
       "A_STRONG_ALIGN",
       "B_FLOW_ALIGN",
       "C_VOLUME_ALIGN",
       "D_MIXED_OK",
       "E_WEAK_CONTRA"
-    ]);
+    ];
+
+    const SHORT_FIXED_SETUP_SET = new Set(SHORT_FIXED_SETUP_TYPES);
+    const SHORT_FIXED_REGIME_SET = new Set(SHORT_FIXED_REGIME_BUCKETS);
+    const SHORT_FIXED_CONFIRMATION_SET = new Set(SHORT_FIXED_CONFIRMATION_PROFILES);
 
     const state = {
       activeTab: "overview",
@@ -820,8 +826,8 @@
       microMode: "adaptive",
       microSearch: "",
       apiTimeoutMs: 22000,
-      microLimit: 240,
-      bestLimit: 180
+      microLimit: 260,
+      bestLimit: 200
     };
 
     const endpoints = {
@@ -841,7 +847,19 @@
     };
 
     const tabs = ["overview", "market", "scanner", "trade", "micros", "rotation", "discord", "reset"];
-    const validMicroModes = ["adaptive", "microMicro", "child75", "clean", "balanced", "winrate", "totalR", "avgR", "directSL", "observed", "cost", "currentFit"];
+
+    const validMicroModes = [
+      "adaptive",
+      "clean",
+      "winrate",
+      "totalR",
+      "avgR",
+      "directSL",
+      "observed",
+      "cost",
+      "currentFit"
+    ];
+
     const $ = (id) => document.getElementById(id);
 
     class ApiError extends Error {
@@ -870,6 +888,132 @@
 
     function upper(value) {
       return String(value || "").trim().toUpperCase();
+    }
+
+    function num(value, fallback = 0) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function firstFinite(...values) {
+      for (const value of values) {
+        const n = Number(value);
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    }
+
+    function clamp(value, min, max) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return min;
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function normalizePctFraction(value, fallback = 0) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return fallback;
+      if (Math.abs(n) > 1.5) return n / 100;
+      return n;
+    }
+
+    function fmt(value, decimals = 3) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return n.toFixed(decimals);
+    }
+
+    function fmtInt(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "0";
+      return Math.round(n).toLocaleString();
+    }
+
+    function fmtPct(value) {
+      const n = normalizePctFraction(value, NaN);
+      if (!Number.isFinite(n)) return "-";
+      return `${(n * 100).toFixed(1)}%`;
+    }
+
+    function fmtRawPct(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return `${n.toFixed(2)}%`;
+    }
+
+    function fmtPrice(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      return n.toLocaleString(undefined, { maximumFractionDigits: 8 });
+    }
+
+    function fmtMoney(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+      if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+      if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+      return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+
+    function fmtTs(value) {
+      if (!value) return "-";
+      const n = Number(value);
+      const date = Number.isFinite(n) ? new Date(n) : new Date(value);
+      if (Number.isNaN(date.getTime())) return "-";
+      return date.toLocaleString();
+    }
+
+    function ageText(ts) {
+      const n = Number(ts);
+      if (!Number.isFinite(n) || n <= 0) return "-";
+
+      const seconds = Math.max(0, Math.floor((Date.now() - n) / 1000));
+      if (seconds < 60) return `${seconds}s geleden`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m geleden`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}u geleden`;
+      return `${Math.floor(seconds / 86400)}d geleden`;
+    }
+
+    function jsonBlock(data) {
+      return `<pre>${escapeHtml(JSON.stringify(data ?? null, null, 2))}</pre>`;
+    }
+
+    function setMessage(message = "", type = "") {
+      $("message").innerHTML = message
+        ? `<div class="message ${escapeAttr(type)}">${escapeHtml(message)}</div>`
+        : "";
+    }
+
+    function showLoading(tabId, label = "Laden...") {
+      $(tabId).innerHTML = `
+        <div class="card">
+          <h3>${escapeHtml(label)}</h3>
+          <div class="empty">Data ophalen voor ${escapeHtml(tabId)}...</div>
+        </div>
+      `;
+    }
+
+    function metricCard(label, value, extra = "") {
+      return `
+        <div class="card metric-card">
+          <div class="metric-label">${escapeHtml(label)}</div>
+          <div>
+            <div class="metric-value">${escapeHtml(value)}</div>
+            ${extra ? `<div class="metric-extra">${escapeHtml(extra)}</div>` : ""}
+          </div>
+        </div>
+      `;
+    }
+
+    function scoreBar(value, min = 0, max = 100) {
+      const n = Number(value);
+      const width = Number.isFinite(n)
+        ? Math.max(0, Math.min(100, ((n - min) / (max - min)) * 100))
+        : 0;
+
+      return `<div class="score-bar"><span style="--w:${width.toFixed(1)}%"></span></div>`;
     }
 
     function cleanSideText(value = "") {
@@ -905,90 +1049,10 @@
         .replaceAll("LONG-ONLY", "LONG");
     }
 
-    function parseFixedShortTaxonomyId(id = "") {
-      const raw = upper(id);
-
-      if (!raw.startsWith("MICRO_SHORT_")) return null;
-      if (isScannerFingerprintId(raw)) return null;
-
-      let value = raw;
-      let microMicroHash = "";
-      let isMicroMicro = false;
-
-      const markerIndex = value.lastIndexOf(MICRO_MICRO_MARKER);
-      if (markerIndex > -1) {
-        microMicroHash = value.slice(markerIndex + MICRO_MICRO_MARKER.length).replace(/[^A-Z0-9]/g, "").slice(0, 16);
-        value = value.slice(0, markerIndex);
-        isMicroMicro = Boolean(microMicroHash);
-      }
-
-      const match = /^MICRO_SHORT_([A-Z_]+)_(TREND|CHOP|SQUEEZE)(?:_(A_STRONG_ALIGN|B_FLOW_ALIGN|C_VOLUME_ALIGN|D_MIXED_OK|E_WEAK_CONTRA))?$/.exec(value);
-      if (!match) return null;
-
-      const setup = match[1];
-      const regime = match[2];
-      const confirmation = match[3] || null;
-
-      if (!SHORT_FIXED_SETUP_TYPES.has(setup)) return null;
-      if (!SHORT_FIXED_REGIME_BUCKETS.has(regime)) return null;
-      if (confirmation && !SHORT_FIXED_CONFIRMATION_PROFILES.has(confirmation)) return null;
-      if (isMicroMicro && !confirmation) return null;
-
-      const parentTrueMicroFamilyId = `MICRO_SHORT_${setup}_${regime}`;
-      const childTrueMicroFamilyId = confirmation ? `${parentTrueMicroFamilyId}_${confirmation}` : null;
-      const microMicroFamilyId = isMicroMicro ? `${childTrueMicroFamilyId}${MICRO_MICRO_MARKER}${microMicroHash}` : "";
-
-      return {
-        setup,
-        regime,
-        confirmation,
-        parentTrueMicroFamilyId,
-        childTrueMicroFamilyId,
-        base75ChildTrueMicroFamilyId: childTrueMicroFamilyId,
-        microMicroFamilyId,
-        microMicroHash,
-        isParent: !confirmation && !isMicroMicro,
-        isChild: Boolean(confirmation) && !isMicroMicro,
-        isBaseChild: Boolean(confirmation),
-        isMicroMicro,
-        selectable: Boolean(confirmation),
-        selectionLayer: isMicroMicro ? "MICRO_MICRO" : confirmation ? "CHILD_75" : "PARENT_15",
-        schema: isMicroMicro ? MICRO_MICRO_SCHEMA : confirmation ? TRUE_MICRO_SCHEMA : PARENT_TRUE_MICRO_SCHEMA
-      };
-    }
-
-    function isFixedShortTaxonomyParentId(id = "") {
-      return parseFixedShortTaxonomyId(id)?.isParent === true;
-    }
-
-    function isFixedShortTaxonomyChildId(id = "") {
-      return parseFixedShortTaxonomyId(id)?.isChild === true;
-    }
-
-    function isMicroMicroId(id = "") {
-      return parseFixedShortTaxonomyId(id)?.isMicroMicro === true;
-    }
-
-    function isBase75OrMicroMicroId(id = "") {
-      const parsed = parseFixedShortTaxonomyId(id);
-      return Boolean(parsed?.isChild || parsed?.isMicroMicro);
-    }
-
-    function parentFromAnyMicroId(id = "") {
-      return parseFixedShortTaxonomyId(id)?.parentTrueMicroFamilyId || "";
-    }
-
-    function base75FromAnyMicroId(id = "") {
-      const parsed = parseFixedShortTaxonomyId(id);
-      return parsed?.base75ChildTrueMicroFamilyId || "";
-    }
-
     function normalizeSide(value) {
       const raw = cleanSideText(value);
-
       if (["SHORT", "BEAR", "BEARISH", "SELL", "DOWN", "DOWNSIDE"].includes(raw)) return ONLY_SIDE;
       if (["LONG", "BULL", "BULLISH", "BUY", "UP", "UPSIDE"].includes(raw)) return OPPOSITE_SIDE;
-
       return "UNKNOWN";
     }
 
@@ -996,6 +1060,7 @@
       const text = ` ${cleanSideText(value)} `;
       return (
         text.includes("MICRO_SHORT_") ||
+        text.includes("MM_SHORT_") ||
         text.includes("TRADESIDE=SHORT") ||
         text.includes("TRADE_SIDE=SHORT") ||
         text.includes("POSITION_SIDE=SHORT") ||
@@ -1010,13 +1075,7 @@
         text.includes("_SHORT_") ||
         text.includes("|SHORT|") ||
         text.includes(":SHORT") ||
-        text.includes("=SHORT") ||
-        text.includes(" BEAR ") ||
-        text.includes("_BEAR") ||
-        text.includes("BEAR_") ||
-        text.includes("|BEAR|") ||
-        text.includes(":BEAR") ||
-        text.includes("=BEAR")
+        text.includes("=SHORT")
       );
     }
 
@@ -1024,6 +1083,7 @@
       const text = ` ${cleanSideText(value)} `;
       return (
         text.includes("MICRO_LONG_") ||
+        text.includes("MM_LONG_") ||
         text.includes("TRADESIDE=LONG") ||
         text.includes("TRADE_SIDE=LONG") ||
         text.includes("POSITION_SIDE=LONG") ||
@@ -1038,19 +1098,12 @@
         text.includes("_LONG_") ||
         text.includes("|LONG|") ||
         text.includes(":LONG") ||
-        text.includes("=LONG") ||
-        text.includes(" BULL ") ||
-        text.includes("_BULL") ||
-        text.includes("BULL_") ||
-        text.includes("|BULL|") ||
-        text.includes(":BULL") ||
-        text.includes("=BULL")
+        text.includes("=LONG")
       );
     }
 
     function isScannerFingerprintId(id = "") {
       const value = upper(id);
-
       return (
         value.startsWith("MICRO_SHORT_SCANNER__") ||
         value.includes("MICRO_SHORT_SCANNER__") ||
@@ -1069,6 +1122,7 @@
     function isExecutionFingerprintId(id = "") {
       const value = upper(id);
 
+      if (value.startsWith(MICRO_MICRO_PREFIX)) return false;
       if (value.startsWith("MICRO_SHORT_") && value.includes(MICRO_MICRO_MARKER)) return false;
 
       return (
@@ -1082,32 +1136,169 @@
       );
     }
 
+    function parseBodySetupRegimeConfirmation(body = "") {
+      const cleanBody = upper(body).replace(/^_+|_+$/g, "");
+
+      for (const regime of SHORT_FIXED_REGIME_BUCKETS) {
+        const marker = `_${regime}`;
+        const idx = cleanBody.indexOf(marker);
+
+        if (idx < 0) continue;
+
+        const setup = cleanBody.slice(0, idx);
+        let rest = cleanBody.slice(idx + marker.length).replace(/^_+/, "");
+
+        if (!SHORT_FIXED_SETUP_SET.has(setup)) continue;
+
+        if (!rest) {
+          return {
+            ok: true,
+            setup,
+            regime,
+            confirmation: null,
+            rest: ""
+          };
+        }
+
+        for (const profile of SHORT_FIXED_CONFIRMATION_PROFILES) {
+          if (rest === profile) {
+            return {
+              ok: true,
+              setup,
+              regime,
+              confirmation: profile,
+              rest: ""
+            };
+          }
+
+          if (rest.startsWith(`${profile}_`)) {
+            return {
+              ok: true,
+              setup,
+              regime,
+              confirmation: profile,
+              rest: rest.slice(profile.length + 1)
+            };
+          }
+        }
+      }
+
+      return {
+        ok: false,
+        setup: null,
+        regime: null,
+        confirmation: null,
+        rest: ""
+      };
+    }
+
+    function parseExactShortId(id = "") {
+      const raw = upper(id);
+      if (!raw) return null;
+      if (isScannerFingerprintId(raw)) return null;
+      if (isExecutionFingerprintId(raw)) return null;
+
+      let mode = "UNKNOWN";
+      let body = "";
+      let microMicroContext = "";
+
+      if (raw.startsWith(MICRO_MICRO_PREFIX)) {
+        mode = "MICRO_MICRO_PREFIX";
+        body = raw.slice(MICRO_MICRO_PREFIX.length);
+      } else if (raw.startsWith("MICRO_SHORT_")) {
+        body = raw.slice("MICRO_SHORT_".length);
+
+        const markerIndex = body.indexOf(MICRO_MICRO_MARKER.replace(/^_/, ""));
+        const fullMarkerIndex = raw.indexOf(MICRO_MICRO_MARKER);
+
+        if (fullMarkerIndex > -1) {
+          mode = "MICRO_SHORT_SUFFIX_MM";
+          const base = raw.slice("MICRO_SHORT_".length, fullMarkerIndex - "MICRO_SHORT_".length);
+          microMicroContext = raw.slice(fullMarkerIndex + MICRO_MICRO_MARKER.length);
+          body = `${base}_${microMicroContext}`;
+        } else if (markerIndex > -1) {
+          mode = "MICRO_SHORT_SUFFIX_MM";
+        } else {
+          mode = "MICRO_SHORT_BASE";
+        }
+      } else {
+        return null;
+      }
+
+      const parsed = parseBodySetupRegimeConfirmation(body);
+      if (!parsed.ok) return null;
+
+      const parentTrueMicroFamilyId = `MICRO_SHORT_${parsed.setup}_${parsed.regime}`;
+      const childTrueMicroFamilyId = parsed.confirmation
+        ? `${parentTrueMicroFamilyId}_${parsed.confirmation}`
+        : "";
+
+      const isParent = Boolean(!parsed.confirmation && mode === "MICRO_SHORT_BASE");
+      const isChild75 = Boolean(parsed.confirmation && mode === "MICRO_SHORT_BASE");
+
+      const isMicroMicro =
+        Boolean(parsed.confirmation) &&
+        (
+          raw.startsWith(MICRO_MICRO_PREFIX) ||
+          raw.includes(MICRO_MICRO_MARKER) ||
+          Boolean(parsed.rest)
+        );
+
+      const microMicroFamilyId = isMicroMicro ? raw : "";
+
+      return {
+        valid: true,
+        rawId: raw,
+        setup: parsed.setup,
+        regime: parsed.regime,
+        confirmation: parsed.confirmation,
+        context: parsed.rest || microMicroContext || "",
+        parentTrueMicroFamilyId,
+        childTrueMicroFamilyId,
+        base75ChildTrueMicroFamilyId: childTrueMicroFamilyId,
+        microMicroFamilyId,
+        isParent,
+        isChild75,
+        isMicroMicro,
+        selectionLayer: isMicroMicro ? "MICRO_MICRO" : isChild75 ? "CHILD_75" : isParent ? "PARENT_15" : "UNKNOWN",
+        schema: isMicroMicro ? MICRO_MICRO_SCHEMA : isChild75 ? TRUE_MICRO_SCHEMA : PARENT_TRUE_MICRO_SCHEMA
+      };
+    }
+
+    function isParent15Id(id = "") {
+      return parseExactShortId(id)?.isParent === true;
+    }
+
+    function isChild75Id(id = "") {
+      return parseExactShortId(id)?.isChild75 === true;
+    }
+
+    function isMicroMicroId(id = "") {
+      return parseExactShortId(id)?.isMicroMicro === true;
+    }
+
     function validLearningId(id = "") {
       const value = String(id || "").trim();
-
       if (!value) return false;
       if (isScannerFingerprintId(value)) return false;
       if (isExecutionFingerprintId(value)) return false;
-
-      return Boolean(parseFixedShortTaxonomyId(value));
+      return Boolean(parseExactShortId(value));
     }
 
-    function isSelectableTrueMicroId(id = "") {
-      const value = String(id || "").trim();
-
-      if (!validLearningId(value)) return false;
-      if (!isBase75OrMicroMicroId(value)) return false;
-
-      return true;
+    function idAllowedInShortOnly(id = "") {
+      return validLearningId(id) && isMicroMicroId(id);
     }
 
-    function isSelectableParentMicroId(id = "") {
-      const value = String(id || "").trim();
+    function parentIdAllowedInShortOnly(id = "") {
+      return validLearningId(id) && isParent15Id(id);
+    }
 
-      if (!validLearningId(value)) return false;
-      if (!isFixedShortTaxonomyParentId(value)) return false;
+    function parentFromAnyMicroId(id = "") {
+      return parseExactShortId(id)?.parentTrueMicroFamilyId || "";
+    }
 
-      return true;
+    function base75FromAnyMicroId(id = "") {
+      return parseExactShortId(id)?.base75ChildTrueMicroFamilyId || "";
     }
 
     function inferSide(input = {}) {
@@ -1115,9 +1306,8 @@
         const direct = normalizeSide(input);
         if (direct !== "UNKNOWN") return direct;
 
-        const text = cleanSideText(input);
-        const shortSignal = hasShortSignal(text);
-        const longSignal = hasLongSignal(text);
+        const shortSignal = hasShortSignal(input);
+        const longSignal = hasLongSignal(input);
 
         if (shortSignal && !longSignal) return ONLY_SIDE;
         if (longSignal) return OPPOSITE_SIDE;
@@ -1159,6 +1349,7 @@
         input.base75ChildTrueMicroFamilyId,
         input.microMicroFamilyId,
         input.trueMicroMicroFamilyId,
+        input.selectedMicroMicroFamilyId,
         input.coarseMicroFamilyId,
         input.liveMicroFamilyId,
         input.realMicroFamilyId,
@@ -1188,7 +1379,6 @@
         Array.isArray(input.microMicroDefinitionParts) ? input.microMicroDefinitionParts.join("|") : "",
         Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts.join("|") : "",
         Array.isArray(input.parentDefinitionParts) ? input.parentDefinitionParts.join("|") : "",
-        Array.isArray(input.executionFingerprintParts) ? input.executionFingerprintParts.join("|") : "",
         Array.isArray(input.microMicroContextParts) ? input.microMicroContextParts.join("|") : ""
       ].join(" | ");
 
@@ -1219,6 +1409,19 @@
       return String(
         row.microMicroFamilyId ||
         row.trueMicroMicroFamilyId ||
+        row.selectedMicroMicroFamilyId ||
+        row.exactMicroMicroFamilyId ||
+        row.executionMicroMicroFamilyId ||
+        row.microMicroId ||
+        row.id ||
+        row.key ||
+        ""
+      ).trim().toUpperCase();
+    }
+
+    function fallbackAnyMicroId(row = {}) {
+      return String(
+        microId(row) ||
         row.trueMicroFamilyId ||
         row.childTrueMicroFamilyId ||
         row.microFamilyId ||
@@ -1226,9 +1429,6 @@
         row.learningMicroFamilyId ||
         row.liveMicroFamilyId ||
         row.realMicroFamilyId ||
-        row.executionMicroFamilyId ||
-        row.id ||
-        row.key ||
         ""
       ).trim().toUpperCase();
     }
@@ -1238,14 +1438,16 @@
       return String(
         row.base75ChildTrueMicroFamilyId ||
         row.childTrueMicroFamilyId ||
+        row.baseTrueMicroFamilyId ||
+        row.parentChildTrueMicroFamilyId ||
         base75FromAnyMicroId(id) ||
+        base75FromAnyMicroId(fallbackAnyMicroId(row)) ||
         ""
       ).trim().toUpperCase();
     }
 
     function parentMicroId(row = {}) {
       const id = microId(row);
-
       return String(
         row.parentTrueMicroFamilyId ||
         row.parentMicroFamilyId ||
@@ -1254,27 +1456,20 @@
         row.baseMicroFamilyId ||
         row.legacyMicroFamilyId ||
         parentFromAnyMicroId(id) ||
+        parentFromAnyMicroId(base75MicroId(row)) ||
+        parentFromAnyMicroId(fallbackAnyMicroId(row)) ||
         ""
       ).trim().toUpperCase();
     }
 
     function microLayer(row = {}) {
-      const parsed = parseFixedShortTaxonomyId(microId(row));
-
-      if (parsed?.isMicroMicro) return "MICRO_MICRO";
-      if (parsed?.isChild) return "CHILD_75";
-      if (parsed?.isParent) return "PARENT_15";
-
-      return "UNKNOWN";
+      return isMicroMicroId(microId(row)) ? "MICRO_MICRO" : "HIDDEN_NON_MICRO_MICRO";
     }
 
     function microLayerPill(row = {}) {
-      const layer = microLayer(row);
-
-      if (layer === "MICRO_MICRO") return '<span class="pill mm">MICRO-MICRO</span>';
-      if (layer === "CHILD_75") return '<span class="pill dark">75-CHILD</span>';
-
-      return '<span class="pill raw">UNKNOWN</span>';
+      return isMicroMicroId(microId(row))
+        ? '<span class="pill mm">MICRO-MICRO</span>'
+        : '<span class="pill raw">HIDDEN</span>';
     }
 
     function rowMeasurementFixVersion(row = {}) {
@@ -1349,27 +1544,17 @@
         : '<span class="pill legacy">LEGACY</span>';
     }
 
-    function isRealAnalyzeMicroRow(row = {}) {
+    function isRealMicroMicroRow(row = {}) {
       const id = microId(row);
-      const parentId = parentMicroId(row);
 
       if (!id) return false;
-      if (!isSelectableTrueMicroId(id)) return false;
-      if (parentId && !isSelectableParentMicroId(parentId)) return false;
+      if (!idAllowedInShortOnly(id)) return false;
       if (row.legacyScannerFamilyFallback === true) return false;
 
       const side = inferSide(row);
       if (side === OPPOSITE_SIDE) return false;
 
       return true;
-    }
-
-    function idAllowedInShortOnly(id = "") {
-      return isSelectableTrueMicroId(id);
-    }
-
-    function parentIdAllowedInShortOnly(id = "") {
-      return isSelectableParentMicroId(id);
     }
 
     function uniqueStrings(values = []) {
@@ -1403,103 +1588,6 @@
       if (Array.isArray(value)) return value;
       if (value && typeof value === "object") return Object.values(value);
       return [];
-    }
-
-    function num(value, fallback = 0) {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : fallback;
-    }
-
-    function firstFinite(...values) {
-      for (const value of values) {
-        const n = Number(value);
-        if (Number.isFinite(n)) return n;
-      }
-
-      return null;
-    }
-
-    function clamp(value, min, max) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return min;
-      return Math.max(min, Math.min(max, n));
-    }
-
-    function normalizePctFraction(value, fallback = 0) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return fallback;
-      if (Math.abs(n) > 1.5) return n / 100;
-      return n;
-    }
-
-    function fmt(value, decimals = 3) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return "-";
-      return n.toFixed(decimals);
-    }
-
-    function fmtInt(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return "0";
-      return Math.round(n).toLocaleString();
-    }
-
-    function fmtPct(value) {
-      const n = normalizePctFraction(value, NaN);
-      if (!Number.isFinite(n)) return "-";
-      return `${(n * 100).toFixed(1)}%`;
-    }
-
-    function fmtRawPct(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return "-";
-      return `${n.toFixed(2)}%`;
-    }
-
-    function fmtPrice(value) {
-      const n = Number(value);
-
-      if (!Number.isFinite(n)) return "-";
-      if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-      if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
-
-      return n.toLocaleString(undefined, { maximumFractionDigits: 8 });
-    }
-
-    function fmtMoney(value) {
-      const n = Number(value);
-
-      if (!Number.isFinite(n)) return "-";
-      if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-      if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-      if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-
-      return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-    }
-
-    function fmtTs(value) {
-      if (!value) return "-";
-
-      const n = Number(value);
-      const date = Number.isFinite(n) ? new Date(n) : new Date(value);
-
-      if (Number.isNaN(date.getTime())) return "-";
-
-      return date.toLocaleString();
-    }
-
-    function ageText(ts) {
-      const n = Number(ts);
-
-      if (!Number.isFinite(n) || n <= 0) return "-";
-
-      const seconds = Math.max(0, Math.floor((Date.now() - n) / 1000));
-
-      if (seconds < 60) return `${seconds}s geleden`;
-      if (seconds < 3600) return `${Math.floor(seconds / 60)}m geleden`;
-      if (seconds < 86400) return `${Math.floor(seconds / 3600)}u geleden`;
-
-      return `${Math.floor(seconds / 86400)}d geleden`;
     }
 
     function baseSymbol(row = {}) {
@@ -1550,48 +1638,55 @@
       );
     }
 
-    function minCompletedForRow(row = {}) {
-      return isMicroMicroId(microId(row))
-        ? MIN_COMPLETED_MICRO_MICRO_ACTIVE
-        : MIN_COMPLETED_ACTIVE_LEARNING;
+    function minCompletedForRow() {
+      return MIN_COMPLETED_MICRO_MICRO_ACTIVE;
     }
 
     function learningStatus(row = {}) {
       const done = completed(row);
-      const minDone = minCompletedForRow(row);
-
-      if (isMicroMicroId(microId(row))) {
-        if (done >= minDone) return "MICRO_MICRO_ACTIVE";
-        if (done > 0) return "MICRO_MICRO_EARLY";
-        return "MICRO_MICRO_OBSERVING";
-      }
-
-      if (done >= minDone) return "ACTIVE_LEARNING";
-      if (done > 0) return "EARLY_OUTCOMES";
-
-      return "OBSERVING";
+      if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO_ACTIVE";
+      if (done > 0) return "MICRO_MICRO_EARLY";
+      return "MICRO_MICRO_OBSERVING";
     }
 
     function tooEarly(row = {}) {
-      return completed(row) < minCompletedForRow(row);
+      return completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE;
     }
 
     function tier(row = {}) {
       const done = completed(row);
       const obs = observationSample(row);
 
-      if (isMicroMicroId(microId(row))) {
-        if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO";
-        if (done > 0) return "MICRO_MICRO_SOFT";
-        if (obs > 0) return "OBSERVATION";
-        return "RAW";
-      }
-
-      if (done >= MIN_COMPLETED_ACTIVE_LEARNING) return "HARD";
-      if (done > 0) return "SOFT";
+      if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO";
+      if (done > 0) return "MICRO_MICRO_SOFT";
       if (obs > 0) return "OBSERVATION";
 
       return String(row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || row.tier || "RAW").toUpperCase();
+    }
+
+    function tierPill(value) {
+      const t = String(value || "NA").toUpperCase();
+
+      if (t === "MICRO_MICRO") return '<span class="pill mm">MM ACTIVE</span>';
+      if (t === "MICRO_MICRO_SOFT") return '<span class="pill purple">MM EARLY</span>';
+      if (t === "OBSERVATION") return '<span class="pill observation">OBS</span>';
+      if (t === "RAW") return '<span class="pill raw">RAW</span>';
+      if (t === "MANUAL") return '<span class="pill purple">MANUAL</span>';
+
+      return `<span class="pill">${escapeHtml(t)}</span>`;
+    }
+
+    function statusPill(row = {}) {
+      const status = learningStatus(row);
+      const done = completed(row);
+
+      if (status === "MICRO_MICRO_ACTIVE") return '<span class="pill mm">MICRO_MICRO_ACTIVE</span>';
+
+      if (status === "MICRO_MICRO_EARLY") {
+        return `<span class="pill soft">MICRO_MICRO_EARLY · ${escapeHtml(fmt(done, 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`;
+      }
+
+      return '<span class="pill observation">MICRO_MICRO_OBSERVING</span>';
     }
 
     function currentMarketRegimeForFit() {
@@ -1625,8 +1720,8 @@
     }
 
     function fallbackCurrentFitScore(row = {}) {
-      const parsed = parseFixedShortTaxonomyId(microId(row));
-      if (!parsed?.isBaseChild) return 0;
+      const parsed = parseExactShortId(microId(row)) || parseExactShortId(base75MicroId(row));
+      if (!parsed?.confirmation) return 0;
 
       const marketRegime = currentMarketRegimeForFit();
       const marketTrend = currentMarketTrendForFit();
@@ -1661,50 +1756,12 @@
       if (parsed.confirmation === "C_VOLUME_ALIGN") score += 10;
       if (parsed.confirmation === "D_MIXED_OK") score += 4;
       if (parsed.confirmation === "E_WEAK_CONTRA") score -= 8;
-      if (parsed.isMicroMicro) score += 4;
+
+      score += 4;
 
       if (!hasSignal) return 0;
 
       return clamp(score, -80, 100);
-    }
-
-    function currentFit(row = {}) {
-      const label = upper(
-        row.currentFitLabel ||
-        row.entryCurrentFitLabel ||
-        row.currentMarketFitLabel ||
-        row.fitLabel ||
-        row.marketFitLabel ||
-        ""
-      );
-
-      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(label)) return "MATCH";
-      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(label)) return "WEAK_MATCH";
-      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(label)) return "MISFIT";
-      if (["NEUTRAL", "MIXED"].includes(label)) return "NEUTRAL";
-
-      const raw = upper(
-        row.currentFit ||
-        row.entryCurrentFit ||
-        row.currentMarketFit ||
-        row.fit ||
-        row.marketFit ||
-        ""
-      );
-
-      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(raw)) return "MATCH";
-      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(raw)) return "WEAK_MATCH";
-      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(raw)) return "MISFIT";
-      if (["NEUTRAL", "MIXED"].includes(raw)) return "NEUTRAL";
-
-      const score = currentFitScore(row);
-
-      if (score >= 70) return "MATCH";
-      if (score >= 45) return "WEAK_MATCH";
-      if (score >= 20) return "NEUTRAL";
-      if (score <= -20) return "MISFIT";
-
-      return "UNKNOWN";
     }
 
     function marketBiasHaystack(row = {}) {
@@ -1794,36 +1851,6 @@
         return direct;
       }
 
-      const numericFit = firstFinite(
-        row.currentFit,
-        row.entryCurrentFit,
-        row.currentMarketFit,
-        row.fit,
-        row.marketFit
-      );
-
-      if (numericFit !== null) {
-        const marketTrend = currentMarketTrendForFit();
-
-        if (marketTrend === "SHORT") return Math.abs(numericFit);
-        if (marketTrend === "LONG") return -Math.abs(numericFit);
-
-        return numericFit;
-      }
-
-      const fit = upper(
-        row.currentFitLabel ||
-        row.entryCurrentFitLabel ||
-        row.currentFit ||
-        row.entryCurrentFit ||
-        ""
-      );
-
-      if (fit === "MATCH") return 80;
-      if (fit === "WEAK_MATCH") return 60;
-      if (fit === "NEUTRAL") return 40;
-      if (fit === "MISFIT") return 20;
-
       return fallbackCurrentFitScore(row);
     }
 
@@ -1848,6 +1875,45 @@
       if (score <= -20) return 35;
 
       return 0;
+    }
+
+    function currentFit(row = {}) {
+      const label = upper(
+        row.currentFitLabel ||
+        row.entryCurrentFitLabel ||
+        row.currentMarketFitLabel ||
+        row.fitLabel ||
+        row.marketFitLabel ||
+        ""
+      );
+
+      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(label)) return "MATCH";
+      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(label)) return "WEAK_MATCH";
+      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(label)) return "MISFIT";
+      if (["NEUTRAL", "MIXED"].includes(label)) return "NEUTRAL";
+
+      const raw = upper(
+        row.currentFit ||
+        row.entryCurrentFit ||
+        row.currentMarketFit ||
+        row.fit ||
+        row.marketFit ||
+        ""
+      );
+
+      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(raw)) return "MATCH";
+      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH", "OK"].includes(raw)) return "WEAK_MATCH";
+      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(raw)) return "MISFIT";
+      if (["NEUTRAL", "MIXED"].includes(raw)) return "NEUTRAL";
+
+      const score = currentFitScore(row);
+
+      if (score >= 70) return "MATCH";
+      if (score >= 45) return "WEAK_MATCH";
+      if (score >= 20) return "NEUTRAL";
+      if (score <= -20) return "MISFIT";
+
+      return "UNKNOWN";
     }
 
     function currentFitPill(row = {}) {
@@ -1875,7 +1941,6 @@
       if (direct !== null) return direct;
 
       const recentRows = Array.isArray(row.recentOutcomes) ? row.recentOutcomes.slice(-12) : [];
-
       if (!recentRows.length) return 0;
 
       const netR = recentRows.reduce((sum, outcome) => {
@@ -1934,12 +1999,11 @@
         row.currentAdaptiveScore
       );
 
-      const microMicroBonus =
-        isMicroMicroId(microId(row)) && completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE
-          ? 6
-          : 0;
+      const microMicroBonus = completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 8 : 0;
 
-      if (direct !== null) return direct + microMicroBonus + (isCleanMeasurementRow(row) ? 0 : -25);
+      if (direct !== null) {
+        return direct + microMicroBonus + (isCleanMeasurementRow(row) ? 0 : -25);
+      }
 
       const base = balancedScore(row);
       const reliability = sampleReliability(row);
@@ -1948,54 +2012,6 @@
       const legacyPenalty = isCleanMeasurementRow(row) ? 0 : 25;
 
       return base + reliability * 10 + microMicroBonus - directSLPenalty - costPenalty - legacyPenalty;
-    }
-
-    function tierPill(value) {
-      const t = String(value || "NA").toUpperCase();
-
-      if (t === "HARD") return '<span class="pill active">ACTIVE</span>';
-      if (t === "SOFT") return '<span class="pill soft">EARLY</span>';
-      if (t === "MICRO_MICRO") return '<span class="pill mm">MM ACTIVE</span>';
-      if (t === "MICRO_MICRO_SOFT") return '<span class="pill purple">MM EARLY</span>';
-      if (t === "OBSERVATION") return '<span class="pill observation">OBS</span>';
-      if (t === "RAW") return '<span class="pill raw">RAW</span>';
-      if (t === "MANUAL") return '<span class="pill purple">MANUAL</span>';
-
-      return `<span class="pill">${escapeHtml(t)}</span>`;
-    }
-
-    function statusPill(row = {}) {
-      const status = learningStatus(row);
-      const done = completed(row);
-      const minDone = minCompletedForRow(row);
-
-      if (status === "ACTIVE_LEARNING") return '<span class="pill active">ACTIVE_LEARNING</span>';
-      if (status === "MICRO_MICRO_ACTIVE") return '<span class="pill mm">MICRO_MICRO_ACTIVE</span>';
-
-      if (status === "EARLY_OUTCOMES" || status === "MICRO_MICRO_EARLY") {
-        return `<span class="pill soft">${escapeHtml(status)} · ${escapeHtml(fmt(done, 0))}/${minDone}</span>`;
-      }
-
-      return `<span class="pill observation">${escapeHtml(status)}</span>`;
-    }
-
-    function jsonBlock(data) {
-      return `<pre>${escapeHtml(JSON.stringify(data ?? null, null, 2))}</pre>`;
-    }
-
-    function setMessage(message = "", type = "") {
-      $("message").innerHTML = message
-        ? `<div class="message ${escapeAttr(type)}">${escapeHtml(message)}</div>`
-        : "";
-    }
-
-    function showLoading(tabId, label = "Laden...") {
-      $(tabId).innerHTML = `
-        <div class="card">
-          <h3>${escapeHtml(label)}</h3>
-          <div class="empty">Data ophalen voor ${escapeHtml(tabId)}...</div>
-        </div>
-      `;
     }
 
     function friendlyApiMessage(error) {
@@ -2086,29 +2102,10 @@
       }
     }
 
-    function metricCard(label, value, extra = "") {
-      return `
-        <div class="card metric-card">
-          <div class="metric-label">${escapeHtml(label)}</div>
-          <div>
-            <div class="metric-value">${escapeHtml(value)}</div>
-            ${extra ? `<div class="metric-extra">${escapeHtml(extra)}</div>` : ""}
-          </div>
-        </div>
-      `;
-    }
-
-    function scoreBar(value, min = 0, max = 100) {
-      const n = Number(value);
-      const width = Number.isFinite(n)
-        ? Math.max(0, Math.min(100, ((n - min) / (max - min)) * 100))
-        : 0;
-
-      return `<div class="score-bar"><span style="--w:${width.toFixed(1)}%"></span></div>`;
-    }
-
     function table(rows, cols, emptyText = "Geen data.") {
-      if (!Array.isArray(rows) || rows.length === 0) return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+      }
 
       const head = cols.map((col) => `<th>${escapeHtml(col.label)}</th>`).join("");
 
@@ -2144,7 +2141,158 @@
       return rows;
     }
 
-    function extractDeepMicroRows(data) {
+    function normalizeMicroMicroRowFromBase(row = {}) {
+      const exactId = microId(row);
+      const parsed = parseExactShortId(exactId);
+
+      if (!parsed?.isMicroMicro) return null;
+
+      return {
+        ...row,
+
+        microFamilyId: exactId,
+        trueMicroFamilyId: exactId,
+        microMicroFamilyId: exactId,
+        trueMicroMicroFamilyId: exactId,
+
+        childTrueMicroFamilyId:
+          row.childTrueMicroFamilyId ||
+          row.base75ChildTrueMicroFamilyId ||
+          parsed.base75ChildTrueMicroFamilyId,
+
+        base75ChildTrueMicroFamilyId:
+          row.base75ChildTrueMicroFamilyId ||
+          row.childTrueMicroFamilyId ||
+          parsed.base75ChildTrueMicroFamilyId,
+
+        parentTrueMicroFamilyId:
+          row.parentTrueMicroFamilyId ||
+          parsed.parentTrueMicroFamilyId,
+
+        parentMicroFamilyId:
+          row.parentMicroFamilyId ||
+          parsed.parentTrueMicroFamilyId,
+
+        parentMacroFamilyId:
+          row.parentMacroFamilyId ||
+          parsed.parentTrueMicroFamilyId,
+
+        macroFamilyId:
+          row.macroFamilyId ||
+          parsed.parentTrueMicroFamilyId,
+
+        coarseMicroFamilyId:
+          row.coarseMicroFamilyId ||
+          parsed.parentTrueMicroFamilyId,
+
+        taxonomySetup: parsed.setup,
+        taxonomyRegime: parsed.regime,
+        confirmationProfile: parsed.confirmation,
+        microMicroContext: row.microMicroContext || parsed.context || null,
+
+        side: DASHBOARD_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        tradeSide: ONLY_SIDE,
+        targetTradeSide: ONLY_SIDE,
+        positionSide: ONLY_SIDE,
+        direction: ONLY_SIDE,
+
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false,
+
+        selectionLayer: "MICRO_MICRO",
+        selectableLayer: "MICRO_MICRO",
+        isMicroMicro: true,
+        isBase75Child: false,
+
+        trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
+        microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+        parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+
+        learningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+        microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+        parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+
+        selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+
+        riskPlanVersion: rowRiskPlanVersion(row) || SHORT_RISK_PLAN_VERSION,
+        costModelVersion: rowCostModelVersion(row) || POSITION_COST_MODEL_VERSION,
+        measurementFixVersion: rowMeasurementFixVersion(row) || MEASUREMENT_FIX_VERSION,
+        observationDedupeVersion: rowObservationDedupeVersion(row) || OBSERVATION_DEDUPE_VERSION,
+        outcomeDedupeVersion: rowOutcomeDedupeVersion(row) || OUTCOME_DEDUPE_VERSION,
+        adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+        microMicroVersion: MICRO_MICRO_VERSION,
+
+        completed: completed(row),
+        outcomeSample: completed(row),
+        observationSample: observationSample(row),
+        learningStatus: learningStatus(row),
+        status: learningStatus(row),
+        tooEarly: tooEarly(row),
+        tooEarlyReason: tooEarly(row) ? `completed ${completed(row)}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}` : null,
+
+        tier: tier(row),
+        selectedTier: tier(row),
+        rotationEligibilityTier: tier(row),
+
+        fairWinrate: fairWinrate(row),
+        dashboardBalancedScore: balancedScore(row),
+        balancedScore: num(row.balancedScore ?? row.dashboardBalancedScore ?? row.learningQualityRank, 0),
+        recentMomentumScore: recentMomentumScore(row),
+        currentFitScore: currentFitScore(row),
+        adaptiveScore: adaptiveScore(row),
+        avgCostR: avgCostR(row),
+        directSLPct: directSLPct(row),
+        cleanMeasurement: isCleanMeasurementRow(row),
+
+        completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
+        completedOnlyClosedVirtualOrShadow: true,
+        scoringRSource: "netR",
+        winsLossesFlatsSource: "netR",
+        avgRSource: "netR",
+        totalRSource: "netR",
+        avgCostRSource: "costR",
+        seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
+
+        riskTradeSide: ONLY_SIDE,
+        riskGeometryRule: "SHORT: tp < entry < sl",
+        tpHitRule: "SHORT: candle.low <= tp",
+        slHitRule: "SHORT: candle.high >= sl",
+        sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
+        grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+        currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+
+        currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+        currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+        currentFitSoftOnly: true,
+        currentFitBlocksLearning: false,
+        currentFitBlocksVirtualLearning: false,
+        currentFitBlocksShadowLearning: false,
+
+        learningRemainsBroad: true,
+        child75RemainsPrimaryLearningLayer: true,
+        microMicroLayerEnabled: true,
+        microMicroActsAsExecutionPreference: true,
+        microMicroIsOnlySelectableLayerInAdmin: true,
+
+        scannerFingerprintRole: row.scannerFingerprintRole || "METADATA_ONLY",
+        scannerFingerprintsMetadataOnly: true,
+        scannerFingerprintsUsedAsLearningFamily: false,
+
+        executionFingerprintsMetadataOnly: true,
+        executionFingerprintsUsedAsLearningFamily: false,
+        executionFingerprintsCanDeriveMicroMicroContextHash: true,
+
+        legacyScannerFamilyFallback: false,
+        scannerFingerprintLegacy: false,
+        learningIdentitySource: "ANALYZE_MICRO_MICRO_FAMILY",
+        symbolExcludedFromFamilyId: row.symbolExcludedFromFamilyId !== false
+      };
+    }
+
+    function extractDeepMicroMicroRows(data) {
       const output = [];
       const seenObjects = new Set();
       const seenIds = new Set();
@@ -2152,42 +2300,45 @@
       function add(row) {
         if (!row || typeof row !== "object") return;
 
-        const id = microId(row);
+        const normalized = normalizeMicroMicroRowFromBase(row);
+        if (!normalized) return;
 
+        const id = microId(normalized);
         if (!id || seenIds.has(id)) return;
-        if (!isRealAnalyzeMicroRow(row)) return;
+        if (!isRealMicroMicroRow(normalized)) return;
 
         seenIds.add(id);
-        output.push(row);
+        output.push(normalized);
       }
 
       function walk(value, depth = 0) {
-        if (!value || typeof value !== "object" || depth > 8) return;
+        if (!value || typeof value !== "object" || depth > 9) return;
         if (seenObjects.has(value)) return;
 
         seenObjects.add(value);
 
         if (Array.isArray(value)) {
           for (const item of value) {
-            if (item && typeof item === "object" && microId(item)) add(item);
+            if (item && typeof item === "object") add(item);
             walk(item, depth + 1);
           }
           return;
         }
 
-        if (microId(value)) add(value);
+        add(value);
 
         for (const key of [
           "bestMicroMicroFamilies",
           "topMicroMicroFamilies",
           "microMicroRows",
           "microMicroFamilies",
-          "best75MicroFamilies",
-          "top75MicroFamilies",
-          "bestMicroFamilies",
-          "topMicroFamilies",
-          "shortRows",
+          "selectedMicroMicroFamilyRows",
+          "activeMicroMicroFamilyRows",
+          "shortMicroMicroRows",
+          "microMicro",
+          "microMicroStats",
           "rows",
+          "shortRows",
           "microFamilies",
           "micros",
           "items",
@@ -2220,52 +2371,41 @@
         "topMicroMicroFamilies",
         "microMicroRows",
         "microMicroFamilies",
-        "best75MicroFamilies",
-        "top75MicroFamilies",
-        "bestMicroFamilies",
-        "topMicroFamilies"
-      ]);
-
-      const direct = extractObjectArrays(data, [
-        "shortRows",
-        "rows",
-        "microFamilies",
-        "micros",
-        "items"
+        "selectedMicroMicroFamilyRows",
+        "activeMicroMicroFamilyRows",
+        "shortMicroMicroRows"
       ]);
 
       const nestedPreferred = [
-        ...extractObjectArrays(data.result || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "best75MicroFamilies", "top75MicroFamilies", "bestMicroFamilies", "topMicroFamilies"]),
-        ...extractObjectArrays(data.payload || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "best75MicroFamilies", "top75MicroFamilies", "bestMicroFamilies", "topMicroFamilies"])
+        ...extractObjectArrays(data.result || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "microMicroRows", "microMicroFamilies"]),
+        ...extractObjectArrays(data.payload || {}, ["bestMicroMicroFamilies", "topMicroMicroFamilies", "microMicroRows", "microMicroFamilies"]),
+        ...extractObjectArrays(data.activeRotation || {}, ["microMicroFamilies", "activeMicroMicroFamilyRows"])
       ];
 
-      const deep = extractDeepMicroRows(data);
+      const deep = extractDeepMicroMicroRows(data);
 
       const source = preferred.length
         ? preferred
         : nestedPreferred.length
           ? nestedPreferred
-          : direct.length
-            ? direct
-            : deep;
+          : deep;
 
       const byId = new Map();
 
       for (const row of source) {
-        if (!row || typeof row !== "object") continue;
-        if (!isRealAnalyzeMicroRow(row)) continue;
+        const normalized = normalizeMicroMicroRowFromBase(row);
+        if (!normalized) continue;
 
-        const id = microId(row);
+        const id = microId(normalized);
         if (!id || byId.has(id)) continue;
 
-        byId.set(id, row);
+        byId.set(id, normalized);
       }
 
       if (byId.size === 0) {
         for (const row of deep) {
           const id = microId(row);
           if (!id || byId.has(id)) continue;
-
           byId.set(id, row);
         }
       }
@@ -2292,6 +2432,7 @@
     function compareBestDataFirst(a, b) {
       return (
         compareCleanFirst(a, b) ||
+        compareNumberDesc(completed(a) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 1 : 0, completed(b) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 1 : 0) ||
         compareNumberDesc(balancedScore(a), balancedScore(b)) ||
         compareNumberDesc(netTotalR(a), netTotalR(b)) ||
         compareNumberDesc(netAvgR(a), netAvgR(b)) ||
@@ -2305,16 +2446,7 @@
       );
     }
 
-    function compareLayerFirst(a, b, wantedLayer) {
-      const aHit = microLayer(a) === wantedLayer ? 1 : 0;
-      const bHit = microLayer(b) === wantedLayer ? 1 : 0;
-
-      return compareNumberDesc(aHit, bHit);
-    }
-
     function compareMicroRows(a, b, mode = state.microMode) {
-      if (mode === "microMicro") return compareLayerFirst(a, b, "MICRO_MICRO") || compareBestDataFirst(a, b);
-      if (mode === "child75") return compareLayerFirst(a, b, "CHILD_75") || compareBestDataFirst(a, b);
       if (mode === "clean") return compareCleanFirst(a, b) || compareBestDataFirst(a, b);
 
       if (mode === "adaptive") {
@@ -2349,120 +2481,11 @@
       return compareBestDataFirst(a, b);
     }
 
-    function normalizeMicroRowForUi(row = {}) {
-      const id = microId(row);
-      const parsed = parseFixedShortTaxonomyId(id);
-      const parentId = parentMicroId(row) || parentFromAnyMicroId(id);
-      const base75 = base75MicroId(row) || parsed?.base75ChildTrueMicroFamilyId || id;
-      const done = completed(row);
-      const obs = observationSample(row);
-      const status = learningStatus(row);
-      const rowTier = tier(row);
-      const layer = microLayer(row);
-
-      return {
-        ...row,
-        microFamilyId: id,
-        trueMicroFamilyId: id,
-        microMicroFamilyId: parsed?.isMicroMicro ? id : row.microMicroFamilyId || null,
-        childTrueMicroFamilyId: parsed?.childTrueMicroFamilyId || row.childTrueMicroFamilyId || base75,
-        base75ChildTrueMicroFamilyId: base75,
-        parentTrueMicroFamilyId: parentId,
-        parentMicroFamilyId: parentId,
-        parentMacroFamilyId: parentId,
-        macroFamilyId: parentId,
-        coarseMicroFamilyId: parentId,
-        side: DASHBOARD_SIDE,
-        dashboardSide: DASHBOARD_SIDE,
-        tradeSide: ONLY_SIDE,
-        targetTradeSide: ONLY_SIDE,
-        positionSide: ONLY_SIDE,
-        direction: ONLY_SIDE,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false,
-        completed: done,
-        outcomeSample: done,
-        observationSample: obs,
-        learningStatus: status,
-        status,
-        tooEarly: done < minCompletedForRow(row),
-        tooEarlyReason: done < minCompletedForRow(row) ? `completed ${done}/${minCompletedForRow(row)}` : null,
-        tier: rowTier,
-        selectedTier: rowTier,
-        rotationEligibilityTier: rowTier,
-        dashboardBalancedScore: balancedScore(row),
-        balancedScore: num(row.balancedScore ?? row.dashboardBalancedScore ?? row.learningQualityRank, 0),
-        fairWinrate: fairWinrate(row),
-        recentMomentumScore: recentMomentumScore(row),
-        currentFitScore: currentFitScore(row),
-        adaptiveScore: adaptiveScore(row),
-        avgCostR: avgCostR(row),
-        directSLPct: directSLPct(row),
-        cleanMeasurement: isCleanMeasurementRow(row),
-        selectionLayer: layer,
-        selectableLayer: layer,
-        isMicroMicro: layer === "MICRO_MICRO",
-        isBase75Child: layer === "CHILD_75",
-        trueMicroFamilySchema: layer === "MICRO_MICRO" ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
-        parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-        microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-        learningGranularity: layer === "MICRO_MICRO" ? MICRO_MICRO_LEARNING_GRANULARITY : LEARNING_GRANULARITY,
-        parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-        microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-        selectionGranularity: "EXACT_75_CHILD_OR_MICRO_MICRO",
-        riskPlanVersion: rowRiskPlanVersion(row) || SHORT_RISK_PLAN_VERSION,
-        costModelVersion: rowCostModelVersion(row) || POSITION_COST_MODEL_VERSION,
-        measurementFixVersion: rowMeasurementFixVersion(row) || MEASUREMENT_FIX_VERSION,
-        observationDedupeVersion: rowObservationDedupeVersion(row) || OBSERVATION_DEDUPE_VERSION,
-        outcomeDedupeVersion: rowOutcomeDedupeVersion(row) || OUTCOME_DEDUPE_VERSION,
-        adaptiveUiVersion: ADAPTIVE_UI_VERSION,
-        microMicroVersion: MICRO_MICRO_VERSION,
-        completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
-        completedOnlyClosedVirtualOrShadow: true,
-        scoringRSource: "netR",
-        winsLossesFlatsSource: "netR",
-        avgRSource: "netR",
-        totalRSource: "netR",
-        avgCostRSource: "costR",
-        seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
-        riskTradeSide: ONLY_SIDE,
-        riskGeometryRule: "SHORT: tp < entry < sl",
-        tpHitRule: "SHORT: candle.low <= tp",
-        slHitRule: "SHORT: candle.high >= sl",
-        sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
-        grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
-        currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
-        currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
-        currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
-        currentFitSoftOnly: true,
-        currentFitBlocksLearning: false,
-        currentFitBlocksVirtualLearning: false,
-        currentFitBlocksShadowLearning: false,
-        learningRemainsBroad: true,
-        child75RemainsPrimaryLearningLayer: true,
-        microMicroLayerEnabled: true,
-        microMicroActsAsExecutionPreference: true,
-        selectionIsAdaptive: true,
-        discordWillBeStrict: true,
-        scannerFingerprintRole: row.scannerFingerprintRole || "METADATA_ONLY",
-        scannerFingerprintsMetadataOnly: true,
-        scannerFingerprintsUsedAsLearningFamily: false,
-        executionFingerprintsMetadataOnly: true,
-        executionFingerprintsUsedAsLearningFamily: false,
-        executionFingerprintsCanDeriveMicroMicroContextHash: true,
-        legacyScannerFamilyFallback: false,
-        scannerFingerprintLegacy: false,
-        learningIdentitySource: row.learningIdentitySource || "ANALYZE_TRUE_MICRO_OR_MICRO_MICRO_FAMILY",
-        symbolExcludedFromFamilyId: row.symbolExcludedFromFamilyId !== false
-      };
-    }
-
     function rankMicroRows(rows = [], mode = state.microMode) {
       return rows
-        .filter(isRealAnalyzeMicroRow)
-        .map(normalizeMicroRowForUi)
+        .map(normalizeMicroMicroRowFromBase)
+        .filter(Boolean)
+        .filter(isRealMicroMicroRow)
         .sort((a, b) => compareMicroRows(a, b, mode))
         .map((row, index) => ({
           ...row,
@@ -2472,11 +2495,11 @@
 
     function identityVersions() {
       return {
-        trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+        child75TrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-        learningGranularity: LEARNING_GRANULARITY,
         parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+        child75LearningGranularity: LEARNING_GRANULARITY,
         microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
         microMicroVersion: MICRO_MICRO_VERSION,
         riskPlanVersion: SHORT_RISK_PLAN_VERSION,
@@ -2484,7 +2507,8 @@
         measurementFixVersion: MEASUREMENT_FIX_VERSION,
         observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
         outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
-        adaptiveUiVersion: ADAPTIVE_UI_VERSION
+        adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+        selectionGranularity: "EXACT_MICRO_MICRO_ONLY"
       };
     }
 
@@ -2514,11 +2538,15 @@
       params.set("persistentLearningKey", PERSISTENT_LEARNING_KEY);
       params.set("redisNamespace", SHORT_NAMESPACE);
       params.set("redisKeyPrefix", SHORT_KEY_PREFIX);
+
       params.set("trueMicroFamilySchema", TRUE_MICRO_SCHEMA);
       params.set("parentTrueMicroFamilySchema", PARENT_TRUE_MICRO_SCHEMA);
       params.set("microMicroFamilySchema", MICRO_MICRO_SCHEMA);
+      params.set("microMicroVersion", MICRO_MICRO_VERSION);
       params.set("microMicroEnabled", "1");
-      params.set("selectionGranularity", "EXACT_75_CHILD_OR_MICRO_MICRO");
+      params.set("microMicroOnly", "1");
+      params.set("selectionGranularity", "EXACT_MICRO_MICRO_ONLY");
+
       params.set("riskPlanVersion", SHORT_RISK_PLAN_VERSION);
       params.set("costModelVersion", POSITION_COST_MODEL_VERSION);
       params.set("measurementFixVersion", MEASUREMENT_FIX_VERSION);
@@ -2530,7 +2558,8 @@
 
     function microApiUrl() {
       const params = commonSideParams();
-      const apiMode = ["adaptive", "currentFit", "cost", "clean", "microMicro", "child75"].includes(state.microMode)
+
+      const apiMode = ["adaptive", "currentFit", "cost", "clean"].includes(state.microMode)
         ? "adaptive"
         : state.microMode;
 
@@ -2545,6 +2574,9 @@
       params.set("includeAdaptive", "1");
       params.set("includeCleanMeasurement", "1");
       params.set("includeMicroMicro", "1");
+      params.set("onlyMicroMicro", "1");
+      params.set("hideChild75Rows", "1");
+      params.set("hideParentRows", "1");
       params.set("compact", "1");
 
       if (state.microSearch.trim()) params.set("q", state.microSearch.trim());
@@ -2560,6 +2592,7 @@
       params.set("includeCurrentFit", "1");
       params.set("includeCleanMeasurement", "1");
       params.set("includeMicroMicro", "1");
+      params.set("onlyMicroMicro", "1");
       params.set("activeRowsLimit", "180");
       params.set("availableLimit", "280");
 
@@ -2704,186 +2737,6 @@
       };
     }
 
-    function compactMarketApiOutput(market = {}) {
-      const raw = market.raw || {};
-
-      return {
-        ok: market.ok !== false,
-        available: Boolean(market.ok),
-        side: ONLY_SIDE,
-        dashboardSide: DASHBOARD_SIDE,
-        namespace: SHORT_NAMESPACE,
-        redisKeyPrefix: SHORT_KEY_PREFIX,
-        persistentLearningKey: PERSISTENT_LEARNING_KEY,
-        file: "src/market/marketWeather.js",
-        apiRoute: "/api/admin/market-weather",
-        versions: identityVersions(),
-        timestamp: {
-          createdAt: market.createdAt || null,
-          ageText: market.ageText || "-",
-          human: fmtTs(market.createdAt)
-        },
-        market: {
-          regime: market.regime || "UNKNOWN",
-          trendSide: market.trendSide || "UNKNOWN",
-          bullishPct: market.bullishPct ?? null,
-          bearishPct: market.bearishPct ?? null,
-          squeezePct: market.squeezePct ?? null,
-          confidence: market.confidence ?? null
-        },
-        shortCurrentFitPolicy: {
-          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
-          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
-          bearishPositive: true,
-          bullishNegative: true,
-          softGate: true,
-          blocksLearning: false,
-          blocksVirtualLearning: false,
-          blocksShadowLearning: false,
-          learningRemainsBroad: true,
-          discordCanBeStrict: true
-        },
-        microMicroPolicy: {
-          enabled: true,
-          base75ChildRemainsPrimary: true,
-          microMicroActsAsExecutionPreference: true,
-          format: "MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}_MM_{CONTEXT_HASH}"
-        },
-        riskContext: riskPolicyObject(),
-        usedFor: [
-          "micro-family ranking",
-          "micro-micro ranking",
-          "manual rotation context",
-          "Discord currentFit gate"
-        ],
-        notUsedFor: [
-          "learning family identity by itself",
-          "scanner fingerprint identity",
-          "real exchange orders"
-        ],
-        error: raw?.ok === false
-          ? {
-              reason: raw.reason || null,
-              message: raw.message || raw.rawError || null,
-              status: raw.status || null
-            }
-          : null,
-        omitted: {
-          fullUniverseRows: true,
-          rawBreadthObjects: true,
-          verboseDebugFields: true,
-          fullApiStillAvailableViaOpenButton: true,
-          reason: "COMPACT_MARKET_WEATHER_OUTPUT_FOR_COPYING"
-        }
-      };
-    }
-
-    function compactOverviewApiOutput(data = {}, microData = {}, market = {}) {
-      const microRows = Array.isArray(microData?.rows) ? microData.rows : [];
-      const child75Rows = microRows.filter((row) => microLayer(row) === "CHILD_75");
-      const microMicroRows = microRows.filter((row) => microLayer(row) === "MICRO_MICRO");
-
-      const activeIds = activeMicroIds();
-
-      const parentIds = uniqueStrings([
-        data.activeMacroFamilyIds || [],
-        data.activeRotation?.activeMacroFamilyIds || [],
-        data.activeRotation?.macroFamilyIds || [],
-        microData?.activeMacroFamilyIds || []
-      ]).filter(parentIdAllowedInShortOnly);
-
-      const observing = microRows.filter((row) => learningStatus(row).includes("OBSERVING")).length;
-      const early = microRows.filter((row) => learningStatus(row).includes("EARLY")).length;
-      const active = microRows.filter((row) => learningStatus(row).includes("ACTIVE")).length;
-      const cleanRows = microRows.filter(isCleanMeasurementRow).length;
-      const legacyRows = Math.max(0, microRows.length - cleanRows);
-      const averageCostR = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
-      const averageDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
-
-      return {
-        ok: data.ok !== false,
-        side: ONLY_SIDE,
-        dashboardSide: DASHBOARD_SIDE,
-        namespace: SHORT_NAMESPACE,
-        redisKeyPrefix: SHORT_KEY_PREFIX,
-        persistentLearningKey: PERSISTENT_LEARNING_KEY,
-        versions: identityVersions(),
-        counts: {
-          totalSelectableRows: microRows.length,
-          child75Rows: child75Rows.length,
-          microMicroRows: microMicroRows.length,
-          cleanMeasurementRows: cleanRows,
-          legacyMeasurementRows: legacyRows,
-          selectedDiscordExactIds: activeIds.length,
-          selectedParent15ContextIds: parentIds.length,
-          openVirtualPositions: Number(data.openPositions || data.positionsCount || 0),
-          scannerShortCandidates: Number(
-            data.shortScannerCandidates ||
-            data.scannerCandidates ||
-            data.latestScan?.shortCandidatesCount ||
-            0
-          )
-        },
-        learningStatus: {
-          observing,
-          earlyOutcomes: early,
-          activeLearning: active,
-          child75ActiveThreshold: MIN_COMPLETED_ACTIVE_LEARNING,
-          microMicroActiveThreshold: MIN_COMPLETED_MICRO_MICRO_ACTIVE
-        },
-        quality: {
-          avgCostR: averageCostR,
-          avgDirectSLPct: averageDirectSL,
-          scoring: "netR after costs",
-          completedDefinition: "closed virtual/shadow outcomes only",
-          seenDefinition: "unique observation dedupe key",
-          cleanMeasurementRequiredForPrimaryRanking: true
-        },
-        selectedDiscordIds: activeIds,
-        selectedParentContextIds: parentIds,
-        market: {
-          regime: market.regime || "UNKNOWN",
-          trendSide: market.trendSide || "UNKNOWN",
-          bullishPct: market.bullishPct ?? null,
-          bearishPct: market.bearishPct ?? null,
-          squeezePct: market.squeezePct ?? null,
-          confidence: market.confidence ?? null,
-          ageText: market.ageText || "-"
-        },
-        rules: {
-          scannerFingerprintsUsedAsLearningFamily: false,
-          executionFingerprintsUsedAsLearningFamily: false,
-          executionFingerprintsCanDeriveMicroMicroContextHash: true,
-          learningIdentitySource: "ANALYZE_TRUE_MICRO_OR_MICRO_MICRO_FAMILY",
-          selectionGranularity: "EXACT_75_CHILD_OR_MICRO_MICRO",
-          discordMatch: "candidate.trueMicroFamilyId === manuallySelectedExactId",
-          parentMatchTriggersDiscord: false,
-          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
-          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
-          currentFitBlocksLearning: false,
-          currentFitCanBlockDiscord: true,
-          realOrdersDisabled: true
-        },
-        microMicroPolicy: {
-          enabled: true,
-          base75ChildRemainsPrimaryLearningLayer: true,
-          microMicroSelectable: true,
-          minCompletedForMicroMicroActive: MIN_COMPLETED_MICRO_MICRO_ACTIVE,
-          format: "MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}_MM_{CONTEXT_HASH}"
-        },
-        shortRisk: riskPolicyObject(),
-        warnings: data.runtimeWarnings || data.warnings || [],
-        error: data.error || data.reason || null,
-        omitted: {
-          fullRawOverview: true,
-          fullMicroRows: true,
-          fullPositionObjects: true,
-          verboseDebugFields: true,
-          reason: "COMPACT_OVERVIEW_OUTPUT_FOR_COPYING"
-        }
-      };
-    }
-
     async function fetchMarket() {
       const url = marketApiUrl();
 
@@ -2908,8 +2761,6 @@
           regime: "UNKNOWN",
           trendSide: "UNKNOWN",
           confidence: 0,
-          breadth: {},
-          btc: {},
           currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
           currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
           currentFitSoftOnly: true,
@@ -2922,32 +2773,47 @@
 
         const market = extractMarketData(data);
         state.market = market;
-
         return market;
       }
     }
 
-    function activeMicroIds() {
+    function activeMicroMicroIds() {
       return uniqueStrings([
-        state.rotation?.activeMicroFamilyIds || [],
         state.rotation?.activeMicroMicroFamilyIds || [],
-        state.rotation?.active75ChildFamilyIds || [],
+        state.rotation?.selectedMicroMicroFamilyIds || [],
+        state.rotation?.microMicroFamilyIds || [],
+        state.rotation?.activeMicroFamilyIds || [],
+
+        state.rotation?.activeRotation?.activeMicroMicroFamilyIds || [],
+        state.rotation?.activeRotation?.selectedMicroMicroFamilyIds || [],
+        state.rotation?.activeRotation?.microMicroFamilyIds || [],
         state.rotation?.activeRotation?.activeMicroFamilyIds || [],
         state.rotation?.activeRotation?.microFamilyIds || [],
         state.rotation?.activeRotation?.trueMicroFamilyIds || [],
-        state.rotation?.activeRotation?.microMicroFamilyIds || [],
+
+        state.rotation?.active?.activeMicroMicroFamilyIds || [],
+        state.rotation?.active?.selectedMicroMicroFamilyIds || [],
+        state.rotation?.active?.microMicroFamilyIds || [],
         state.rotation?.active?.activeMicroFamilyIds || [],
         state.rotation?.active?.microFamilyIds || [],
         state.rotation?.active?.trueMicroFamilyIds || [],
-        state.micros?.activeMicroFamilyIds || [],
+
         state.micros?.activeMicroMicroFamilyIds || [],
-        state.micros?.active75ChildFamilyIds || [],
+        state.micros?.selectedMicroMicroFamilyIds || [],
+        state.micros?.microMicroFamilyIds || [],
+        state.micros?.activeMicroFamilyIds || [],
+        state.micros?.activeRotation?.activeMicroMicroFamilyIds || [],
+        state.micros?.activeRotation?.selectedMicroMicroFamilyIds || [],
+        state.micros?.activeRotation?.microMicroFamilyIds || [],
         state.micros?.activeRotation?.activeMicroFamilyIds || [],
         state.micros?.activeRotation?.microFamilyIds || [],
-        state.micros?.activeRotation?.trueMicroFamilyIds || [],
-        state.overview?.activeMicroFamilyIds || [],
+
+        state.overview?.activeMicroMicroFamilyIds || [],
+        state.trade?.activeMicroMicroFamilyIds || [],
         state.trade?.activeMicroFamilyIds || []
-      ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      ])
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
     }
 
     function activeParentIds() {
@@ -3050,7 +2916,7 @@
           </div>
 
           <div class="coin-foot">
-            <code>${escapeHtml(microId(row) || "NO_EXACT_MICRO_ID")}</code>
+            <code>${escapeHtml(microId(row) || "NO_MICRO_MICRO_ID")}</code>
           </div>
         </article>
       `;
@@ -3058,10 +2924,10 @@
 
     function microTable(rows = []) {
       if (!Array.isArray(rows) || rows.length === 0) {
-        return `<div class="empty">Geen geldige SHORT 75-child of micro-micro Analyze rows.</div>`;
+        return `<div class="empty">Geen micro-micro rows gevonden. Backend moet microMicroFamilyId / trueMicroMicroFamilyId teruggeven.</div>`;
       }
 
-      const activeSet = new Set(activeMicroIds());
+      const activeSet = new Set(activeMicroMicroIds());
 
       const desktopRows = rows.map((row, index) => {
         const id = microId(row);
@@ -3069,7 +2935,6 @@
         const parentId = parentMicroId(row);
         const active = activeSet.has(id);
         const obs = observationSample(row);
-        const minDone = minCompletedForRow(row);
 
         return `
           <tr>
@@ -3079,7 +2944,7 @@
             <td>${measurementPill(row)}</td>
             <td class="micro-id-cell">
               <button class="small" type="button" data-open-micro="${escapeAttr(id)}">
-                <code>${escapeHtml(id || "NO_EXACT_ID")}</code>
+                <code>${escapeHtml(id || "NO_MICRO_MICRO_ID")}</code>
               </button>
             </td>
             <td class="micro-id-cell"><code>${escapeHtml(base75 || "NO_BASE75")}</code></td>
@@ -3088,7 +2953,7 @@
             <td>${tierPill(tier(row))}</td>
             <td>${statusPill(row)}</td>
             <td>${tooEarly(row)
-              ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${minDone}</span>`
+              ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`
               : '<span class="pill active">OK</span>'
             }</td>
             <td>${fmtInt(obs)}</td>
@@ -3102,9 +2967,9 @@
             <td><strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong></td>
             <td>
               <div class="micro-actions">
-                <button type="button" class="small short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #1</button>
-                <button type="button" class="small short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #2</button>
-                <button type="button" class="small" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
+                <button type="button" class="small short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}">Zet als #1</button>
+                <button type="button" class="small short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}">Zet als #2</button>
+                <button type="button" class="small" data-copy="${escapeAttr(id)}">Copy</button>
               </div>
             </td>
           </tr>
@@ -3117,14 +2982,13 @@
         const parentId = parentMicroId(row);
         const active = activeSet.has(id);
         const obs = observationSample(row);
-        const minDone = minCompletedForRow(row);
 
         return `
           <article class="micro-card">
             <div class="micro-card-top">
               <div>
                 <div class="micro-card-title">#${escapeHtml(row.rank ?? index + 1)}</div>
-                <div class="metric-extra">${escapeHtml(microLayer(row))}</div>
+                <div class="metric-extra">MICRO-MICRO</div>
               </div>
               <div class="toolbar" style="margin:0">
                 <span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span>
@@ -3135,20 +2999,20 @@
             </div>
 
             <button class="micro-id-button" type="button" data-open-micro="${escapeAttr(id)}">
-              <code>${escapeHtml(id || "NO_EXACT_ID")}</code>
+              <code>${escapeHtml(id || "NO_MICRO_MICRO_ID")}</code>
             </button>
 
-            <div class="metric-extra">Base 75-child</div>
+            <div class="metric-extra">Base 75-child context</div>
             <code>${escapeHtml(base75 || "NO_BASE75")}</code>
 
-            <div class="metric-extra">Parent 15</div>
+            <div class="metric-extra">Parent 15 context</div>
             <code>${escapeHtml(parentId || "NO_PARENT")}</code>
 
             <div class="toolbar">
               ${tierPill(tier(row))}
               ${statusPill(row)}
               ${tooEarly(row)
-                ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${minDone}</span>`
+                ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`
                 : '<span class="pill active">OK</span>'
               }
               ${currentFitPill(row)}
@@ -3168,9 +3032,9 @@
             </div>
 
             <div class="toolbar">
-              <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #1</button>
-              <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #2</button>
-              <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
+              <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}">Zet als #1</button>
+              <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}">Zet als #2</button>
+              <button type="button" data-copy="${escapeAttr(id)}">Copy</button>
             </div>
           </article>
         `;
@@ -3185,9 +3049,9 @@
                 <th>Discord</th>
                 <th>Layer</th>
                 <th>Meetlat</th>
-                <th>Exact selectable ID</th>
-                <th>Base 75-child</th>
-                <th>Parent 15</th>
+                <th>Micro-micro ID</th>
+                <th>Base 75-child context</th>
+                <th>Parent 15 context</th>
                 <th>Side</th>
                 <th>Tier</th>
                 <th>Status</th>
@@ -3214,185 +3078,8 @@
       `;
     }
 
-    function compactScannerCandidate(row = {}) {
-      return {
-        symbol: baseSymbol(row),
-        contractSymbol: row.contractSymbol || row.instId || row.instrumentId || `${baseSymbol(row)}USDT`,
-        side: ONLY_SIDE,
-        price: firstFinite(row.price, row.currentPrice, row.markPrice, row.entry),
-        scannerScore: firstFinite(row.scannerScore, row.moveScore, row.sniperScore, row.confluence),
-        change1h: firstFinite(row.change1h, row.priceChange1h),
-        change24h: firstFinite(row.change24h, row.priceChange24h),
-        volume24h: firstFinite(row.volume24h, row.quoteVolume24h),
-        scannerGatePassed: Boolean(row.scannerGatePassed),
-        analyzeOnly: Boolean(row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly),
-        regime: row.regime || row.currentRegime || null,
-        btcState: row.btcState || null,
-        reason: row.scannerReason || row.reason || null,
-        role: "SCANNER_METADATA_ONLY"
-      };
-    }
-
-    function scannerWarnings(data = {}) {
-      if (Array.isArray(data.runtimeWarnings)) return data.runtimeWarnings;
-      if (Array.isArray(data.warnings)) return data.warnings;
-      if (data.warning) return [data.warning];
-      return [];
-    }
-
-    function scannerErrors(data = {}) {
-      if (Array.isArray(data.errors)) return data.errors;
-      if (data.error) return [data.error];
-      if (data.reason && data.ok === false) return [data.reason];
-      return [];
-    }
-
-    function scannerHealthStatus({ data = {}, snapshot = {}, candidates = [] } = {}) {
-      const warnings = scannerWarnings(data);
-      const errors = scannerErrors(data);
-      const snapshotId = snapshot.snapshotId || data.snapshotId || null;
-      const createdAt = Number(snapshot.createdAt || data.createdAt || snapshot.completedAt || data.completedAt || 0);
-      const ageSec = createdAt > 0 ? Math.round((Date.now() - createdAt) / 1000) : null;
-
-      if (errors.length) return "ERROR";
-      if (data.ok === false) return "ERROR";
-      if (!snapshotId && !candidates.length) return "NO_SNAPSHOT";
-      if (Number.isFinite(ageSec) && ageSec > 15 * 60) return "STALE";
-      if (!candidates.length) return "NO_CANDIDATES";
-      if (warnings.length) return "HEALTHY_WITH_WARNINGS";
-
-      return "HEALTHY";
-    }
-
-    function compactScannerApiOutput(data = {}) {
-      const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
-      const rawCandidates = snapshot.candidates || data.candidates || data.rows || [];
-      const candidates = shortRows(rawCandidates);
-
-      const warnings = scannerWarnings(data);
-      const errors = scannerErrors(data);
-
-      const snapshotId = snapshot.snapshotId || data.snapshotId || null;
-      const createdAt = Number(snapshot.createdAt || data.createdAt || snapshot.completedAt || data.completedAt || 0);
-      const ageSec = createdAt > 0 ? Math.round((Date.now() - createdAt) / 1000) : null;
-
-      const gatePassed = candidates.filter((row) => row.scannerGatePassed).length;
-      const analyzeOnly = candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length;
-
-      return {
-        ok: data.ok !== false,
-        health: scannerHealthStatus({ data, snapshot, candidates }),
-        side: ONLY_SIDE,
-        dashboardSide: DASHBOARD_SIDE,
-        namespace: SHORT_NAMESPACE,
-        redisKeyPrefix: SHORT_KEY_PREFIX,
-        persistentLearningKey: PERSISTENT_LEARNING_KEY,
-        versions: identityVersions(),
-        apiRoute: endpoints.scanner,
-        runRoute: endpoints.runScanner,
-        snapshot: {
-          snapshotId,
-          createdAt: createdAt || null,
-          ageSec,
-          ageText: ageText(createdAt),
-          source: data.selectedSnapshotSource || snapshot.selectedSnapshotSource || data.source || null,
-          reason: data.selectedSnapshotReason || snapshot.selectedSnapshotReason || data.reason || null
-        },
-        counts: {
-          rawCandidates: Array.isArray(rawCandidates) ? rawCandidates.length : 0,
-          shortCandidates: candidates.length,
-          scannerGatePassed: gatePassed,
-          analyzeOnly,
-          ignoredOppositeSide: Number(snapshot.rawLongCandidatesIgnored || data.rawOppositeCount || data.ignoredLongCandidates || 0),
-          filteredUniverse: Number(snapshot.filteredUniverse || data.filteredUniverse || data.scannerSnapshotStats?.filteredUniverse || 0) || null,
-          rawUniverse: Number(snapshot.rawCount || data.rawCount || data.scannerSnapshotStats?.rawCount || 0) || null
-        },
-        scannerRules: {
-          scannerWritesLearning: false,
-          scannerWritesTrade: false,
-          scannerSendsDiscord: false,
-          scannerFingerprintRole: "METADATA_ONLY",
-          scannerFingerprintsUsedAsLearningFamily: false,
-          executionFingerprintsCanDeriveMicroMicroContextHash: true,
-          learningIdentitySource: "ANALYZE_TRUE_MICRO_OR_MICRO_MICRO_FAMILY"
-        },
-        market: {
-          regime: data.marketContext?.regime || data.currentMarketWeather?.regime || data.currentMarketWeather?.currentRegime || null,
-          trendSide: data.marketContext?.trendSide || data.currentMarketWeather?.trendSide || data.currentMarketWeather?.currentTrendSide || null,
-          confidence: data.marketContext?.confidence || data.currentMarketWeather?.confidence || null,
-          bullishPct: data.marketContext?.bullishPct || data.currentMarketWeather?.bullishPct || null,
-          bearishPct: data.marketContext?.bearishPct || data.currentMarketWeather?.bearishPct || null,
-          squeezePct: data.marketContext?.squeezePct || data.currentMarketWeather?.squeezePct || null
-        },
-        warnings,
-        errors,
-        topCandidates: candidates.slice(0, 12).map(compactScannerCandidate),
-        omitted: {
-          fullCandidatesArray: true,
-          rawUniverseRows: true,
-          marketUniverseRows: true,
-          verboseDebugFields: true,
-          fullApiStillAvailableViaOpenButton: true,
-          reason: "COMPACT_SCANNER_HEALTH_OUTPUT_FOR_CHATGPT_UPLOAD"
-        }
-      };
-    }
-
-    function compactTradeApiOutput(data = {}) {
-      const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
-      const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
-
-      return {
-        ok: data.ok !== false,
-        side: ONLY_SIDE,
-        dashboardSide: DASHBOARD_SIDE,
-        namespace: SHORT_NAMESPACE,
-        redisKeyPrefix: SHORT_KEY_PREFIX,
-        persistentLearningKey: PERSISTENT_LEARNING_KEY,
-        versions: identityVersions(),
-        riskPolicy: riskPolicyObject(),
-        counts: {
-          openVirtualShortPositions: positions.length,
-          cleanMeasurementPositions: positions.filter(isCleanMeasurementRow).length,
-          legacyMeasurementPositions: positions.filter((row) => !isCleanMeasurementRow(row)).length,
-          activeExactIds: (data.activeMicroFamilyIds || []).filter(idAllowedInShortOnly).length,
-          activeMicroMicroIds: (data.activeMicroFamilyIds || []).filter(isMicroMicroId).length,
-          parentContextIds: (data.activeMacroFamilyIds || []).filter(parentIdAllowedInShortOnly).length
-        },
-        sync: {
-          scannerAndTradeInSync: Boolean(data.scannerAndTradeInSync),
-          lastProcessedSnapshotId: data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || null,
-          latestScannerSnapshotId: data.latestScannerSnapshotId || null
-        },
-        runMeta,
-        topPositions: positions.slice(0, 12).map((row) => ({
-          symbol: baseSymbol(row),
-          contractSymbol: row.contractSymbol || `${baseSymbol(row)}USDT`,
-          exactMicroFamilyId: microId(row) || null,
-          base75ChildTrueMicroFamilyId: base75MicroId(row) || null,
-          parentTrueMicroFamilyId: parentMicroId(row) || null,
-          layer: microLayer(row),
-          entry: row.entry ?? null,
-          sl: row.sl ?? row.stopLoss ?? null,
-          tp: row.tp ?? row.takeProfit ?? null,
-          rr: row.rr ?? null,
-          currentR: row.currentR ?? row.shortCurrentR ?? null,
-          mfeR: row.mfeR ?? null,
-          maeR: row.maeR ?? null,
-          costR: row.costR ?? row.avgCostR ?? null,
-          directSL: Boolean(row.directSL || row.directToSL),
-          cleanMeasurement: isCleanMeasurementRow(row)
-        })),
-        omitted: {
-          fullPositionsArray: true,
-          verboseDebugFields: true,
-          reason: "COMPACT_TRADE_OUTPUT_FOR_CHATGPT_UPLOAD"
-        }
-      };
-    }
-
     function currentManualSelectionSlots() {
-      const active = activeMicroIds()
+      const active = activeMicroMicroIds()
         .map((id) => String(id || "").trim().toUpperCase())
         .filter(idAllowedInShortOnly)
         .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
@@ -3446,7 +3133,7 @@
       });
 
       document.querySelectorAll("[data-copy]").forEach((btn) => {
-        btn.addEventListener("click", () => copyText(btn.dataset.copy, "Exact selectable micro ID gekopieerd."));
+        btn.addEventListener("click", () => copyText(btn.dataset.copy, "Micro-micro ID gekopieerd."));
       });
 
       document.querySelectorAll("[data-open-micro]").forEach((btn) => {
@@ -3490,15 +3177,19 @@
         ...data,
         rows,
         rawExtractedRows: rawRows.length,
-        activeMicroFamilyIds: uniqueStrings([
-          data.activeMicroFamilyIds || [],
+        activeMicroFamilyIds: activeMicroMicroIds(),
+        activeMicroMicroFamilyIds: uniqueStrings([
           data.activeMicroMicroFamilyIds || [],
-          data.active75ChildFamilyIds || [],
+          data.selectedMicroMicroFamilyIds || [],
+          data.microMicroFamilyIds || [],
+          data.activeMicroFamilyIds || [],
           data.selectedMicroFamilyIds || [],
+          data.activeRotation?.activeMicroMicroFamilyIds || [],
+          data.activeRotation?.selectedMicroMicroFamilyIds || [],
+          data.activeRotation?.microMicroFamilyIds || [],
           data.activeRotation?.activeMicroFamilyIds || [],
           data.activeRotation?.microFamilyIds || [],
-          data.activeRotation?.trueMicroFamilyIds || [],
-          data.activeRotation?.microMicroFamilyIds || []
+          data.activeRotation?.trueMicroFamilyIds || []
         ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES),
         activeMacroFamilyIds: uniqueStrings([
           data.activeMacroFamilyIds || [],
@@ -3532,6 +3223,111 @@
       return state.micros;
     }
 
+    function compactOverviewApiOutput(data = {}, microData = {}, market = {}) {
+      const microRows = Array.isArray(microData?.rows) ? microData.rows : [];
+      const activeIds = activeMicroMicroIds();
+      const cleanRows = microRows.filter(isCleanMeasurementRow).length;
+      const legacyRows = Math.max(0, microRows.length - cleanRows);
+
+      const observing = microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_OBSERVING").length;
+      const early = microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_EARLY").length;
+      const active = microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_ACTIVE").length;
+
+      const avgCost = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
+      const avgDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
+
+      return {
+        ok: data.ok !== false,
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        versions: identityVersions(),
+        counts: {
+          visibleMicroMicroRows: microRows.length,
+          cleanMeasurementRows: cleanRows,
+          legacyMeasurementRows: legacyRows,
+          selectedDiscordMicroMicroIds: activeIds.length,
+          hiddenChild75Rows: "not rendered by admin UI",
+          hiddenParent15Rows: "not rendered by admin UI",
+          openVirtualPositions: Number(data.openPositions || data.positionsCount || 0),
+          scannerShortCandidates: Number(
+            data.shortScannerCandidates ||
+            data.scannerCandidates ||
+            data.latestScan?.shortCandidatesCount ||
+            0
+          )
+        },
+        learningStatus: {
+          microMicroObserving: observing,
+          microMicroEarly: early,
+          microMicroActive: active,
+          microMicroActiveThreshold: MIN_COMPLETED_MICRO_MICRO_ACTIVE,
+          child75PrimaryThresholdBackend: MIN_COMPLETED_ACTIVE_LEARNING
+        },
+        quality: {
+          avgCostR: avgCost,
+          avgDirectSLPct: avgDirectSL,
+          scoring: "netR after costs",
+          completedDefinition: "closed virtual/shadow outcomes only",
+          seenDefinition: "unique observation dedupe key",
+          cleanMeasurementRequiredForPrimaryRanking: true
+        },
+        selectedDiscordMicroMicroIds: activeIds,
+        market: {
+          regime: market.regime || "UNKNOWN",
+          trendSide: market.trendSide || "UNKNOWN",
+          bullishPct: market.bullishPct ?? null,
+          bearishPct: market.bearishPct ?? null,
+          squeezePct: market.squeezePct ?? null,
+          confidence: market.confidence ?? null,
+          ageText: market.ageText || "-"
+        },
+        rules: {
+          uiShowsOnlyMicroMicro: true,
+          uiAllowsOnlyMicroMicroSelection: true,
+          scannerFingerprintsUsedAsLearningFamily: false,
+          executionFingerprintsUsedAsLearningFamily: false,
+          executionFingerprintsCanDeriveMicroMicroContextHash: true,
+          learningIdentitySource: "ANALYZE_MICRO_MICRO_FAMILY",
+          selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+          discordMatch: "candidate.microMicroFamilyId === selectedMicroMicroFamilyId",
+          child75MatchTriggersDiscord: false,
+          parent15MatchTriggersDiscord: false,
+          scannerMatchTriggersDiscord: false,
+          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+          currentFitBlocksLearning: false,
+          currentFitCanBlockDiscord: true,
+          realOrdersDisabled: true
+        },
+        microMicroPolicy: {
+          enabled: true,
+          onlySelectableLayerInAdmin: true,
+          base75ChildRemainsPrimaryLearningLayerInBackend: true,
+          parent15RemainsRollupContextInBackend: true,
+          microMicroSelectable: true,
+          minCompletedForMicroMicroActive: MIN_COMPLETED_MICRO_MICRO_ACTIVE,
+          acceptedFormats: [
+            "MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}_MM_{HASH_OR_CONTEXT}",
+            "MM_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}_{CONTEXT_TAGS}"
+          ]
+        },
+        shortRisk: riskPolicyObject(),
+        warnings: data.runtimeWarnings || data.warnings || [],
+        error: data.error || data.reason || null,
+        omitted: {
+          fullRawOverview: true,
+          child75RowsHidden: true,
+          parent15RowsHidden: true,
+          fullPositionObjects: true,
+          verboseDebugFields: true,
+          reason: "COMPACT_OVERVIEW_OUTPUT_MICRO_MICRO_ONLY"
+        }
+      };
+    }
+
     async function renderOverview() {
       showLoading("overview");
 
@@ -3545,15 +3341,14 @@
       state.market = market;
 
       const microRows = microData?.rows || [];
-      const child75Rows = microRows.filter((row) => microLayer(row) === "CHILD_75");
-      const microMicroRows = microRows.filter((row) => microLayer(row) === "MICRO_MICRO");
       const cleanRows = microRows.filter(isCleanMeasurementRow).length;
       const legacyRows = Math.max(0, microRows.length - cleanRows);
-      const activeCount = activeMicroIds().length;
+      const activeCount = activeMicroMicroIds().length;
 
-      const observing = microRows.filter((row) => learningStatus(row).includes("OBSERVING")).length;
-      const early = microRows.filter((row) => learningStatus(row).includes("EARLY")).length;
-      const active = microRows.filter((row) => learningStatus(row).includes("ACTIVE")).length;
+      const observing = microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_OBSERVING").length;
+      const early = microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_EARLY").length;
+      const active = microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_ACTIVE").length;
+
       const avgCost = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
       const avgDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
 
@@ -3564,22 +3359,20 @@
         <div class="grid">
           ${metricCard("Learning key", PERSISTENT_LEARNING_KEY)}
           ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
-          ${metricCard("75-child rows", fmtInt(child75Rows.length), "primary learning layer")}
-          ${metricCard("Micro-micro rows", fmtInt(microMicroRows.length), "execution profile layer")}
-          ${metricCard("Parent families", "15", "metadata/context, not Discord match")}
+          ${metricCard("Visible rows", fmtInt(microRows.length), "micro-micro only")}
+          ${metricCard("Discord selected MM IDs", fmtInt(activeCount), "exact micro-micro only")}
           ${metricCard("Clean rows", fmtInt(cleanRows), `${fmtInt(legacyRows)} legacy/polluted rows zichtbaar`)}
-          ${metricCard("Discord selected exact IDs", fmtInt(activeCount), "75-child or micro-micro")}
+          ${metricCard("Parent/75 rows", "HIDDEN", "alleen context")}
           ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
           ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
-          ${metricCard("Default top N", "2", "manual Discord limiet")}
         </div>
 
         <div class="grid">
-          ${metricCard("OBSERVING", fmtInt(observing), "completed = 0")}
-          ${metricCard("EARLY", fmtInt(early), "sample nog klein")}
-          ${metricCard("ACTIVE", fmtInt(active), `75-child ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}, micro-micro ≥ ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
+          ${metricCard("MM OBSERVING", fmtInt(observing), "completed = 0")}
+          ${metricCard("MM EARLY", fmtInt(early), `completed 1-${MIN_COMPLETED_MICRO_MICRO_ACTIVE - 1}`)}
+          ${metricCard("MM ACTIVE", fmtInt(active), `completed ≥ ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
           ${metricCard("Ranking", state.microMode, "clean → adaptive → fair → netR → cost")}
-          ${metricCard("AvgCostR", fmt(avgCost, 3), "gemiddelde over zichtbare rows")}
+          ${metricCard("AvgCostR", fmt(avgCost, 3), "gemiddelde over micro-micro rows")}
           ${metricCard("Avg DirectSL", fmtPct(avgDirectSL), "directSL hoort laag te blijven")}
           ${metricCard("Market regime", market.regime || "UNKNOWN", market.ageText)}
           ${metricCard("Trend side", market.trendSide || "UNKNOWN", "CurrentFit is soft voor learning")}
@@ -3589,17 +3382,16 @@
           <div class="card">
             <h3>Architectuurregels</h3>
             <div class="toolbar">
-              <span class="pill short">Learning breed</span>
-              <span class="pill dark">75-child primary</span>
-              <span class="pill mm">micro-micro execution</span>
-              <span class="pill info">Selection adaptief</span>
-              <span class="pill danger">Discord streng</span>
+              <span class="pill mm">UI toont alleen micro-micro</span>
+              <span class="pill dark">75-child context only</span>
+              <span class="pill dark">parent 15 context only</span>
+              <span class="pill danger">Discord exact MM only</span>
               <span class="pill soft">CurrentFit soft</span>
               <span class="pill clean">Clean rows first</span>
             </div>
             <div class="metric-extra">
-              CurrentFit blokkeert geen virtual/shadow learning. Micro-micro mag exact Discord-match zijn,
-              maar 75-child blijft de hoofdlaag zodat sample niet kapot gesplitst wordt.
+              De pagina laat geen 75-child microfamilies meer selecteren of rangschikken.
+              Backend mag parent 15 en 75-child nog gebruiken voor rollup/sample-bescherming, maar deze admin selecteert alleen micro-micro.
             </div>
           </div>
 
@@ -3620,13 +3412,16 @@
           <div class="card">
             <h3>Identity</h3>
             ${jsonBlock({
-              selectionGranularity: "EXACT_75_CHILD_OR_MICRO_MICRO",
-              discordMatch: "candidate.trueMicroFamilyId === manuallySelectedExactId",
-              parentMatchTriggersDiscord: false,
+              selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+              discordMatch: "candidate.microMicroFamilyId === selectedMicroMicroFamilyId",
+              child75MatchTriggersDiscord: false,
+              parent15MatchTriggersDiscord: false,
               scannerFingerprintAsLearningFamily: false,
               executionFingerprintAsLearningFamily: false,
-              executionFingerprintCanDeriveMicroMicroContext: true,
-              microMicroFormat: "MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}",
+              acceptedMicroMicroFormats: [
+                "MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH_OR_CONTEXT}",
+                "MM_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_{CONTEXT_TAGS}"
+              ],
               currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE"
             })}
           </div>
@@ -3660,8 +3455,81 @@
       });
 
       $("exportOverviewOutputBtn")?.addEventListener("click", () => {
-        downloadJson("overview-compact-short-micro-micro.json", compactOverview);
+        downloadJson("overview-compact-short-micro-micro-only.json", compactOverview);
       });
+    }
+
+    function compactMarketApiOutput(market = {}) {
+      const raw = market.raw || {};
+
+      return {
+        ok: market.ok !== false,
+        available: Boolean(market.ok),
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        file: "src/market/marketWeather.js",
+        apiRoute: "/api/admin/market-weather",
+        versions: identityVersions(),
+        timestamp: {
+          createdAt: market.createdAt || null,
+          ageText: market.ageText || "-",
+          human: fmtTs(market.createdAt)
+        },
+        market: {
+          regime: market.regime || "UNKNOWN",
+          trendSide: market.trendSide || "UNKNOWN",
+          bullishPct: market.bullishPct ?? null,
+          bearishPct: market.bearishPct ?? null,
+          squeezePct: market.squeezePct ?? null,
+          confidence: market.confidence ?? null
+        },
+        shortCurrentFitPolicy: {
+          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+          bearishPositive: true,
+          bullishNegative: true,
+          softGate: true,
+          blocksLearning: false,
+          blocksVirtualLearning: false,
+          blocksShadowLearning: false,
+          learningRemainsBroad: true,
+          discordCanBeStrict: true
+        },
+        microMicroPolicy: {
+          enabled: true,
+          adminShowsOnlyMicroMicro: true,
+          adminSelectionOnlyMicroMicro: true,
+          base75ChildRemainsBackendContext: true
+        },
+        riskContext: riskPolicyObject(),
+        usedFor: [
+          "micro-micro ranking",
+          "manual rotation context",
+          "Discord currentFit gate"
+        ],
+        notUsedFor: [
+          "learning family identity by itself",
+          "scanner fingerprint identity",
+          "real exchange orders"
+        ],
+        error: raw?.ok === false
+          ? {
+              reason: raw.reason || null,
+              message: raw.message || raw.rawError || null,
+              status: raw.status || null
+            }
+          : null,
+        omitted: {
+          fullUniverseRows: true,
+          rawBreadthObjects: true,
+          verboseDebugFields: true,
+          fullApiStillAvailableViaOpenButton: true,
+          reason: "COMPACT_MARKET_WEATHER_OUTPUT_FOR_COPYING"
+        }
+      };
     }
 
     async function renderMarket() {
@@ -3712,12 +3580,11 @@
             <span class="pill soft">soft gate</span>
             <span class="pill active">bearish positive</span>
             <span class="pill danger">bullish negative</span>
-            <span class="pill info">ranking influence</span>
-            <span class="pill mm">micro-micro context</span>
-            <span class="pill danger">discord strict later</span>
+            <span class="pill mm">micro-micro ranking</span>
+            <span class="pill danger">discord strict</span>
           </div>
           <div class="metric-extra">
-            MarketWeather is context. Learning blijft breed doorlopen.
+            MarketWeather is context. Learning blijft breed doorlopen. Deze pagina gebruikt het alleen voor micro-micro ranking/Discord-context.
           </div>
         </div>
 
@@ -3749,7 +3616,123 @@
       });
 
       $("openMarketApiBtn")?.addEventListener("click", () => window.open(endpointUrl, "_blank", "noopener,noreferrer"));
-      $("exportMarketBtn")?.addEventListener("click", () => downloadJson("marketWeather-compact-short-micro-micro.json", compactOutput));
+      $("exportMarketBtn")?.addEventListener("click", () => downloadJson("marketWeather-compact-short-micro-micro-only.json", compactOutput));
+    }
+
+    function scannerWarnings(data = {}) {
+      if (Array.isArray(data.runtimeWarnings)) return data.runtimeWarnings;
+      if (Array.isArray(data.warnings)) return data.warnings;
+      if (data.warning) return [data.warning];
+      return [];
+    }
+
+    function scannerErrors(data = {}) {
+      if (Array.isArray(data.errors)) return data.errors;
+      if (data.error) return [data.error];
+      if (data.reason && data.ok === false) return [data.reason];
+      return [];
+    }
+
+    function scannerHealthStatus({ data = {}, snapshot = {}, candidates = [] } = {}) {
+      const warnings = scannerWarnings(data);
+      const errors = scannerErrors(data);
+      const snapshotId = snapshot.snapshotId || data.snapshotId || null;
+      const createdAt = Number(snapshot.createdAt || data.createdAt || snapshot.completedAt || data.completedAt || 0);
+      const ageSec = createdAt > 0 ? Math.round((Date.now() - createdAt) / 1000) : null;
+
+      if (errors.length) return "ERROR";
+      if (data.ok === false) return "ERROR";
+      if (!snapshotId && !candidates.length) return "NO_SNAPSHOT";
+      if (Number.isFinite(ageSec) && ageSec > 15 * 60) return "STALE";
+      if (!candidates.length) return "NO_CANDIDATES";
+      if (warnings.length) return "HEALTHY_WITH_WARNINGS";
+
+      return "HEALTHY";
+    }
+
+    function compactScannerCandidate(row = {}) {
+      return {
+        symbol: baseSymbol(row),
+        contractSymbol: row.contractSymbol || row.instId || row.instrumentId || `${baseSymbol(row)}USDT`,
+        side: ONLY_SIDE,
+        price: firstFinite(row.price, row.currentPrice, row.markPrice, row.entry),
+        scannerScore: firstFinite(row.scannerScore, row.moveScore, row.sniperScore, row.confluence),
+        change1h: firstFinite(row.change1h, row.priceChange1h),
+        change24h: firstFinite(row.change24h, row.priceChange24h),
+        volume24h: firstFinite(row.volume24h, row.quoteVolume24h),
+        scannerGatePassed: Boolean(row.scannerGatePassed),
+        analyzeOnly: Boolean(row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly),
+        regime: row.regime || row.currentRegime || null,
+        btcState: row.btcState || null,
+        reason: row.scannerReason || row.reason || null,
+        role: "SCANNER_METADATA_ONLY"
+      };
+    }
+
+    function compactScannerApiOutput(data = {}) {
+      const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
+      const rawCandidates = snapshot.candidates || data.candidates || data.rows || [];
+      const candidates = shortRows(rawCandidates);
+
+      const warnings = scannerWarnings(data);
+      const errors = scannerErrors(data);
+
+      const snapshotId = snapshot.snapshotId || data.snapshotId || null;
+      const createdAt = Number(snapshot.createdAt || data.createdAt || snapshot.completedAt || data.completedAt || 0);
+      const ageSec = createdAt > 0 ? Math.round((Date.now() - createdAt) / 1000) : null;
+
+      const gatePassed = candidates.filter((row) => row.scannerGatePassed).length;
+      const analyzeOnly = candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length;
+
+      return {
+        ok: data.ok !== false,
+        health: scannerHealthStatus({ data, snapshot, candidates }),
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        versions: identityVersions(),
+        apiRoute: endpoints.scanner,
+        runRoute: endpoints.runScanner,
+        snapshot: {
+          snapshotId,
+          createdAt: createdAt || null,
+          ageSec,
+          ageText: ageText(createdAt),
+          source: data.selectedSnapshotSource || snapshot.selectedSnapshotSource || data.source || null,
+          reason: data.selectedSnapshotReason || snapshot.selectedSnapshotReason || data.reason || null
+        },
+        counts: {
+          rawCandidates: Array.isArray(rawCandidates) ? rawCandidates.length : 0,
+          shortCandidates: candidates.length,
+          scannerGatePassed: gatePassed,
+          analyzeOnly,
+          ignoredOppositeSide: Number(snapshot.rawLongCandidatesIgnored || data.rawOppositeCount || data.ignoredLongCandidates || 0),
+          filteredUniverse: Number(snapshot.filteredUniverse || data.filteredUniverse || data.scannerSnapshotStats?.filteredUniverse || 0) || null,
+          rawUniverse: Number(snapshot.rawCount || data.rawCount || data.scannerSnapshotStats?.rawCount || 0) || null
+        },
+        scannerRules: {
+          scannerWritesLearning: false,
+          scannerWritesTrade: false,
+          scannerSendsDiscord: false,
+          scannerFingerprintRole: "METADATA_ONLY",
+          scannerFingerprintsUsedAsLearningFamily: false,
+          executionFingerprintsCanDeriveMicroMicroContextHash: true,
+          learningIdentitySource: "ANALYZE_MICRO_MICRO_FAMILY"
+        },
+        warnings,
+        errors,
+        topCandidates: candidates.slice(0, 12).map(compactScannerCandidate),
+        omitted: {
+          fullCandidatesArray: true,
+          rawUniverseRows: true,
+          marketUniverseRows: true,
+          verboseDebugFields: true,
+          fullApiStillAvailableViaOpenButton: true,
+          reason: "COMPACT_SCANNER_HEALTH_OUTPUT_FOR_CHATGPT_UPLOAD"
+        }
+      };
     }
 
     async function renderScanner() {
@@ -3769,7 +3752,7 @@
         <div class="section-title">
           <div>
             <h2>Scanner</h2>
-            <p>Compacte API-health voor scanner. Scanner schrijft geen learning family, geen trade, geen Discord.</p>
+            <p>Scanner blijft metadata-only. Scanner selecteert geen micro-micro en triggert geen Discord.</p>
           </div>
         </div>
 
@@ -3796,14 +3779,14 @@
           ${metricCard("Scanner gate", fmtInt(compactOutput.counts.scannerGatePassed))}
           ${metricCard("Analyze-only", fmtInt(compactOutput.counts.analyzeOnly))}
           ${metricCard("Ignored LONG", fmtInt(compactOutput.counts.ignoredOppositeSide))}
-          ${metricCard("Learning identity", "Analyze / MicroMicro")}
+          ${metricCard("Learning identity", "Analyze MM")}
           ${metricCard("Scanner IDs", "metadata only")}
         </div>
 
         <div class="section-title">
           <div>
             <h2>Scanner SHORT candidates</h2>
-            <p>Scanner zoekt bearish coins. Scanner fingerprints blijven metadata-only.</p>
+            <p>Scanner zoekt bearish coins. Micro-micro wordt pas later door Analyze/Trade context gevormd.</p>
           </div>
         </div>
 
@@ -3855,7 +3838,7 @@
       });
 
       $("openScannerApiBtn")?.addEventListener("click", () => window.open(endpointUrl, "_blank", "noopener,noreferrer"));
-      $("exportScannerBtn")?.addEventListener("click", () => downloadJson("scanner-health-compact-short-micro-micro.json", compactOutput));
+      $("exportScannerBtn")?.addEventListener("click", () => downloadJson("scanner-health-compact-short-micro-micro-only.json", compactOutput));
     }
 
     async function runScannerNow() {
@@ -3891,6 +3874,7 @@
             trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
             parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
             microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+            microMicroVersion: MICRO_MICRO_VERSION,
             microMicroEnabled: true,
             riskPlanVersion: SHORT_RISK_PLAN_VERSION,
             costModelVersion: POSITION_COST_MODEL_VERSION,
@@ -3905,6 +3889,57 @@
       } catch (error) {
         setMessage(friendlyApiMessage(error), "warn");
       }
+    }
+
+    function compactTradeApiOutput(data = {}) {
+      const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
+      const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
+
+      return {
+        ok: data.ok !== false,
+        side: ONLY_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        namespace: SHORT_NAMESPACE,
+        redisKeyPrefix: SHORT_KEY_PREFIX,
+        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        versions: identityVersions(),
+        riskPolicy: riskPolicyObject(),
+        counts: {
+          openVirtualShortPositions: positions.length,
+          cleanMeasurementPositions: positions.filter(isCleanMeasurementRow).length,
+          legacyMeasurementPositions: positions.filter((row) => !isCleanMeasurementRow(row)).length,
+          activeMicroMicroIds: activeMicroMicroIds().length,
+          parentContextIds: (data.activeMacroFamilyIds || []).filter(parentIdAllowedInShortOnly).length
+        },
+        sync: {
+          scannerAndTradeInSync: Boolean(data.scannerAndTradeInSync),
+          lastProcessedSnapshotId: data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || null,
+          latestScannerSnapshotId: data.latestScannerSnapshotId || null
+        },
+        runMeta,
+        topPositions: positions.slice(0, 12).map((row) => ({
+          symbol: baseSymbol(row),
+          contractSymbol: row.contractSymbol || `${baseSymbol(row)}USDT`,
+          microMicroFamilyId: microId(row) || null,
+          base75ChildTrueMicroFamilyId: base75MicroId(row) || null,
+          parentTrueMicroFamilyId: parentMicroId(row) || null,
+          entry: row.entry ?? null,
+          sl: row.sl ?? row.stopLoss ?? null,
+          tp: row.tp ?? row.takeProfit ?? null,
+          rr: row.rr ?? null,
+          currentR: row.currentR ?? row.shortCurrentR ?? null,
+          mfeR: row.mfeR ?? null,
+          maeR: row.maeR ?? null,
+          costR: row.costR ?? row.avgCostR ?? null,
+          directSL: Boolean(row.directSL || row.directToSL),
+          cleanMeasurement: isCleanMeasurementRow(row)
+        })),
+        omitted: {
+          fullPositionsArray: true,
+          verboseDebugFields: true,
+          reason: "COMPACT_TRADE_OUTPUT_FOR_CHATGPT_UPLOAD"
+        }
+      };
     }
 
     async function renderTrade() {
@@ -3941,9 +3976,7 @@
           ${metricCard("Scanner/trade sync", data.scannerAndTradeInSync ? "YES" : "NO")}
           ${metricCard("Last processed", data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || "-")}
           ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
-          ${metricCard("Active exact IDs", fmtInt((data.activeMicroFamilyIds || []).filter(idAllowedInShortOnly).length))}
-          ${metricCard("Active MM IDs", fmtInt((data.activeMicroFamilyIds || []).filter(isMicroMicroId).length))}
-          ${metricCard("Parent IDs", fmtInt((data.activeMacroFamilyIds || []).filter(parentIdAllowedInShortOnly).length))}
+          ${metricCard("Active MM IDs", fmtInt(activeMicroMicroIds().length))}
           ${metricCard("Last run", fmtTs(runMeta.completedAt || runMeta.startedAt))}
           ${metricCard("Orders", "0", "exchange disabled")}
         </div>
@@ -3982,7 +4015,7 @@
             ${row.slHitNow || row.slExitArmed || row.shortSlHit ? '<span class="pill danger">SL</span>' : ""}
             ${row.timeStopHitNow || row.timeStopExitArmed ? '<span class="pill warn">TIME</span>' : ""}
           ` || "-" },
-          { label: "Exact micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_EXACT_ID")}</code>` },
+          { label: "Micro-micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_MM")}</code>` },
           { label: "Base 75", render: (row) => `<code>${escapeHtml(base75MicroId(row) || "NO_BASE75")}</code>` },
           { label: "Parent 15", render: (row) => `<code>${escapeHtml(parentMicroId(row) || "NO_PARENT")}</code>` },
           { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
@@ -4021,7 +4054,7 @@
         setMessage("Compacte trade output geselecteerd. Je kunt nu kopiëren.", "ok");
       });
 
-      $("exportTradeBtn")?.addEventListener("click", () => downloadJson("trade-compact-short-micro-micro.json", compactOutput));
+      $("exportTradeBtn")?.addEventListener("click", () => downloadJson("trade-compact-short-micro-micro-only.json", compactOutput));
     }
 
     async function runTradeNow() {
@@ -4036,6 +4069,7 @@
             monitorOpenPositionsFirst: true,
             monitorOpenPositions: true,
             processScannerSnapshot: true,
+
             targetTradeSide: ONLY_SIDE,
             tradeSide: ONLY_SIDE,
             side: DASHBOARD_SIDE,
@@ -4044,6 +4078,7 @@
             shortOnly: true,
             longDisabled: true,
             disableLong: true,
+
             virtualOnly: true,
             virtualTracked: true,
             source: "VIRTUAL",
@@ -4053,41 +4088,53 @@
             bitgetOrdersDisabled: true,
             noExchangeOrders: true,
             noRealOrders: true,
+
             allowLearningWithoutActiveRotation: true,
             ignoreMaxOpenPositionsForLearning: true,
             ignoreGlobalMaxOpenPositions: true,
             oneOpenPositionPerSymbol: true,
             maxOneOpenPositionPerSymbol: true,
+
             trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
             parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
             microMicroFamilySchema: MICRO_MICRO_SCHEMA,
             microMicroVersion: MICRO_MICRO_VERSION,
             microMicroEnabled: true,
+
             learningGranularity: LEARNING_GRANULARITY,
             parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
             microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-            selectionGranularity: "EXACT_75_CHILD_OR_MICRO_MICRO",
+
+            selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
             completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
             scoringRSource: "netR",
             winsLossesFlatsSource: "netR",
             avgCostRSource: "costR",
             seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
+
             currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
             currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
             currentFitSoftOnly: true,
             currentFitBlocksLearning: false,
             currentFitBlocksVirtualLearning: false,
             currentFitBlocksShadowLearning: false,
+
             child75RemainsPrimaryLearningLayer: true,
+            parent15RemainsRollupLayer: true,
             microMicroActsAsExecutionPreference: true,
+            microMicroDoesNotReplace75ChildLearning: true,
+            adminSelectionLayer: "MICRO_MICRO_ONLY",
+
             riskPlanVersion: SHORT_RISK_PLAN_VERSION,
             costModelVersion: POSITION_COST_MODEL_VERSION,
             measurementFixVersion: MEASUREMENT_FIX_VERSION,
             observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
             outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+
             monitorCandleRangeEnabled: true,
             candleFirstTouchEnabled: true,
             conservativeSameCandleExit: true,
+
             shortRiskShape: { expression: "tp < entry < sl" },
             riskGeometryRule: "SHORT: tp < entry < sl",
             tpHitRule: "SHORT: candle.low <= tp",
@@ -4095,11 +4142,15 @@
             sameCandleBothHitRule: "CONSERVATIVE_SL_FIRST",
             grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
             currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+
             discordOnlyForSelectedMicroFamilies: true,
-            discordOnlyForExactTrueMicroMatch: true,
+            discordOnlyForExactMicroMicroMatch: true,
+            discordOnlyForExactTrueMicroMatch: false,
             discordRequiresCurrentFit: true,
+            child75MatchDoesNotTriggerDiscord: true,
             macroMatchDoesNotTriggerDiscord: true,
             parentMacroMatchDoesNotTriggerDiscord: true,
+
             persistentLearningKey: PERSISTENT_LEARNING_KEY,
             redisNamespace: SHORT_NAMESPACE,
             redisKeyPrefix: SHORT_KEY_PREFIX
@@ -4123,7 +4174,7 @@
         return `
           <div class="manual-card">
             <h3>Manual Discord selection</h3>
-            <div class="empty">Geen geldige SHORT 75-child of micro-micro family beschikbaar. Laat scanner + TradeSystem eerst Analyze rows schrijven.</div>
+            <div class="empty">Geen micro-micro beschikbaar. Backend moet microMicroFamilyId / trueMicroMicroFamilyId teruggeven.</div>
           </div>
         `;
       }
@@ -4131,12 +4182,11 @@
       const id = microId(row);
       const base75 = base75MicroId(row);
       const parentId = parentMicroId(row);
-      const isActive = activeMicroIds().includes(id);
-      const minDone = minCompletedForRow(row);
+      const isActive = activeMicroMicroIds().includes(id);
 
       return `
         <div class="manual-card">
-          <h3>Beste zichtbare exact selectable micro</h3>
+          <h3>Beste zichtbare micro-micro</h3>
 
           <div class="toolbar">
             <span class="pill short">SHORT</span>
@@ -4146,16 +4196,16 @@
             ${tierPill(tier(row))}
             ${statusPill(row)}
             ${currentFitPill(row)}
-            ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${minDone}</span>` : ""}
+            ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>` : ""}
           </div>
 
           <div>
-            <div class="metric-extra">Exact selectable ID</div>
-            <code>${escapeHtml(id || "NO_EXACT_ID")}</code>
+            <div class="metric-extra">Selectable micro-micro ID</div>
+            <code>${escapeHtml(id || "NO_MICRO_MICRO_ID")}</code>
           </div>
 
           <div style="margin-top:8px">
-            <div class="metric-extra">Base 75-child</div>
+            <div class="metric-extra">Base 75-child context</div>
             <code>${escapeHtml(base75 || "NO_BASE75")}</code>
           </div>
 
@@ -4165,11 +4215,11 @@
           </div>
 
           <div class="manual-grid">
-            <div class="manual-stat"><span>Layer</span><strong>${escapeHtml(microLayer(row))}</strong></div>
+            <div class="manual-stat"><span>Layer</span><strong>MICRO_MICRO</strong></div>
             <div class="manual-stat"><span>Seen</span><strong>${escapeHtml(fmt(observationSample(row), 2))}</strong></div>
             <div class="manual-stat"><span>Completed</span><strong>${escapeHtml(fmt(completed(row), 2))}</strong></div>
             <div class="manual-stat"><span>Status</span><strong>${escapeHtml(learningStatus(row))}</strong></div>
-            <div class="manual-stat"><span>Sample</span><strong>${tooEarly(row) ? `TE VROEG ${fmt(completed(row), 0)}/${minDone}` : "OK"}</strong></div>
+            <div class="manual-stat"><span>Sample</span><strong>${tooEarly(row) ? `TE VROEG ${fmt(completed(row), 0)}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}` : "OK"}</strong></div>
             <div class="manual-stat"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}</strong></div>
             <div class="manual-stat"><span>Net TotalR</span><strong>${escapeHtml(fmt(netTotalR(row), 3))}</strong></div>
             <div class="manual-stat"><span>AvgCostR</span><strong>${escapeHtml(fmt(avgCostR(row), 3))}</strong></div>
@@ -4180,15 +4230,15 @@
           </div>
 
           <div class="metric-extra">
-            Discord wordt alleen actief voor exact deze ID. Parent 15, macro, scanner buckets,
-            coinnaam en losse fingerprints mogen nooit Discord-match zijn.
+            Discord wordt alleen actief voor exact deze micro-micro ID.
+            75-child, parent 15, macro, scanner buckets, coinnaam en losse fingerprints mogen nooit Discord-match zijn.
           </div>
 
           <div class="toolbar">
-            <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #1</button>
-            <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Zet als #2</button>
+            <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(id)}">Zet als #1</button>
+            <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(id)}">Zet als #2</button>
             <button type="button" class="warn" data-clear-slot="2">Maak #2 leeg</button>
-            <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
+            <button type="button" data-copy="${escapeAttr(id)}">Copy</button>
           </div>
         </div>
       `;
@@ -4207,11 +4257,9 @@
       const rows = currentMicroRows();
       const top = rows[0] || null;
 
-      const child75Rows = rows.filter((row) => microLayer(row) === "CHILD_75");
-      const microMicroRows = rows.filter((row) => microLayer(row) === "MICRO_MICRO");
-      const observingRows = rows.filter((row) => learningStatus(row).includes("OBSERVING"));
-      const earlyRows = rows.filter((row) => learningStatus(row).includes("EARLY"));
-      const activeRows = rows.filter((row) => learningStatus(row).includes("ACTIVE"));
+      const observingRows = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_OBSERVING");
+      const earlyRows = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_EARLY");
+      const activeRows = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_ACTIVE");
       const cleanRows = rows.filter(isCleanMeasurementRow);
       const legacyRows = rows.filter((row) => !isCleanMeasurementRow(row));
       const misfitRows = rows.filter((row) => currentFit(row) === "MISFIT");
@@ -4224,77 +4272,68 @@
             `).join("")}
           </select>
 
-          <input id="microSearch" type="search" placeholder="Zoek exact ID, 75-child, micro-micro, parent 15, setup, regime..." value="${escapeAttr(state.microSearch)}" />
+          <input id="microSearch" type="search" placeholder="Zoek micro-micro ID, base 75-child, parent 15, setup, regime..." value="${escapeAttr(state.microSearch)}" />
 
-          <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible exact IDs</button>
-          <button type="button" class="success" id="activateVisibleIdsBtn">Activate top 2 visible exact IDs</button>
+          <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible MM IDs</button>
+          <button type="button" class="success" id="activateVisibleIdsBtn">Activate top 2 visible MM IDs</button>
           <button type="button" class="primary" id="activateTopTwoBtn">Activate top 2 adaptief</button>
           <button type="button" id="exportMicrosBtn">Export JSON</button>
         </div>
 
         <div class="card">
-          <h3>MicroFamilies ranking policy</h3>
+          <h3>Micro-micro ranking policy</h3>
           <div class="toolbar">
-            <span class="pill dark">75-child primary layer</span>
-            <span class="pill mm">micro-micro selectable</span>
+            <span class="pill mm">only micro-micro rows rendered</span>
+            <span class="pill dark">75-child hidden/context only</span>
+            <span class="pill dark">parent 15 hidden/context only</span>
             <span class="pill clean">clean rows first</span>
-            <span class="pill dark">adaptive/balanced/fair/netR/cost</span>
-            <span class="pill observation">OBSERVING = completed 0</span>
-            <span class="pill soft">75-child early = 1-19</span>
-            <span class="pill purple">micro-micro early = 1-5</span>
-            <span class="pill active">active thresholds</span>
+            <span class="pill dark">adaptive/fair/netR/cost</span>
+            <span class="pill observation">MM observing = completed 0</span>
+            <span class="pill purple">MM early = completed 1-5</span>
+            <span class="pill active">MM active = completed ≥ ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>
             <span class="pill short">scanner fingerprints hidden</span>
             <span class="pill soft">CurrentFit soft</span>
           </div>
           <div class="metric-extra">
-            Dashboard toont echte Analyze 75-child rows én micro-micro rows. Micro-micro mag Discord-exact zijn,
-            maar 75-child blijft hoofdlaag om sample niet kapot te splitsen.
+            Deze pagina toont geen 75-child microfamilies meer als rij. Micro-micro is de enige selecteerbare Discord-laag.
           </div>
         </div>
 
         <div class="section-title">
           <div>
             <h2>Manual Discord selection candidate</h2>
-            <p>Alleen exacte SHORT 75-child of micro-micro IDs worden actief gezet. CurrentFit beïnvloedt Discord, niet learning.</p>
+            <p>Alleen exacte SHORT micro-micro IDs worden actief gezet. CurrentFit beïnvloedt Discord, niet learning.</p>
           </div>
         </div>
 
         ${manualCard(top)}
 
         <div class="grid">
-          ${metricCard("Total exact rows", fmtInt(rows.length), `API totalAvailable=${fmtInt(state.micros?.totalAvailable || rows.length)}`)}
-          ${metricCard("75-child rows", fmtInt(child75Rows.length), "primary learning layer")}
-          ${metricCard("Micro-micro rows", fmtInt(microMicroRows.length), "execution profile layer")}
+          ${metricCard("Micro-micro rows", fmtInt(rows.length), `API totalAvailable=${fmtInt(state.micros?.totalAvailable || rows.length)}`)}
           ${metricCard("Clean measurement", fmtInt(cleanRows.length), `${fmtInt(legacyRows.length)} legacy`)}
-          ${metricCard("OBSERVING", fmtInt(observingRows.length), "completed = 0")}
-          ${metricCard("EARLY", fmtInt(earlyRows.length), "sample nog klein")}
-          ${metricCard("ACTIVE", fmtInt(activeRows.length), "sample voldoende")}
+          ${metricCard("MM OBSERVING", fmtInt(observingRows.length), "completed = 0")}
+          ${metricCard("MM EARLY", fmtInt(earlyRows.length), `completed 1-${MIN_COMPLETED_MICRO_MICRO_ACTIVE - 1}`)}
+          ${metricCard("MM ACTIVE", fmtInt(activeRows.length), `completed ≥ ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
           ${metricCard("CurrentFit MISFIT", fmtInt(misfitRows.length), "blocks Discord only")}
-          ${metricCard("Discord active exact IDs", fmtInt(activeMicroIds().length))}
-          ${metricCard("Parent 15 context", fmtInt(activeParentIds().length), "does not trigger Discord")}
+          ${metricCard("Discord active MM IDs", fmtInt(activeMicroMicroIds().length))}
           ${metricCard("Outcomes", "NET R", "virtual/shadow closed outcomes")}
         </div>
 
         ${microTable(rows.slice(0, state.bestLimit))}
 
         <div class="card">
-          <h3>Micro API status</h3>
+          <h3>Micro-micro API status</h3>
           ${jsonBlock({
             ok: state.micros?.ok,
             rowsRendered: rows.length,
-            child75Rows: child75Rows.length,
-            microMicroRows: microMicroRows.length,
             cleanRows: cleanRows.length,
             legacyRows: legacyRows.length,
             rawExtractedRows: state.micros?.rawExtractedRows || 0,
-            bestCount: state.micros?.bestCount ?? null,
-            best75Count: state.micros?.best75Count ?? null,
             bestMicroMicroCount: state.micros?.bestMicroMicroCount ?? null,
             totalAvailable: state.micros?.totalAvailable ?? null,
             weekRows: state.micros?.weekRows ?? null,
-            microMicroRowsFromApi: state.micros?.microMicroRows ?? null,
-            primaryWeekRows: state.micros?.primaryWeekRows ?? null,
-            rawScannerFingerprintRowsHidden: state.micros?.rawScannerFingerprintRowsHidden ?? null,
+            hiddenChild75Rows: true,
+            hiddenParent15Rows: true,
             versions: identityVersions(),
             rankingPolicy: "cleanMeasurement|adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR",
             currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
@@ -4324,7 +4363,7 @@
 
       $("copyVisibleIdsBtn")?.addEventListener("click", () => {
         const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
-        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} exact IDs gekopieerd.`);
+        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} micro-micro IDs gekopieerd.`);
       });
 
       $("activateVisibleIdsBtn")?.addEventListener("click", () => {
@@ -4335,7 +4374,7 @@
       });
 
       $("activateTopTwoBtn")?.addEventListener("click", () => activateTopN(2));
-      $("exportMicrosBtn")?.addEventListener("click", () => downloadJson("short-75-plus-micro-micro-families.json", state.micros));
+      $("exportMicrosBtn")?.addEventListener("click", () => downloadJson("short-micro-micro-only-families.json", state.micros));
 
       bindMicroEvents();
     }
@@ -4358,96 +4397,90 @@
 
       const active = data.active || data.activeRotation || {};
       const activeIds = uniqueStrings([
+        active.activeMicroMicroFamilyIds || [],
+        active.selectedMicroMicroFamilyIds || [],
+        active.microMicroFamilyIds || [],
         active.activeMicroFamilyIds || [],
         active.microFamilyIds || [],
         active.trueMicroFamilyIds || [],
-        active.microMicroFamilyIds || [],
-        data.activeMicroFamilyIds || [],
         data.activeMicroMicroFamilyIds || [],
-        data.active75ChildFamilyIds || []
+        data.selectedMicroMicroFamilyIds || [],
+        data.microMicroFamilyIds || [],
+        data.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
-      const parentIds = uniqueStrings([
-        active.activeMacroFamilyIds || [],
-        active.macroFamilyIds || [],
-        data.activeMacroFamilyIds || []
-      ]).filter(parentIdAllowedInShortOnly);
+      const rows = rankMicroRows(data.activeRows || active.microMicroFamilies || active.microFamilies || []);
 
-      const activeRows = rankMicroRows(data.activeRows || active.microFamilies || []);
+      const manualRows = activeIds.map((id, index) => ({
+        rank: index + 1,
+        microFamilyId: id,
+        trueMicroFamilyId: id,
+        microMicroFamilyId: id,
+        trueMicroMicroFamilyId: id,
+        childTrueMicroFamilyId: base75FromAnyMicroId(id),
+        base75ChildTrueMicroFamilyId: base75FromAnyMicroId(id),
+        parentTrueMicroFamilyId: parentFromAnyMicroId(id),
+        tradeSide: ONLY_SIDE,
+        side: DASHBOARD_SIDE,
+        selectedTier: "MANUAL",
+        shortOnly: true,
+        longDisabled: true,
+        riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+        costModelVersion: POSITION_COST_MODEL_VERSION,
+        measurementFixVersion: MEASUREMENT_FIX_VERSION,
+        observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+        outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+        measurementClean: true
+      }));
 
-      const rows = activeRows
-        .concat(
-          activeIds.map((id, index) => ({
-            rank: index + 1,
-            microFamilyId: id,
-            trueMicroFamilyId: id,
-            microMicroFamilyId: isMicroMicroId(id) ? id : null,
-            childTrueMicroFamilyId: base75FromAnyMicroId(id),
-            base75ChildTrueMicroFamilyId: base75FromAnyMicroId(id),
-            parentTrueMicroFamilyId: parentFromAnyMicroId(id),
-            tradeSide: ONLY_SIDE,
-            side: DASHBOARD_SIDE,
-            selectedTier: "MANUAL",
-            shortOnly: true,
-            longDisabled: true,
-            riskPlanVersion: SHORT_RISK_PLAN_VERSION,
-            costModelVersion: POSITION_COST_MODEL_VERSION,
-            measurementFixVersion: MEASUREMENT_FIX_VERSION,
-            observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
-            outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
-            measurementClean: true
-          }))
-        )
+      const activeRows = rankMicroRows(rows.concat(manualRows))
         .filter((row, index, arr) => arr.findIndex((candidate) => microId(candidate) === microId(row)) === index);
 
       $("rotation").innerHTML = `
         <div class="section-title">
           <div>
             <h2>Manual Discord selection</h2>
-            <p>Geen auto-rotatie. Alleen exact geselecteerde SHORT 75-child of micro-micro IDs. CurrentFit maakt Discord strenger.</p>
+            <p>Geen 75-child selectie meer. Alleen exact geselecteerde SHORT micro-micro IDs.</p>
           </div>
         </div>
 
         <div class="grid">
-          ${metricCard("Active exact IDs", fmtInt(activeIds.length))}
-          ${metricCard("Active micro-micro IDs", fmtInt(activeIds.filter(isMicroMicroId).length))}
-          ${metricCard("Active 75-child IDs", fmtInt(activeIds.filter(isFixedShortTaxonomyChildId).length))}
-          ${metricCard("Parent 15 context IDs", fmtInt(parentIds.length))}
+          ${metricCard("Active MM IDs", fmtInt(activeIds.length))}
           ${metricCard("Rotation ID", active.rotationId || "-")}
           ${metricCard("Mode", active.mode || "manual")}
           ${metricCard("Source", active.source || "-")}
-          ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT" : "OFF")}
+          ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT MM ONLY" : "OFF")}
           ${metricCard("Virtual learning", "UNCHANGED")}
+          ${metricCard("75-child selection", "DISABLED")}
           ${metricCard("Auto rotation", "DISABLED")}
         </div>
 
         <div class="card">
-          <h3>Manual exact IDs</h3>
+          <h3>Manual micro-micro IDs</h3>
           <p class="metric-extra">
-            Plak maximaal 2 exact IDs. Voor 75-child: MICRO_SHORT_BREAKOUT_TREND_A_STRONG_ALIGN.
-            Voor micro-micro: MICRO_SHORT_BREAKOUT_TREND_A_STRONG_ALIGN_MM_XXXXXXXX.
-            Parent IDs zoals MICRO_SHORT_BREAKOUT_TREND worden geweigerd voor Discord selectie.
+            Plak maximaal 2 micro-micro IDs. 75-child IDs zoals MICRO_SHORT_BREAKOUT_TREND_A_STRONG_ALIGN worden geweigerd.
+            Geldig: MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH of MM_SHORT_..._A_STRONG_ALIGN_CONTEXT.
           </p>
 
-          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN of MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH">${escapeHtml(activeIds.join("\n"))}</textarea>
+          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH">${escapeHtml(activeIds.join("\n"))}</textarea>
 
           <div class="toolbar">
-            <button type="button" class="short-action" id="activateManualBtn">Save max 2 exact Discord IDs</button>
+            <button type="button" class="short-action" id="activateManualBtn">Save max 2 micro-micro Discord IDs</button>
             <button type="button" class="primary" id="activateTopTwoRotationBtn">Select top 2 adaptief</button>
             <button type="button" id="clearManualBtn">Clear input</button>
-            <button type="button" class="success" id="copyActiveBtn">Copy active exact IDs</button>
+            <button type="button" class="success" id="copyActiveBtn">Copy active MM IDs</button>
             <button type="button" id="exportRotationBtn">Export JSON</button>
           </div>
         </div>
 
         <div class="section-title">
           <div>
-            <h2>Active selected SHORT exact micro-families</h2>
+            <h2>Active selected SHORT micro-micro IDs</h2>
             <p>Deze IDs bepalen Discord eligibility. Niet-geselecteerde setups blijven stil leren.</p>
           </div>
         </div>
 
-        ${microTable(rows)}
+        ${microTable(activeRows)}
 
         <div class="card">
           <h3>Raw rotation dashboard</h3>
@@ -4466,66 +4499,73 @@
 
       $("activateTopTwoRotationBtn")?.addEventListener("click", () => activateTopN(2));
       $("clearManualBtn")?.addEventListener("click", () => { $("manualMicroIds").value = ""; });
-      $("copyActiveBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), "Active exact IDs gekopieerd."));
-      $("exportRotationBtn")?.addEventListener("click", () => downloadJson("manual-discord-selection-short-exact-micro.json", data));
+      $("copyActiveBtn")?.addEventListener("click", () => copyText(JSON.stringify(activeIds, null, 2), "Active micro-micro IDs gekopieerd."));
+      $("exportRotationBtn")?.addEventListener("click", () => downloadJson("manual-discord-selection-short-micro-micro-only.json", data));
 
       bindMicroEvents();
     }
 
     async function activateSelectedMicroFamilies(ids = []) {
       const allRequestedIds = uniqueStrings(ids);
-      const validIds = allRequestedIds.filter(idAllowedInShortOnly);
-      const microFamilyIds = validIds.slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
-      const rejectedIds = allRequestedIds.filter((id) => !idAllowedInShortOnly(id));
-      const ignoredExtraIds = validIds.slice(MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+      const microMicroIds = allRequestedIds
+        .filter(idAllowedInShortOnly)
+        .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
-      if (!microFamilyIds.length) {
+      const rejectedIds = allRequestedIds.filter((id) => !idAllowedInShortOnly(id));
+      const ignoredExtraIds = allRequestedIds.filter(idAllowedInShortOnly).slice(MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+
+      if (!microMicroIds.length) {
         setMessage(
           rejectedIds.length
-            ? `Geen geldige SHORT exact micro ID geselecteerd.\nGeweigerd: ${rejectedIds.join(", ")}`
-            : "Geen geldige SHORT exact micro ID geselecteerd.",
+            ? `Geen geldige SHORT micro-micro ID geselecteerd.\nGeweigerd: ${rejectedIds.join(", ")}`
+            : "Geen geldige SHORT micro-micro ID geselecteerd.",
           "warn"
         );
         return;
       }
 
       if (!confirm(
-        `Activeer Discord alerts voor ${microFamilyIds.length} van maximaal ${MAX_ACTIVE_DISCORD_MICRO_FAMILIES} exacte SHORT ID(s)?\n\n` +
-        `${microFamilyIds.join("\n")}` +
-        `${ignoredExtraIds.length ? `\n\nGenegeerd boven limiet:\n${ignoredExtraIds.join("\n")}` : ""}\n\n` +
-        "Virtual/shadow learning blijft breed doorlopen. CurrentFit mag Discord blokkeren."
+        `Activeer Discord alerts voor ${microMicroIds.length} van maximaal ${MAX_ACTIVE_DISCORD_MICRO_FAMILIES} exacte SHORT micro-micro ID(s)?\n\n` +
+        `${microMicroIds.join("\n")}` +
+        `${ignoredExtraIds.length ? `\n\nGenegeerd boven limiet:\n${ignoredExtraIds.join("\n")}` : ""}` +
+        `${rejectedIds.length ? `\n\nGeweigerd, geen micro-micro:\n${rejectedIds.join("\n")}` : ""}\n\n` +
+        "Virtual/shadow learning blijft breed doorlopen. 75-child/parent context selecteert geen Discord."
       )) {
         return;
       }
 
-      const microMicroIds = microFamilyIds.filter(isMicroMicroId);
-      const child75Ids = microFamilyIds.filter(isFixedShortTaxonomyChildId);
-      const base75Ids = uniqueStrings(microFamilyIds.map(base75FromAnyMicroId)).filter(isFixedShortTaxonomyChildId);
+      const base75Ids = uniqueStrings(microMicroIds.map(base75FromAnyMicroId)).filter(isChild75Id);
+      const parentIds = uniqueStrings(microMicroIds.map(parentFromAnyMicroId)).filter(parentIdAllowedInShortOnly);
 
       const data = await api(endpoints.rotation, {
         method: "POST",
         timeoutMs: 28000,
         body: JSON.stringify({
           action: "activateSelectedMicroFamilies",
-          microFamilyIds,
-          activeMicroFamilyIds: microFamilyIds,
-          trueMicroFamilyIds: microFamilyIds,
-          selectedMicroFamilyIds: microFamilyIds,
+
+          microFamilyIds: microMicroIds,
+          activeMicroFamilyIds: microMicroIds,
+          selectedMicroFamilyIds: microMicroIds,
+          trueMicroFamilyIds: microMicroIds,
 
           microMicroFamilyIds: microMicroIds,
           activeMicroMicroFamilyIds: microMicroIds,
           selectedMicroMicroFamilyIds: microMicroIds,
+          trueMicroMicroFamilyIds: microMicroIds,
 
-          child75FamilyIds: child75Ids,
-          active75ChildFamilyIds: child75Ids,
+          child75FamilyIds: [],
+          active75ChildFamilyIds: [],
+          selected75ChildFamilyIds: [],
           childTrueMicroFamilyIds: base75Ids,
           base75ChildTrueMicroFamilyIds: base75Ids,
+
+          macroFamilyIds: [],
+          activeMacroFamilyIds: [],
+          parentTrueMicroFamilyIds: parentIds,
 
           maxActiveMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
           maxManualMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
           maxSelectedMicroFamilies: MAX_ACTIVE_DISCORD_MICRO_FAMILIES,
-          macroFamilyIds: [],
-          activeMacroFamilyIds: [],
 
           side: DASHBOARD_SIDE,
           tradeSide: ONLY_SIDE,
@@ -4545,10 +4585,13 @@
           microMicroFamilySchema: MICRO_MICRO_SCHEMA,
           microMicroVersion: MICRO_MICRO_VERSION,
           microMicroEnabled: true,
+
           learningGranularity: LEARNING_GRANULARITY,
           parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
           microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-          selectionGranularity: "EXACT_75_CHILD_OR_MICRO_MICRO",
+
+          selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+          adminSelectionLayer: "MICRO_MICRO_ONLY",
 
           currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
           currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
@@ -4557,6 +4600,7 @@
           selectionIsAdaptive: true,
 
           child75RemainsPrimaryLearningLayer: true,
+          parent15RemainsRollupLayer: true,
           microMicroActsAsExecutionPreference: true,
           microMicroDoesNotReplace75ChildLearning: true,
 
@@ -4574,9 +4618,10 @@
           currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
 
           discordOnlyForSelectedMicroFamilies: true,
-          discordOnlyForExactTrueMicroMatch: true,
-          discordOnlyForExactMicroMicroMatch: microMicroIds.length > 0,
+          discordOnlyForExactMicroMicroMatch: true,
+          discordOnlyForExactTrueMicroMatch: false,
           discordRequiresCurrentFit: true,
+          child75MatchDoesNotTriggerDiscord: true,
           macroMatchDoesNotTriggerDiscord: true,
           parentMacroMatchDoesNotTriggerDiscord: true
         })
@@ -4584,13 +4629,16 @@
 
       const active = data.active || data.activeRotation || {};
       const activeIds = uniqueStrings([
+        active.activeMicroMicroFamilyIds || [],
+        active.selectedMicroMicroFamilyIds || [],
+        active.microMicroFamilyIds || [],
         active.activeMicroFamilyIds || [],
         active.microFamilyIds || [],
         active.trueMicroFamilyIds || [],
-        active.microMicroFamilyIds || [],
-        data.activeMicroFamilyIds || [],
         data.activeMicroMicroFamilyIds || [],
-        data.active75ChildFamilyIds || []
+        data.selectedMicroMicroFamilyIds || [],
+        data.microMicroFamilyIds || [],
+        data.activeMicroFamilyIds || []
       ]).filter(idAllowedInShortOnly).slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
       state.rotation = {
@@ -4599,12 +4647,12 @@
         active,
         activeRotation: active,
         activeMicroFamilyIds: activeIds,
-        activeMicroMicroFamilyIds: activeIds.filter(isMicroMicroId),
-        active75ChildFamilyIds: activeIds.filter(isFixedShortTaxonomyChildId)
+        activeMicroMicroFamilyIds: activeIds,
+        selectedMicroMicroFamilyIds: activeIds
       };
 
       setMessage(
-        `Manual Discord selection opgeslagen.\nActive exact IDs: ${activeIds.length}/${MAX_ACTIVE_DISCORD_MICRO_FAMILIES}\nMicro-micro: ${activeIds.filter(isMicroMicroId).length}\n75-child: ${activeIds.filter(isFixedShortTaxonomyChildId).length}\nVirtual/shadow learning blijft breed doorlopen.`,
+        `Manual Discord selection opgeslagen.\nActive micro-micro IDs: ${activeIds.length}/${MAX_ACTIVE_DISCORD_MICRO_FAMILIES}\nVirtual/shadow learning blijft breed doorlopen.`,
         "ok"
       );
 
@@ -4633,14 +4681,13 @@
       try {
         const params = commonSideParams();
         const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}?${params.toString()}`, { timeoutMs: 18000 });
-        const row = normalizeMicroRowForUi(data.row || data.microFamily || data);
-        const minDone = minCompletedForRow(row);
+        const row = normalizeMicroMicroRowFromBase(data.row || data.microFamily || data) || normalizeMicroMicroRowFromBase({ microMicroFamilyId: id });
 
         drawer.innerHTML = `
           <div class="drawer-head">
             <div>
               <h2>${escapeHtml(id)}</h2>
-              <div class="metric-extra">exact=${escapeHtml(microId(row))} · base75=${escapeHtml(base75MicroId(row))} · parent=${escapeHtml(parentMicroId(row))}</div>
+              <div class="metric-extra">MM=${escapeHtml(microId(row))} · base75=${escapeHtml(base75MicroId(row))} · parent=${escapeHtml(parentMicroId(row))}</div>
             </div>
             <button type="button" id="closeDrawerBtn">Close</button>
           </div>
@@ -4651,18 +4698,18 @@
             ${measurementPill(row)}
             ${statusPill(row)}
             ${currentFitPill(row)}
-            ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${minDone}</span>` : ""}
-            <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(row))}" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Zet als #1</button>
-            <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(microId(row))}" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Zet als #2</button>
+            ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>` : ""}
+            <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(row))}">Zet als #1</button>
+            <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(microId(row))}">Zet als #2</button>
             <button type="button" class="warn" data-clear-slot="2">Maak #2 leeg</button>
           </div>
 
           <div class="grid">
-            ${metricCard("Layer", microLayer(row))}
+            ${metricCard("Layer", "MICRO_MICRO")}
             ${metricCard("Seen", fmtInt(observationSample(row)))}
             ${metricCard("Observations", fmtInt(observationSample(row)))}
             ${metricCard("Obs dedupe skipped", fmtInt(row.observationDuplicateSkippedCount))}
-            ${metricCard("Completed", fmt(completed(row), 2), tooEarly(row) ? `minimum ${minDone}` : "active")}
+            ${metricCard("Completed", fmt(completed(row), 2), tooEarly(row) ? `minimum ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}` : "active")}
             ${metricCard("Winrate raw", fmtPct(row.winrate))}
             ${metricCard("Fair WR", fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}
             ${metricCard("AvgR net", fmt(netAvgR(row), 3))}
@@ -4677,8 +4724,9 @@
             <h3>Measurement identity</h3>
             ${jsonBlock({
               cleanMeasurement: isCleanMeasurementRow(row),
-              layer: microLayer(row),
-              exactId: microId(row),
+              selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+              layer: "MICRO_MICRO",
+              microMicroFamilyId: microId(row),
               base75ChildTrueMicroFamilyId: base75MicroId(row),
               parentTrueMicroFamilyId: parentMicroId(row),
               rowVersions: {
@@ -4745,11 +4793,10 @@
           ${metricCard("Last log", fmtTs(logs[0]?.ts || logs[0]?.createdAt))}
           ${metricCard("Entry alerts", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("ENTRY")).length))}
           ${metricCard("Exit alerts", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("EXIT")).length))}
-          ${metricCard("Match mode", "EXACT")}
-          ${metricCard("Micro-micro", "SUPPORTED")}
+          ${metricCard("Match mode", "EXACT MM")}
+          ${metricCard("75-child match", "OFF")}
           ${metricCard("CurrentFit", "STRICT")}
           ${metricCard("Parent match", "OFF")}
-          ${metricCard("Scanner match", "OFF")}
         </div>
 
         ${table(logs, [
@@ -4758,22 +4805,22 @@
           { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row.payload || row)) },
           { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
           { label: "Layer", render: (row) => microLayerPill(row.payload || row) },
-          { label: "Selected exact", render: (row) => {
+          { label: "Selected MM", render: (row) => {
             const payload = row.payload || row;
             const id = microId(payload);
             const selected = Boolean(
-              payload.selectedMicroFamilyAlert ||
               payload.selectedMicroMicroFamilyAlert ||
+              payload.selectedMicroFamilyAlert ||
               payload.discordAlertEligible ||
               payload.selectedForDiscord ||
               payload.wasSelected ||
               row.selectedOnly
-            ) && isSelectableTrueMicroId(id);
+            ) && idAllowedInShortOnly(id);
 
             return `<span class="pill ${selected ? "active" : ""}">${selected ? "YES" : "NO"}</span>`;
           }},
           { label: "CurrentFit", render: (row) => currentFitPill(row.payload || row) },
-          { label: "Exact micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
+          { label: "Micro-micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
           { label: "Base 75", render: (row) => `<code>${escapeHtml(base75MicroId(row.payload || row) || "-")}</code>` },
           { label: "Parent 15", render: (row) => `<code>${escapeHtml(parentMicroId(row.payload || row) || "-")}</code>` },
           { label: "Message", render: (row) => escapeHtml(row.message || row.content || row.result || row.reason || "") }
@@ -4781,7 +4828,7 @@
       `;
 
       $("copyDiscordBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
-      $("exportDiscordBtn")?.addEventListener("click", () => downloadJson("discord-logs-short-micro-micro.json", data));
+      $("exportDiscordBtn")?.addEventListener("click", () => downloadJson("discord-logs-short-micro-micro-only.json", data));
     }
 
     function renderReset() {
@@ -4799,7 +4846,7 @@
           <div class="card">
             <h3>Reset manual selection</h3>
             <p class="metric-extra">
-              Wist active/next SHORT rotation. Learning en virtual positions blijven staan.
+              Wist active/next SHORT micro-micro selection. Learning en virtual positions blijven staan.
             </p>
             <button type="button" class="warn" id="resetRotationBtn">Reset rotation</button>
           </div>
@@ -4852,6 +4899,8 @@
         microMicroFamilySchema: MICRO_MICRO_SCHEMA,
         microMicroVersion: MICRO_MICRO_VERSION,
         microMicroEnabled: true,
+        microMicroOnlySelection: true,
+        selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
         persistentLearningKey: PERSISTENT_LEARNING_KEY,
         redisNamespace: SHORT_NAMESPACE,
         redisKeyPrefix: SHORT_KEY_PREFIX,
@@ -4960,7 +5009,7 @@
 
     async function refresh(tab = state.activeTab) {
       setMessage("");
-      $("liveLabel").textContent = `SHORT-only · 75+MM · clean measurement · ${new Date().toLocaleTimeString()}`;
+      $("liveLabel").textContent = `SHORT-only · micro-micro only · ${new Date().toLocaleTimeString()}`;
 
       try {
         if (tab === "overview") return await renderOverview();
