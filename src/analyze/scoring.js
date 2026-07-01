@@ -4,6 +4,7 @@ import { CONFIG } from '../config.js';
 import { clamp, safeNumber, sideToTradeSide } from '../utils.js';
 
 const DEFAULT_WILSON_Z = 1.96;
+const DEFAULT_AVG_R_LCB_Z = 1.96;
 const DEFAULT_PRIOR_TRADES = 24;
 const DEFAULT_PRIOR_WINRATE = 0.5;
 const DEFAULT_SAMPLE_CAP = 50;
@@ -13,6 +14,12 @@ const DEFAULT_OBSERVATION_DEDUPE_CACHE_LIMIT = 5000;
 
 const MIN_COMPLETED_ACTIVE = 20;
 const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
+
+const DEFAULT_ELIGIBLE_MIN_COMPLETED = 35;
+const DEFAULT_ELIGIBLE_MIN_AVG_R_LCB = 0;
+const DEFAULT_ELIGIBLE_MAX_DIRECT_SL_PCT = 0.45;
+const DEFAULT_ELIGIBLE_MAX_AVG_COST_R = 0.5;
+const DEFAULT_ELIGIBLE_MIN_PROFIT_FACTOR = 1.0;
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
@@ -36,8 +43,9 @@ const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const MICRO_MICRO_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V2';
-const MICRO_MICRO_MEASUREMENT_VERSION = 'SHORT_MICRO_MICRO_ROLLUP_SELECTION_V1';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V3_LCB_AVGR';
+const MICRO_MICRO_MEASUREMENT_VERSION = 'SHORT_MICRO_MICRO_ROLLUP_SELECTION_V2_LCB_AVGR';
+const LCB_MODEL_VERSION = 'SHORT_AVGR_LCB95_SELECTION_V1';
 
 const SOURCE_VIRTUAL = 'VIRTUAL';
 const SOURCE_REAL = 'REAL';
@@ -83,6 +91,10 @@ function now() {
 
 function round4(value) {
   return Number(safeNumber(value, 0).toFixed(4));
+}
+
+function round6(value) {
+  return Number(safeNumber(value, 0).toFixed(6));
 }
 
 function upper(value, fallback = '') {
@@ -146,6 +158,16 @@ function analyzeNumber(key, fallback) {
   );
 }
 
+function selectionNumber(key, fallback) {
+  return safeNumber(
+    CONFIG.short?.selection?.[key] ??
+      CONFIG.selection?.[key] ??
+      CONFIG.short?.rotation?.[key] ??
+      CONFIG.rotation?.[key],
+    fallback
+  );
+}
+
 function observationDedupeCacheLimit() {
   return Math.max(
     100,
@@ -200,6 +222,10 @@ function wilsonZ() {
   return Math.max(0.1, rotationNumber('wilsonZ', DEFAULT_WILSON_Z));
 }
 
+function avgRLCBZ() {
+  return Math.max(0.1, selectionNumber('avgRLCBZ', DEFAULT_AVG_R_LCB_Z));
+}
+
 function sampleCap() {
   return Math.max(1, rotationNumber('sampleReliabilityCap', DEFAULT_SAMPLE_CAP));
 }
@@ -213,6 +239,46 @@ function avgRSampleExponent() {
     rotationNumber('avgRSampleExponent', DEFAULT_AVG_R_SAMPLE_EXPONENT),
     0.5,
     3
+  );
+}
+
+function eligibleMinCompletedForLayer(layer = LAYER_MICRO_MICRO) {
+  const configured = Math.floor(selectionNumber('eligibleMinCompleted', DEFAULT_ELIGIBLE_MIN_COMPLETED));
+
+  if (layer === LAYER_MICRO_MICRO) {
+    return Math.max(MIN_COMPLETED_MICRO_MICRO_ACTIVE, configured);
+  }
+
+  if (layer === LAYER_MICRO_75) {
+    return Math.max(MIN_COMPLETED_ACTIVE, configured);
+  }
+
+  return Math.max(MIN_COMPLETED_ACTIVE, configured);
+}
+
+function eligibleMinAvgRLCB() {
+  return selectionNumber('eligibleMinAvgRLCB', DEFAULT_ELIGIBLE_MIN_AVG_R_LCB);
+}
+
+function eligibleMaxDirectSLPct() {
+  return clamp(
+    selectionNumber('eligibleMaxDirectSLPct', DEFAULT_ELIGIBLE_MAX_DIRECT_SL_PCT),
+    0,
+    1
+  );
+}
+
+function eligibleMaxAvgCostR() {
+  return Math.max(
+    0,
+    selectionNumber('eligibleMaxAvgCostR', DEFAULT_ELIGIBLE_MAX_AVG_COST_R)
+  );
+}
+
+function eligibleMinProfitFactor() {
+  return Math.max(
+    0,
+    selectionNumber('eligibleMinProfitFactor', DEFAULT_ELIGIBLE_MIN_PROFIT_FACTOR)
   );
 }
 
@@ -230,7 +296,8 @@ function makeCounters() {
     regime: {},
     scannerReason: {},
     microMicroFamilyId: {},
-    learningLayer: {}
+    learningLayer: {},
+    currentFit: {}
   };
 }
 
@@ -817,6 +884,30 @@ function candidateLearningValues(row = {}) {
   ];
 }
 
+function rowChildTrueMicroId(row = {}) {
+  const values = [
+    row.childTrueMicroFamilyId,
+    row.baseTrueMicroFamilyId,
+    row.trueMicro75FamilyId,
+    row.trueMicroFamilyId,
+    row.microFamilyId,
+    row.learningMicroFamilyId,
+    row.analyzeMicroFamilyId,
+    row.id,
+    row.key
+  ];
+
+  for (const value of values) {
+    const parsed = parseShortTaxonomyMicroId(value);
+
+    if (parsed.isMicroMicro || parsed.isChild) {
+      return parsed.childTrueMicroFamilyId;
+    }
+  }
+
+  return '';
+}
+
 function rowMicroMicroId(row = {}) {
   const child = rowChildTrueMicroId(row);
 
@@ -861,30 +952,6 @@ function rowMicroMicroId(row = {}) {
 
   if (hash && child && hash.length >= 6) {
     return `${child}_${MICRO_MICRO_SUFFIX}_${hash}`;
-  }
-
-  return '';
-}
-
-function rowChildTrueMicroId(row = {}) {
-  const values = [
-    row.childTrueMicroFamilyId,
-    row.baseTrueMicroFamilyId,
-    row.trueMicro75FamilyId,
-    row.trueMicroFamilyId,
-    row.microFamilyId,
-    row.learningMicroFamilyId,
-    row.analyzeMicroFamilyId,
-    row.id,
-    row.key
-  ];
-
-  for (const value of values) {
-    const parsed = parseShortTaxonomyMicroId(value);
-
-    if (parsed.isMicroMicro || parsed.isChild) {
-      return parsed.childTrueMicroFamilyId;
-    }
   }
 
   return '';
@@ -1521,13 +1588,20 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
   stats.avgCostRShown = true;
   stats.avgCostRSource = 'costR';
 
+  stats.lcbModelVersion = LCB_MODEL_VERSION;
+  stats.avgRLCBDefinition = 'avgR - z * (stdDevR / sqrt(completed))';
+  stats.avgRLCBUsesNetR = true;
+  stats.avgRLCBSource = 'netR';
+  stats.selectionUsesLCBAvgR = true;
+  stats.selectionAvoidsWeeklyWinnerCurse = true;
+
   stats.measurementFixVersion = MEASUREMENT_FIX_VERSION;
   stats.microMicroMeasurementVersion = MICRO_MICRO_MEASUREMENT_VERSION;
   stats.seenDefinition = 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY';
   stats.observationDedupeRequired = true;
   stats.observationAlwaysCounted = false;
 
-  stats.defaultRanking = 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR';
+  stats.defaultRanking = 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR';
   stats.bareWinrateRankingDisabled = true;
   stats.rawWinrateRankingDisabled = true;
   stats.rankingUsesBalancedScore = true;
@@ -1535,6 +1609,7 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
   stats.rankingUsesTotalR = true;
   stats.rankingUsesAvgR = true;
   stats.rankingUsesAvgCostR = true;
+  stats.rankingUsesAvgRLCB95 = true;
 
   stats.currentFitSoftOnly = true;
   stats.currentFitBlocksLearning = false;
@@ -1576,6 +1651,11 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
 
   stats.minCompletedForActiveLearning = minCompleted;
   stats.microMicroMinCompletedForActiveLearning = MIN_COMPLETED_MICRO_MICRO_ACTIVE;
+  stats.eligibleMinCompleted = eligibleMinCompletedForLayer(learningLayer);
+  stats.eligibleMinAvgRLCB = eligibleMinAvgRLCB();
+  stats.eligibleMaxDirectSLPct = eligibleMaxDirectSLPct();
+  stats.eligibleMaxAvgCostR = eligibleMaxAvgCostR();
+  stats.eligibleMinProfitFactor = eligibleMinProfitFactor();
 
   return stats;
 }
@@ -1623,7 +1703,9 @@ function hasSourceBuckets(stats = {}) {
     safeNumber(stats.virtualTotalR, 0) !== 0 ||
     safeNumber(stats.shadowTotalR, 0) !== 0 ||
     safeNumber(stats.virtualTotalCostR, 0) !== 0 ||
-    safeNumber(stats.shadowTotalCostR, 0) !== 0
+    safeNumber(stats.shadowTotalCostR, 0) !== 0 ||
+    safeNumber(stats.virtualSumSquaredR, 0) !== 0 ||
+    safeNumber(stats.shadowSumSquaredR, 0) !== 0
   );
 }
 
@@ -1718,6 +1800,22 @@ function weightedSourceTotals(stats = {}) {
     totalCostR:
       safeNumber(stats.virtualTotalCostR, 0) +
       safeNumber(stats.shadowTotalCostR, 0) * w,
+
+    totalExecutionCostR:
+      safeNumber(stats.virtualTotalExecutionCostR, 0) +
+      safeNumber(stats.shadowTotalExecutionCostR, 0) * w,
+
+    totalFundingCostR:
+      safeNumber(stats.virtualTotalFundingCostR, 0) +
+      safeNumber(stats.shadowTotalFundingCostR, 0) * w,
+
+    sumR:
+      safeNumber(stats.virtualSumR, 0) +
+      safeNumber(stats.shadowSumR, 0) * w,
+
+    sumSquaredR:
+      safeNumber(stats.virtualSumSquaredR, 0) +
+      safeNumber(stats.shadowSumSquaredR, 0) * w,
 
     grossWinR:
       safeNumber(stats.virtualGrossWinR, 0) +
@@ -1814,8 +1912,26 @@ function inferCostR(row = {}, exitR = 0) {
   const riskPct = finiteOrNull(row.riskPct);
 
   if (costPct !== null && riskPct !== null && riskPct > 0) {
-    return Math.max(0, costPct / riskPct);
+    // costPct uit costModel.js is percentage, dus 0.24 betekent 0.24%.
+    // Voor R moet dat eerst terug naar ratio: 0.24 / 100.
+    return Math.max(0, (costPct / 100) / riskPct);
   }
+
+  return 0;
+}
+
+function inferExecutionCostR(row = {}, totalCostR = 0) {
+  const explicit = finiteOrNull(row.executionCostR);
+
+  if (explicit !== null) return explicit;
+
+  return Math.max(0, totalCostR - Math.max(0, safeNumber(row.fundingCostR, 0)));
+}
+
+function inferFundingCostR(row = {}) {
+  const explicit = finiteOrNull(row.fundingCostR);
+
+  if (explicit !== null) return explicit;
 
   return 0;
 }
@@ -1931,6 +2047,8 @@ function aggregateRecentOutcomes(stats = {}) {
       const exitR = outcomeExitR(row);
       const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
       const costR = inferCostR(row, exitR);
+      const executionCostR = inferExecutionCostR(row, costR);
+      const fundingCostR = inferFundingCostR(row);
 
       const win = exitR > 0;
       const loss = exitR < 0;
@@ -1959,6 +2077,11 @@ function aggregateRecentOutcomes(stats = {}) {
       acc.totalR += exitR * weight;
       acc.totalPnlPct += pnlPct * weight;
       acc.totalCostR += costR * weight;
+      acc.totalExecutionCostR += executionCostR * weight;
+      acc.totalFundingCostR += fundingCostR * weight;
+
+      acc.sumR += exitR * weight;
+      acc.sumSquaredR += exitR * exitR * weight;
 
       if (isDirectSL(row)) acc.directSLCount += weight;
       if (row.nearTpSeen) acc.nearTpCount += weight;
@@ -1986,6 +2109,12 @@ function aggregateRecentOutcomes(stats = {}) {
       totalR: 0,
       totalPnlPct: 0,
       totalCostR: 0,
+      totalExecutionCostR: 0,
+      totalFundingCostR: 0,
+
+      sumR: 0,
+      sumSquaredR: 0,
+
       grossWinR: 0,
       grossLossR: 0,
 
@@ -2045,6 +2174,95 @@ function sampleAdjustedAvgR(avgR, reliability) {
   return cappedAvgR * samplePenalty;
 }
 
+function varianceFromTotals({
+  sumR,
+  sumSquaredR,
+  completed
+} = {}) {
+  const n = safeNumber(completed, 0);
+  const sum = safeNumber(sumR, 0);
+  const sumSq = safeNumber(sumSquaredR, 0);
+
+  if (n <= 1) {
+    return {
+      varianceR: 0,
+      sampleVarianceR: 0,
+      stdDevR: 0,
+      standardErrorAvgR: 0
+    };
+  }
+
+  const populationVariance = Math.max(0, (sumSq / n) - Math.pow(sum / n, 2));
+  const sampleVariance = Math.max(0, (sumSq - (sum * sum) / n) / (n - 1));
+  const stdDevR = Math.sqrt(sampleVariance);
+  const standardErrorAvgR = stdDevR / Math.sqrt(n);
+
+  return {
+    varianceR: populationVariance,
+    sampleVarianceR: sampleVariance,
+    stdDevR,
+    standardErrorAvgR
+  };
+}
+
+export function avgRLowerConfidenceBound({
+  avgR,
+  stdDevR,
+  completed,
+  z = avgRLCBZ()
+} = {}) {
+  const mean = safeNumber(avgR, 0);
+  const sd = Math.max(0, safeNumber(stdDevR, 0));
+  const n = safeNumber(completed, 0);
+
+  if (n <= 1) return 0;
+
+  return mean - Math.max(0, safeNumber(z, DEFAULT_AVG_R_LCB_Z)) * (sd / Math.sqrt(n));
+}
+
+function normalizeCurrentFit(value = '') {
+  const text = upper(value);
+
+  if (!text) return 'UNKNOWN';
+  if (text.includes('MISFIT')) return 'MISFIT';
+  if (text.includes('NO_MATCH')) return 'MISFIT';
+  if (text.includes('MISMATCH')) return 'MISFIT';
+  if (text.includes('MATCH')) return 'MATCH';
+  if (text.includes('FIT')) return 'MATCH';
+
+  return text;
+}
+
+function isCurrentFitMatch(row = {}, currentFitLookup = null) {
+  const direct = normalizeCurrentFit(
+    row.currentFit ??
+      row.entryCurrentFit ??
+      row.marketFit ??
+      row.currentMarketFit ??
+      ''
+  );
+
+  if (direct === 'MATCH') return true;
+  if (direct === 'MISFIT') return false;
+
+  if (typeof currentFitLookup === 'function') {
+    const value = currentFitLookup(row);
+    return normalizeCurrentFit(value) === 'MATCH';
+  }
+
+  if (currentFitLookup && typeof currentFitLookup === 'object') {
+    const id = rowMicroId(row);
+    const value = currentFitLookup[id] ??
+      currentFitLookup[row.microFamilyId] ??
+      currentFitLookup[row.trueMicroFamilyId] ??
+      currentFitLookup[row.microMicroFamilyId];
+
+    return normalizeCurrentFit(value) === 'MATCH';
+  }
+
+  return false;
+}
+
 function learningStatus(stats = {}) {
   const completed = safeNumber(stats.completed, 0);
   const minCompleted = safeNumber(stats.minCompletedForActiveLearning, rowLayerMinCompleted(stats));
@@ -2053,6 +2271,74 @@ function learningStatus(stats = {}) {
   if (completed < minCompleted) return 'EARLY_OUTCOMES';
 
   return 'ACTIVE_LEARNING';
+}
+
+function eligibleGate(stats = {}, options = {}) {
+  const row = refreshStats({ ...stats });
+
+  const layer = rowLearningLayer(row);
+  const completed = safeNumber(row.completed, 0);
+  const minCompleted = safeNumber(
+    options.minCompleted,
+    eligibleMinCompletedForLayer(layer)
+  );
+
+  const avgRLCB95 = safeNumber(row.avgRLCB95 ?? row.avgRLowerBound95 ?? row.lcb95AvgR, 0);
+  const minAvgRLCB = safeNumber(options.minAvgRLCB, eligibleMinAvgRLCB());
+
+  const directSLPct = safeNumber(row.directSLPct, 0);
+  const maxDirectSLPct = safeNumber(options.maxDirectSLPct, eligibleMaxDirectSLPct());
+
+  const avgCostR = safeNumber(row.avgCostR, 0);
+  const maxAvgCostR = safeNumber(options.maxAvgCostR, eligibleMaxAvgCostR());
+
+  const profitFactor = safeNumber(row.profitFactor, 0);
+  const minProfitFactor = safeNumber(options.minProfitFactor, eligibleMinProfitFactor());
+
+  const totalR = safeNumber(row.totalR, 0);
+  const avgR = safeNumber(row.avgR, 0);
+
+  const requireCurrentFitMatch = options.requireCurrentFitMatch === true;
+  const currentFitMatched = isCurrentFitMatch(row, options.currentFitLookup);
+
+  const checks = {
+    completedOk: completed >= minCompleted,
+    avgRLCBOk: avgRLCB95 > minAvgRLCB,
+    directSLOk: directSLPct < maxDirectSLPct,
+    avgCostROk: avgCostR <= maxAvgCostR,
+    profitFactorOk: profitFactor >= minProfitFactor,
+    totalROk: totalR > 0,
+    avgROk: avgR > 0,
+    currentFitOk: requireCurrentFitMatch ? currentFitMatched : true
+  };
+
+  const eligible = Object.values(checks).every(Boolean);
+
+  const reasons = Object.entries(checks)
+    .filter(([, ok]) => !ok)
+    .map(([key]) => key);
+
+  return {
+    eligible,
+    checks,
+    reasons,
+    completed,
+    minCompleted,
+    avgRLCB95,
+    minAvgRLCB,
+    directSLPct,
+    maxDirectSLPct,
+    avgCostR,
+    maxAvgCostR,
+    profitFactor,
+    minProfitFactor,
+    totalR,
+    avgR,
+    currentFitMatched,
+    requireCurrentFitMatch,
+    lcbModelVersion: LCB_MODEL_VERSION,
+    gateVersion: 'SHORT_LIFETIME_ELIGIBLE_LCB_CURRENTFIT_V1'
+  };
 }
 
 export function createMicroStats({
@@ -2231,6 +2517,25 @@ export function createMicroStats({
     realTotalR: 0,
     shadowTotalR: 0,
 
+    sumR: 0,
+    virtualSumR: 0,
+    realSumR: 0,
+    shadowSumR: 0,
+
+    sumSquaredR: 0,
+    virtualSumSquaredR: 0,
+    realSumSquaredR: 0,
+    shadowSumSquaredR: 0,
+
+    varianceR: 0,
+    sampleVarianceR: 0,
+    stdDevR: 0,
+    standardErrorAvgR: 0,
+    avgRLCB95: 0,
+    avgRLowerBound95: 0,
+    lcb95AvgR: 0,
+    avgRLCBZ: DEFAULT_AVG_R_LCB_Z,
+
     totalPnlPct: 0,
     virtualTotalPnlPct: 0,
     realTotalPnlPct: 0,
@@ -2240,6 +2545,16 @@ export function createMicroStats({
     virtualTotalCostR: 0,
     realTotalCostR: 0,
     shadowTotalCostR: 0,
+
+    totalExecutionCostR: 0,
+    virtualTotalExecutionCostR: 0,
+    realTotalExecutionCostR: 0,
+    shadowTotalExecutionCostR: 0,
+
+    totalFundingCostR: 0,
+    virtualTotalFundingCostR: 0,
+    realTotalFundingCostR: 0,
+    shadowTotalFundingCostR: 0,
 
     grossWinR: 0,
     grossLossR: 0,
@@ -2270,6 +2585,8 @@ export function createMicroStats({
     nearTpThenLossCount: 0,
 
     avgCostR: 0,
+    avgExecutionCostR: 0,
+    avgFundingCostR: 0,
 
     winrate: 0,
     bayesianWinrate: 0,
@@ -2299,6 +2616,24 @@ export function createMicroStats({
 
     costStatsInferredFromRecent: false,
     directSLStatsInferredFromRecent: false,
+
+    tradingEligible: false,
+    eligible: false,
+    eligibleGatePassed: false,
+    eligibleReason: 'NO_OUTCOMES_YET',
+    eligibleReasons: ['NO_OUTCOMES_YET'],
+    eligibleMinCompleted: eligibleMinCompletedForLayer(learningLayer),
+    eligibleMinAvgRLCB: eligibleMinAvgRLCB(),
+    eligibleMaxDirectSLPct: eligibleMaxDirectSLPct(),
+    eligibleMaxAvgCostR: eligibleMaxAvgCostR(),
+    eligibleMinProfitFactor: eligibleMinProfitFactor(),
+
+    lcbModelVersion: LCB_MODEL_VERSION,
+    avgRLCBDefinition: 'avgR - z * (stdDevR / sqrt(completed))',
+    avgRLCBUsesNetR: true,
+    avgRLCBSource: 'netR',
+    selectionUsesLCBAvgR: true,
+    selectionAvoidsWeeklyWinnerCurse: true,
 
     validShortRiskShape: 'entry > 0 && tp < entry && sl > entry',
     shortRiskShape: 'tp < entry < sl',
@@ -2346,7 +2681,7 @@ export function createMicroStats({
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     observationDedupeRequired: true,
 
-    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR',
     bareWinrateRankingDisabled: true,
     rawWinrateRankingDisabled: true,
     rankingUsesBalancedScore: true,
@@ -2354,6 +2689,7 @@ export function createMicroStats({
     rankingUsesTotalR: true,
     rankingUsesAvgR: true,
     rankingUsesAvgCostR: true,
+    rankingUsesAvgRLCB95: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -2402,6 +2738,7 @@ function ensureStatsShape(stats = {}) {
   stats.counters.scannerReason ||= {};
   stats.counters.microMicroFamilyId ||= {};
   stats.counters.learningLayer ||= {};
+  stats.counters.currentFit ||= {};
 
   stats.examples = Array.isArray(stats.examples) ? stats.examples.filter(isShortRow) : [];
   stats.recentOutcomes = Array.isArray(stats.recentOutcomes)
@@ -2459,6 +2796,25 @@ function ensureStatsShape(stats = {}) {
     'realTotalR',
     'shadowTotalR',
 
+    'sumR',
+    'virtualSumR',
+    'realSumR',
+    'shadowSumR',
+
+    'sumSquaredR',
+    'virtualSumSquaredR',
+    'realSumSquaredR',
+    'shadowSumSquaredR',
+
+    'varianceR',
+    'sampleVarianceR',
+    'stdDevR',
+    'standardErrorAvgR',
+    'avgRLCB95',
+    'avgRLowerBound95',
+    'lcb95AvgR',
+    'avgRLCBZ',
+
     'totalPnlPct',
     'virtualTotalPnlPct',
     'realTotalPnlPct',
@@ -2468,6 +2824,16 @@ function ensureStatsShape(stats = {}) {
     'virtualTotalCostR',
     'realTotalCostR',
     'shadowTotalCostR',
+
+    'totalExecutionCostR',
+    'virtualTotalExecutionCostR',
+    'realTotalExecutionCostR',
+    'shadowTotalExecutionCostR',
+
+    'totalFundingCostR',
+    'virtualTotalFundingCostR',
+    'realTotalFundingCostR',
+    'shadowTotalFundingCostR',
 
     'grossWinR',
     'grossLossR',
@@ -2487,6 +2853,8 @@ function ensureStatsShape(stats = {}) {
 
     'avgPnlPct',
     'avgCostR',
+    'avgExecutionCostR',
+    'avgFundingCostR',
 
     'directSLCount',
     'nearTpCount',
@@ -2524,12 +2892,25 @@ function ensureStatsShape(stats = {}) {
     'gaveBackAfterOneRPct',
     'nearTpThenLossPct',
 
+    'eligibleMinCompleted',
+    'eligibleMinAvgRLCB',
+    'eligibleMaxDirectSLPct',
+    'eligibleMaxAvgCostR',
+    'eligibleMinProfitFactor',
+
     'minCompletedForActiveLearning',
     'microMicroMinCompletedForActiveLearning'
   ];
 
   for (const field of numericFields) {
-    stats[field] = safeNumber(stats[field], field === 'microMicroMinCompletedForActiveLearning' ? MIN_COMPLETED_MICRO_MICRO_ACTIVE : 0);
+    stats[field] = safeNumber(
+      stats[field],
+      field === 'microMicroMinCompletedForActiveLearning'
+        ? MIN_COMPLETED_MICRO_MICRO_ACTIVE
+        : field === 'avgRLCBZ'
+          ? DEFAULT_AVG_R_LCB_Z
+          : 0
+    );
   }
 
   stats.realCompleted = 0;
@@ -2539,8 +2920,19 @@ function ensureStatsShape(stats = {}) {
   stats.realTotalR = 0;
   stats.realTotalPnlPct = 0;
   stats.realTotalCostR = 0;
+  stats.realTotalExecutionCostR = 0;
+  stats.realTotalFundingCostR = 0;
   stats.realGrossWinR = 0;
   stats.realGrossLossR = 0;
+  stats.realSumR = 0;
+  stats.realSumSquaredR = 0;
+
+  stats.lcbModelVersion = LCB_MODEL_VERSION;
+  stats.avgRLCBDefinition = 'avgR - z * (stdDevR / sqrt(completed))';
+  stats.avgRLCBUsesNetR = true;
+  stats.avgRLCBSource = 'netR';
+  stats.selectionUsesLCBAvgR = true;
+  stats.selectionAvoidsWeeklyWinnerCurse = true;
 
   stats.currentFitSoftOnly = true;
   stats.currentFitBlocksLearning = false;
@@ -2603,6 +2995,7 @@ export function updateObservation(stats, row = {}) {
   const childId = rowChildTrueMicroId(stats) || rowChildTrueMicroId(row) || null;
   const microMicroId = rowMicroMicroId(stats) || rowMicroMicroId(row) || null;
   const learningLayer = rowLearningLayer(stats);
+  const fit = normalizeCurrentFit(row.currentFit ?? row.entryCurrentFit ?? row.marketFit ?? '');
 
   stats.seen = safeNumber(stats.seen, 0) + 1;
   stats.observations = safeNumber(stats.observations, 0) + 1;
@@ -2618,6 +3011,7 @@ export function updateObservation(stats, row = {}) {
   inc(stats.counters.scannerReason, row.scannerReason);
   inc(stats.counters.microMicroFamilyId, microMicroId || 'NO_MICRO_MICRO');
   inc(stats.counters.learningLayer, learningLayer);
+  inc(stats.counters.currentFit, fit);
 
   if (stats.examples.length < 20) {
     const parsed = parseShortTaxonomyMicroId(learningId);
@@ -2661,6 +3055,11 @@ export function updateObservation(stats, row = {}) {
       regime: row.regime || null,
       scannerReason: row.scannerReason || null,
 
+      currentFit: fit,
+      entryCurrentFit: row.entryCurrentFit ?? row.currentFit ?? null,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
       observationDedupeKey: dedupeKey || null,
       observationRecorded: true,
       observationDuplicate: false,
@@ -2695,8 +3094,6 @@ export function updateObservation(stats, row = {}) {
       slHitRule: 'SHORT: price >= sl',
       grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
       currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
       ts: row.createdAt || row.ts || now()
     });
@@ -2745,6 +3142,8 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   const exitR = outcomeExitR(row);
   const pnlPct = safeNumber(row.netPnlPct ?? row.pnlPct, 0);
   const costR = inferCostR(row, exitR);
+  const executionCostR = inferExecutionCostR(row, costR);
+  const fundingCostR = inferFundingCostR(row);
 
   const win = exitR > 0;
   const loss = exitR < 0;
@@ -2755,6 +3154,10 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     stats.shadowTotalR += exitR;
     stats.shadowTotalPnlPct += pnlPct;
     stats.shadowTotalCostR += costR;
+    stats.shadowTotalExecutionCostR += executionCostR;
+    stats.shadowTotalFundingCostR += fundingCostR;
+    stats.shadowSumR += exitR;
+    stats.shadowSumSquaredR += exitR * exitR;
 
     if (win) {
       stats.shadowWins += 1;
@@ -2772,6 +3175,10 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     stats.virtualTotalR += exitR;
     stats.virtualTotalPnlPct += pnlPct;
     stats.virtualTotalCostR += costR;
+    stats.virtualTotalExecutionCostR += executionCostR;
+    stats.virtualTotalFundingCostR += fundingCostR;
+    stats.virtualSumR += exitR;
+    stats.virtualSumSquaredR += exitR * exitR;
 
     if (win) {
       stats.virtualWins += 1;
@@ -2795,6 +3202,10 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   stats.totalR += exitR * weight;
   stats.totalPnlPct += pnlPct * weight;
   stats.totalCostR += costR * weight;
+  stats.totalExecutionCostR += executionCostR * weight;
+  stats.totalFundingCostR += fundingCostR * weight;
+  stats.sumR += exitR * weight;
+  stats.sumSquaredR += exitR * exitR * weight;
 
   if (win) stats.grossWinR += exitR * weight;
   if (loss) stats.grossLossR += Math.abs(exitR) * weight;
@@ -2817,6 +3228,7 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   const childId = parsed.childTrueMicroFamilyId || rowChildTrueMicroId(row) || stats.childTrueMicroFamilyId || null;
   const microMicroId = parsed.microMicroFamilyId || rowMicroMicroId(row) || stats.microMicroFamilyId || null;
   const learningLayer = parsed.learningLayer || rowLearningLayer(stats);
+  const fit = normalizeCurrentFit(row.entryCurrentFit ?? row.currentFit ?? row.marketFit ?? '');
 
   stats.recentOutcomes.push({
     source: src,
@@ -2882,6 +3294,8 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
 
     costR,
     avgCostR: costR,
+    executionCostR,
+    fundingCostR,
     costPct: safeNumber(row.costPct, 0),
     feePct: safeNumber(row.feePct, 0),
     slippagePct: safeNumber(row.slippagePct, 0),
@@ -2907,6 +3321,7 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     entryCurrentRegime: row.entryCurrentRegime || row.currentRegime || null,
     entryCurrentTrendSide: row.entryCurrentTrendSide || row.currentTrendSide || null,
     entryCurrentFit: row.entryCurrentFit ?? row.currentFit ?? null,
+    entryCurrentFitNormalized: fit,
     entryCurrentFitConfidence: firstFinite(row.entryCurrentFitConfidence, row.currentMarketFitConfidence),
     entryWeatherFitMatchedFamily: row.entryWeatherFitMatchedFamily ?? null,
 
@@ -2978,6 +3393,7 @@ export function bayesianWinrate(wins, completed) {
 function buildBalancedScore({
   fair,
   avgR,
+  avgRLCB95,
   totalR,
   sampleRel,
   profitFactor,
@@ -2987,14 +3403,18 @@ function buildBalancedScore({
   nearTpThenLossPct,
   gaveBackAfterOneRPct,
   avgCostR,
-  sampleFallbackPenalty
+  sampleFallbackPenalty,
+  eligibleBonus
 }) {
   const pfNorm = clamp(profitFactor, 0, 10) / 10;
 
   const totalRComponent = Math.log1p(positive(totalR)) * 12;
   const avgRComponent = Math.log1p(positive(avgR)) * 8;
+  const lcbComponent = positive(avgRLCB95) * 120;
 
   return (
+    eligibleBonus +
+    lcbComponent +
     fair * 100 +
     sampleRel * 25 +
     totalRComponent +
@@ -3012,6 +3432,7 @@ function buildBalancedScore({
 
 function buildAvgRScore({
   sampleAdjustedAvgRValue,
+  avgRLCB95,
   fair,
   totalR,
   sampleRel,
@@ -3022,12 +3443,16 @@ function buildAvgRScore({
   nearTpThenLossPct,
   gaveBackAfterOneRPct,
   avgCostR,
-  sampleFallbackPenalty
+  sampleFallbackPenalty,
+  eligibleBonus
 }) {
   const pfNorm = clamp(profitFactor, 0, 10) / 10;
   const totalRComponent = Math.log1p(positive(totalR)) * 8;
+  const lcbComponent = positive(avgRLCB95) * 140;
 
   return (
+    eligibleBonus +
+    lcbComponent +
     sampleAdjustedAvgRValue * 100 +
     fair * 35 +
     sampleRel * 25 +
@@ -3120,6 +3545,24 @@ export function refreshStats(stats) {
     recentCompleted: recent.completed
   });
 
+  let totalExecutionCostR = chooseTotal({
+    sourceValue: sourceTotals.totalExecutionCostR,
+    storedValue: stats.totalExecutionCostR,
+    recentValue: recent.totalExecutionCostR,
+    sourceCompleted: sourceCounts.completed,
+    storedCompleted: safeNumber(stats.completed, 0),
+    recentCompleted: recent.completed
+  });
+
+  let totalFundingCostR = chooseTotal({
+    sourceValue: sourceTotals.totalFundingCostR,
+    storedValue: stats.totalFundingCostR,
+    recentValue: recent.totalFundingCostR,
+    sourceCompleted: sourceCounts.completed,
+    storedCompleted: safeNumber(stats.completed, 0),
+    recentCompleted: recent.completed
+  });
+
   let costStatsInferredFromRecent = false;
 
   if (
@@ -3131,6 +3574,26 @@ export function refreshStats(stats) {
     const recentAvgCostR = recent.totalCostR / recent.completed;
     totalCostR = recentAvgCostR * weightedCompletedForR;
     costStatsInferredFromRecent = true;
+  }
+
+  if (
+    weightedCompletedForR > 0 &&
+    totalExecutionCostR <= 0 &&
+    recent.completed > 0 &&
+    recent.totalExecutionCostR > 0
+  ) {
+    const recentAvgExecutionCostR = recent.totalExecutionCostR / recent.completed;
+    totalExecutionCostR = recentAvgExecutionCostR * weightedCompletedForR;
+  }
+
+  if (
+    weightedCompletedForR > 0 &&
+    totalFundingCostR === 0 &&
+    recent.completed > 0 &&
+    recent.totalFundingCostR !== 0
+  ) {
+    const recentAvgFundingCostR = recent.totalFundingCostR / recent.completed;
+    totalFundingCostR = recentAvgFundingCostR * weightedCompletedForR;
   }
 
   const grossWinR = hasBuckets
@@ -3148,6 +3611,24 @@ export function refreshStats(stats) {
       recent.grossLossR,
       totalR < 0 && weightedWins <= 0 ? Math.abs(totalR) : 0
     );
+
+  const sumR = chooseTotal({
+    sourceValue: sourceTotals.sumR,
+    storedValue: stats.sumR,
+    recentValue: recent.sumR,
+    sourceCompleted: sourceCounts.completed,
+    storedCompleted: safeNumber(stats.completed, 0),
+    recentCompleted: recent.completed
+  });
+
+  const sumSquaredR = chooseTotal({
+    sourceValue: sourceTotals.sumSquaredR,
+    storedValue: stats.sumSquaredR,
+    recentValue: recent.sumSquaredR,
+    sourceCompleted: sourceCounts.completed,
+    storedCompleted: safeNumber(stats.completed, 0),
+    recentCompleted: recent.completed
+  });
 
   const winrateSample = safeNumber(actualCounts.completed, 0);
   const winrateWins = safeNumber(actualCounts.wins, 0);
@@ -3168,6 +3649,19 @@ export function refreshStats(stats) {
   const avgR = weightedCompletedForR > 0
     ? totalR / weightedCompletedForR
     : 0;
+
+  const varianceStats = varianceFromTotals({
+    sumR: sumR || totalR,
+    sumSquaredR,
+    completed: weightedCompletedForR
+  });
+
+  const avgRLCB95 = avgRLowerConfidenceBound({
+    avgR,
+    stdDevR: varianceStats.stdDevR,
+    completed: weightedCompletedForR,
+    z: avgRLCBZ()
+  });
 
   const avgPnlPct = weightedCompletedForR > 0
     ? totalPnlPct / weightedCompletedForR
@@ -3257,6 +3751,14 @@ export function refreshStats(stats) {
     ? totalCostR / weightedCompletedForR
     : 0;
 
+  const avgExecutionCostR = weightedCompletedForR > 0
+    ? totalExecutionCostR / weightedCompletedForR
+    : 0;
+
+  const avgFundingCostR = weightedCompletedForR > 0
+    ? totalFundingCostR / weightedCompletedForR
+    : 0;
+
   const sampleAdjustedAvgRValue = sampleAdjustedAvgR(avgR, reliability);
 
   const microMicroSampleTooSmall =
@@ -3265,9 +3767,23 @@ export function refreshStats(stats) {
 
   const sampleFallbackPenalty = microMicroSampleTooSmall ? 6 : 0;
 
+  const preEligible = eligibleGate({
+    ...stats,
+    completed: closedCompleted,
+    totalR,
+    avgR,
+    avgRLCB95,
+    directSLPct,
+    avgCostR,
+    profitFactor
+  });
+
+  const eligibleBonus = preEligible.eligible ? 25 : 0;
+
   const balancedScore = buildBalancedScore({
     fair,
     avgR,
+    avgRLCB95,
     totalR,
     sampleRel: reliability,
     profitFactor,
@@ -3277,11 +3793,13 @@ export function refreshStats(stats) {
     nearTpThenLossPct,
     gaveBackAfterOneRPct,
     avgCostR,
-    sampleFallbackPenalty
+    sampleFallbackPenalty,
+    eligibleBonus
   });
 
   const avgRScore = buildAvgRScore({
     sampleAdjustedAvgRValue,
+    avgRLCB95,
     fair,
     totalR,
     sampleRel: reliability,
@@ -3292,7 +3810,8 @@ export function refreshStats(stats) {
     nearTpThenLossPct,
     gaveBackAfterOneRPct,
     avgCostR,
-    sampleFallbackPenalty
+    sampleFallbackPenalty,
+    eligibleBonus
   });
 
   Object.assign(stats, {
@@ -3313,10 +3832,32 @@ export function refreshStats(stats) {
     totalR: round4(totalR),
     totalPnlPct: round4(totalPnlPct),
     totalCostR: round4(totalCostR),
+    totalExecutionCostR: round4(totalExecutionCostR),
+    totalFundingCostR: round4(totalFundingCostR),
+
+    sumR: round4(sumR || totalR),
+    sumSquaredR: round4(sumSquaredR),
+
+    varianceR: round6(varianceStats.varianceR),
+    sampleVarianceR: round6(varianceStats.sampleVarianceR),
+    stdDevR: round6(varianceStats.stdDevR),
+    standardErrorAvgR: round6(varianceStats.standardErrorAvgR),
+    avgRLCB95: round6(avgRLCB95),
+    avgRLowerBound95: round6(avgRLCB95),
+    lcb95AvgR: round6(avgRLCB95),
+    avgRLCBZ: round4(avgRLCBZ()),
 
     virtualTotalR: round4(stats.virtualTotalR),
     realTotalR: 0,
     shadowTotalR: round4(stats.shadowTotalR),
+
+    virtualSumR: round4(stats.virtualSumR),
+    realSumR: 0,
+    shadowSumR: round4(stats.shadowSumR),
+
+    virtualSumSquaredR: round4(stats.virtualSumSquaredR),
+    realSumSquaredR: 0,
+    shadowSumSquaredR: round4(stats.shadowSumSquaredR),
 
     virtualTotalPnlPct: round4(stats.virtualTotalPnlPct),
     realTotalPnlPct: 0,
@@ -3325,6 +3866,14 @@ export function refreshStats(stats) {
     virtualTotalCostR: round4(stats.virtualTotalCostR),
     realTotalCostR: 0,
     shadowTotalCostR: round4(stats.shadowTotalCostR),
+
+    virtualTotalExecutionCostR: round4(stats.virtualTotalExecutionCostR),
+    realTotalExecutionCostR: 0,
+    shadowTotalExecutionCostR: round4(stats.shadowTotalExecutionCostR),
+
+    virtualTotalFundingCostR: round4(stats.virtualTotalFundingCostR),
+    realTotalFundingCostR: 0,
+    shadowTotalFundingCostR: round4(stats.shadowTotalFundingCostR),
 
     virtualGrossWinR: round4(stats.virtualGrossWinR),
     virtualGrossLossR: round4(stats.virtualGrossLossR),
@@ -3379,8 +3928,23 @@ export function refreshStats(stats) {
     nearTpThenLossPct: round4(nearTpThenLossPct),
 
     avgCostR: round4(avgCostR),
+    avgExecutionCostR: round4(avgExecutionCostR),
+    avgFundingCostR: round4(avgFundingCostR),
     costStatsInferredFromRecent,
     directSLStatsInferredFromRecent,
+
+    tradingEligible: preEligible.eligible,
+    eligible: preEligible.eligible,
+    eligibleGatePassed: preEligible.eligible,
+    eligibleReason: preEligible.eligible ? 'ELIGIBLE_LCB_AVGR_POSITIVE' : preEligible.reasons[0] || 'NOT_ELIGIBLE',
+    eligibleReasons: preEligible.reasons,
+    eligibleChecks: preEligible.checks,
+    eligibleMinCompleted: preEligible.minCompleted,
+    eligibleMinAvgRLCB: preEligible.minAvgRLCB,
+    eligibleMaxDirectSLPct: preEligible.maxDirectSLPct,
+    eligibleMaxAvgCostR: preEligible.maxAvgCostR,
+    eligibleMinProfitFactor: preEligible.minProfitFactor,
+    eligibleGateVersion: preEligible.gateVersion,
 
     balancedScore: round4(balancedScore),
     dashboardBalancedScore: round4(balancedScore),
@@ -3472,13 +4036,20 @@ export function refreshStats(stats) {
     avgCostRShown: true,
     avgCostRSource: 'costR',
 
+    lcbModelVersion: LCB_MODEL_VERSION,
+    avgRLCBDefinition: 'avgR - z * (stdDevR / sqrt(completed))',
+    avgRLCBUsesNetR: true,
+    avgRLCBSource: 'netR',
+    selectionUsesLCBAvgR: true,
+    selectionAvoidsWeeklyWinnerCurse: true,
+
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
     microMicroMeasurementVersion: MICRO_MICRO_MEASUREMENT_VERSION,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     observationDedupeRequired: true,
     observationAlwaysCounted: false,
 
-    defaultRanking: 'dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR',
     bareWinrateRankingDisabled: true,
     rawWinrateRankingDisabled: true,
     rankingUsesBalancedScore: true,
@@ -3486,6 +4057,7 @@ export function refreshStats(stats) {
     rankingUsesTotalR: true,
     rankingUsesAvgR: true,
     rankingUsesAvgCostR: true,
+    rankingUsesAvgRLCB95: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -3585,8 +4157,19 @@ function sortById(a, b) {
   return String(a.microFamilyId || '').localeCompare(String(b.microFamilyId || ''));
 }
 
+function compareEligibility(a, b) {
+  return (
+    Number(b.tradingEligible === true || b.eligible === true) -
+      Number(a.tradingEligible === true || a.eligible === true) ||
+    safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
+    safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
+    safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0)
+  );
+}
+
 function compareWinrate(a, b) {
   return (
+    compareEligibility(a, b) ||
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.wilsonLowerBound, 0) - safeNumber(a.wilsonLowerBound, 0) ||
     safeNumber(b.bayesianWinrate, 0) - safeNumber(a.bayesianWinrate, 0) ||
@@ -3601,8 +4184,10 @@ function compareWinrate(a, b) {
 
 function compareAvgR(a, b) {
   return (
+    compareEligibility(a, b) ||
     safeNumber(b.avgRScore, 0) - safeNumber(a.avgRScore, 0) ||
     safeNumber(b.sampleAdjustedAvgR, 0) - safeNumber(a.sampleAdjustedAvgR, 0) ||
+    safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.sampleReliability, 0) - safeNumber(a.sampleReliability, 0) ||
     safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
@@ -3615,9 +4200,11 @@ function compareAvgR(a, b) {
 
 function compareTotalR(a, b) {
   return (
+    compareEligibility(a, b) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
       safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
+    safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
     safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
@@ -3628,9 +4215,11 @@ function compareTotalR(a, b) {
 
 function compareBalanced(a, b) {
   return (
+    compareEligibility(a, b) ||
     safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
       safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
     safeNumber(b.balancedScore, 0) - safeNumber(a.balancedScore, 0) ||
+    safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
@@ -3664,7 +4253,9 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
     if (safeMode === 'directSL') {
       return (
+        compareEligibility(a, b) ||
         safeNumber(a.directSLPct, 0) - safeNumber(b.directSLPct, 0) ||
+        safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
         safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
           safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
         safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
@@ -3678,10 +4269,12 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 
     if (safeMode === 'observed') {
       return (
+        compareEligibility(a, b) ||
         safeNumber(b.seen, 0) - safeNumber(a.seen, 0) ||
         safeNumber(b.observations, 0) - safeNumber(a.observations, 0) ||
         safeNumber(b.dashboardBalancedScore ?? b.balancedScore, 0) -
           safeNumber(a.dashboardBalancedScore ?? a.balancedScore, 0) ||
+        safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
         safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
         safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
         safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
@@ -3697,10 +4290,61 @@ export function rankMicros(micros = {}, mode = 'balanced') {
       );
     }
 
+    if (safeMode === 'eligible') {
+      return (
+        compareEligibility(a, b) ||
+        safeNumber(a.directSLPct, 0) - safeNumber(b.directSLPct, 0) ||
+        safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
+        sortById(a, b)
+      );
+    }
+
     return compareBalanced(a, b);
   });
 
   return sorted.map((row, index) => normalizeDashboardMicro(row, index + 1));
+}
+
+export function isEligibleTradingCandidate(row = {}, options = {}) {
+  return eligibleGate(row, options);
+}
+
+export function getWeeklyTradingCandidates(micros = {}, options = {}) {
+  const requireCurrentFitMatch = options.requireCurrentFitMatch !== false;
+
+  return Object.values(micros || {})
+    .filter(Boolean)
+    .filter(isRealAnalyzeMicroRow)
+    .map((row) => refreshStats(row))
+    .map((row) => {
+      const gate = eligibleGate(row, {
+        ...options,
+        requireCurrentFitMatch
+      });
+
+      return {
+        ...row,
+        tradingEligible: gate.eligible,
+        eligible: gate.eligible,
+        eligibleGatePassed: gate.eligible,
+        eligibleReason: gate.eligible ? 'ELIGIBLE_LCB_AVGR_CURRENT_FIT' : gate.reasons[0] || 'NOT_ELIGIBLE',
+        eligibleReasons: gate.reasons,
+        eligibleChecks: gate.checks,
+        currentFitMatched: gate.currentFitMatched,
+        eligibleGateVersion: gate.gateVersion
+      };
+    })
+    .filter((row) => row.tradingEligible === true)
+    .sort((a, b) => (
+      safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
+      safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
+      safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+      safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
+      safeNumber(a.directSLPct, 0) - safeNumber(b.directSLPct, 0) ||
+      safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
+      sortById(a, b)
+    ))
+    .map((row, index) => normalizeDashboardMicro(row, index + 1));
 }
 
 export function getLearningLayerIds(row = {}) {
