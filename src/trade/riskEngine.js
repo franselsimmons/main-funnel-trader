@@ -1,4 +1,18 @@
 // ================= FILE: src/trade/riskEngine.js =================
+//
+// SHORT-only risk engine.
+//
+// Doel:
+// - Geen LONG.
+// - Geen echte orders.
+// - Risk geometry blijft SHORT-valid: tp < entry < sl.
+// - Risk wordt cost-aware zodat te krappe stops geen hoge AvgCostR veroorzaken.
+// - RR-shadow grid wordt meegegeven zodat position/analyze later kan meten:
+//   1.0R / 1.25R / 1.5R / 1.75R / 2.0R.
+// - Micro-micro identity sluit aan op:
+//   MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}
+// - XR blijft execution metadata.
+// - Scanner buckets blijven metadata.
 
 import { CONFIG } from '../config.js';
 import {
@@ -27,11 +41,26 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+
+const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
+const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
+
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
+const MICRO_MICRO_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
+
+const MICRO_MICRO_SUFFIX = 'MM';
+const EXECUTION_MICRO_SUFFIX = 'XR';
 
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
+
+const SHORT_RISK_PLAN_VERSION = 'SHORT_COST_AWARE_RR_SHADOW_GRID_V1';
+const RR_SHADOW_GRID_VERSION = 'SHORT_RR_SHADOW_GRID_1_125_15_175_2_V1';
+const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V1';
+
+const DEFAULT_RR_VARIANTS = Object.freeze([1.0, 1.25, 1.5, 1.75, 2.0]);
 
 const SETUP_ORDER = Object.freeze([
   'BREAKOUT',
@@ -87,16 +116,87 @@ function now() {
 
 function tradeConfig() {
   return {
-    minRR: safeNumber(CONFIG.short?.trade?.minRR ?? CONFIG.trade?.shortMinRR ?? CONFIG.trade?.minRR, 0.5),
-    defaultRR: safeNumber(CONFIG.short?.trade?.defaultRR ?? CONFIG.trade?.shortDefaultRR ?? CONFIG.trade?.defaultRR, 1.5),
-    maxSpreadPct: safeNumber(CONFIG.short?.trade?.maxSpreadPct ?? CONFIG.trade?.shortMaxSpreadPct ?? CONFIG.trade?.maxSpreadPct, 0.015),
+    minRR: safeNumber(
+      CONFIG.short?.trade?.minRR ??
+        CONFIG.trade?.shortMinRR ??
+        CONFIG.trade?.minRR,
+      0.5
+    ),
 
-    minRiskPct: safeNumber(CONFIG.short?.trade?.minRiskPct ?? CONFIG.trade?.shortMinRiskPct ?? CONFIG.trade?.minRiskPct, 0.004),
-    maxRiskPct: safeNumber(CONFIG.short?.trade?.maxRiskPct ?? CONFIG.trade?.shortMaxRiskPct ?? CONFIG.trade?.maxRiskPct, 0.025),
-    fallbackRiskPct: safeNumber(CONFIG.short?.trade?.fallbackRiskPct ?? CONFIG.trade?.shortFallbackRiskPct ?? CONFIG.trade?.fallbackRiskPct, 0.005),
+    defaultRR: safeNumber(
+      CONFIG.short?.trade?.defaultRR ??
+        CONFIG.trade?.shortDefaultRR ??
+        CONFIG.trade?.defaultRR,
+      1.5
+    ),
 
-    atrRiskMult: safeNumber(CONFIG.short?.trade?.atrRiskMult ?? CONFIG.trade?.shortAtrRiskMult ?? CONFIG.trade?.atrRiskMult, 1.2),
-    spreadRiskMult: safeNumber(CONFIG.short?.trade?.spreadRiskMult ?? CONFIG.trade?.shortSpreadRiskMult ?? CONFIG.trade?.spreadRiskMult, 5),
+    maxSpreadPct: safeNumber(
+      CONFIG.short?.trade?.maxSpreadPct ??
+        CONFIG.trade?.shortMaxSpreadPct ??
+        CONFIG.trade?.maxSpreadPct,
+      0.015
+    ),
+
+    minRiskPct: safeNumber(
+      CONFIG.short?.trade?.minRiskPct ??
+        CONFIG.trade?.shortMinRiskPct ??
+        CONFIG.trade?.minRiskPct,
+      0.004
+    ),
+
+    maxRiskPct: safeNumber(
+      CONFIG.short?.trade?.maxRiskPct ??
+        CONFIG.trade?.shortMaxRiskPct ??
+        CONFIG.trade?.maxRiskPct,
+      0.025
+    ),
+
+    fallbackRiskPct: safeNumber(
+      CONFIG.short?.trade?.fallbackRiskPct ??
+        CONFIG.trade?.shortFallbackRiskPct ??
+        CONFIG.trade?.fallbackRiskPct,
+      0.005
+    ),
+
+    atrRiskMult: safeNumber(
+      CONFIG.short?.trade?.atrRiskMult ??
+        CONFIG.trade?.shortAtrRiskMult ??
+        CONFIG.trade?.atrRiskMult,
+      1.2
+    ),
+
+    spreadRiskMult: safeNumber(
+      CONFIG.short?.trade?.spreadRiskMult ??
+        CONFIG.trade?.shortSpreadRiskMult ??
+        CONFIG.trade?.spreadRiskMult,
+      5
+    ),
+
+    costAwareRiskEnabled:
+      CONFIG.short?.trade?.costAwareRiskEnabled ??
+      CONFIG.trade?.shortCostAwareRiskEnabled ??
+      CONFIG.trade?.costAwareRiskEnabled ??
+      true,
+
+    maxEstimatedCostR: safeNumber(
+      CONFIG.short?.trade?.maxEstimatedCostR ??
+        CONFIG.trade?.shortMaxEstimatedCostR ??
+        CONFIG.trade?.maxEstimatedCostR,
+      0.35
+    ),
+
+    hardMaxEstimatedCostR: safeNumber(
+      CONFIG.short?.trade?.hardMaxEstimatedCostR ??
+        CONFIG.trade?.shortHardMaxEstimatedCostR ??
+        CONFIG.trade?.hardMaxEstimatedCostR,
+      0.55
+    ),
+
+    rejectCostHeavyRisk:
+      CONFIG.short?.trade?.rejectCostHeavyRisk ??
+      CONFIG.trade?.shortRejectCostHeavyRisk ??
+      CONFIG.trade?.rejectCostHeavyRisk ??
+      false,
 
     positionTimeStopMin: safeNumber(
       CONFIG.short?.trade?.positionTimeStopMin ??
@@ -107,13 +207,44 @@ function tradeConfig() {
   };
 }
 
+function costConfig() {
+  return {
+    fallbackSpreadPct: safeNumber(
+      CONFIG.short?.cost?.fallbackSpreadPct ??
+        CONFIG.cost?.shortFallbackSpreadPct ??
+        CONFIG.cost?.fallbackSpreadPct,
+      0.0008
+    ),
+
+    roundTripFeePct: safeNumber(
+      CONFIG.short?.cost?.roundTripFeePct ??
+        CONFIG.cost?.shortRoundTripFeePct ??
+        CONFIG.cost?.roundTripFeePct ??
+        CONFIG.short?.cost?.feePct ??
+        CONFIG.cost?.feePct,
+      0.0012
+    ),
+
+    roundTripSlippagePct: safeNumber(
+      CONFIG.short?.cost?.roundTripSlippagePct ??
+        CONFIG.cost?.shortRoundTripSlippagePct ??
+        CONFIG.cost?.roundTripSlippagePct ??
+        CONFIG.short?.cost?.slippagePct ??
+        CONFIG.cost?.slippagePct,
+      0.0004
+    ),
+
+    spreadCostMult: safeNumber(
+      CONFIG.short?.cost?.spreadCostMult ??
+        CONFIG.cost?.shortSpreadCostMult ??
+        CONFIG.cost?.spreadCostMult,
+      1
+    )
+  };
+}
+
 function fallbackSpreadPct() {
-  return safeNumber(
-    CONFIG.short?.cost?.fallbackSpreadPct ??
-      CONFIG.cost?.shortFallbackSpreadPct ??
-      CONFIG.cost?.fallbackSpreadPct,
-    0.0008
-  );
+  return costConfig().fallbackSpreadPct;
 }
 
 function scoreInput(candidate = {}) {
@@ -150,7 +281,7 @@ function bool(value) {
 
   const text = String(value || '').toLowerCase().trim();
 
-  return ['true', '1', 'yes', 'y'].includes(text);
+  return ['true', '1', 'yes', 'y', 'on'].includes(text);
 }
 
 function upper(value, fallback = 'UNKNOWN') {
@@ -181,6 +312,11 @@ function cleanSideText(value = '') {
     .replaceAll('BLOCK_LONG', 'SHORT')
     .replaceAll('LONG_DISABLED', 'SHORT')
     .replaceAll('LONGDISABLED', 'SHORT')
+    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
+    .replaceAll('BLOCK_SHORT', 'LONG')
+    .replaceAll('SHORT_DISABLED', 'LONG')
+    .replaceAll('SHORTDISABLED', 'LONG')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT')
@@ -291,6 +427,10 @@ function normalizeTradeSideValue(value) {
   return 'UNKNOWN';
 }
 
+function isModernMicroMicroId(id = '') {
+  return /^MICRO_SHORT_.+_MM_[A-Z0-9]{6,24}$/u.test(upper(id, ''));
+}
+
 function isScannerFingerprintId(id = '') {
   const value = upper(id, '');
 
@@ -312,6 +452,8 @@ function isScannerFingerprintId(id = '') {
 function isExecutionFingerprintId(id = '') {
   const value = upper(id, '');
 
+  if (isModernMicroMicroId(value)) return false;
+
   return (
     value.includes('_XR_') ||
     value.includes('__XR__') ||
@@ -332,7 +474,8 @@ function validLearningId(id = '') {
 }
 
 function parseShortTaxonomyMicroId(id = '') {
-  const value = upper(id, '');
+  const rawId = String(id || '').trim();
+  const value = upper(rawId, '');
 
   if (!value.startsWith('MICRO_SHORT_')) {
     return {
@@ -340,11 +483,23 @@ function parseShortTaxonomyMicroId(id = '') {
       selectable: false,
       isParent: false,
       isChild: false,
-      rawId: String(id || '').trim()
+      isMicroMicro: false,
+      rawId
     };
   }
 
-  let body = value.slice('MICRO_SHORT_'.length);
+  let baseValue = value;
+  let microMicroHash = null;
+  let microMicroFamilyId = null;
+
+  const microMicroMatch = /^(MICRO_SHORT_.+)_MM_([A-Z0-9]{6,24})$/u.exec(value);
+
+  if (microMicroMatch) {
+    baseValue = microMicroMatch[1];
+    microMicroHash = microMicroMatch[2].slice(0, 10);
+  }
+
+  let body = baseValue.slice('MICRO_SHORT_'.length);
   let confirmationProfile = null;
 
   for (const profile of CONFIRMATION_PROFILE_ORDER) {
@@ -383,27 +538,123 @@ function parseShortTaxonomyMicroId(id = '') {
     Boolean(confirmationProfile) &&
     SHORT_CONFIRMATION_PROFILES.has(confirmationProfile);
 
+  if (validChild && microMicroHash) {
+    microMicroFamilyId = `${childId}_${MICRO_MICRO_SUFFIX}_${microMicroHash}`;
+  }
+
+  const isMicroMicro = Boolean(microMicroFamilyId);
+  const isChild = validChild && !isMicroMicro;
+  const isParent = validParent && !validChild && !isMicroMicro;
+
   return {
-    valid: validParent || validChild,
-    selectable: validChild,
-    isParent: validParent && !validChild,
-    isChild: validChild,
-    rawId: String(id || '').trim(),
+    valid: validParent || validChild || isMicroMicro,
+    selectable: isChild || isMicroMicro,
+    isParent,
+    isChild,
+    isMicroMicro,
+    rawId,
     setup,
     regime,
     confirmationProfile,
     parentTrueMicroFamilyId: validParent ? parentId : null,
-    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+    trueMicroFamilyId: isMicroMicro ? microMicroFamilyId : validChild ? childId : validParent ? parentId : null,
     childTrueMicroFamilyId: validChild ? childId : null,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    microMicroFamilyId,
+    trueMicroMicroFamilyId: microMicroFamilyId,
+    exactMicroMicroFamilyId: microMicroFamilyId,
+    microMicroHash,
+    trueMicroFamilySchema: isMicroMicro ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY
+    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+    learningGranularity: isMicroMicro ? MICRO_MICRO_LEARNING_GRANULARITY : LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+    selectionGranularity: isMicroMicro
+      ? 'EXACT_MICRO_MICRO'
+      : isChild
+        ? 'EXACT_75_CHILD_CONTEXT_ONLY'
+        : 'PARENT_15_CONTEXT_ONLY'
   };
 }
 
+function normalizeMicroMicroFamilyId(id = '', row = {}) {
+  const direct = String(id || '').trim().toUpperCase();
+
+  if (direct && validLearningId(direct)) {
+    const parsed = parseShortTaxonomyMicroId(direct);
+
+    if (parsed.isMicroMicro) return parsed.microMicroFamilyId;
+  }
+
+  const child = normalizeChildTrueMicroFamilyId(
+    row.childTrueMicroFamilyId ||
+      row.trueMicroFamilyId ||
+      row.microFamilyId ||
+      ''
+  );
+
+  const hash = String(
+    row.microMicroHash ||
+      row.executionFingerprintHash ||
+      row.executionHash ||
+      ''
+  )
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '')
+    .slice(0, 10);
+
+  if (child && hash.length >= 6) {
+    return `${child}_${MICRO_MICRO_SUFFIX}_${hash}`;
+  }
+
+  return '';
+}
+
+function normalizeChildTrueMicroFamilyId(id = '') {
+  const value = String(id || '').trim().toUpperCase();
+
+  if (!value || !validLearningId(value)) return '';
+
+  const parsed = parseShortTaxonomyMicroId(value);
+
+  if (parsed.isMicroMicro) return parsed.childTrueMicroFamilyId || '';
+  if (parsed.isChild) return parsed.childTrueMicroFamilyId || '';
+
+  return '';
+}
+
 function identityFromCandidate(row = {}) {
+  const rawMicroMicroId = String(
+    row.microMicroFamilyId ||
+      row.trueMicroMicroFamilyId ||
+      row.exactMicroMicroFamilyId ||
+      ''
+  ).trim().toUpperCase();
+
+  const parsedMicroMicro = parseShortTaxonomyMicroId(rawMicroMicroId);
+
+  if (parsedMicroMicro.isMicroMicro) {
+    return {
+      trueMicroFamilyId: parsedMicroMicro.microMicroFamilyId,
+      microFamilyId: parsedMicroMicro.microMicroFamilyId,
+      childTrueMicroFamilyId: parsedMicroMicro.childTrueMicroFamilyId,
+      parentTrueMicroFamilyId: parsedMicroMicro.parentTrueMicroFamilyId,
+      microMicroFamilyId: parsedMicroMicro.microMicroFamilyId,
+      trueMicroMicroFamilyId: parsedMicroMicro.microMicroFamilyId,
+      exactMicroMicroFamilyId: parsedMicroMicro.microMicroFamilyId,
+      microMicroHash: parsedMicroMicro.microMicroHash,
+      setupType: parsedMicroMicro.setup,
+      regimeBucket: parsedMicroMicro.regime,
+      confirmationProfile: parsedMicroMicro.confirmationProfile,
+      exact75Child: false,
+      parent15: false,
+      microMicro: true
+    };
+  }
+
   const rawId = String(
     row.childTrueMicroFamilyId ||
       row.trueMicroFamilyId ||
@@ -416,13 +667,19 @@ function identityFromCandidate(row = {}) {
   if (!rawId || !validLearningId(rawId)) {
     return {
       trueMicroFamilyId: null,
+      microFamilyId: null,
       childTrueMicroFamilyId: null,
       parentTrueMicroFamilyId: null,
+      microMicroFamilyId: null,
+      trueMicroMicroFamilyId: null,
+      exactMicroMicroFamilyId: null,
+      microMicroHash: null,
       setupType: null,
       regimeBucket: null,
       confirmationProfile: null,
       exact75Child: false,
-      parent15: false
+      parent15: false,
+      microMicro: false
     };
   }
 
@@ -431,25 +688,42 @@ function identityFromCandidate(row = {}) {
   if (!parsed.valid) {
     return {
       trueMicroFamilyId: rawId,
+      microFamilyId: rawId,
       childTrueMicroFamilyId: null,
       parentTrueMicroFamilyId: null,
+      microMicroFamilyId: null,
+      trueMicroMicroFamilyId: null,
+      exactMicroMicroFamilyId: null,
+      microMicroHash: null,
       setupType: null,
       regimeBucket: null,
       confirmationProfile: null,
       exact75Child: false,
-      parent15: false
+      parent15: false,
+      microMicro: false
     };
   }
 
+  const microMicroFamilyId = normalizeMicroMicroFamilyId('', {
+    ...row,
+    childTrueMicroFamilyId: parsed.childTrueMicroFamilyId
+  });
+
   return {
     trueMicroFamilyId: parsed.childTrueMicroFamilyId || parsed.trueMicroFamilyId,
+    microFamilyId: parsed.childTrueMicroFamilyId || parsed.trueMicroFamilyId,
     childTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
     parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
+    microMicroFamilyId: microMicroFamilyId || null,
+    trueMicroMicroFamilyId: microMicroFamilyId || null,
+    exactMicroMicroFamilyId: microMicroFamilyId || null,
+    microMicroHash: row.microMicroHash || row.executionFingerprintHash || null,
     setupType: parsed.setup,
     regimeBucket: parsed.regime,
     confirmationProfile: parsed.confirmationProfile,
-    exact75Child: parsed.selectable,
-    parent15: parsed.isParent
+    exact75Child: parsed.isChild,
+    parent15: parsed.isParent,
+    microMicro: false
   };
 }
 
@@ -467,6 +741,10 @@ function inferTradeSideFromIds(row = {}) {
     row.liveMicroFamilyId,
     row.realMicroFamilyId,
     row.executionMicroFamilyId,
+
+    row.microMicroFamilyId,
+    row.trueMicroMicroFamilyId,
+    row.exactMicroMicroFamilyId,
 
     row.parentTrueMicroFamilyId,
     row.coarseMicroFamilyId,
@@ -507,12 +785,14 @@ function inferTradeSideFromDefinition(row = {}) {
     row.microDefinition,
     row.macroDefinition,
     row.parentDefinition,
+    row.microMicroDefinition,
 
     ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
     ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
     ...(Array.isArray(row.macroDefinitionParts) ? row.macroDefinitionParts : []),
     ...(Array.isArray(row.parentDefinitionParts) ? row.parentDefinitionParts : []),
-    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : [])
+    ...(Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : []),
+    ...(Array.isArray(row.microMicroDefinitionParts) ? row.microMicroDefinitionParts : [])
   ]
     .map((value) => cleanSideText(value))
     .filter(Boolean)
@@ -690,9 +970,9 @@ function modeFlags(row = {}) {
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
 
-    executionFingerprintRole: 'METADATA_ONLY',
-    executionFingerprintsMetadataOnly: true,
-    executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    executionFingerprintsMetadataOnly: false,
+    executionFingerprintsUsedAsLearningFamily: true,
 
     scannerBucketsMetadataOnly: true,
     legacy25BucketsMetadataOnly: true,
@@ -700,7 +980,7 @@ function modeFlags(row = {}) {
 
     analyzeMicroFamiliesOnly: true,
     analyzeAssignsTrueMicroFamily: true,
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+    learningIdentitySource: 'ANALYZE_PARENT_MICRO_MICRO_LAYERED',
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
     hashesExcludedFromFamilyId: true,
@@ -710,11 +990,16 @@ function modeFlags(row = {}) {
     exactTrueMicroFamilyRequired: true,
     fixedTaxonomyPreferred: true,
 
-    trueMicroFamilyId: identity.exact75Child ? identity.childTrueMicroFamilyId : identity.trueMicroFamilyId,
-    microFamilyId: identity.exact75Child ? identity.childTrueMicroFamilyId : identity.trueMicroFamilyId,
-    childTrueMicroFamilyId: identity.childTrueMicroFamilyId,
-    parentTrueMicroFamilyId: identity.parentTrueMicroFamilyId,
-    coarseMicroFamilyId: identity.parentTrueMicroFamilyId,
+    trueMicroFamilyId: identity.trueMicroFamilyId || null,
+    microFamilyId: identity.microFamilyId || identity.trueMicroFamilyId || null,
+    childTrueMicroFamilyId: identity.childTrueMicroFamilyId || null,
+    parentTrueMicroFamilyId: identity.parentTrueMicroFamilyId || null,
+    coarseMicroFamilyId: identity.parentTrueMicroFamilyId || null,
+
+    microMicroFamilyId: identity.microMicroFamilyId || null,
+    trueMicroMicroFamilyId: identity.trueMicroMicroFamilyId || null,
+    exactMicroMicroFamilyId: identity.exactMicroMicroFamilyId || null,
+    microMicroHash: identity.microMicroHash || null,
 
     setupType: identity.setupType,
     regimeBucket: identity.regimeBucket,
@@ -722,21 +1007,34 @@ function modeFlags(row = {}) {
 
     exact75ChildTrueMicro: identity.exact75Child,
     parent15TrueMicroMetadataOnly: identity.parent15,
+    exactMicroMicro: identity.microMicro,
 
     exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    learningGranularity: LEARNING_GRANULARITY,
+    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+
+    learningGranularity: identity.microMicro
+      ? MICRO_MICRO_LEARNING_GRANULARITY
+      : LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
     parentLearningEnabled: true,
     childLearningEnabled: true,
-    selectionGranularity: 'EXACT_75_CHILD',
-    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
+    microMicroLearningEnabled: true,
+    selectionGranularity: identity.microMicro
+      ? 'EXACT_MICRO_MICRO'
+      : 'EXACT_75_CHILD_CONTEXT_ONLY',
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED_THEN_MICRO_75_UNTIL_MM_MIN_COMPLETED',
 
-    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
-    discordOnlyForExactTrueMicroMatch: true,
+    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ONLY',
+    discordOnlyForExactTrueMicroMatch: false,
+    discordOnlyForExactMicroMicroMatch: true,
+    discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -747,12 +1045,21 @@ function modeFlags(row = {}) {
     avgCostRShown: true,
 
     minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING,
+    minCompletedForMicroMicroActive: MIN_COMPLETED_MICRO_MICRO_ACTIVE,
     observingStatusRule: 'completed = 0',
     earlyOutcomesStatusRule: 'completed > 0 && completed < 20',
     activeLearningStatusRule: 'completed >= 20',
+    microMicroActiveLearningStatusRule: `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`,
 
-    defaultRanking: 'dashboardBalancedScore/balancedScore/fairWinrate',
+    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|profitFactor|directSLPct|avgCostR',
     noBareWinrateRanking: true,
+
+    selectionEngineVersion: SELECTION_ENGINE_VERSION,
+    selectionUsesLifetimeStats: true,
+    selectionUsesWeeklyWinnerOnly: false,
+    selectionUsesLCBAvgR: true,
+    selectionUsesCurrentFitHook: true,
+    selectionRequiresEligibleGate: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -771,6 +1078,9 @@ function modeFlags(row = {}) {
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
 
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
@@ -796,9 +1106,7 @@ function withTradeSide(candidate = {}, side = TARGET_TRADE_SIDE) {
 
   return {
     ...candidate,
-
     originalSide: candidate.side ?? candidate.tradeSide ?? null,
-
     ...modeFlags(candidate)
   };
 }
@@ -1212,6 +1520,95 @@ function fundingScore(alignment) {
   return 0;
 }
 
+function estimateTotalCostPct({
+  spreadPct
+} = {}) {
+  const cfg = costConfig();
+  const spread = Math.max(0, safeNumber(spreadPct, cfg.fallbackSpreadPct));
+
+  return Math.max(
+    0,
+    safeNumber(cfg.roundTripFeePct, 0) +
+      safeNumber(cfg.roundTripSlippagePct, 0) +
+      spread * safeNumber(cfg.spreadCostMult, 1)
+  );
+}
+
+function estimateCostR({
+  spreadPct,
+  riskPct
+} = {}) {
+  const risk = safeNumber(riskPct, 0);
+
+  if (risk <= 0) return 999;
+
+  return estimateTotalCostPct({ spreadPct }) / risk;
+}
+
+function normalizeRR(value) {
+  const rr = safeNumber(value, NaN);
+
+  if (!Number.isFinite(rr)) return null;
+  if (rr <= 0) return null;
+
+  return Number(rr.toFixed(4));
+}
+
+function normalizeRRVariants(primaryRR) {
+  const cfg = tradeConfig();
+
+  const configured =
+    CONFIG.short?.trade?.rrVariants ??
+    CONFIG.trade?.shortRRVariants ??
+    CONFIG.trade?.rrVariants ??
+    DEFAULT_RR_VARIANTS;
+
+  const raw = Array.isArray(configured) ? configured : DEFAULT_RR_VARIANTS;
+
+  return [...new Set([
+    ...raw,
+    primaryRR
+  ]
+    .map(normalizeRR)
+    .filter((rr) => rr !== null)
+    .filter((rr) => rr >= cfg.minRR)
+    .filter((rr) => rr <= 5)
+    .map((rr) => Number(rr.toFixed(4))))]
+    .sort((a, b) => a - b);
+}
+
+function buildRRVariantTargets({
+  entry,
+  riskPct,
+  variants
+} = {}) {
+  const e = safeNumber(entry, 0);
+  const risk = safeNumber(riskPct, 0);
+
+  if (e <= 0 || risk <= 0) return [];
+
+  const sl = roundPrice(e * (1 + risk));
+
+  return variants.map((rr) => {
+    const rewardPct = risk * rr;
+    const tp = roundPrice(e * (1 - rewardPct));
+
+    return {
+      rr,
+      label: `RR_${String(rr).replace('.', '_')}`,
+      entry: roundPrice(e),
+      sl,
+      tp,
+      riskPct: round6(risk),
+      rewardPct: round6(rewardPct),
+      validShortRiskShape: tp < e && e < sl,
+      tpHitRule: 'SHORT: price <= tp',
+      slHitRule: 'SHORT: price >= sl',
+      grossRFormula: '(entry - exitPrice) / (initialSl - entry)'
+    };
+  });
+}
+
 function buildMicroSignalParts({
   tradeSide,
   rsiZone,
@@ -1231,6 +1628,7 @@ function buildMicroSignalParts({
   fundingGroup,
   fundingAlign,
   riskGroup,
+  costGroup,
   entryQuality,
   fakeBreakout
 } = {}) {
@@ -1238,8 +1636,10 @@ function buildMicroSignalParts({
     `schema=${TRUE_MICRO_SCHEMA}`,
     `parentSchema=${PARENT_TRUE_MICRO_SCHEMA}`,
     `childSchema=${CHILD_TRUE_MICRO_SCHEMA}`,
+    `microMicroSchema=${MICRO_MICRO_SCHEMA}`,
     `granularity=${LEARNING_GRANULARITY}`,
     `parentGranularity=${PARENT_LEARNING_GRANULARITY}`,
+    `microMicroGranularity=${MICRO_MICRO_LEARNING_GRANULARITY}`,
 
     `tradeSide=${tradeSide}`,
     `side=${TARGET_DASHBOARD_SIDE}`,
@@ -1271,12 +1671,18 @@ function buildMicroSignalParts({
     `fundingAlignment=${fundingAlign}`,
 
     `riskBucket=${riskGroup}`,
+    `costBucket=${costGroup}`,
     `entryQuality=${entryQuality}`,
     `fakeBreakout=${Boolean(fakeBreakout)}`,
 
+    `riskPlanVersion=${SHORT_RISK_PLAN_VERSION}`,
+    `rrShadowGridVersion=${RR_SHADOW_GRID_VERSION}`,
+    `selectionEngine=${SELECTION_ENGINE_VERSION}`,
+
     'scannerFingerprintRole=METADATA_ONLY',
-    'executionFingerprintRole=METADATA_ONLY',
-    'learningIdentitySource=ANALYZE_TRUE_MICRO_FAMILY',
+    'executionFingerprintRole=MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    'executionFingerprintsUsedAsLearningFamily=true',
+    'learningIdentitySource=ANALYZE_PARENT_MICRO_MICRO_LAYERED',
     'symbolExcludedFromFamilyId=true',
     'coinNameExcludedFromFamilyId=true',
     'hashesExcludedFromFamilyId=true',
@@ -1284,6 +1690,16 @@ function buildMicroSignalParts({
     'currentFitDefinition=SHORT_MIRRORED_CURRENT_FIT',
     'riskGeometry=SHORT:tp<entry<sl'
   ];
+}
+
+function costBucketFromEstimatedCostR(value) {
+  const n = safeNumber(value, 999);
+
+  if (n < 0.15) return 'COST_R_LOW';
+  if (n < 0.35) return 'COST_R_MID';
+  if (n < 0.55) return 'COST_R_HIGH';
+
+  return 'COST_R_EXTREME';
 }
 
 export function calculateRR({
@@ -1343,6 +1759,15 @@ export function isValidRiskGeometry(risk, side = TARGET_TRADE_SIDE) {
   if (riskPct <= 0) return false;
   if (riskPct > cfg.maxRiskPct * 1.05) return false;
 
+  const estimated = safeNumber(risk.estimatedCostR, 0);
+
+  if (
+    cfg.rejectCostHeavyRisk === true &&
+    estimated > cfg.hardMaxEstimatedCostR
+  ) {
+    return false;
+  }
+
   return true;
 }
 
@@ -1374,10 +1799,18 @@ export function buildRiskGeometry({
   const atrPct = safeNumber(calculateAtrPct(candles15m, 14), 0);
   const spreadPct = safeNumber(ob?.spreadPct, fallbackSpreadPct());
 
+  if (spreadPct > cfg.maxSpreadPct) return null;
+
+  const estimatedCostPct = estimateTotalCostPct({ spreadPct });
+  const costAwareMinRiskPct = cfg.costAwareRiskEnabled
+    ? estimatedCostPct / Math.max(0.05, cfg.maxEstimatedCostR)
+    : 0;
+
   const rawRiskPct = Math.max(
     cfg.fallbackRiskPct,
     atrPct * cfg.atrRiskMult,
-    spreadPct * cfg.spreadRiskMult
+    spreadPct * cfg.spreadRiskMult,
+    costAwareMinRiskPct
   );
 
   const riskPct = clamp(
@@ -1385,6 +1818,18 @@ export function buildRiskGeometry({
     cfg.minRiskPct,
     cfg.maxRiskPct
   );
+
+  const estimatedCostR = estimateCostR({
+    spreadPct,
+    riskPct
+  });
+
+  if (
+    cfg.rejectCostHeavyRisk === true &&
+    estimatedCostR > cfg.hardMaxEstimatedCostR
+  ) {
+    return null;
+  }
 
   const effectiveRR = Math.max(
     cfg.minRR,
@@ -1407,12 +1852,31 @@ export function buildRiskGeometry({
     side: TARGET_TRADE_SIDE
   });
 
+  const rrVariants = normalizeRRVariants(rr || effectiveRR);
+  const rrVariantTargets = buildRRVariantTargets({
+    entry: roundedEntry,
+    riskPct,
+    variants: rrVariants
+  });
+
   const rowForFlags = {
     ...(candidate || {}),
     entry: roundedEntry,
     sl: roundedSl,
-    tp: roundedTp
+    tp: roundedTp,
+    rr,
+    riskPct,
+    rewardPct,
+    estimatedCostR,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION
   };
+
+  const costSafetyState =
+    estimatedCostR <= cfg.maxEstimatedCostR
+      ? 'OK'
+      : estimatedCostR <= cfg.hardMaxEstimatedCostR
+        ? 'WARNING'
+        : 'DANGER';
 
   const risk = {
     ...modeFlags(rowForFlags),
@@ -1423,18 +1887,36 @@ export function buildRiskGeometry({
 
     rr: round4(rr),
 
-    slSource: 'SHORT_ATR_SPREAD_FALLBACK',
+    slSource: 'SHORT_ATR_SPREAD_COST_AWARE',
     tpSource: 'SHORT_DEFAULT_RR_TARGET',
-    riskRewardSource: 'SHORT_ATR_SPREAD_DEFAULT_RR',
+    riskRewardSource: 'SHORT_ATR_SPREAD_COST_AWARE_DEFAULT_RR',
 
     atrPct: round6(atrPct),
     spreadPct: round6(spreadPct),
     riskPct: round6(riskPct),
     rewardPct: round6(rewardPct),
 
+    estimatedCostPct: round6(estimatedCostPct),
+    estimatedCostR: round6(estimatedCostR),
+    estimatedAvgCostR: round6(estimatedCostR),
+    costAwareRiskEnabled: Boolean(cfg.costAwareRiskEnabled),
+    costAwareMinRiskPct: round6(costAwareMinRiskPct),
+    maxEstimatedCostR: round6(cfg.maxEstimatedCostR),
+    hardMaxEstimatedCostR: round6(cfg.hardMaxEstimatedCostR),
+    costSafetyState,
+    costBucket: costBucketFromEstimatedCostR(estimatedCostR),
+
     atrBucket: volatilityBucket(atrPct),
     riskBucket: riskPctBucket(riskPct),
     spreadBucket: spreadBucket(spreadPct),
+
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    rrVariants,
+    rrVariantTargets,
+    rrVariantCount: rrVariantTargets.length,
+    rrPrimary: round4(rr),
+    rrPrimaryLabel: `RR_${String(round4(rr)).replace('.', '_')}`,
 
     positionTimeStopMin: cfg.positionTimeStopMin,
 
@@ -1451,10 +1933,13 @@ export function buildRiskGeometry({
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     riskEngineAssignedTrueMicroFamily: false,
     analyzeAssignsTrueMicroFamily: true,
     scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true
+    legacy25BucketsMetadataOnly: true,
+    executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    executionFingerprintsUsedAsLearningFamily: true
   };
 
   return isValidRiskGeometry(risk, TARGET_TRADE_SIDE)
@@ -1564,6 +2049,15 @@ export function buildLiveMetrics({
 
   const riskGroup = riskPctBucket(risk?.riskPct);
   const obImbalanceGroup = obImbalanceBucket(imbalance);
+  const estimatedCostR = safeNumber(
+    risk.estimatedCostR ??
+      estimateCostR({
+        spreadPct,
+        riskPct: risk.riskPct
+      }),
+    0
+  );
+  const costGroup = costBucketFromEstimatedCostR(estimatedCostR);
 
   const baseScore = scoreInput(sideCandidate);
 
@@ -1582,6 +2076,7 @@ export function buildLiveMetrics({
   confluence += Math.abs(rsiSlope) > 2 ? 3 : 0;
   confluence += rsiAlign === 'RSI_WITH' ? 4 : 0;
   confluence += rsiAlign === 'RSI_AGAINST' ? -6 : 0;
+  confluence += estimatedCostR <= 0.2 ? 4 : estimatedCostR >= 0.55 ? -10 : 0;
 
   confluence = Math.round(clamp(confluence, 0, 100));
 
@@ -1604,6 +2099,7 @@ export function buildLiveMetrics({
   sniperScore += entryQualityScore(flags);
   sniperScore += fundingScore(fundingAlign);
   sniperScore += flags.fakeBreakoutRisk ? -10 : 0;
+  sniperScore += estimatedCostR <= 0.2 ? 4 : estimatedCostR >= 0.55 ? -10 : 0;
 
   sniperScore = Math.round(clamp(sniperScore, 0, 100));
 
@@ -1626,6 +2122,7 @@ export function buildLiveMetrics({
     fundingGroup,
     fundingAlign,
     riskGroup,
+    costGroup,
     entryQuality: flags.entryQuality,
     fakeBreakout: flags.fakeBreakout
   });
@@ -1638,6 +2135,12 @@ export function buildLiveMetrics({
     sniperScore,
 
     rr: safeNumber(risk?.rr, 0),
+    rrPrimary: safeNumber(risk?.rrPrimary ?? risk?.rr, 0),
+    rrVariants: Array.isArray(risk?.rrVariants) ? risk.rrVariants : DEFAULT_RR_VARIANTS,
+    rrVariantTargets: Array.isArray(risk?.rrVariantTargets) ? risk.rrVariantTargets : [],
+    rrVariantCount: safeNumber(risk?.rrVariantCount, Array.isArray(risk?.rrVariantTargets) ? risk.rrVariantTargets.length : 0),
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
 
     rsi: round2(rsi),
     rsiHTF: round2(rsiHTF),
@@ -1691,6 +2194,14 @@ export function buildLiveMetrics({
     riskBucket: riskGroup,
     rewardPct: risk.rewardPct,
 
+    estimatedCostPct: safeNumber(risk.estimatedCostPct, 0),
+    estimatedCostR,
+    estimatedAvgCostR: estimatedCostR,
+    costAwareRiskEnabled: Boolean(risk.costAwareRiskEnabled),
+    costAwareMinRiskPct: safeNumber(risk.costAwareMinRiskPct, 0),
+    costSafetyState: risk.costSafetyState || 'UNKNOWN',
+    costBucket: costGroup,
+
     slSource: risk.slSource,
     tpSource: risk.tpSource,
     riskRewardSource: risk.riskRewardSource,
@@ -1714,8 +2225,13 @@ export function buildLiveMetrics({
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     riskEngineAssignedTrueMicroFamily: false,
     analyzeAssignsTrueMicroFamily: true,
+
+    executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    executionFingerprintsMetadataOnly: false,
+    executionFingerprintsUsedAsLearningFamily: true,
 
     positionTimeStopMin: tradeConfig().positionTimeStopMin,
 
@@ -1794,7 +2310,11 @@ export function buildRiskAndLiveMetricsForBothSides({
 
     validShortRiskShape: true,
     shortRiskRule: 'tp < entry < sl',
-    riskValidForAnalyzeTrueMicroAssignment: true
+    riskValidForAnalyzeTrueMicroAssignment: true,
+
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION
   };
 
   return [out];
