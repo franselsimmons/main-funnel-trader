@@ -9,6 +9,15 @@
 // - wins/losses/flats worden bepaald op netR.
 // - Explicit LONG/BULL/BUY input wordt geweigerd en produceert geen learnable outcome.
 //
+// Fase-0 fix:
+// - Cost model is auditbaar: grossR - costR = netR wordt expliciet gecontroleerd.
+// - Measured spread wordt niet meer automatisch omhoog gefloord naar fallbackSpreadPct.
+//   Fallback spread wordt alleen gebruikt wanneer spread ontbreekt/ongeldig is.
+// - Funding zit NIET standaard in costR. Alleen als includeFunding/fundingEnabled expliciet aan staat.
+// - Execution cost, funding cost en total cost worden apart zichtbaar gemaakt.
+// - costR blijft de netto/signed totale cost in R zodat de vergelijking exact blijft:
+//   netR = grossR - costR.
+//
 // Architectuur:
 // - Learning blijft breed.
 // - Selection wordt later adaptief.
@@ -33,10 +42,14 @@ const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const COST_MODEL_VERSION = 'SHORT_TAKER_NET_COST_MEASUREMENT_FIX_V4';
+const COST_MODEL_VERSION = 'SHORT_TAKER_NET_COST_AUDIT_V5';
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const COST_AUDIT_VERSION = 'SHORT_COST_AUDIT_GROSS_MINUS_COST_EQUALS_NET_V1';
 
 const DEFAULT_SOURCE = 'VIRTUAL';
+const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000;
+const DEFAULT_MIN_HEALTHY_RISK_PCT = 0.01;
+const DEFAULT_HIGH_COST_R_WARNING = 0.25;
 
 const SHORT_TOKENS = new Set([
   'SHORT',
@@ -105,12 +118,64 @@ function costConfig() {
           CONFIG.cost?.maxSpreadPct,
         0.05
       )
+    ),
+
+    // Belangrijk: true betekent fallback alleen bij ontbrekende spread.
+    // Oude gedrag was effectief: appliedSpread = max(measuredSpread, fallbackSpreadPct).
+    // Dat maakte costR mechanisch te streng bij liquid markets.
+    fallbackSpreadOnlyWhenMissing:
+      CONFIG.short?.cost?.fallbackSpreadOnlyWhenMissing !== false &&
+      CONFIG.cost?.fallbackSpreadOnlyWhenMissing !== false,
+
+    includeFundingByDefault:
+      CONFIG.short?.cost?.includeFundingByDefault === true ||
+      CONFIG.cost?.includeFundingByDefault === true ||
+      CONFIG.short?.cost?.fundingEnabled === true ||
+      CONFIG.cost?.fundingEnabled === true,
+
+    fundingPctPer8h: safeNumber(
+      CONFIG.short?.cost?.fundingPctPer8h ??
+        CONFIG.short?.cost?.fundingRatePctPer8h ??
+        CONFIG.cost?.fundingPctPer8h ??
+        CONFIG.cost?.fundingRatePctPer8h,
+      0
+    ),
+
+    minHealthyRiskPct: Math.max(
+      0,
+      safeNumber(
+        CONFIG.short?.cost?.minHealthyRiskPct ??
+          CONFIG.cost?.minHealthyRiskPct,
+        DEFAULT_MIN_HEALTHY_RISK_PCT
+      )
+    ),
+
+    highCostRWarning: Math.max(
+      0,
+      safeNumber(
+        CONFIG.short?.cost?.highCostRWarning ??
+          CONFIG.cost?.highCostRWarning,
+        DEFAULT_HIGH_COST_R_WARNING
+      )
     )
   };
 }
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function finiteNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function round6(value) {
+  return Number(safeNumber(value, 0).toFixed(6));
+}
+
+function round10(value) {
+  return Number(safeNumber(value, 0).toFixed(10));
 }
 
 function cleanSideText(value = '') {
@@ -270,15 +335,84 @@ function clampSpread(spreadPct) {
   return Math.min(spread, cfg.maxSpreadPct);
 }
 
-function spreadForCost(spreadPct) {
+function spreadCostDetails(spreadPct, leg = 'unknown') {
   const cfg = costConfig();
-  const spread = clampSpread(spreadPct);
+  const raw = finiteNumber(spreadPct, null);
+  const missing = raw === null || raw < 0;
 
-  return Math.max(spread, cfg.fallbackSpreadPct);
+  let appliedSpreadPct;
+  let source;
+  let fallbackUsed;
+  let clampedByMax = false;
+
+  if (missing) {
+    appliedSpreadPct = cfg.fallbackSpreadPct;
+    source = 'FALLBACK_SPREAD_MISSING_OR_INVALID';
+    fallbackUsed = true;
+  } else {
+    const clamped = clampSpread(raw);
+    clampedByMax = cfg.maxSpreadPct > 0 && raw > cfg.maxSpreadPct;
+
+    if (cfg.fallbackSpreadOnlyWhenMissing) {
+      appliedSpreadPct = clamped;
+      source = clampedByMax
+        ? 'MEASURED_SPREAD_CLAMPED_TO_MAX'
+        : 'MEASURED_SPREAD';
+      fallbackUsed = false;
+    } else {
+      appliedSpreadPct = Math.max(clamped, cfg.fallbackSpreadPct);
+      source = appliedSpreadPct > clamped
+        ? 'FALLBACK_SPREAD_FLOOR_APPLIED'
+        : clampedByMax
+          ? 'MEASURED_SPREAD_CLAMPED_TO_MAX'
+          : 'MEASURED_SPREAD';
+      fallbackUsed = appliedSpreadPct > clamped;
+    }
+  }
+
+  return {
+    leg,
+    inputSpreadPct: missing ? null : round10(raw),
+    appliedSpreadPct: round10(appliedSpreadPct),
+    fallbackSpreadPct: round10(cfg.fallbackSpreadPct),
+    maxSpreadPct: round10(cfg.maxSpreadPct),
+    spreadSource: source,
+    spreadFallbackUsed: fallbackUsed,
+    spreadClampedByMax: clampedByMax,
+    fallbackSpreadOnlyWhenMissing: Boolean(cfg.fallbackSpreadOnlyWhenMissing)
+  };
 }
 
-function round6(value) {
-  return Number(safeNumber(value, 0).toFixed(6));
+function spreadForCost(spreadPct) {
+  return spreadCostDetails(spreadPct).appliedSpreadPct;
+}
+
+function buildSpreadCostMeta(entrySpreadPct, exitSpreadPct) {
+  const entry = spreadCostDetails(entrySpreadPct, 'entry');
+  const exit = spreadCostDetails(exitSpreadPct, 'exit');
+
+  return {
+    entrySpreadInputPct: entry.inputSpreadPct,
+    exitSpreadInputPct: exit.inputSpreadPct,
+
+    entrySpreadPct: entry.appliedSpreadPct,
+    exitSpreadPct: exit.appliedSpreadPct,
+
+    entrySpreadSource: entry.spreadSource,
+    exitSpreadSource: exit.spreadSource,
+
+    entrySpreadFallbackUsed: entry.spreadFallbackUsed,
+    exitSpreadFallbackUsed: exit.spreadFallbackUsed,
+    spreadFallbackUsed: Boolean(entry.spreadFallbackUsed || exit.spreadFallbackUsed),
+
+    entrySpreadClampedByMax: entry.spreadClampedByMax,
+    exitSpreadClampedByMax: exit.spreadClampedByMax,
+    spreadClampedByMax: Boolean(entry.spreadClampedByMax || exit.spreadClampedByMax),
+
+    fallbackSpreadPct: entry.fallbackSpreadPct,
+    maxSpreadPct: entry.maxSpreadPct,
+    fallbackSpreadOnlyWhenMissing: entry.fallbackSpreadOnlyWhenMissing
+  };
 }
 
 function validShortRiskShape({ entry, sl, tp } = {}) {
@@ -343,6 +477,209 @@ function isNegativeNetR(value) {
   return safeNumber(value, 0) < 0;
 }
 
+function fundingCostDetails({
+  includeFunding = null,
+  fundingCostPct = null,
+  fundingPctPer8h = null,
+  fundingRatePct = null,
+  fundingRatePctPer8h = null,
+  holdMs = null,
+  ageMs = null,
+  positionAgeMs = null,
+  source = DEFAULT_SOURCE
+} = {}) {
+  const cfg = costConfig();
+
+  const explicitlyEnabled = includeFunding === true;
+  const enabled = explicitlyEnabled || cfg.includeFundingByDefault === true;
+
+  if (!enabled) {
+    return {
+      fundingIncluded: false,
+      fundingApplied: false,
+      fundingSource: 'FUNDING_DISABLED_BY_DEFAULT',
+      fundingCostRatio: 0,
+      fundingCostPct: 0,
+      fundingCostR: 0,
+      fundingBenefitRatio: 0,
+      fundingChargeRatio: 0,
+      fundingIntervalMs: FUNDING_INTERVAL_MS,
+      fundingWindows: 0,
+      fundingRatePctPer8h: 0,
+      fundingNote: 'Funding is excluded unless includeFunding=true or CONFIG.short.cost.fundingEnabled/includeFundingByDefault=true.',
+      source: normalizeSource(source)
+    };
+  }
+
+  const explicitFundingCost = finiteNumber(fundingCostPct, null);
+
+  if (explicitFundingCost !== null) {
+    return {
+      fundingIncluded: true,
+      fundingApplied: true,
+      fundingSource: 'EXPLICIT_SIGNED_FUNDING_COST_PCT',
+      fundingCostRatio: round10(explicitFundingCost),
+      fundingCostPct: round6(explicitFundingCost * 100),
+      fundingCostR: 0,
+      fundingBenefitRatio: round10(Math.max(0, -explicitFundingCost)),
+      fundingChargeRatio: round10(Math.max(0, explicitFundingCost)),
+      fundingIntervalMs: FUNDING_INTERVAL_MS,
+      fundingWindows: null,
+      fundingRatePctPer8h: null,
+      fundingNote: 'Positive fundingCostPct is a cost. Negative fundingCostPct is a benefit.',
+      source: normalizeSource(source)
+    };
+  }
+
+  const rate = safeNumber(
+    fundingPctPer8h ??
+      fundingRatePctPer8h ??
+      fundingRatePct ??
+      cfg.fundingPctPer8h,
+    0
+  );
+
+  const resolvedHoldMs = Math.max(
+    0,
+    safeNumber(holdMs ?? ageMs ?? positionAgeMs, 0)
+  );
+
+  if (resolvedHoldMs <= 0 || rate === 0) {
+    return {
+      fundingIncluded: true,
+      fundingApplied: false,
+      fundingSource: resolvedHoldMs <= 0
+        ? 'NO_HOLD_MS_FOR_FUNDING_ESTIMATE'
+        : 'ZERO_FUNDING_RATE',
+      fundingCostRatio: 0,
+      fundingCostPct: 0,
+      fundingCostR: 0,
+      fundingBenefitRatio: 0,
+      fundingChargeRatio: 0,
+      fundingIntervalMs: FUNDING_INTERVAL_MS,
+      fundingWindows: resolvedHoldMs / FUNDING_INTERVAL_MS,
+      fundingRatePctPer8h: round10(rate),
+      fundingNote: 'Funding enabled but no charge/benefit could be applied.',
+      source: normalizeSource(source)
+    };
+  }
+
+  const windows = resolvedHoldMs / FUNDING_INTERVAL_MS;
+
+  // Bitget perpetual convention in simplified form:
+  // Positive funding rate: longs pay shorts -> SHORT receives -> negative cost.
+  // Negative funding rate: shorts pay longs -> SHORT pays -> positive cost.
+  const signedFundingCostRatio = -rate * windows;
+
+  return {
+    fundingIncluded: true,
+    fundingApplied: true,
+    fundingSource: 'SIGNED_FUNDING_RATE_PER_8H_TIMES_HOLD_TIME_SHORT_POLARITY',
+    fundingCostRatio: round10(signedFundingCostRatio),
+    fundingCostPct: round6(signedFundingCostRatio * 100),
+    fundingCostR: 0,
+    fundingBenefitRatio: round10(Math.max(0, -signedFundingCostRatio)),
+    fundingChargeRatio: round10(Math.max(0, signedFundingCostRatio)),
+    fundingIntervalMs: FUNDING_INTERVAL_MS,
+    fundingWindows: round6(windows),
+    fundingRatePctPer8h: round10(rate),
+    fundingNote: 'For SHORT: positive funding rate is benefit, negative funding rate is cost.',
+    source: normalizeSource(source)
+  };
+}
+
+function executionRoundTripCostDetails(entrySpreadPct, exitSpreadPct) {
+  const cfg = costConfig();
+  const spreadMeta = buildSpreadCostMeta(entrySpreadPct, exitSpreadPct);
+
+  const feeRoundTrip = cfg.takerFeePct * 2;
+
+  const entryHalfSpreadRatio = spreadMeta.entrySpreadPct / 2;
+  const exitHalfSpreadRatio = spreadMeta.exitSpreadPct / 2;
+
+  const entryMarketImpactRatio = cfg.marketImpactPct;
+  const exitMarketImpactRatio = cfg.marketImpactPct;
+
+  const entrySlip = entryHalfSpreadRatio + entryMarketImpactRatio;
+  const exitSlip = exitHalfSpreadRatio + exitMarketImpactRatio;
+
+  const executionCostRatio = feeRoundTrip + entrySlip + exitSlip;
+  const slippageRatio = entrySlip + exitSlip;
+
+  return {
+    ...spreadMeta,
+
+    takerFeePct: round10(cfg.takerFeePct),
+    makerFeePct: round10(cfg.makerFeePct),
+    marketImpactPct: round10(cfg.marketImpactPct),
+
+    feeRatio: round10(feeRoundTrip),
+    feePct: round6(feeRoundTrip * 100),
+
+    entryHalfSpreadRatio: round10(entryHalfSpreadRatio),
+    exitHalfSpreadRatio: round10(exitHalfSpreadRatio),
+    entryMarketImpactRatio: round10(entryMarketImpactRatio),
+    exitMarketImpactRatio: round10(exitMarketImpactRatio),
+
+    entrySlipRatio: round10(entrySlip),
+    exitSlipRatio: round10(exitSlip),
+    slippageRatio: round10(slippageRatio),
+    slippagePct: round6(slippageRatio * 100),
+
+    executionCostRatio: round10(executionCostRatio),
+    executionCostPct: round6(executionCostRatio * 100),
+
+    executionCostFormula: '2*takerFeePct + entrySpreadPct/2 + exitSpreadPct/2 + 2*marketImpactPct',
+    spreadCostPolicy: spreadMeta.fallbackSpreadOnlyWhenMissing
+      ? 'fallbackSpreadPct only when measured spread is missing/invalid'
+      : 'fallbackSpreadPct is used as a minimum floor'
+  };
+}
+
+function buildCostAudit({
+  grossR,
+  costR,
+  netR,
+  riskPct,
+  costRatio,
+  executionCostRatio,
+  fundingCostRatio
+} = {}) {
+  const g = safeNumber(grossR, 0);
+  const c = safeNumber(costR, 0);
+  const n = safeNumber(netR, 0);
+  const diff = (g - c) - n;
+  const cfg = costConfig();
+  const risk = safeNumber(riskPct, 0);
+  const cost = safeNumber(costRatio, 0);
+
+  return {
+    costAuditVersion: COST_AUDIT_VERSION,
+    costEquation: 'netR = grossR - costR',
+    costRFormula: 'costR = totalCostRatio / riskPct',
+    totalCostRatioFormula: 'executionCostRatio + fundingCostRatio',
+    executionCostRatioFormula: '2*takerFeePct + entrySpreadPct/2 + exitSpreadPct/2 + 2*marketImpactPct',
+    grossMinusCostEqualsNet: Math.abs(diff) <= 0.000001,
+    netEquationDiffR: round10(diff),
+    riskPct: round10(risk),
+    costRatio: round10(cost),
+    executionCostRatio: round10(executionCostRatio),
+    fundingCostRatio: round10(fundingCostRatio),
+    costR: round10(c),
+    grossR: round10(g),
+    netR: round10(n),
+    riskPctTooTight: risk > 0 && risk < cfg.minHealthyRiskPct,
+    highCostR: Math.abs(c) >= cfg.highCostRWarning,
+    minHealthyRiskPct: round10(cfg.minHealthyRiskPct),
+    highCostRWarning: round10(cfg.highCostRWarning),
+    costRiskWarning: risk > 0 && risk < cfg.minHealthyRiskPct
+      ? 'RISK_PCT_TOO_TIGHT_COSTR_CAN_EXPLODE'
+      : Math.abs(c) >= cfg.highCostRWarning
+        ? 'HIGH_COSTR_CHECK_SPREAD_SLIPPAGE_RISK_DISTANCE'
+        : null
+  };
+}
+
 function identityFlags() {
   return {
     virtualLearning: true,
@@ -395,6 +732,16 @@ function identityFlags() {
     avgCostRShown: true,
     avgCostRSource: 'costR',
 
+    costModelAuditEnabled: true,
+    costAuditVersion: COST_AUDIT_VERSION,
+    costEquation: 'netR = grossR - costR',
+    costRFormula: 'costR = totalCostRatio / riskPct',
+    fundingIncludedByDefault: costConfig().includeFundingByDefault,
+    fundingDefaultPolicy: 'EXCLUDED_UNLESS_EXPLICITLY_ENABLED',
+    spreadFallbackPolicy: costConfig().fallbackSpreadOnlyWhenMissing
+      ? 'FALLBACK_ONLY_WHEN_MISSING'
+      : 'FALLBACK_AS_MINIMUM_FLOOR',
+
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     observationDedupeRequired: true,
@@ -446,8 +793,10 @@ function baseShortOnlyMeta({
   reason = null,
   source = DEFAULT_SOURCE
 } = {}) {
+  const normalizedSource = normalizeSource(source);
+
   return {
-    source: normalizeSource(source),
+    source: normalizedSource,
 
     costModel: COST_MODEL_VERSION,
     costModelVersion: COST_MODEL_VERSION,
@@ -471,8 +820,8 @@ function baseShortOnlyMeta({
 
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
-    outcomeSource: normalizeSource(source),
+    shadowOnly: normalizedSource === 'SHADOW',
+    outcomeSource: normalizedSource,
 
     realTrade: false,
     realOrder: false,
@@ -503,6 +852,16 @@ function baseShortOnlyMeta({
 }
 
 function emptyCostResult(reason = 'NON_SHORT_COST_MODEL_SKIPPED', source = DEFAULT_SOURCE) {
+  const audit = buildCostAudit({
+    grossR: 0,
+    costR: 0,
+    netR: 0,
+    riskPct: 0,
+    costRatio: 0,
+    executionCostRatio: 0,
+    fundingCostRatio: 0
+  });
+
   return {
     ...baseShortOnlyMeta({
       skipped: true,
@@ -512,7 +871,10 @@ function emptyCostResult(reason = 'NON_SHORT_COST_MODEL_SKIPPED', source = DEFAU
 
     feeRatio: 0,
     slippageRatio: 0,
+    executionCostRatio: 0,
+    fundingCostRatio: 0,
     costRatio: 0,
+    totalCostRatio: 0,
 
     grossMovePct: 0,
     netMovePct: 0,
@@ -520,6 +882,8 @@ function emptyCostResult(reason = 'NON_SHORT_COST_MODEL_SKIPPED', source = DEFAU
 
     feePct: 0,
     slippagePct: 0,
+    executionCostPct: 0,
+    fundingCostPct: 0,
     costPct: 0,
 
     grossPnlPct: 0,
@@ -529,6 +893,8 @@ function emptyCostResult(reason = 'NON_SHORT_COST_MODEL_SKIPPED', source = DEFAU
     rawR: 0,
     realizedGrossR: 0,
 
+    executionCostR: 0,
+    fundingCostR: 0,
     costR: 0,
     avgCostR: 0,
     totalCostR: 0,
@@ -542,7 +908,9 @@ function emptyCostResult(reason = 'NON_SHORT_COST_MODEL_SKIPPED', source = DEFAU
     win: false,
     loss: false,
     flat: true,
-    isWin: false
+    isWin: false,
+
+    ...audit
   };
 }
 
@@ -614,19 +982,7 @@ export function modelFillPrice({
 }
 
 export function roundTripCostRatio(entrySpreadPct, exitSpreadPct) {
-  const cfg = costConfig();
-
-  const feeRoundTrip = cfg.takerFeePct * 2;
-
-  const entrySlip =
-    spreadForCost(entrySpreadPct) / 2 +
-    cfg.marketImpactPct;
-
-  const exitSlip =
-    spreadForCost(exitSpreadPct) / 2 +
-    cfg.marketImpactPct;
-
-  return feeRoundTrip + entrySlip + exitSlip;
+  return executionRoundTripCostDetails(entrySpreadPct, exitSpreadPct).executionCostRatio;
 }
 
 export function roundTripCostPct(entrySpreadPct, exitSpreadPct) {
@@ -641,7 +997,15 @@ export function applyCosts({
   exitSpreadPct,
   side = TARGET_TRADE_SIDE,
   tradeSide = side,
-  source = DEFAULT_SOURCE
+  source = DEFAULT_SOURCE,
+  includeFunding = null,
+  fundingCostPct = null,
+  fundingPctPer8h = null,
+  fundingRatePct = null,
+  fundingRatePctPer8h = null,
+  holdMs = null,
+  ageMs = null,
+  positionAgeMs = null
 } = {}) {
   const normalizedSide = normalizeTradeSide(tradeSide || side);
 
@@ -653,8 +1017,6 @@ export function applyCosts({
     return emptyCostResult('UNKNOWN_OR_NON_SHORT_COST_MODEL_SKIPPED', source);
   }
 
-  const cfg = costConfig();
-
   const move = safeNumber(grossMovePct, 0);
   const risk = Math.max(0, safeNumber(riskPct, 0));
 
@@ -662,11 +1024,27 @@ export function applyCosts({
     return emptyCostResult('INVALID_OR_ZERO_SHORT_RISK_PCT', source);
   }
 
-  const feeRatio = cfg.takerFeePct * 2;
-  const costRatio = roundTripCostRatio(entrySpreadPct, exitSpreadPct);
-  const slippageRatio = Math.max(0, costRatio - feeRatio);
+  const execution = executionRoundTripCostDetails(entrySpreadPct, exitSpreadPct);
+  const funding = fundingCostDetails({
+    includeFunding,
+    fundingCostPct,
+    fundingPctPer8h,
+    fundingRatePct,
+    fundingRatePctPer8h,
+    holdMs,
+    ageMs,
+    positionAgeMs,
+    source
+  });
 
-  const netMovePct = move - costRatio;
+  const executionCostRatio = safeNumber(execution.executionCostRatio, 0);
+  const fundingCostRatio = safeNumber(funding.fundingCostRatio, 0);
+  const totalCostRatio = executionCostRatio + fundingCostRatio;
+
+  const feeRatio = safeNumber(execution.feeRatio, 0);
+  const slippageRatio = safeNumber(execution.slippageRatio, 0);
+
+  const netMovePct = move - totalCostRatio;
 
   const grossPnlPct = move * 100;
   const netPnlPct = netMovePct * 100;
@@ -675,33 +1053,60 @@ export function applyCosts({
     ? safeNumber(grossR, 0)
     : move / risk;
 
-  const costR = costRatio / risk;
+  const executionCostR = executionCostRatio / risk;
+  const fundingCostR = fundingCostRatio / risk;
+  const costR = totalCostRatio / risk;
   const netR = calculatedGrossR - costR;
+
+  const audit = buildCostAudit({
+    grossR: calculatedGrossR,
+    costR,
+    netR,
+    riskPct: risk,
+    costRatio: totalCostRatio,
+    executionCostRatio,
+    fundingCostRatio
+  });
 
   return {
     ...baseShortOnlyMeta({
       source
     }),
 
-    takerFeePct: round6(cfg.takerFeePct),
-    makerFeePct: round6(cfg.makerFeePct),
-    marketImpactPct: round6(cfg.marketImpactPct),
-    fallbackSpreadPct: round6(cfg.fallbackSpreadPct),
+    takerFeePct: round6(execution.takerFeePct),
+    makerFeePct: round6(execution.makerFeePct),
+    marketImpactPct: round6(execution.marketImpactPct),
+    fallbackSpreadPct: round6(execution.fallbackSpreadPct),
+    maxSpreadPct: round6(execution.maxSpreadPct),
 
-    entrySpreadPct: round6(spreadForCost(entrySpreadPct)),
-    exitSpreadPct: round6(spreadForCost(exitSpreadPct)),
+    entrySpreadInputPct: execution.entrySpreadInputPct,
+    exitSpreadInputPct: execution.exitSpreadInputPct,
+    entrySpreadPct: round6(execution.entrySpreadPct),
+    exitSpreadPct: round6(execution.exitSpreadPct),
+    entrySpreadSource: execution.entrySpreadSource,
+    exitSpreadSource: execution.exitSpreadSource,
+    entrySpreadFallbackUsed: execution.entrySpreadFallbackUsed,
+    exitSpreadFallbackUsed: execution.exitSpreadFallbackUsed,
+    spreadFallbackUsed: execution.spreadFallbackUsed,
+    spreadFallbackPolicy: execution.spreadCostPolicy,
+    spreadClampedByMax: execution.spreadClampedByMax,
 
     feeRatio: round6(feeRatio),
     slippageRatio: round6(slippageRatio),
-    costRatio: round6(costRatio),
+    executionCostRatio: round6(executionCostRatio),
+    fundingCostRatio: round6(fundingCostRatio),
+    costRatio: round6(totalCostRatio),
+    totalCostRatio: round6(totalCostRatio),
 
     grossMovePct: round6(move),
     netMovePct: round6(netMovePct),
-    breakEvenMovePct: round6(costRatio),
+    breakEvenMovePct: round6(totalCostRatio),
 
     feePct: round6(feeRatio * 100),
     slippagePct: round6(slippageRatio * 100),
-    costPct: round6(costRatio * 100),
+    executionCostPct: round6(executionCostRatio * 100),
+    fundingCostPct: round6(fundingCostRatio * 100),
+    costPct: round6(totalCostRatio * 100),
 
     grossPnlPct: round6(grossPnlPct),
     netPnlPct: round6(netPnlPct),
@@ -710,6 +1115,8 @@ export function applyCosts({
     rawR: round6(calculatedGrossR),
     realizedGrossR: round6(calculatedGrossR),
 
+    executionCostR: round6(executionCostR),
+    fundingCostR: round6(fundingCostR),
     costR: round6(costR),
     avgCostR: round6(costR),
     totalCostR: round6(costR),
@@ -725,11 +1132,23 @@ export function applyCosts({
     flat: !isPositiveNetR(netR) && !isNegativeNetR(netR),
     isWin: isPositiveNetR(netR),
 
+    fundingIncluded: funding.fundingIncluded,
+    fundingApplied: funding.fundingApplied,
+    fundingSource: funding.fundingSource,
+    fundingBenefitRatio: funding.fundingBenefitRatio,
+    fundingChargeRatio: funding.fundingChargeRatio,
+    fundingIntervalMs: funding.fundingIntervalMs,
+    fundingWindows: funding.fundingWindows,
+    fundingRatePctPer8h: funding.fundingRatePctPer8h,
+    fundingNote: funding.fundingNote,
+
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
     slHitRule: 'SHORT: price >= sl',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    ...audit
   };
 }
 
@@ -745,7 +1164,15 @@ export function applyCostsFromPrices({
   tradeSide = side,
   source = DEFAULT_SOURCE,
   entrySpreadPct,
-  exitSpreadPct
+  exitSpreadPct,
+  includeFunding = null,
+  fundingCostPct = null,
+  fundingPctPer8h = null,
+  fundingRatePct = null,
+  fundingRatePctPer8h = null,
+  holdMs = null,
+  ageMs = null,
+  positionAgeMs = null
 } = {}) {
   const normalizedSide = normalizeTradeSide(tradeSide || side);
 
@@ -805,7 +1232,15 @@ export function applyCostsFromPrices({
     exitSpreadPct,
     side: TARGET_TRADE_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
-    source
+    source,
+    includeFunding,
+    fundingCostPct,
+    fundingPctPer8h,
+    fundingRatePct,
+    fundingRatePctPer8h,
+    holdMs,
+    ageMs,
+    positionAgeMs
   });
 
   const netR = safeNumber(result.netR, grossR - safeNumber(result.costR, 0));
@@ -851,6 +1286,8 @@ export function applyCostsFromPrices({
     currentR: round6(currentR),
     shortCurrentR: round6(currentR),
 
+    executionCostR: round6(result.executionCostR),
+    fundingCostR: round6(result.fundingCostR),
     costR: round6(result.costR),
     avgCostR: round6(result.costR),
     totalCostR: round6(result.costR),
