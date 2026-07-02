@@ -1,10 +1,5 @@
 // ================= FILE: src/trade/tradeSystem.js =================
-// SHORT-only virtual trade system.
-// - RR shadow grid on every virtual entry: 1.0 / 1.25 / 1.5 / 1.75 / 2.0.
-// - Cost-aware risk distance to reduce fake high AvgCostR from too-tight stops.
-// - Discord only on exact micro-micro match: MICRO_SHORT_..._MM_HASH.
-// - 75-child remains learning/rollup context, not a Discord trigger.
-// - No real orders, no LONG, no scanner writes.
+
 import { createHash } from 'crypto';
 import { CONFIG } from '../config.js';
 import { KEYS, assertKeyAllowedForWriteScope } from '../keys.js';
@@ -1027,6 +1022,103 @@ function tradeConfig() {
     maxRuntimeMs: int(first(options.maxRuntimeMs, CONFIG.short?.trade?.maxRuntimeMs, CONFIG.trade?.maxRuntimeMs), DEFAULT_MAX_RUNTIME_MS, 8000, 26000),
     positionTimeStopMin: n(first(options.positionTimeStopMin, CONFIG.short?.trade?.positionTimeStopMin, CONFIG.trade?.positionTimeStopMin), 720),
     monitorLivePriceFetchEnabled: bool(first(options.monitorLivePriceFetchEnabled, CONFIG.short?.trade?.monitorLivePriceFetchEnabled, CONFIG.trade?.monitorLivePriceFetchEnabled), true)
+  };
+}
+function sizingConfig() {
+  const options = ACTIVE_RUN_OPTIONS || {};
+  const enabled = bool(first(
+    options.sizingEnabled,
+    options.positionSizingEnabled,
+    options.usePositionSizing,
+    CONFIG.short?.sizing?.enabled,
+    CONFIG.short?.trade?.sizingEnabled,
+    CONFIG.sizing?.shortEnabled,
+    CONFIG.sizing?.enabled,
+    CONFIG.trade?.sizingEnabled
+  ), true);
+  const baseRiskPct = clamp(
+    first(
+      options.baseRiskPct,
+      options.defaultRiskFraction,
+      options.riskFraction,
+      CONFIG.short?.sizing?.baseRiskPct,
+      CONFIG.short?.sizing?.defaultRiskFraction,
+      CONFIG.short?.trade?.baseRiskPct,
+      CONFIG.sizing?.shortBaseRiskPct,
+      CONFIG.sizing?.baseRiskPct,
+      CONFIG.trade?.baseRiskPct
+    ) ?? 0.0025,
+    0,
+    0.05
+  );
+  const minRiskPct = clamp(
+    first(
+      options.minPositionRiskPct,
+      options.minRiskFraction,
+      CONFIG.short?.sizing?.minRiskPct,
+      CONFIG.short?.sizing?.minRiskFraction,
+      CONFIG.sizing?.shortMinRiskPct,
+      CONFIG.sizing?.minRiskPct
+    ) ?? 0.0005,
+    0,
+    0.05
+  );
+  const maxRiskPct = clamp(
+    first(
+      options.maxPositionRiskPct,
+      options.maxRiskFraction,
+      CONFIG.short?.sizing?.maxRiskPct,
+      CONFIG.short?.sizing?.maxRiskFraction,
+      CONFIG.sizing?.shortMaxRiskPct,
+      CONFIG.sizing?.maxRiskPct
+    ) ?? 0.01,
+    0,
+    0.05
+  );
+  const minMult = clamp(
+    first(
+      options.sizingMinMult,
+      CONFIG.short?.sizing?.minMult,
+      CONFIG.sizing?.shortMinMult,
+      CONFIG.sizing?.minMult
+    ) ?? 0.35,
+    0,
+    5
+  );
+  const maxMult = clamp(
+    first(
+      options.sizingMaxMult,
+      CONFIG.short?.sizing?.maxMult,
+      CONFIG.sizing?.shortMaxMult,
+      CONFIG.sizing?.maxMult
+    ) ?? 1.25,
+    0,
+    5
+  );
+  const fallbackRiskPct = clamp(
+    first(
+      options.sizingFallbackRiskPct,
+      CONFIG.short?.sizing?.fallbackRiskPct,
+      CONFIG.sizing?.shortFallbackRiskPct,
+      CONFIG.sizing?.fallbackRiskPct
+    ) ?? baseRiskPct,
+    0,
+    0.05
+  );
+  return {
+    enabled,
+    baseRiskPct,
+    fallbackRiskPct,
+    minRiskPct,
+    maxRiskPct,
+    minMult,
+    maxMult,
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    shortOnly: true,
+    longDisabled: true,
+    source: 'LOCAL_TRADE_SYSTEM_SIZING_CONFIG',
+    reason: 'PREVENT_SIZING_CONFIG_REFERENCE_ERROR'
   };
 }
 function estimatedCostRForRiskPct(row = {}, riskPct = 0, cfg = tradeConfig()) {
