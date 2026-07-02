@@ -5,12 +5,12 @@
 // Belangrijk:
 // - Geen project-imports op top-level.
 // - tradeSystem.js, scanner.js, redis.js, config.js worden dynamic geïmporteerd.
-// - Daardoor krijg je echte import/runtime errors terug als JSON.
-// - Dit voorkomt dat Vercel alleen "500" toont zonder duidelijke oorzaak.
-// - SHORT-only, virtual/shadow only, geen real orders.
-// - Micro-micro is de selectie/Discord-laag.
+// - Echte import/runtime errors komen terug als JSON.
+// - SHORT-only, virtual/shadow learning only, geen real orders.
+// - Micro-micro is de enige Discord/selectie-laag.
 // - Parent 15 en Micro 75 blijven rollup/context.
-// - XR blijft metadata/hash-source, geen aparte selectable learning family.
+// - Deze route forceert NIET meer zelf monitor-only bij dezelfde snapshot.
+//   tradeSystem.js bepaalt zelf of een snapshot opnieuw verwerkt moet worden.
 
 export const config = {
   api: {
@@ -36,6 +36,7 @@ const DEFAULT_MAX_LOCK_TTL_SEC = 75;
 
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
 
 const DEFAULT_MONITOR_TIMEOUT_MS = 3500;
 const DEFAULT_MONITOR_ONLY_TIMEOUT_MS = 12000;
@@ -55,13 +56,15 @@ const DEFAULT_ROTATION_TIMEOUT_MS = 1200;
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
+const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
 const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
+
+const TRADE_RUN_ROUTE_VERSION = 'SHORT_API_TRADE_RUN_DEBUG_SAFE_MICRO_MICRO_V7';
 
 const RUN_SCOPE = 'TRADE_FAST_STALE_SAFE_LOCK_MONITOR_FIRST_DEBUG_SAFE_IMPORT';
 const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
@@ -83,21 +86,14 @@ function now() {
 }
 
 function safeNumber(value, fallback = 0) {
-  const n = Number(value);
-
-  return Number.isFinite(n) ? n : fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function safeInt(value, fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER) {
-  const n = Number(value);
-
-  if (!Number.isFinite(n)) return fallback;
-
-  return Math.max(min, Math.min(max, Math.floor(n)));
-}
-
-function round(value, decimals = 4) {
-  return Number(safeNumber(value, 0).toFixed(decimals));
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
 function upper(value) {
@@ -107,7 +103,6 @@ function upper(value) {
 function firstValue(value, fallback = null) {
   if (Array.isArray(value)) return value[0] ?? fallback;
   if (value === undefined || value === null || value === '') return fallback;
-
   return value;
 }
 
@@ -147,10 +142,7 @@ function flattenValues(values = []) {
 
 function compactString(value, max = 1800) {
   const text = String(value ?? '');
-
-  return text.length > max
-    ? `${text.slice(0, max)}...TRUNCATED`
-    : text;
+  return text.length > max ? `${text.slice(0, max)}...TRUNCATED` : text;
 }
 
 function compactError(error) {
@@ -158,9 +150,7 @@ function compactError(error) {
 }
 
 function compactStack(error) {
-  return error?.stack
-    ? compactString(error.stack, 8000)
-    : null;
+  return error?.stack ? compactString(error.stack, 8000) : null;
 }
 
 function callMaybeKey(value, fallback = null) {
@@ -311,7 +301,6 @@ async function readBody(req) {
   if (req.body) {
     if (typeof req.body === 'string') return parseJson(req.body);
     if (Buffer.isBuffer(req.body)) return parseJson(req.body.toString('utf8'));
-
     return req.body;
   }
 
@@ -695,8 +684,8 @@ function isolationFlags() {
     closeVirtualPositionsBeforeEntries: true,
 
     snapshotAlreadyProcessedDoesNotBlockMonitor: true,
-    sameSnapshotRunsMonitorOnly: true,
-    newEntriesBlockedWhenSnapshotAlreadyProcessed: true,
+    routeDoesNotForceMonitorOnlyOnSameSnapshot: true,
+    sameSnapshotReprocessDecisionIsInsideTradeSystem: true,
 
     debugSafeDynamicImports: true,
     topLevelTradeSystemImportDisabled: true,
@@ -711,6 +700,8 @@ function isolationFlags() {
 
 function baseFlags() {
   return {
+    tradeRunRouteVersion: TRADE_RUN_ROUTE_VERSION,
+
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
     scannerSide: TARGET_SCANNER_SIDE,
@@ -733,7 +724,7 @@ function baseFlags() {
     virtualLearning: true,
     virtualLearningForced: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: false,
     source: 'VIRTUAL',
     outcomeSource: 'VIRTUAL',
 
@@ -764,7 +755,7 @@ function baseFlags() {
       OBSERVING: 'completed == 0',
       EARLY_OUTCOMES: `completed > 0 && completed < ${MIN_COMPLETED_ACTIVE_LEARNING}`,
       ACTIVE_LEARNING: `completed >= ${MIN_COMPLETED_ACTIVE_LEARNING}`,
-      MICRO_MICRO_ACTIVE: 'completed >= 35'
+      MICRO_MICRO_ACTIVE: `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`
     },
 
     scannerFingerprintRole: 'METADATA_ONLY',
@@ -779,9 +770,10 @@ function baseFlags() {
     executionFingerprintOnlyMetadata: false,
     executionFingerprintsMetadataOnly: false,
     executionFingerprintsUsedAsLearningFamily: true,
+    executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_PARENT_MICRO_MICRO_LAYERED',
+    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
 
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
@@ -811,8 +803,8 @@ function baseFlags() {
 
     parentMicroFamilyCount: 15,
     micro75Count: 75,
-    selectionGranularity: 'EXACT_MICRO_MICRO',
-    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+    selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     parentFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}',
     micro75FamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}',
     microMicroFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}_MM_{HASH}',
@@ -825,8 +817,9 @@ function baseFlags() {
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpRule: 'price <= tp',
     slRule: 'price >= sl',
-    tpHitRule: 'SHORT: price <= tp',
-    slHitRule: 'SHORT: price >= sl',
+    tpHitRule: 'SHORT: candle.low <= tp',
+    slHitRule: 'SHORT: candle.high >= sl',
+    sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
@@ -836,6 +829,7 @@ function baseFlags() {
     currentFitBlocksLearning: false,
     currentFitBlocksVirtualLearning: false,
     currentFitBlocksShadowLearning: false,
+    currentFitCanBlockDiscord: true,
 
     discordOnlyForSelectedMicroFamilies: false,
     discordOnlyForSelectedMicroMicroFamilies: true,
@@ -844,6 +838,9 @@ function baseFlags() {
     discordOnlyForExactMicroMicroMatch: true,
     manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
+    parent15MatchTriggersDiscord: false,
+    child75MatchTriggersDiscord: false,
+    scannerMatchTriggersDiscord: false,
     parentMacroMatchDoesNotTriggerDiscord: true,
     macroMatchDoesNotTriggerDiscord: true,
     micro75MatchDoesNotTriggerDiscord: true,
@@ -881,6 +878,7 @@ function baseFlags() {
 
 function setHeaders(res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('X-Trade-Run-Route-Version', TRADE_RUN_ROUTE_VERSION);
   res.setHeader('X-Trade-Target-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Dashboard-Side', TARGET_DASHBOARD_SIDE);
@@ -893,8 +891,8 @@ function setHeaders(res) {
   res.setHeader('X-No-Real-Orders', 'true');
   res.setHeader('X-Scanner-Fingerprint-Role', 'METADATA_ONLY');
   res.setHeader('X-Execution-Fingerprint-Role', 'MICRO_MICRO_IDENTITY_HASH_SOURCE');
-  res.setHeader('X-Learning-Identity-Source', 'ANALYZE_PARENT_MICRO_MICRO_LAYERED');
-  res.setHeader('X-Selection-Granularity', 'EXACT_MICRO_MICRO');
+  res.setHeader('X-Learning-Identity-Source', 'ANALYZE_MICRO_MICRO_FAMILY');
+  res.setHeader('X-Selection-Granularity', 'EXACT_MICRO_MICRO_ONLY');
   res.setHeader('X-Discord-Selection-Rule', 'EXACT_MICRO_MICRO_ONLY');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
   res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
@@ -917,7 +915,7 @@ function setHeaders(res) {
   res.setHeader('X-Monitor-Open-Positions-First', 'true');
   res.setHeader('X-Exit-Sweep-Before-Entry-Gate', 'true');
   res.setHeader('X-Stale-Safe-Lock', 'true');
-  res.setHeader('X-Snapshot-Already-Processed-Monitor-Only', 'true');
+  res.setHeader('X-Route-Does-Not-Force-Monitor-Only-On-Same-Snapshot', 'true');
   res.setHeader('X-Debug-Safe-Dynamic-Imports', 'true');
 }
 
@@ -977,9 +975,7 @@ async function redisTtl(redis, key) {
 async function redisSetNxEx(redis, key, value, ttlSec) {
   if (!redis || !key) return false;
 
-  const serialized = typeof value === 'string'
-    ? value
-    : JSON.stringify(value);
+  const serialized = typeof value === 'string' ? value : JSON.stringify(value);
 
   try {
     if (typeof redis.set === 'function') {
@@ -1021,9 +1017,7 @@ async function readLockState(redis, lockKey) {
 
   if (typeof raw === 'object') {
     const createdAt = safeNumber(raw.createdAt, 0);
-    const ageSec = createdAt > 0
-      ? Math.round((now() - createdAt) / 1000)
-      : null;
+    const ageSec = createdAt > 0 ? Math.round((now() - createdAt) / 1000) : null;
 
     return {
       exists: true,
@@ -1043,9 +1037,7 @@ async function readLockState(redis, lockKey) {
   try {
     const parsed = JSON.parse(text);
     const createdAt = safeNumber(parsed.createdAt, 0);
-    const ageSec = createdAt > 0
-      ? Math.round((now() - createdAt) / 1000)
-      : null;
+    const ageSec = createdAt > 0 ? Math.round((now() - createdAt) / 1000) : null;
 
     return {
       exists: true,
@@ -1078,6 +1070,7 @@ function isStaleLock(lockState, staleAfterSec) {
 
   if (Number.isFinite(lockState.ageSec) && lockState.ageSec >= staleAfterSec) return true;
   if (Number.isFinite(lockState.ttlSec) && lockState.ttlSec <= 0) return true;
+
   if (
     Number.isFinite(safeNumber(lockState.expiresAt, NaN)) &&
     safeNumber(lockState.expiresAt, 0) <= now()
@@ -1260,25 +1253,21 @@ function unwrapRunResult(value) {
   if (value.result?.result?.result) return value.result.result.result;
   if (value.result?.result) return value.result.result;
   if (value.result) return value.result;
-
   return value;
 }
 
 function responseOk(value) {
   const payload = unwrapRunResult(value);
-
   return value?.ok !== false && payload?.ok !== false;
 }
 
 function responseSkipped(value) {
   const payload = unwrapRunResult(value);
-
   return Boolean(value?.skipped || payload?.skipped || payload?.skippedNewEntries);
 }
 
 function responseReason(value) {
   const payload = unwrapRunResult(value);
-
   return value?.reason || payload?.reason || payload?.skipReason || null;
 }
 
@@ -1367,6 +1356,12 @@ function cleanShortArray(values = [], max = 100) {
   )].slice(0, max);
 }
 
+function cleanMicroMicroArray(values = [], max = 100) {
+  return cleanShortArray(values, max)
+    .filter((value) => value.includes('_MM_'))
+    .slice(0, max);
+}
+
 function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
   return (Array.isArray(rows) ? rows : [])
     .slice(0, limit)
@@ -1375,6 +1370,7 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
 
       return {
         symbol: row.symbol || row.baseSymbol || null,
+        contractSymbol: row.contractSymbol || null,
         action: row.action || row.type || null,
         reason: row.reason || row.skipReason || row.liveEntryBlockedReason || null,
 
@@ -1392,7 +1388,7 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
         exactMicroMicroFamilyId: row.exactMicroMicroFamilyId || row.microMicroFamilyId || row.trueMicroMicroFamilyId || null,
 
         entry: row.entry ?? row.entryPrice ?? null,
-        sl: row.sl ?? row.stopLoss ?? null,
+        sl: row.sl ?? row.stopLoss ?? row.initialSl ?? null,
         tp: row.tp ?? row.takeProfit ?? null,
         exitPrice: row.exitPrice ?? null,
         currentPrice: row.currentPrice ?? row.lastPrice ?? null,
@@ -1406,7 +1402,6 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
         currentFitScore: row.currentFitScore ?? row.shortCurrentFit ?? row.bearCurrentFit ?? null,
 
         virtualOnly: true,
-        shadowOnly: true,
         realOrder: false,
         exchangeOrder: false,
         bitgetOrderPlaced: false
@@ -1448,7 +1443,6 @@ function countActionsByType(actions = []) {
   return actions.reduce((acc, row) => {
     const key = row?.action || row?.type || 'UNKNOWN';
     acc[key] = safeNumber(acc[key], 0) + 1;
-
     return acc;
   }, {});
 }
@@ -1501,6 +1495,8 @@ function compactRunPayload(payload, { debug = false } = {}) {
     skippedNewEntries: Boolean(payload.skippedNewEntries),
     reason: payload.reason || payload.skipReason || null,
     skipReason: payload.skipReason || payload.reason || null,
+
+    shouldMarkSnapshotProcessed: Boolean(payload.shouldMarkSnapshotProcessed),
 
     runId: payload.runId || null,
     runPhase: payload.runPhase || payload.tradeRunPhase || null,
@@ -1562,7 +1558,7 @@ function compactRunPayload(payload, { debug = false } = {}) {
 
     discordAlertEligibleRows: safeNumber(payload.discordAlertEligibleRows, 0),
     discordAlertsQueued: safeNumber(payload.discordAlertsQueued, 0),
-    discordAlertsSent: 0,
+    discordAlertsSent: safeNumber(payload.discordAlertsSent, 0),
     discordAlertsSkippedNoSelectedMicro: safeNumber(payload.discordAlertsSkippedNoSelectedMicro, 0),
     discordAlertsSkippedCurrentFit: safeNumber(payload.discordAlertsSkippedCurrentFit, 0),
     selectedMicroMatchRows: safeNumber(payload.selectedMicroMatchRows, 0),
@@ -1601,7 +1597,7 @@ function compactRunPayload(payload, { debug = false } = {}) {
         []
     ),
 
-    activeMicroMicroFamilyIds: cleanShortArray(
+    activeMicroMicroFamilyIds: cleanMicroMicroArray(
       payload.activeMicroMicroFamilyIds ||
         payload.selectedMicroMicroFamilyIds ||
         payload.trueMicroMicroFamilyIds ||
@@ -1609,7 +1605,7 @@ function compactRunPayload(payload, { debug = false } = {}) {
         []
     ),
 
-    selectedMicroMicroFamilyIds: cleanShortArray(
+    selectedMicroMicroFamilyIds: cleanMicroMicroArray(
       payload.selectedMicroMicroFamilyIds ||
         payload.activeMicroMicroFamilyIds ||
         payload.trueMicroMicroFamilyIds ||
@@ -1708,10 +1704,12 @@ function compactMonitorPreflightPayload(payload = {}) {
 }
 
 function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null) {
-  const actionsCount = safeNumber(payload.actionsCount, 0) +
+  const actionsCount =
+    safeNumber(payload.actionsCount, 0) +
     safeNumber(monitorPreflightPayload?.actionsCount, 0);
 
-  const virtualExitRows = safeNumber(payload.virtualExitRows, 0) +
+  const virtualExitRows =
+    safeNumber(payload.virtualExitRows, 0) +
     safeNumber(monitorPreflightPayload?.virtualExitRows, 0);
 
   return {
@@ -1782,7 +1780,16 @@ function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null)
   };
 }
 
-async function readLatestSnapshotId() {
+async function readLatestSnapshotInfo() {
+  if (!CORE?.redis) {
+    return {
+      snapshotId: null,
+      source: null,
+      createdAt: null,
+      selectedTargetCandidateCount: 0
+    };
+  }
+
   const { getDurableRedis, getVolatileRedis, getJson } = CORE.redis;
   const shortKeys = getKeys();
 
@@ -1823,7 +1830,9 @@ async function readLatestSnapshotId() {
   };
 }
 
-async function readLastProcessedSnapshotId() {
+async function readLastProcessedSnapshotInfo() {
+  if (!CORE?.redis) return null;
+
   const { getDurableRedis, getJson } = CORE.redis;
   const shortKeys = getKeys();
 
@@ -1831,46 +1840,54 @@ async function readLastProcessedSnapshotId() {
   const value = await getJson(durableRedis, shortKeys.trade.lastProcessedSnapshot, null).catch(() => null);
 
   if (!value) return null;
-  if (typeof value === 'string') return value;
 
-  return value.snapshotId || value.id || value.latestSnapshotId || null;
+  if (typeof value === 'string') {
+    return {
+      snapshotId: value
+    };
+  }
+
+  return {
+    snapshotId: value.snapshotId || value.id || value.latestSnapshotId || null,
+    runId: value.runId || null,
+    processedAt: value.processedAt || null,
+    analyzedRows: safeNumber(value.analyzedRows, 0),
+    analyzedMicroMicroRows: safeNumber(value.analyzedMicroMicroRows, 0),
+    virtualCreatedRows: safeNumber(value.virtualCreatedRows, 0),
+    waitRows: safeNumber(value.waitRows, 0),
+    reason: value.reason || null
+  };
 }
 
-async function determineSnapshotMode(req, body = {}) {
-  const latest = await readLatestSnapshotId();
-  const lastProcessedSnapshotId = await readLastProcessedSnapshotId();
+async function determineSnapshotInfo(req, body = {}) {
+  const latest = await readLatestSnapshotInfo();
+  const lastProcessed = await readLastProcessedSnapshotInfo();
 
   const forceProcessSnapshot = shouldForceProcessSnapshot(req, body);
   const requestedMonitorOnly = shouldMonitorOnly(req, body);
 
   const snapshotAlreadyProcessed =
     Boolean(latest.snapshotId) &&
-    Boolean(lastProcessedSnapshotId) &&
-    latest.snapshotId === lastProcessedSnapshotId;
-
-  const effectiveMonitorOnly =
-    requestedMonitorOnly ||
-    (snapshotAlreadyProcessed && !forceProcessSnapshot);
+    Boolean(lastProcessed?.snapshotId) &&
+    latest.snapshotId === lastProcessed.snapshotId;
 
   return {
     latestSnapshotId: latest.snapshotId,
     latestSnapshotSource: latest.source,
     latestSnapshotCreatedAt: latest.createdAt,
     latestSelectedTargetCandidateCount: latest.selectedTargetCandidateCount,
-    lastProcessedSnapshotId,
-
+    lastProcessedSnapshotId: lastProcessed?.snapshotId || null,
+    lastProcessed,
     forceProcessSnapshot,
     requestedMonitorOnly,
     snapshotAlreadyProcessed,
 
-    effectiveMonitorOnly,
-    effectiveProcessScannerSnapshot: !effectiveMonitorOnly,
+    routeForcesMonitorOnlyBecauseSameSnapshot: false,
+    effectiveMonitorOnly: requestedMonitorOnly,
+    effectiveProcessScannerSnapshot: !requestedMonitorOnly,
 
-    entriesBlockedBecauseSnapshotAlreadyProcessed:
-      snapshotAlreadyProcessed && !forceProcessSnapshot && !requestedMonitorOnly,
-
-    reason: snapshotAlreadyProcessed && !forceProcessSnapshot && !requestedMonitorOnly
-      ? 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY'
+    reason: snapshotAlreadyProcessed && !forceProcessSnapshot
+      ? 'SAME_SNAPSHOT_SEEN_ROUTE_DOES_NOT_FORCE_MONITOR_ONLY_TRADE_SYSTEM_DECIDES'
       : null
   };
 }
@@ -1924,7 +1941,9 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     allowTpSlExitWithoutScannerSnapshot: true,
 
     snapshotAlreadyProcessedDoesNotBlockMonitor: true,
-    sameSnapshotRunsMonitorOnly: true,
+    sameSnapshotRunsMonitorOnly: false,
+    routeDoesNotForceMonitorOnlyOnSameSnapshot: true,
+    sameSnapshotReprocessDecisionIsInsideTradeSystem: true,
 
     monitorTimeoutMs,
     openPositionMonitorTimeoutMs: monitorTimeoutMs,
@@ -1985,7 +2004,7 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     virtualLearning: true,
     virtualLearningForced: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: false,
     source: 'VIRTUAL',
     outcomeSource: 'VIRTUAL',
 
@@ -2017,15 +2036,17 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     executionFingerprintOnlyMetadata: false,
     executionFingerprintsMetadataOnly: false,
     executionFingerprintsUsedAsLearningFamily: true,
+    executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_PARENT_MICRO_MICRO_LAYERED',
+    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
 
     exactTrueMicroFamilyRequired: true,
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
 
     microMicroEnabled: true,
@@ -2044,8 +2065,8 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
 
-    selectionGranularity: 'EXACT_MICRO_MICRO',
-    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+    selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
 
     allowLearningWithoutActiveRotation: true,
     ignoreMaxOpenPositionsForLearning: true,
@@ -2075,8 +2096,9 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     },
 
     riskGeometryRule: 'SHORT: tp < entry < sl',
-    tpHitRule: 'SHORT: price <= tp',
-    slHitRule: 'SHORT: price >= sl',
+    tpHitRule: 'SHORT: candle.low <= tp',
+    slHitRule: 'SHORT: candle.high >= sl',
+    sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
@@ -2084,6 +2106,9 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitCanBlockDiscord: true,
 
     discordOnlyForSelectedMicroFamilies: false,
     discordOnlyForSelectedMicroMicroFamilies: true,
@@ -2094,7 +2119,10 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
     macroMatchDoesNotTriggerDiscord: true,
     parentMacroMatchDoesNotTriggerDiscord: true,
+    parent15MatchTriggersDiscord: false,
+    child75MatchTriggersDiscord: false,
     micro75MatchDoesNotTriggerDiscord: true,
+    scannerMatchTriggersDiscord: false,
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -2206,7 +2234,7 @@ function buildScannerPreloadOptions(req, body = {}) {
     currentFitBlocksLearning: false,
 
     microMicroEnabled: true,
-    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO'
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY'
   };
 }
 
@@ -2293,7 +2321,7 @@ async function mirrorOneMarketKey({
       currentFitSoftOnly: true,
       currentFitBlocksLearning: false,
       microMicroEnabled: true,
-      microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+      microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
       ...baseFlags()
     }
   );
@@ -2404,25 +2432,14 @@ function buildMonitorPreflightOptions(req, body = {}) {
   });
 }
 
-function buildMainTradeOptions(req, body = {}, snapshotMode = null) {
+function buildMainTradeOptions(req, body = {}) {
   const requestedMonitorOnly = shouldMonitorOnly(req, body);
-  const effectiveMonitorOnly = snapshotMode?.effectiveMonitorOnly ?? requestedMonitorOnly;
 
   return buildRunOptions(req, body, {
-    monitorOnly: effectiveMonitorOnly,
-    processScannerSnapshot: !effectiveMonitorOnly,
-    phase: effectiveMonitorOnly
-      ? snapshotMode?.snapshotAlreadyProcessed && !snapshotMode?.forceProcessSnapshot
-        ? 'MONITOR_ONLY_SNAPSHOT_ALREADY_PROCESSED'
-        : 'MONITOR_ONLY_REQUEST'
-      : 'TRADE_MAIN',
-    snapshotAlreadyProcessed: Boolean(snapshotMode?.snapshotAlreadyProcessed),
-    entriesBlockedBecauseSnapshotAlreadyProcessed: Boolean(snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed)
+    monitorOnly: requestedMonitorOnly,
+    processScannerSnapshot: !requestedMonitorOnly,
+    phase: requestedMonitorOnly ? 'MONITOR_ONLY_REQUEST' : 'TRADE_MAIN'
   });
-}
-
-function isSnapshotAlreadyProcessedReason(reason = '') {
-  return String(reason || '').toUpperCase() === 'SNAPSHOT_ALREADY_PROCESSED';
 }
 
 async function persistShortRunMeta(
@@ -2431,7 +2448,7 @@ async function persistShortRunMeta(
   rawResult = {},
   scannerPreload = null,
   monitorPreflight = null,
-  snapshotMode = null
+  snapshotInfo = null
 ) {
   const { setJson } = CORE.redis;
   const shortKeys = getKeys();
@@ -2475,7 +2492,7 @@ async function persistShortRunMeta(
 
     scannerPreload,
     monitorPreflight,
-    snapshotMode,
+    snapshotInfo,
 
     monitorPreflightEnabled: Boolean(monitorPreflight),
     monitorPreflightVirtualExitRows: safeNumber(monitorPreflight?.virtualExitRows, 0),
@@ -2520,14 +2537,7 @@ async function persistShortRunMeta(
       persistence.warnings.push(`RUN_META_PERSIST_FAILED:${compactError(error)}`);
     });
 
-  const shouldPersistLastProcessed =
-    Boolean(payload.snapshotId) &&
-    payload.processScannerSnapshot !== false &&
-    payload.reason !== 'MONITOR_ONLY' &&
-    payload.reason !== 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY' &&
-    snapshotMode?.effectiveMonitorOnly !== true;
-
-  if (shouldPersistLastProcessed) {
+  if (payload.shouldMarkSnapshotProcessed && payload.snapshotId) {
     await setJson(
       redis,
       shortKeys.trade.lastProcessedSnapshot,
@@ -2536,21 +2546,13 @@ async function persistShortRunMeta(
         runId: payload.runId || null,
         processedAt: now(),
         processScannerSnapshot: true,
-        snapshotMode: {
-          latestSnapshotId: snapshotMode?.latestSnapshotId || payload.snapshotId,
-          lastProcessedSnapshotId: snapshotMode?.lastProcessedSnapshotId || null,
-          snapshotAlreadyProcessed: Boolean(snapshotMode?.snapshotAlreadyProcessed),
-          effectiveMonitorOnly: false
-        },
-        scannerPreload: scannerPreload
-          ? {
-              ok: scannerPreload.ok !== false,
-              skipped: Boolean(scannerPreload.skipped),
-              reason: scannerPreload.reason || null,
-              snapshotId: scannerPreload.scanner?.snapshotId || null
-            }
-          : null,
-        monitorPreflight,
+        analyzedRows: safeNumber(payload.analyzedRows, 0),
+        analyzedMicroMicroRows: safeNumber(payload.analyzedMicroMicroRows, 0),
+        virtualCreatedRows: safeNumber(payload.virtualCreatedRows, 0),
+        waitRows: safeNumber(payload.waitRows, 0),
+        reason: payload.reason || null,
+        routePersistedBecauseTradeSystemMarkedProcessed: true,
+        snapshotInfo,
         ...baseFlags(),
         compactedForVercelRuntime: true
       }
@@ -2711,7 +2713,6 @@ function buildLockSkippedResponse({
 
 function resolveStatus(error) {
   if (Number.isFinite(error?.statusCode)) return error.statusCode;
-
   return 500;
 }
 
@@ -2838,10 +2839,8 @@ export default async function handler(req, res) {
 
     let scannerPreload = null;
     let rawMonitorPreflight = null;
-    let snapshotMode = null;
+    let snapshotInfo = null;
     let mainRunOptions = null;
-    let fallbackMonitorAfterSnapshotSkip = null;
-    let rawMainBeforeFallback = null;
 
     phase = 'ACQUIRE_TRADE_LOCK_AND_RUN';
 
@@ -2868,11 +2867,11 @@ export default async function handler(req, res) {
           scannerPreload = skippedScannerPreload();
         }
 
-        phase = 'DETERMINE_SNAPSHOT_MODE';
-        snapshotMode = await determineSnapshotMode(req, body);
+        phase = 'READ_SNAPSHOT_INFO';
+        snapshotInfo = await determineSnapshotInfo(req, body);
 
         phase = 'BUILD_MAIN_TRADE_OPTIONS';
-        mainRunOptions = buildMainTradeOptions(req, body, snapshotMode);
+        mainRunOptions = buildMainTradeOptions(req, body);
 
         phase = 'DYNAMIC_IMPORT_TRADE_SYSTEM';
         const { runTradeSystem } = await loadTradeSystemModule();
@@ -2913,7 +2912,7 @@ export default async function handler(req, res) {
 
         phase = 'RUN_MAIN_TRADE_SYSTEM';
 
-        const mainResult = await runTradeSystem({
+        return runTradeSystem({
           ...mainRunOptions,
           scannerPreloadBeforeTrade: scannerPreloadEnabled,
           marketWeatherPreloadBeforeTrade: scannerPreloadEnabled,
@@ -2926,58 +2925,10 @@ export default async function handler(req, res) {
             ? unwrapRunResult(rawMonitorPreflight)?.ok !== false
             : null,
           monitorPreflightVirtualExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.virtualExitRows, 0),
-          monitorPreflightShadowExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.shadowExitRows, 0)
+          monitorPreflightShadowExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.shadowExitRows, 0),
+          snapshotInfoFromRoute: snapshotInfo,
+          routeDoesNotForceMonitorOnlyOnSameSnapshot: true
         });
-
-        const mainPayload = unwrapRunResult(mainResult);
-
-        if (
-          isSnapshotAlreadyProcessedReason(mainPayload?.reason || mainPayload?.skipReason) &&
-          !requestedMonitorOnly
-        ) {
-          phase = 'RUN_MONITOR_FALLBACK_AFTER_SNAPSHOT_ALREADY_PROCESSED';
-
-          rawMainBeforeFallback = mainResult;
-          fallbackMonitorAfterSnapshotSkip = true;
-
-          const monitorResult = await runTradeSystem({
-            ...buildRunOptions(req, body, {
-              monitorOnly: true,
-              processScannerSnapshot: false,
-              phase: 'MONITOR_ONLY_AFTER_SNAPSHOT_ALREADY_PROCESSED',
-              force: false,
-              forceProcessSnapshot: false,
-              snapshotAlreadyProcessed: true,
-              entriesBlockedBecauseSnapshotAlreadyProcessed: true
-            }),
-            scannerPreloadBeforeTrade: false,
-            marketWeatherPreloadBeforeTrade: false,
-            scannerPreloadOk: scannerPreload?.ok !== false,
-            fallbackMonitorAfterSnapshotAlreadyProcessed: true
-          });
-
-          return {
-            ok: monitorResult?.ok !== false,
-            skipped: true,
-            skippedNewEntries: true,
-            reason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
-            skipReason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
-            fallbackMonitorAfterSnapshotAlreadyProcessed: true,
-            rawMainBeforeFallback: mainResult,
-            result: {
-              ...unwrapRunResult(monitorResult),
-              reason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
-              skipReason: 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY',
-              skipped: true,
-              skippedNewEntries: true,
-              processScannerSnapshot: false,
-              snapshotAlreadyProcessed: true,
-              entriesBlockedBecauseSnapshotAlreadyProcessed: true
-            }
-          };
-        }
-
-        return mainResult;
       }
     });
 
@@ -3016,7 +2967,7 @@ export default async function handler(req, res) {
       rawResult,
       scannerPreload,
       monitorPreflight,
-      snapshotMode
+      snapshotInfo
     );
 
     const actionCounts = mergeActionCounts(
@@ -3043,13 +2994,11 @@ export default async function handler(req, res) {
       safeNumber(monitorPreflightPayload?.shadowExitRows, 0);
 
     const effectiveReason =
-      snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed
-        ? 'SNAPSHOT_ALREADY_PROCESSED_MONITOR_ONLY'
-        : !scannerOk
-          ? 'SCANNER_PRELOAD_FAILED'
-          : monitorPreflightOk === false
-            ? 'MONITOR_PREFLIGHT_FAILED'
-            : responseReason(rawResult);
+      !scannerOk
+        ? 'SCANNER_PRELOAD_FAILED'
+        : monitorPreflightOk === false
+          ? 'MONITOR_PREFLIGHT_FAILED'
+          : responseReason(rawResult);
 
     phase = 'SEND_SUCCESS_RESPONSE';
 
@@ -3068,8 +3017,8 @@ export default async function handler(req, res) {
       totalVirtualExitRowsThisRequest: totalVirtualExitRows,
       totalShadowExitRowsThisRequest: totalShadowExitRows,
 
-      skipped: responseSkipped(rawResult) || Boolean(snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed),
-      skippedNewEntries: Boolean(snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed || payload?.skippedNewEntries),
+      skipped: responseSkipped(rawResult),
+      skippedNewEntries: Boolean(payload?.skippedNewEntries),
       reason: effectiveReason,
       skipReason: payload?.skipReason || effectiveReason,
 
@@ -3092,14 +3041,10 @@ export default async function handler(req, res) {
         mode: 'STALE_SAFE_LOCK_RELEASED_IN_FINALLY'
       },
 
-      snapshotMode: {
-        ...snapshotMode,
-        rawMainBeforeFallbackReason: rawMainBeforeFallback
-          ? unwrapRunResult(rawMainBeforeFallback)?.reason ||
-            unwrapRunResult(rawMainBeforeFallback)?.skipReason ||
-            null
-          : null,
-        fallbackMonitorAfterSnapshotSkip: Boolean(fallbackMonitorAfterSnapshotSkip)
+      snapshotInfo: {
+        ...snapshotInfo,
+        routeDoesNotForceMonitorOnlyOnSameSnapshot: true,
+        tradeSystemControlsSameSnapshotReprocess: true
       },
 
       force: mainRunOptions?.force ?? shouldForceProcessSnapshot(req, body),
@@ -3194,11 +3139,11 @@ export default async function handler(req, res) {
         ? payload.selectedMicroMicroFamilyIds
         : [],
 
-      selectedSnapshotSource: payload?.selectedSnapshotSource || snapshotMode?.latestSnapshotSource || null,
+      selectedSnapshotSource: payload?.selectedSnapshotSource || snapshotInfo?.latestSnapshotSource || null,
       selectedSnapshotReason: payload?.selectedSnapshotReason || null,
       selectedTargetCandidateCount: safeNumber(
         payload?.selectedTargetCandidateCount,
-        snapshotMode?.latestSelectedTargetCandidateCount || 0
+        snapshotInfo?.latestSelectedTargetCandidateCount || 0
       ),
       selectedOppositeCandidateCount: 0,
 
@@ -3236,11 +3181,8 @@ export default async function handler(req, res) {
         forceUnlock
           ? 'FORCE_UNLOCK_ENABLED_FOR_THIS_REQUEST'
           : null,
-        snapshotMode?.entriesBlockedBecauseSnapshotAlreadyProcessed
-          ? 'SNAPSHOT_ALREADY_PROCESSED_ENTRIES_BLOCKED_MONITOR_STILL_RAN'
-          : null,
-        fallbackMonitorAfterSnapshotSkip
-          ? 'TRADE_SYSTEM_RETURNED_SNAPSHOT_ALREADY_PROCESSED_FALLBACK_MONITOR_RAN'
+        snapshotInfo?.snapshotAlreadyProcessed
+          ? 'SAME_SNAPSHOT_SEEN_BUT_ROUTE_DID_NOT_FORCE_MONITOR_ONLY'
           : null,
         monitorPreflightEnabled
           ? 'MONITOR_PREFLIGHT_ENABLED_EXPLICITLY'
@@ -3273,9 +3215,6 @@ export default async function handler(req, res) {
 
       run: debug ? payload : undefined,
       monitorPreflightRun: debug ? monitorPreflightPayload : undefined,
-      rawMainBeforeFallback: debug && rawMainBeforeFallback
-        ? compactRunPayload(unwrapRunResult(rawMainBeforeFallback), { debug: false })
-        : undefined,
       result: debug
         ? {
             ok: rawResult?.ok !== false,
