@@ -1,6 +1,5 @@
 // ================= FILE: src/trade/tradeSystem.js =================
 // SHORT-only virtual trade system.
-// Patch focus:
 // - RR shadow grid on every virtual entry: 1.0 / 1.25 / 1.5 / 1.75 / 2.0.
 // - Cost-aware risk distance to reduce fake high AvgCostR from too-tight stops.
 // - Discord only on exact micro-micro match: MICRO_SHORT_..._MM_HASH.
