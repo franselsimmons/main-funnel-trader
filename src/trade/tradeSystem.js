@@ -10,6 +10,9 @@
 // - Discord matcht alleen exacte micro-micro.
 // - CurrentFit blokkeert learning niet, alleen Discord.
 // - Last processed snapshot wordt alleen opgeslagen na echte verwerking, niet bij monitor-only.
+// - XR/execution fingerprint is alleen hash-source, geen learning-family.
+// - Snapshot wordt niet meer "processed" gemarkeerd door alleen waitRows.
+// - riskFractionForEntry kan trade-run niet meer crashen.
 
 import { createHash } from 'crypto';
 import { CONFIG } from '../config.js';
@@ -52,7 +55,7 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
+const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
 const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
@@ -67,12 +70,12 @@ const EXECUTION_MICRO_HASH_LEN = 10;
 const LAYER_MICRO_MICRO = 'MICRO_MICRO';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO';
 
-const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V6';
+const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V7';
 const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V3';
-const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V3';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V4';
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 const RR_SHADOW_GRID_VERSION = 'SHORT_RR_SHADOW_GRID_1_125_15_175_2_V1';
-const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V2';
+const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V3';
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
 const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 10;
@@ -409,7 +412,7 @@ function virtualFlags(row = {}) {
 
     executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
     executionFingerprintsMetadataOnly: false,
-    executionFingerprintsUsedAsLearningFamily: true,
+    executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     analyzeMicroFamiliesOnly: true,
@@ -1074,7 +1077,7 @@ function scannerMetadataFrom(...rows) {
     executionFingerprintRole: microMicroFamilyId ? 'MICRO_MICRO_IDENTITY_HASH_SOURCE' : 'METADATA_ONLY',
     executionFingerprintOnlyMetadata: !microMicroFamilyId,
     executionFingerprintsMetadataOnly: !microMicroFamilyId,
-    executionFingerprintsUsedAsLearningFamily: Boolean(microMicroFamilyId),
+    executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     microMicroFamilyId: microMicroFamilyId || null,
@@ -1290,7 +1293,7 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
       : row.executionMicroFamilyId || null,
     executionFingerprintRole: microMicroFamilyId ? 'MICRO_MICRO_IDENTITY_HASH_SOURCE' : 'METADATA_ONLY',
     executionFingerprintsMetadataOnly: !microMicroFamilyId,
-    executionFingerprintsUsedAsLearningFamily: Boolean(microMicroFamilyId),
+    executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
@@ -1436,12 +1439,55 @@ function sizingConfig() {
     CONFIG.trade?.baseRiskPct
   ) ?? 0.0025, 0, 0.05);
 
+  const minRiskPct = clamp(first(
+    options.minPositionRiskPct,
+    options.minRiskFraction,
+    CONFIG.short?.sizing?.minRiskPct,
+    CONFIG.short?.sizing?.minRiskFraction,
+    CONFIG.sizing?.shortMinRiskPct,
+    CONFIG.sizing?.minRiskPct
+  ) ?? 0.0005, 0, 0.05);
+
+  const maxRiskPct = clamp(first(
+    options.maxPositionRiskPct,
+    options.maxRiskFraction,
+    CONFIG.short?.sizing?.maxRiskPct,
+    CONFIG.short?.sizing?.maxRiskFraction,
+    CONFIG.sizing?.shortMaxRiskPct,
+    CONFIG.sizing?.maxRiskPct
+  ) ?? 0.01, 0, 0.05);
+
+  const fallbackRiskPct = clamp(first(
+    options.sizingFallbackRiskPct,
+    CONFIG.short?.sizing?.fallbackRiskPct,
+    CONFIG.sizing?.shortFallbackRiskPct,
+    CONFIG.sizing?.fallbackRiskPct
+  ) ?? baseRiskPct, 0, 0.05);
+
   return {
     enabled,
     baseRiskPct,
-    fallbackRiskPct: baseRiskPct,
+    fallbackRiskPct,
+    minRiskPct,
+    maxRiskPct,
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    shortOnly: true,
+    longDisabled: true,
     source: 'LOCAL_TRADE_SYSTEM_SIZING_CONFIG'
   };
+}
+
+function safeRiskFractionForEntry(input = {}, sizing = sizingConfig()) {
+  if (!sizing.enabled) return sizing.baseRiskPct;
+
+  try {
+    const value = riskFractionForEntry(input);
+    const clean = n(value, sizing.baseRiskPct);
+    return clamp(clean, sizing.minRiskPct, sizing.maxRiskPct);
+  } catch {
+    return sizing.fallbackRiskPct;
+  }
 }
 
 function estimatedCostRForRiskPct(row = {}, riskPct = 0, cfg = tradeConfig()) {
@@ -2906,14 +2952,13 @@ function shouldMarkSnapshotProcessed(result = {}) {
   if (result.reason === 'MONITOR_ONLY') return false;
   if (result.reason === 'NO_SHORT_SCANNER_SNAPSHOT') return false;
   if (result.reason === 'SNAPSHOT_TOO_STALE') return false;
+  if (result.reason === 'SNAPSHOT_ALREADY_PROCESSED') return false;
 
   return Boolean(
-    result.processScannerSnapshot === true ||
-      result.skippedNewEntries === false ||
-      n(result.analyzedRows, 0) > 0 ||
-      n(result.analyzedMicroMicroRows, 0) > 0 ||
+    n(result.analyzedMicroMicroRows, 0) > 0 ||
       n(result.virtualCreatedRows, 0) > 0 ||
-      result.reason === 'SNAPSHOT_ALREADY_PROCESSED'
+      n(result.entryRows, 0) > 0 ||
+      n(result.virtualExitRows, 0) > 0
   );
 }
 
@@ -3515,10 +3560,9 @@ function snapshotAlreadyProcessedEnough(lastProcessed = {}) {
 
   return Boolean(
     n(lastProcessed.analyzedMicroMicroRows, 0) > 0 ||
-      n(lastProcessed.analyzedRows, 0) > 0 ||
       n(lastProcessed.virtualCreatedRows, 0) > 0 ||
-      n(lastProcessed.waitRows, 0) > 0 ||
-      lastProcessed.reason === 'SNAPSHOT_ALREADY_PROCESSED'
+      n(lastProcessed.entryRows, 0) > 0 ||
+      n(lastProcessed.virtualExitRows, 0) > 0
   );
 }
 
@@ -3801,7 +3845,8 @@ export async function runTradeSystem(options = {}) {
           scannerFingerprintsMetadataOnly: true,
           scannerFingerprintsUsedAsLearningFamily: false,
           executionFingerprintsMetadataOnly: false,
-          executionFingerprintsUsedAsLearningFamily: true,
+          executionFingerprintsUsedAsLearningFamily: false,
+          executionFingerprintsCanDeriveMicroMicroContextHash: true,
           executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
           analyzeMicroFamiliesOnly: true,
           learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
@@ -3969,13 +4014,11 @@ export async function runTradeSystem(options = {}) {
       const selectedWeeklyStats = getSelectedWeeklyStats(alertContext, selectedAlertMatch.selectedMicroMicroFamilyId || microMicroFamilyId);
       const sizingStats = selectedWeeklyStats || row;
 
-      const riskFraction = sizing.enabled
-        ? riskFractionForEntry({
-            weeklyStats: sizingStats,
-            side: TARGET_DASHBOARD_SIDE,
-            tradeSide: TARGET_TRADE_SIDE
-          })
-        : sizing.baseRiskPct;
+      const riskFraction = safeRiskFractionForEntry({
+        weeklyStats: sizingStats,
+        side: TARGET_DASHBOARD_SIDE,
+        tradeSide: TARGET_TRADE_SIDE
+      }, sizing);
 
       const currentFitGate = discordCurrentFitGate(row);
       const discordAlertEligible =
