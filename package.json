@@ -11,7 +11,9 @@
     "analyze:activate": "node scripts/activateRotation.js",
     "trace:scanner": "node --trace-deprecation scripts/runScanner.js",
     "trace:trade": "node --trace-deprecation scripts/runTradeSystem.js",
-    "check:node": "node -v"
+    "check:node": "node -v",
+    "check:syntax": "node --check src/trade/tradeSystem.js && node --check api/trade/run.js && find src api scripts -name '*.js' -exec node --check {} \\;",
+    "build": "npm run check:syntax"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
