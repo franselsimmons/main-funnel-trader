@@ -76,9 +76,9 @@ const SELECTION_PARENT_CONTEXT = 'PARENT_15_CONTEXT_ONLY';
 const SELECTION_75_CHILD_CONTEXT = 'MICRO_75_CONTEXT_ONLY';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
-const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V9';
+const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V10';
 const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V4';
-const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V6';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V7';
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 const RR_SHADOW_GRID_VERSION = 'SHORT_RR_SHADOW_GRID_1_125_15_175_2_V1';
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
@@ -132,7 +132,7 @@ const LIVE_PRICE_CACHE_TTL_MS = 2500;
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 
-const SETUP_ORDER = Object.freeze([
+const SETUP_TYPES = Object.freeze([
   'BREAKOUT',
   'RETEST',
   'SWEEP_REVERSAL',
@@ -140,13 +140,13 @@ const SETUP_ORDER = Object.freeze([
   'COMPRESSION'
 ]);
 
-const REGIME_ORDER = Object.freeze([
+const REGIME_BUCKETS = Object.freeze([
   'TREND',
   'CHOP',
   'SQUEEZE'
 ]);
 
-const CONFIRMATION_PROFILE_ORDER = Object.freeze([
+const CONFIRMATION_PROFILES = Object.freeze([
   'A_STRONG_ALIGN',
   'B_FLOW_ALIGN',
   'C_VOLUME_ALIGN',
@@ -154,9 +154,9 @@ const CONFIRMATION_PROFILE_ORDER = Object.freeze([
   'E_WEAK_CONTRA'
 ]);
 
-const SETUP_SET = new Set(SETUP_ORDER);
-const REGIME_SET = new Set(REGIME_ORDER);
-const CONFIRMATION_SET = new Set(CONFIRMATION_PROFILE_ORDER);
+const SETUP_SET = new Set(SETUP_TYPES);
+const REGIME_SET = new Set(REGIME_BUCKETS);
+const CONFIRMATION_SET = new Set(CONFIRMATION_PROFILES);
 
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
@@ -222,6 +222,7 @@ function pct(part, total) {
 
 function uniqueStrings(values = []) {
   const out = [];
+  const seen = new Set();
   const stack = Array.isArray(values) ? [...values] : [values];
 
   while (stack.length) {
@@ -232,16 +233,16 @@ function uniqueStrings(values = []) {
       continue;
     }
 
-    if (typeof value === 'string') {
-      for (const part of value.split(/[\s,;\n\r]+/g)) {
-        const clean = part.trim();
-        if (clean && !out.includes(clean)) out.push(clean);
-      }
-      continue;
-    }
+    const parts = typeof value === 'string'
+      ? value.split(/[\s,;\n\r]+/g)
+      : [value];
 
-    const clean = String(value || '').trim();
-    if (clean && !out.includes(clean)) out.push(clean);
+    for (const part of parts) {
+      const clean = String(part || '').trim();
+      if (!clean || seen.has(clean)) continue;
+      seen.add(clean);
+      out.push(clean);
+    }
   }
 
   return out;
@@ -697,7 +698,7 @@ function inferRowTradeSide(row = {}) {
 }
 
 function isTargetRow(row = {}) {
-  return inferRowTradeSide(row) === TARGET_TRADE_SIDE;
+  return inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
 }
 
 function isScannerFingerprintId(id = '') {
@@ -758,7 +759,7 @@ function parseShortTaxonomyMicroId(id = '') {
   let body = baseValue.slice('MICRO_SHORT_'.length);
   let confirmationProfile = null;
 
-  for (const profile of CONFIRMATION_PROFILE_ORDER) {
+  for (const profile of CONFIRMATION_PROFILES) {
     const suffix = `_${profile}`;
     if (body.endsWith(suffix)) {
       confirmationProfile = profile;
@@ -767,23 +768,35 @@ function parseShortTaxonomyMicroId(id = '') {
     }
   }
 
-  let setup = null;
-  let regime = null;
+  let setupType = null;
+  let regimeBucket = null;
 
-  for (const candidateRegime of REGIME_ORDER) {
+  for (const candidateRegime of REGIME_BUCKETS) {
     const suffix = `_${candidateRegime}`;
     if (body.endsWith(suffix)) {
-      regime = candidateRegime;
-      setup = body.slice(0, -suffix.length);
+      regimeBucket = candidateRegime;
+      setupType = body.slice(0, -suffix.length);
       break;
     }
   }
 
-  const parentId = setup && regime ? `MICRO_SHORT_${setup}_${regime}` : null;
-  const childId = parentId && confirmationProfile ? `${parentId}_${confirmationProfile}` : null;
+  const parentId = setupType && regimeBucket
+    ? `MICRO_SHORT_${setupType}_${regimeBucket}`
+    : null;
 
-  const validParent = Boolean(parentId) && SETUP_SET.has(setup) && REGIME_SET.has(regime);
-  const validChild = validParent && Boolean(confirmationProfile) && CONFIRMATION_SET.has(confirmationProfile);
+  const childId = parentId && confirmationProfile
+    ? `${parentId}_${confirmationProfile}`
+    : null;
+
+  const validParent =
+    Boolean(parentId) &&
+    SETUP_SET.has(setupType) &&
+    REGIME_SET.has(regimeBucket);
+
+  const validChild =
+    validParent &&
+    Boolean(confirmationProfile) &&
+    CONFIRMATION_SET.has(confirmationProfile);
 
   if (validChild && microMicroHash) {
     microMicroFamilyId = `${childId}_${MICRO_MICRO_SUFFIX}_${microMicroHash}`;
@@ -796,22 +809,33 @@ function parseShortTaxonomyMicroId(id = '') {
   return {
     valid: validParent || validChild || isMicroMicro,
     selectable: isMicroMicro,
+
     isParent,
     isChild,
     isMicroMicro,
     rawId,
     id: microMicroFamilyId || childId || parentId || value,
-    setup,
-    regime,
+
+    setupType,
+    regimeBucket,
     confirmationProfile,
+
     parentTrueMicroFamilyId: validParent ? parentId : null,
     childTrueMicroFamilyId: validChild ? childId : null,
     trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+
     microMicroFamilyId,
     trueMicroMicroFamilyId: microMicroFamilyId,
     exactMicroMicroFamilyId: microMicroFamilyId,
     microMicroHash,
-    learningLayer: isMicroMicro ? LAYER_MICRO_MICRO : isChild ? LAYER_MICRO_75 : isParent ? LAYER_PARENT_15 : 'UNKNOWN'
+
+    learningLayer: isMicroMicro
+      ? LAYER_MICRO_MICRO
+      : isChild
+        ? LAYER_MICRO_75
+        : isParent
+          ? LAYER_PARENT_15
+          : 'UNKNOWN'
   };
 }
 
@@ -963,8 +987,8 @@ function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
     `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
     `TRUE_MICRO=${childTrueMicroFamilyId || 'NO_TRUE_MICRO'}`,
     `PARENT_TRUE_MICRO=${parentId || 'NO_PARENT_TRUE_MICRO'}`,
-    `SETUP=${parsed.setup || row.setupType || 'NA'}`,
-    `REGIME_BUCKET=${parsed.regime || row.regimeBucket || 'NA'}`,
+    `SETUP=${parsed.setupType || row.setupType || 'NA'}`,
+    `REGIME_BUCKET=${parsed.regimeBucket || row.regimeBucket || 'NA'}`,
     `CONFIRMATION_PROFILE=${parsed.confirmationProfile || row.confirmationProfile || 'NA'}`,
     `RSI=${normalizeBucketText(row.rsiZone || row.rsiCoarse || 'NA')}`,
     `FLOW=${normalizeBucketText(row.flowCoarse || row.flow || 'NA')}`,
@@ -1136,11 +1160,10 @@ function learningIdentityFields(row = {}) {
     learningFamilyId: microMicroFamilyId || childTrueMicroFamilyId || parentTrueMicroFamilyId || null,
     learningMicroFamilyId: microMicroFamilyId || childTrueMicroFamilyId || parentTrueMicroFamilyId || null,
     analyzeMicroFamilyId: microMicroFamilyId || childTrueMicroFamilyId || parentTrueMicroFamilyId || null,
-
     familyId: microMicroFamilyId || childTrueMicroFamilyId || parentTrueMicroFamilyId || null,
 
-    setupType: parsedChild.setup || row.setupType || null,
-    regimeBucket: parsedChild.regime || row.regimeBucket || null,
+    setupType: parsedChild.setupType || row.setupType || null,
+    regimeBucket: parsedChild.regimeBucket || row.regimeBucket || null,
     confirmationProfile: parsedChild.confirmationProfile || row.confirmationProfile || null,
 
     exact75ChildTrueMicro: Boolean(childTrueMicroFamilyId),
@@ -1243,7 +1266,7 @@ function setupFromRow(row = {}) {
       ''
   );
 
-  if (parsed.setup && SETUP_SET.has(parsed.setup)) return parsed.setup;
+  if (parsed.setupType && SETUP_SET.has(parsed.setupType)) return parsed.setupType;
 
   const text = upper([
     row.scannerReason,
@@ -1295,7 +1318,7 @@ function regimeFromRow(row = {}, marketContext = {}) {
       ''
   );
 
-  if (parsed.regime && REGIME_SET.has(parsed.regime)) return parsed.regime;
+  if (parsed.regimeBucket && REGIME_SET.has(parsed.regimeBucket)) return parsed.regimeBucket;
 
   const direct = normalizeMarketRegime(
     row.regimeBucket ||
@@ -1600,7 +1623,6 @@ function weakContraApplies(row = {}, marketContext = {}) {
     currentTrendSide === OPPOSITE_TRADE_SIDE ||
     obRelation === 'AGAINST' ||
     btcRelation === 'BTC_AGAINST' ||
-    hasLongSignal(text) ||
     text.includes('E_WEAK_CONTRA') ||
     text.includes('WEAK_CONTRA') ||
     text.includes('CONTRA')
@@ -1679,13 +1701,7 @@ function buildWeakContraEntryGate(row = {}, marketContext = {}) {
     failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
   }
 
-  if (
-    cfg.rejectFakeBreakout &&
-    (
-      row.fakeBreakout === true ||
-      row.fakeBreakoutRisk === true
-    )
-  ) {
+  if (cfg.rejectFakeBreakout && (row.fakeBreakout === true || row.fakeBreakoutRisk === true)) {
     failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
   }
 
@@ -1757,8 +1773,8 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     baseTrueMicroFamilyId: childTrueMicroFamilyId,
     trueMicro75FamilyId: childTrueMicroFamilyId,
     parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
-    setupType: parsed.setup,
-    regimeBucket: parsed.regime,
+    setupType: parsed.setupType,
+    regimeBucket: parsed.regimeBucket,
     confirmationProfile: parsed.confirmationProfile
   };
 
@@ -2207,7 +2223,7 @@ function hasValidRiskShape(row = {}) {
 
   if (row.learningOnly === true) return false;
   if (row.liveRiskValid === false) return false;
-  if (inferRowTradeSide(row) !== TARGET_TRADE_SIDE) return false;
+  if (inferRowTradeSide(row) === OPPOSITE_TRADE_SIDE) return false;
   if (entry <= 0 || sl <= 0 || tp <= 0 || rr <= 0) return false;
 
   return tp < entry && entry < sl;
@@ -2336,7 +2352,7 @@ function validateVirtualEntry(row = {}) {
   const trueMicroFamilyId = getTrueMicroFamilyId(row);
   const microMicroFamilyId = getMicroMicroFamilyId(row);
 
-  if (tradeSide !== TARGET_TRADE_SIDE) {
+  if (tradeSide === OPPOSITE_TRADE_SIDE) {
     return { ok: false, reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM', tradeSide };
   }
 
@@ -2648,15 +2664,30 @@ function discordCurrentFitGate(row = {}) {
   const confidence = n(row.currentFitConfidence ?? row.entryCurrentFitConfidence, 0);
 
   if (!fit || fit === 'UNKNOWN') {
-    return { ok: false, reason: 'DISCORD_BLOCKED_CURRENT_FIT_UNKNOWN', currentFit: fit || 'UNKNOWN', currentFitConfidence: confidence };
+    return {
+      ok: false,
+      reason: 'DISCORD_BLOCKED_CURRENT_FIT_UNKNOWN',
+      currentFit: fit || 'UNKNOWN',
+      currentFitConfidence: confidence
+    };
   }
 
   if (confidence < discordMinCurrentFitConfidence()) {
-    return { ok: false, reason: 'DISCORD_BLOCKED_CURRENT_FIT_CONFIDENCE_TOO_LOW', currentFit: fit, currentFitConfidence: confidence };
+    return {
+      ok: false,
+      reason: 'DISCORD_BLOCKED_CURRENT_FIT_CONFIDENCE_TOO_LOW',
+      currentFit: fit,
+      currentFitConfidence: confidence
+    };
   }
 
   if (fit === 'MATCH' || fit === 'WEAK_MATCH') {
-    return { ok: true, reason: 'DISCORD_CURRENT_FIT_OK', currentFit: fit, currentFitConfidence: confidence };
+    return {
+      ok: true,
+      reason: 'DISCORD_CURRENT_FIT_OK',
+      currentFit: fit,
+      currentFitConfidence: confidence
+    };
   }
 
   return {
@@ -2819,7 +2850,6 @@ function buildVirtualEntryAction({
   const normalized = normalizeExactTrueMicroRow(row);
   const trueMicroFamilyId = getTrueMicroFamilyId(normalized);
   const microMicroFamilyId = getMicroMicroFamilyId(normalized);
-  const parentTrueMicroFamilyId = getParentTrueMicroFamilyId(normalized);
   const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
   const currentFitGate = discordCurrentFitGate(row);
   const identity = learningIdentityFields({
@@ -2848,8 +2878,8 @@ function buildVirtualEntryAction({
     reason: virtualGate.reason || 'SHORT_VIRTUAL_LEARNING_COST_AWARE_RR_GRID',
     shadowOnly: false,
 
-    setupType: parsed.setup,
-    regimeBucket: parsed.regime,
+    setupType: parsed.setupType,
+    regimeBucket: parsed.regimeBucket,
     confirmationProfile: parsed.confirmationProfile,
 
     weakContraEntryGate: row.weakContraEntryGate || normalized.weakContraEntryGate || null,
@@ -3133,8 +3163,8 @@ function buildVirtualExitAction(outcome = {}) {
     parentTrueMicroFamilyId: parentTrueMicroFamilyId || null,
     coarseMicroFamilyId: parentTrueMicroFamilyId || null,
 
-    setupType: parsed.setup || outcome.setupType || null,
-    regimeBucket: parsed.regime || outcome.regimeBucket || null,
+    setupType: parsed.setupType || outcome.setupType || null,
+    regimeBucket: parsed.regimeBucket || outcome.regimeBucket || null,
     confirmationProfile: parsed.confirmationProfile || outcome.confirmationProfile || null,
 
     exact75ChildTrueMicro: Boolean(trueMicroFamilyId),
@@ -3679,7 +3709,7 @@ function extractSnapshotId(latest) {
 
 function countTargetCandidates(snapshot = {}) {
   const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
-  return rows.filter((candidate) => inferRowTradeSide(candidate) === TARGET_TRADE_SIDE).length;
+  return rows.filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE).length;
 }
 
 function countOppositeCandidates(snapshot = {}) {
@@ -3695,7 +3725,7 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
   const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
 
   const targetRows = rows
-    .filter((candidate) => inferRowTradeSide(candidate) === TARGET_TRADE_SIDE)
+    .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE)
     .map((candidate) => ({
       ...candidate,
       ...scannerMetadataFrom(candidate),
@@ -3705,7 +3735,7 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
     }));
 
   const blockedNonShortCandidates = rows
-    .filter((candidate) => inferRowTradeSide(candidate) !== TARGET_TRADE_SIDE)
+    .filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE)
     .slice(0, 50)
     .map((candidate) => waitAction(
       normalizeCandidate(candidate),
@@ -3728,7 +3758,7 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
     selectedOppositeCandidateCount: countOppositeCandidates(snapshot),
     selectedLongCandidateCount: countOppositeCandidates(snapshot),
     blockedNonShortCandidates,
-    blockedNonShortCandidatesCount: rows.length - targetRows.length,
+    blockedNonShortCandidatesCount: blockedNonShortCandidates.length,
     ...sideFlags(),
     ...isolationFlags(),
     ...virtualFlags(),
@@ -4248,7 +4278,9 @@ export async function runTradeSystem(options = {}) {
     const snapshotAgeSec = (now() - n(snapshot.createdAt, 0)) / 1000;
 
     if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
-      const actions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
+      const actions = Array.isArray(snapshot.blockedNonShortCandidates)
+        ? snapshot.blockedNonShortCandidates
+        : [];
 
       return saveRunMeta(baseEarlyReturnPayload({
         runId,
@@ -4272,7 +4304,9 @@ export async function runTradeSystem(options = {}) {
     const sameSnapshotCompletedEnough = sameSnapshot && snapshotAlreadyProcessedEnough(lastProcessed);
 
     if (sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot) {
-      const actions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
+      const actions = Array.isArray(snapshot.blockedNonShortCandidates)
+        ? snapshot.blockedNonShortCandidates
+        : [];
 
       return saveRunMeta(baseEarlyReturnPayload({
         runId,
@@ -4336,10 +4370,12 @@ export async function runTradeSystem(options = {}) {
     }
 
     const alertContext = buildSelectedAlertContext(activeRotation);
-    const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
+    const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonShortCandidates)
+      ? snapshot.blockedNonShortCandidates
+      : [];
 
     const allTargetCandidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
-      .filter((candidate) => inferRowTradeSide(candidate) === TARGET_TRADE_SIDE);
+      .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE);
 
     const candidates = allTargetCandidates
       .slice(0, cfg.maxCandidatesPerSnapshot)
@@ -4359,7 +4395,12 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push(`SHORT_CANDIDATES_CAPPED_FOR_ENTRY_BUDGET:${cappedCandidateCount}`);
     }
 
-    const processed = await mapConcurrent(candidates, cfg.dataConcurrency, (candidate) => safeProcessCandidate(candidate, marketContext));
+    const processed = await mapConcurrent(
+      candidates,
+      cfg.dataConcurrency,
+      (candidate) => safeProcessCandidate(candidate, marketContext)
+    );
+
     const candidateTimeoutRows = processed.filter((row) => row?.timedOut).length;
 
     if (candidateTimeoutRows > 0) {
@@ -4417,7 +4458,7 @@ export async function runTradeSystem(options = {}) {
           bitgetOrdersDisabled: true,
           exchangeCallsDisabled: true,
 
-          observationAlwaysCounted: false,
+          observationAlwaysCounted: true,
           observationDedupeRequired: true,
           observationDedupeEnabled: true,
           seenDefinition: 'UNIQUE_SNAPSHOT_SYMBOL_MICRO_MICRO_ENTRY_OBSERVATION_ONLY',
