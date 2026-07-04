@@ -10,6 +10,10 @@
 // - Geen auto-rotation.
 // - Alleen manual Discord selectie.
 // - SHORT-only, virtual-only, geen real orders.
+// - Discord activation heeft harde netto-edge gate:
+//   completed >= 35, avgR > 0, totalR > 0, PF > 1,
+//   avgCostR <= 0.35, directSLPct <= 25%, CurrentFit != MISFIT,
+//   E_WEAK_CONTRA niet activeerbaar voor Discord.
 //
 // Selecteerbaar:
 // - MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}
@@ -22,6 +26,7 @@
 // - scanner fingerprints
 // - raw XR execution fingerprints
 // - LONG ids
+// - negatieve of te dure micro-micro families voor Discord activation
 
 import { safeNumber, sideToTradeSide } from '../../src/utils.js';
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
@@ -43,6 +48,16 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_MICRO_MICRO_ACTIVE_LEARNING = 35;
 const MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES = 2;
+
+const DISCORD_ACTIVATION_GATE_VERSION = 'SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V1';
+const MIN_DISCORD_ACTIVATION_COMPLETED = 35;
+const MIN_DISCORD_ACTIVATION_AVG_R = 0;
+const MIN_DISCORD_ACTIVATION_TOTAL_R = 0;
+const MIN_DISCORD_ACTIVATION_PROFIT_FACTOR = 1;
+const MAX_DISCORD_ACTIVATION_AVG_COST_R = 0.35;
+const MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT = 0.25;
+const BLOCK_E_WEAK_CONTRA_FOR_DISCORD_ACTIVATION = true;
+const BLOCK_MISFIT_FOR_DISCORD_ACTIVATION = true;
 
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const CHILD_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
@@ -315,6 +330,21 @@ function cleanSideText(value = '') {
     .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
+function activationGateConfig() {
+  return {
+    version: DISCORD_ACTIVATION_GATE_VERSION,
+    minCompleted: MIN_DISCORD_ACTIVATION_COMPLETED,
+    minAvgR: MIN_DISCORD_ACTIVATION_AVG_R,
+    minTotalR: MIN_DISCORD_ACTIVATION_TOTAL_R,
+    minProfitFactor: MIN_DISCORD_ACTIVATION_PROFIT_FACTOR,
+    maxAvgCostR: MAX_DISCORD_ACTIVATION_AVG_COST_R,
+    maxDirectSLPct: MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT,
+    blockEWeakContra: BLOCK_E_WEAK_CONTRA_FOR_DISCORD_ACTIVATION,
+    blockMisfit: BLOCK_MISFIT_FOR_DISCORD_ACTIVATION,
+    rule: 'completed>=35 && avgR>0 && totalR>0 && profitFactor>1 && avgCostR<=0.35 && directSLPct<=0.25 && currentFit!=MISFIT && confirmationProfile!=E_WEAK_CONTRA'
+  };
+}
+
 function modeFlags() {
   return {
     targetTradeSide: TARGET_TRADE_SIDE,
@@ -406,6 +436,10 @@ function modeFlags() {
     scannerMatchDoesNotTriggerDiscord: true,
     executionFingerprintMatchDoesNotTriggerDiscord: true,
 
+    discordActivationRequiresNetEdge: true,
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordActivationGate: activationGateConfig(),
+
     persistentLearningOnly: true,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
     requestedWeekKeyIgnored: true,
@@ -460,7 +494,10 @@ function taxonomyMeta() {
     selectableIdsAreMicroMicroOnly: true,
     child75IdsAreContextOnly: true,
     parentIdsAreMetadataOnly: true,
-    child75ProxySelectionDisabled: true
+    child75ProxySelectionDisabled: true,
+
+    discordActivationRequiresNetEdge: true,
+    discordActivationGate: activationGateConfig()
   };
 }
 
@@ -1114,6 +1151,86 @@ function eligibilityTier(row = {}) {
   return 'RAW';
 }
 
+function discordActivationGate(row = {}, parsed = null, fit = null) {
+  const id = getExplicitMicroMicroId(row, row.key);
+  const parsedId = parsed || parseShortTaxonomyMicroId(id);
+  const fitInfo = fit || getShortCurrentFit(row);
+
+  const completed = completedSample(row);
+  const observed = observationSample(row);
+  const netAvgR = avgR(row);
+  const netTotalR = totalR(row);
+  const pf = profitFactor(row);
+  const cost = avgCostR(row);
+  const dsl = directSLPct(row);
+  const confirmationProfile = upper(row.confirmationProfile || parsedId.confirmationProfile);
+  const reasons = [];
+
+  if (!id || !isSelectableMicroMicroId(id)) {
+    reasons.push('EXACT_MICRO_MICRO_ID_REQUIRED');
+  }
+
+  if (observed <= 0 && completed <= 0) {
+    reasons.push('NO_PERSISTENT_STATS_FOR_MICRO_MICRO_ID');
+  }
+
+  if (completed < MIN_DISCORD_ACTIVATION_COMPLETED) {
+    reasons.push(`COMPLETED_BELOW_${MIN_DISCORD_ACTIVATION_COMPLETED}`);
+  }
+
+  if (!(netAvgR > MIN_DISCORD_ACTIVATION_AVG_R)) {
+    reasons.push('AVG_R_NET_NOT_POSITIVE');
+  }
+
+  if (!(netTotalR > MIN_DISCORD_ACTIVATION_TOTAL_R)) {
+    reasons.push('TOTAL_R_NET_NOT_POSITIVE');
+  }
+
+  if (!(pf > MIN_DISCORD_ACTIVATION_PROFIT_FACTOR)) {
+    reasons.push('PROFIT_FACTOR_NOT_ABOVE_1');
+  }
+
+  if (cost > MAX_DISCORD_ACTIVATION_AVG_COST_R) {
+    reasons.push('AVG_COST_R_TOO_HIGH');
+  }
+
+  if (dsl > MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT) {
+    reasons.push('DIRECT_SL_PCT_TOO_HIGH');
+  }
+
+  if (BLOCK_MISFIT_FOR_DISCORD_ACTIVATION && upper(fitInfo.label) === 'MISFIT') {
+    reasons.push('CURRENTFIT_MISFIT_BLOCKS_DISCORD');
+  }
+
+  if (BLOCK_E_WEAK_CONTRA_FOR_DISCORD_ACTIVATION && confirmationProfile === 'E_WEAK_CONTRA') {
+    reasons.push('E_WEAK_CONTRA_BLOCKED_FOR_DISCORD_ACTIVATION');
+  }
+
+  const eligible = reasons.length === 0;
+
+  return {
+    version: DISCORD_ACTIVATION_GATE_VERSION,
+    eligible,
+    blocked: !eligible,
+    reason: eligible ? 'DISCORD_ACTIVATION_ELIGIBLE_NET_EDGE_CONFIRMED' : reasons[0],
+    reasons,
+
+    id,
+    completed: round(completed, 4),
+    observed: round(observed, 4),
+    avgR: round(netAvgR, 4),
+    totalR: round(netTotalR, 4),
+    profitFactor: round(pf, 4),
+    avgCostR: round(cost, 4),
+    directSLPct: round(dsl, 4),
+    currentFit: fitInfo.label || 'UNKNOWN',
+    currentFitScore: round(fitInfo.score, 4),
+    confirmationProfile,
+
+    thresholds: activationGateConfig()
+  };
+}
+
 function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
   const id = getExplicitMicroMicroId(row, row.key);
   if (!id || !isSelectableMicroMicroId(id)) return null;
@@ -1126,6 +1243,7 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
   const observed = observationSample(row);
   const bScore = balancedScore(row, wr);
   const tier = row.selectedTier || row.rotationEligibilityTier || eligibilityTier(row);
+  const gate = discordActivationGate(row, parsed, fit);
 
   return {
     rank: index + 1,
@@ -1241,6 +1359,16 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
     currentFitBlocksDiscord: fit.label === 'MISFIT',
     discordCurrentFitAllowed: fit.label !== 'MISFIT',
 
+    discordActivationEligible: gate.eligible,
+    discordActivationBlocked: gate.blocked,
+    discordActivationReason: gate.reason,
+    discordActivationBlockedReason: gate.blocked ? gate.reason : null,
+    discordActivationBlockedReasons: gate.reasons,
+    discordActivationGate: gate,
+    activationEligible: gate.eligible,
+    activationBlocked: gate.blocked,
+    activationBlockedReason: gate.blocked ? gate.reason : null,
+
     selectedTier: tier,
     rotationEligibilityTier: tier,
 
@@ -1298,19 +1426,24 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
 }
 
 function compareRows(a = {}, b = {}) {
+  const aEligible = a.discordActivationEligible === true ? 1 : 0;
+  const bEligible = b.discordActivationEligible === true ? 1 : 0;
+
   const aActive = completedSample(a) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE_LEARNING ? 1 : 0;
   const bActive = completedSample(b) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE_LEARNING ? 1 : 0;
 
   return (
+    bEligible - aEligible ||
     bActive - aActive ||
+    num(b.avgR, 0) - num(a.avgR, 0) ||
+    num(b.totalR, 0) - num(a.totalR, 0) ||
+    num(b.profitFactor, 0) - num(a.profitFactor, 0) ||
+    num(a.avgCostR, 0) - num(b.avgCostR, 0) ||
+    num(a.directSLPct, 0) - num(b.directSLPct, 0) ||
     num(b.outcomeSample ?? completedSample(b), 0) - num(a.outcomeSample ?? completedSample(a), 0) ||
     num(b.adaptiveScore, 0) - num(a.adaptiveScore, 0) ||
     num(b.dashboardBalancedScore, 0) - num(a.dashboardBalancedScore, 0) ||
     num(b.balancedScore, 0) - num(a.balancedScore, 0) ||
-    num(b.totalR, 0) - num(a.totalR, 0) ||
-    num(b.avgR, 0) - num(a.avgR, 0) ||
-    num(a.directSLPct, 0) - num(b.directSLPct, 0) ||
-    num(a.avgCostR, 0) - num(b.avgCostR, 0) ||
     String(a.trueMicroFamilyId || '').localeCompare(String(b.trueMicroFamilyId || ''))
   );
 }
@@ -1411,6 +1544,8 @@ async function loadAvailableRows({ weekKey, limit = DEFAULT_AVAILABLE_LIMIT, act
     previousRows: 0,
     mergedRows: rows.length,
     ignoredLayerCounts: allRows.ignoredLayerCounts || {},
+    activationEligibleRows: allRows.filter((row) => row.discordActivationEligible === true).length,
+    activationBlockedRows: allRows.filter((row) => row.discordActivationEligible !== true).length,
     rows
   };
 }
@@ -1768,6 +1903,28 @@ function layerCounts(rows = []) {
   };
 }
 
+function activationSummary(rows = []) {
+  const eligible = rows.filter((row) => row.discordActivationEligible === true);
+  const blocked = rows.filter((row) => row.discordActivationEligible !== true);
+  const reasons = blocked.reduce((acc, row) => {
+    for (const reason of row.discordActivationBlockedReasons || [row.discordActivationBlockedReason || 'UNKNOWN']) {
+      acc[reason] = (acc[reason] || 0) + 1;
+    }
+    return acc;
+  }, {});
+
+  return {
+    version: DISCORD_ACTIVATION_GATE_VERSION,
+    total: rows.length,
+    eligible: eligible.length,
+    blocked: blocked.length,
+    eligibleIds: eligible.map((row) => row.trueMicroFamilyId),
+    topEligibleIds: eligible.slice(0, MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES).map((row) => row.trueMicroFamilyId),
+    blockedReasonCounts: reasons,
+    thresholds: activationGateConfig()
+  };
+}
+
 function rotationOptions(extra = {}) {
   return {
     tradeSide: TARGET_TRADE_SIDE,
@@ -1834,6 +1991,10 @@ function rotationOptions(extra = {}) {
     parentMatchDoesNotTriggerDiscord: true,
     macroMatchDoesNotTriggerDiscord: true,
 
+    discordActivationRequiresNetEdge: true,
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordActivationGate: activationGateConfig(),
+
     persistentLearningOnly: true,
 
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
@@ -1845,6 +2006,73 @@ function rotationOptions(extra = {}) {
     microMicroVersion: MICRO_MICRO_VERSION,
 
     ...extra
+  };
+}
+
+async function validateSelectedActivationIds(selectedIds = []) {
+  const current = await getWeekMicros(PERSISTENT_LEARNING_KEY).catch(() => ({}));
+  const rows = buildAvailableRowsFromMicros(current || {}, new Set());
+  const rowById = new Map(rows.map((row) => [row.trueMicroFamilyId, row]));
+
+  const requestedRows = [];
+  const eligibleRows = [];
+  const rejectedRows = [];
+
+  for (const id of uniqueStrings(selectedIds).filter(isSelectableMicroMicroId)) {
+    const row = rowById.get(id) || manualActiveRowFromId(id, requestedRows.length, new Set()) || null;
+
+    if (!row) {
+      rejectedRows.push({
+        id,
+        reason: 'MICRO_MICRO_ROW_NOT_FOUND_IN_PERSISTENT_LEARNING',
+        discordActivationGate: {
+          version: DISCORD_ACTIVATION_GATE_VERSION,
+          eligible: false,
+          blocked: true,
+          reason: 'MICRO_MICRO_ROW_NOT_FOUND_IN_PERSISTENT_LEARNING',
+          reasons: ['MICRO_MICRO_ROW_NOT_FOUND_IN_PERSISTENT_LEARNING'],
+          thresholds: activationGateConfig()
+        }
+      });
+      continue;
+    }
+
+    requestedRows.push(row);
+
+    if (row.discordActivationEligible === true) {
+      eligibleRows.push(row);
+    } else {
+      rejectedRows.push({
+        id,
+        reason: row.discordActivationBlockedReason || row.discordActivationReason || 'DISCORD_ACTIVATION_GATE_REJECTED',
+        reasons: row.discordActivationBlockedReasons || [],
+        completed: row.completed,
+        avgR: row.avgR,
+        totalR: row.totalR,
+        profitFactor: row.profitFactor,
+        avgCostR: row.avgCostR,
+        directSLPct: row.directSLPct,
+        currentFit: row.currentFit,
+        currentFitScore: row.currentFitScore,
+        confirmationProfile: row.confirmationProfile,
+        discordActivationGate: row.discordActivationGate || null
+      });
+    }
+  }
+
+  const eligibleIds = eligibleRows
+    .map((row) => row.trueMicroFamilyId)
+    .filter(Boolean)
+    .slice(0, MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES);
+
+  return {
+    ok: eligibleIds.length > 0,
+    eligibleIds,
+    eligibleRows,
+    rejectedRows,
+    requestedRows,
+    allAvailableRows: rows,
+    activationSummary: activationSummary(rows)
   };
 }
 
@@ -1894,6 +2122,8 @@ async function handleGet(req, res) {
       previousRows: 0,
       mergedRows: 0,
       ignoredLayerCounts: {},
+      activationEligibleRows: 0,
+      activationBlockedRows: 0,
       rows: [],
       warning: error?.message || String(error)
     }))
@@ -1907,10 +2137,13 @@ async function handleGet(req, res) {
       previousRows: 0,
       mergedRows: 0,
       ignoredLayerCounts: {},
+      activationEligibleRows: 0,
+      activationBlockedRows: 0,
       rows: []
     };
 
   const availableRows = availableResult.rows || [];
+  const activation = activationSummary(availableRows);
 
   const warnings = uniqueWarnings([
     availableResult.warning,
@@ -1920,7 +2153,8 @@ async function handleGet(req, res) {
     (active.legacyChild75ActiveIdsIgnored || []).length > 0
       ? `LEGACY_CHILD75_ACTIVE_IDS_IGNORED:${active.legacyChild75ActiveIdsIgnored.length}`
       : null,
-    availableRows.length === 0 ? 'NO_AVAILABLE_EXPLICIT_MICRO_MICRO_ROWS' : null
+    availableRows.length === 0 ? 'NO_AVAILABLE_EXPLICIT_MICRO_MICRO_ROWS' : null,
+    availableRows.length > 0 && activation.eligible === 0 ? 'NO_DISCORD_ACTIVATION_ELIGIBLE_MICRO_MICRO_ROWS_NET_EDGE_GATE' : null
   ]);
 
   return res.status(200).json({
@@ -1975,11 +2209,19 @@ async function handleGet(req, res) {
     availableTierSummary: buildTierSummary(availableRows),
     availableLayerCounts: layerCounts(availableRows),
 
+    discordActivationSummary: activation,
+    discordActivationEligibleRows: activation.eligible,
+    discordActivationBlockedRows: activation.blocked,
+    discordActivationEligibleIds: activation.eligibleIds,
+    topDiscordActivationEligibleIds: activation.topEligibleIds,
+
     sourceRows: {
       currentWeekRows: availableResult.currentRows,
       previousWeekRows: availableResult.previousRows,
       mergedRows: availableResult.mergedRows,
       ignoredLayerCounts: availableResult.ignoredLayerCounts || {},
+      activationEligibleRows: availableResult.activationEligibleRows || 0,
+      activationBlockedRows: availableResult.activationBlockedRows || 0,
       explicitMicroMicroOnly: true,
       child75ProxySelectionDisabled: true,
       persistentLearningOnly: true,
@@ -1994,7 +2236,9 @@ async function handleGet(req, res) {
       selectExactMicroMicro: true,
       selectParent15Disabled: true,
       copy: true,
-      activateVisibleIdsForDiscord: true
+      activateVisibleIdsForDiscord: true,
+      activateTop2VisibleRequiresNetEdge: true,
+      activateTop2AdaptiveRequiresNetEdge: true
     },
 
     warnings,
@@ -2072,29 +2316,76 @@ async function handlePost(req, res) {
     });
   }
 
+  const activationValidation = await validateSelectedActivationIds(selected.acceptedIds);
+  const activationIds = activationValidation.eligibleIds;
+
+  if (!activationValidation.ok) {
+    return res.status(400).json({
+      ok: false,
+      fixed: true,
+      reason: 'NO_ACTIVATION_ELIGIBLE_MICRO_MICRO_IDS_NET_EDGE_GATE',
+      action,
+
+      ...modeFlags(),
+      taxonomy: taxonomyMeta(),
+
+      requestedIds: selected.requestedIds,
+      parsedAcceptedIds: selected.acceptedIds,
+      acceptedIds: [],
+      rejectedIds: activationValidation.rejectedRows.map((row) => row.id).filter(Boolean),
+      activationRejectedRows: activationValidation.rejectedRows,
+      ignoredRequestedIds: selected.ignoredRequestedIds,
+      ignoredAboveLimitIds: selected.ignoredAboveLimitIds,
+
+      discordActivationGate: activationGateConfig(),
+      discordActivationSummary: activationValidation.activationSummary,
+
+      expectedHardRules: [
+        'completed >= 35',
+        'avgR net > 0',
+        'totalR net > 0',
+        'profitFactor > 1',
+        'avgCostR <= 0.35',
+        'directSLPct <= 0.25',
+        'currentFit != MISFIT',
+        'confirmationProfile != E_WEAK_CONTRA'
+      ],
+
+      noSelectionMeansNoDiscord: true,
+
+      perf: {
+        durationMs: now() - startedAt,
+        source: 'activateSelectedShortExactMicroMicro_rejected_by_net_edge_gate'
+      },
+
+      serverTs: Date.now()
+    });
+  }
+
   const requestedWeekKey = String(firstValue(body.weekKey, PERSISTENT_LEARNING_KEY)).trim();
   const weekKey = PERSISTENT_LEARNING_KEY;
   const mode = normalizeMode(firstValue(body.mode, action === 'activateSelected' ? 'selected' : 'manual'), 'manual');
-  const parentIds = extractParentIdsFromIds(selected.acceptedIds);
+  const childIds = uniqueStrings(activationIds.map(getChildTrueMicroFamilyIdFromId).filter(Boolean));
+  const parentIds = extractParentIdsFromIds(activationIds);
 
   const activation = await activateSelectedMicroFamilies({
-    microFamilyIds: selected.acceptedIds,
-    trueMicroFamilyIds: selected.acceptedIds,
-    activeMicroFamilyIds: selected.acceptedIds,
-    ids: selected.acceptedIds,
+    microFamilyIds: activationIds,
+    trueMicroFamilyIds: activationIds,
+    activeMicroFamilyIds: activationIds,
+    ids: activationIds,
 
-    microMicroFamilyIds: selected.acceptedIds,
-    trueMicroMicroFamilyIds: selected.acceptedIds,
-    exactMicroMicroFamilyIds: selected.acceptedIds,
-    activeMicroMicroFamilyIds: selected.acceptedIds,
-    activeTrueMicroMicroFamilyIds: selected.acceptedIds,
-    activeExactMicroMicroFamilyIds: selected.acceptedIds,
-    selectedMicroMicroFamilyIds: selected.acceptedIds,
-    selectedTrueMicroMicroFamilyIds: selected.acceptedIds,
-    selectedExactMicroMicroFamilyIds: selected.acceptedIds,
+    microMicroFamilyIds: activationIds,
+    trueMicroMicroFamilyIds: activationIds,
+    exactMicroMicroFamilyIds: activationIds,
+    activeMicroMicroFamilyIds: activationIds,
+    activeTrueMicroMicroFamilyIds: activationIds,
+    activeExactMicroMicroFamilyIds: activationIds,
+    selectedMicroMicroFamilyIds: activationIds,
+    selectedTrueMicroMicroFamilyIds: activationIds,
+    selectedExactMicroMicroFamilyIds: activationIds,
 
-    childTrueMicroFamilyIds: selected.childTrueMicroFamilyIds,
-    base75ChildTrueMicroFamilyIds: selected.childTrueMicroFamilyIds,
+    childTrueMicroFamilyIds: childIds,
+    base75ChildTrueMicroFamilyIds: childIds,
 
     macroFamilyIds: [],
     activeMacroFamilyIds: [],
@@ -2138,10 +2429,11 @@ async function handlePost(req, res) {
     requestedMacroFamilyIds: selected.requestedMacroFamilyIds,
     requestedIds: selected.requestedIds,
 
-    resolvedMicroFamilyIds: selected.acceptedIds,
-    resolvedTrueMicroFamilyIds: selected.acceptedIds,
-    resolvedMicroMicroFamilyIds: selected.acceptedIds,
-    resolvedChildTrueMicroFamilyIds: selected.childTrueMicroFamilyIds,
+    parsedAcceptedIds: selected.acceptedIds,
+    resolvedMicroFamilyIds: activationIds,
+    resolvedTrueMicroFamilyIds: activationIds,
+    resolvedMicroMicroFamilyIds: activationIds,
+    resolvedChildTrueMicroFamilyIds: childIds,
     resolvedMacroFamilyIds: [],
     expandedFromMacro: [],
     unresolvedMacroFamilyIds: selected.requestedMacroFamilyIds,
@@ -2149,12 +2441,17 @@ async function handlePost(req, res) {
     parentExpansionDisabled: true,
     child75ActivationDisabled: true,
 
-    acceptedIds: selected.acceptedIds,
+    acceptedIds: activationIds,
+    activationAcceptedIds: activationIds,
+    activationRejectedRows: activationValidation.rejectedRows,
     ignoredRequestedIds: [
       ...selected.ignoredRequestedIds,
       ...(Array.isArray(activation?.ignoredRequestedIds) ? activation.ignoredRequestedIds : [])
     ],
     ignoredAboveLimitIds: selected.ignoredAboveLimitIds,
+
+    discordActivationGate: activationGateConfig(),
+    discordActivationSummary: activationValidation.activationSummary,
 
     activeRotation: active,
     active,
@@ -2184,7 +2481,7 @@ async function handlePost(req, res) {
 
     perf: {
       durationMs: now() - startedAt,
-      source: 'activateSelectedShortExactMicroMicro_manual_only_exact_match'
+      source: 'activateSelectedShortExactMicroMicro_manual_only_exact_match_net_edge_gate'
     },
 
     serverTs: Date.now()
@@ -2193,7 +2490,7 @@ async function handlePost(req, res) {
 
 function setHeaders(res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Rotation-Mode', 'short-only-manual-selection-exact-micro-micro-only-v4');
+  res.setHeader('X-Admin-Rotation-Mode', 'short-only-manual-selection-exact-micro-micro-only-v5-net-edge-gate');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -2225,6 +2522,15 @@ function setHeaders(res) {
   res.setHeader('X-Redis-Namespace', SHORT_NAMESPACE);
   res.setHeader('X-Long-Root-Touched', 'false');
   res.setHeader('X-Min-Completed-Micro-Micro-Active', String(MIN_COMPLETED_MICRO_MICRO_ACTIVE_LEARNING));
+  res.setHeader('X-Discord-Activation-Gate-Version', DISCORD_ACTIVATION_GATE_VERSION);
+  res.setHeader('X-Discord-Activation-Requires-Net-Edge', 'true');
+  res.setHeader('X-Discord-Activation-Min-Completed', String(MIN_DISCORD_ACTIVATION_COMPLETED));
+  res.setHeader('X-Discord-Activation-Min-AvgR', String(MIN_DISCORD_ACTIVATION_AVG_R));
+  res.setHeader('X-Discord-Activation-Min-TotalR', String(MIN_DISCORD_ACTIVATION_TOTAL_R));
+  res.setHeader('X-Discord-Activation-Min-ProfitFactor', String(MIN_DISCORD_ACTIVATION_PROFIT_FACTOR));
+  res.setHeader('X-Discord-Activation-Max-AvgCostR', String(MAX_DISCORD_ACTIVATION_AVG_COST_R));
+  res.setHeader('X-Discord-Activation-Max-DirectSLPct', String(MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT));
+  res.setHeader('X-Discord-Activation-Blocks-E-Weak-Contra', String(BLOCK_E_WEAK_CONTRA_FOR_DISCORD_ACTIVATION));
 }
 
 export default async function handler(req, res) {
