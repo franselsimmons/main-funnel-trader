@@ -13,6 +13,7 @@
 // - XR/execution fingerprint is alleen hash-source, geen learning-family.
 // - Snapshot wordt niet meer "processed" gemarkeerd door alleen waitRows.
 // - riskFractionForEntry kan trade-run niet meer crashen.
+// - E_WEAK_CONTRA wordt hard geblokkeerd vóór virtual entry.
 
 import { createHash } from 'crypto';
 import { CONFIG } from '../config.js';
@@ -55,12 +56,13 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
+const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
 const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
-const MICRO_MICRO_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
+const MICRO_MICRO_LEARNING_GRANULARITY =
+  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const MICRO_MICRO_SUFFIX = 'MM';
 const MICRO_MICRO_HASH_LEN = 10;
@@ -68,14 +70,15 @@ const EXECUTION_MICRO_SUFFIX = 'XR';
 const EXECUTION_MICRO_HASH_LEN = 10;
 
 const LAYER_MICRO_MICRO = 'MICRO_MICRO';
-const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO';
+const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
-const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V7';
+const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V8';
 const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V3';
-const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V4';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V5';
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 const RR_SHADOW_GRID_VERSION = 'SHORT_RR_SHADOW_GRID_1_125_15_175_2_V1';
-const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V3';
+const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
+const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V1';
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
 const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 10;
@@ -428,6 +431,11 @@ function virtualFlags(row = {}) {
     currentFitCanBlockDiscord: true,
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
+    weakContraEntryGateEnabled: true,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraRejectedBlocksVirtualEntry: true,
+    weakContraRejectedBlocksLearning: false,
 
     manualSelectionOnly: true,
     manualSelectionRequired: true,
@@ -940,6 +948,7 @@ function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
     `RISK_REWARD_RATIO=${normalizeBucketText(row.riskToRewardDistanceRatio ?? 'NA')}`,
     `FAKE_BREAKOUT=${row.fakeBreakout === true ? 'YES' : 'NO'}`,
     `FAKE_RISK=${row.fakeBreakoutRisk === true ? 'YES' : 'NO'}`,
+    `WEAK_CONTRA_GATE=${row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'NA'}`,
     `RISK_PLAN=${row.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`,
     'EXECUTION_FINGERPRINT_ROLE=MICRO_MICRO_HASH_SOURCE'
   ];
@@ -1191,12 +1200,15 @@ function confirmationFromRow(row = {}, marketContext = {}) {
   }
 
   const text = upper([
+    row.confirmationProfile,
     row.scannerReason,
     row.reason,
     row.definition,
     row.microDefinition,
     row.microMicroDefinition,
-    ...(Array.isArray(row.definitionParts) ? row.definitionParts : [])
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.microMicroDefinitionParts) ? row.microMicroDefinitionParts : [])
   ].filter(Boolean).join('|'));
 
   const fitScore = n(row.currentFitScore ?? row.entryCurrentFitScore, 0);
@@ -1204,7 +1216,18 @@ function confirmationFromRow(row = {}, marketContext = {}) {
   const scannerScore = n(row.scannerScore ?? row.moveScore, 0);
   const volumeExpansion = n(row.volumeExpansion, 0);
 
-  if (text.includes('FAKE_RISK') || row.fakeBreakoutRisk === true || fitScore < -20) return 'E_WEAK_CONTRA';
+  if (
+    text.includes('E_WEAK_CONTRA') ||
+    text.includes('WEAK_CONTRA') ||
+    text.includes('FAKE_RISK') ||
+    row.fakeBreakoutRisk === true ||
+    row.weakContra === true ||
+    row.contraSignal === true ||
+    fitScore < -20
+  ) {
+    return 'E_WEAK_CONTRA';
+  }
+
   if (fitScore >= 45 && fitConfidence >= 50 && scannerScore >= 70) return 'A_STRONG_ALIGN';
   if (fitScore >= 20 || marketContext?.trendSide === TARGET_TRADE_SIDE) return 'B_FLOW_ALIGN';
   if (volumeExpansion >= 1.4 || text.includes('VOL_EXP')) return 'C_VOLUME_ALIGN';
@@ -1222,6 +1245,362 @@ function fallbackExact75Id(row = {}, marketContext = {}) {
   const confirmation = confirmationFromRow(row, marketContext);
 
   return `MICRO_SHORT_${setup}_${regime}_${confirmation}`;
+}
+
+function weakContraGateConfig() {
+  const options = ACTIVE_RUN_OPTIONS || {};
+
+  return {
+    enabled: bool(first(
+      options.weakContraGateEnabled,
+      options.weakContraEnabled,
+      CONFIG.short?.weakContra?.enabled,
+      CONFIG.short?.trade?.weakContraGateEnabled,
+      CONFIG.analyze?.weakContra?.enabled,
+      CONFIG.trade?.weakContraGateEnabled
+    ), true),
+
+    minConfluence: n(first(
+      options.weakContraMinConfluence,
+      CONFIG.short?.weakContra?.minConfluence,
+      CONFIG.short?.trade?.weakContraMinConfluence,
+      CONFIG.analyze?.weakContra?.minConfluence,
+      CONFIG.trade?.weakContraMinConfluence
+    ), 72),
+
+    minRR: n(first(
+      options.weakContraMinRR,
+      CONFIG.short?.weakContra?.minRR,
+      CONFIG.short?.trade?.weakContraMinRR,
+      CONFIG.analyze?.weakContra?.minRR,
+      CONFIG.trade?.weakContraMinRR
+    ), 1.15),
+
+    maxSpreadPct: n(first(
+      options.weakContraMaxSpreadPct,
+      CONFIG.short?.weakContra?.maxSpreadPct,
+      CONFIG.short?.trade?.weakContraMaxSpreadPct,
+      CONFIG.analyze?.weakContra?.maxSpreadPct,
+      CONFIG.trade?.weakContraMaxSpreadPct
+    ), 0.0015),
+
+    minDepthUsd1p: n(first(
+      options.weakContraMinDepthUsd1p,
+      CONFIG.short?.weakContra?.minDepthUsd1p,
+      CONFIG.short?.trade?.weakContraMinDepthUsd1p,
+      CONFIG.analyze?.weakContra?.minDepthUsd1p,
+      CONFIG.trade?.weakContraMinDepthUsd1p
+    ), 100000),
+
+    maxCostR: n(first(
+      options.weakContraMaxCostR,
+      CONFIG.short?.weakContra?.maxCostR,
+      CONFIG.short?.trade?.weakContraMaxCostR,
+      CONFIG.analyze?.weakContra?.maxCostR,
+      CONFIG.trade?.weakContraMaxCostR
+    ), 0.35),
+
+    requireStructure: bool(first(
+      options.weakContraRequireStructure,
+      CONFIG.short?.weakContra?.requireStructure,
+      CONFIG.short?.trade?.weakContraRequireStructure,
+      CONFIG.analyze?.weakContra?.requireStructure,
+      CONFIG.trade?.weakContraRequireStructure
+    ), true),
+
+    requireFlowOrVolume: bool(first(
+      options.weakContraRequireFlowOrVolume,
+      CONFIG.short?.weakContra?.requireFlowOrVolume,
+      CONFIG.short?.trade?.weakContraRequireFlowOrVolume,
+      CONFIG.analyze?.weakContra?.requireFlowOrVolume,
+      CONFIG.trade?.weakContraRequireFlowOrVolume
+    ), true),
+
+    requireDepthData: bool(first(
+      options.weakContraRequireDepthData,
+      CONFIG.short?.weakContra?.requireDepthData,
+      CONFIG.short?.trade?.weakContraRequireDepthData,
+      CONFIG.analyze?.weakContra?.requireDepthData,
+      CONFIG.trade?.weakContraRequireDepthData
+    ), false),
+
+    rejectFakeBreakout: bool(first(
+      options.weakContraRejectFakeBreakout,
+      CONFIG.short?.weakContra?.rejectFakeBreakout,
+      CONFIG.short?.trade?.weakContraRejectFakeBreakout,
+      CONFIG.analyze?.weakContra?.rejectFakeBreakout,
+      CONFIG.trade?.weakContraRejectFakeBreakout
+    ), true)
+  };
+}
+
+function rowText(row = {}) {
+  return upper([
+    row.confirmationProfile,
+    row.scannerReason,
+    row.reason,
+    row.definition,
+    row.microDefinition,
+    row.microMicroDefinition,
+    row.flow,
+    row.flowCoarse,
+    row.obRelation,
+    row.btcRelation,
+    row.btcState,
+    row.currentFit,
+    row.entryCurrentFit,
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.microMicroDefinitionParts) ? row.microMicroDefinitionParts : [])
+  ].filter(Boolean).join('|'));
+}
+
+function getRowConfluence(row = {}) {
+  return n(first(row.confluence, row.sniperScore, row.scannerScore, row.moveScore), 0);
+}
+
+function getRowRR(row = {}) {
+  return n(first(row.rr, row.primaryRr, row.riskReward, row.rewardRisk), 0);
+}
+
+function getRowSpreadPct(row = {}) {
+  const direct = n(row.spreadPct, NaN);
+  if (Number.isFinite(direct)) return direct;
+
+  const bps = n(row.spreadBps, NaN);
+  if (Number.isFinite(bps)) return bps / 10000;
+
+  return NaN;
+}
+
+function getRowDepthUsd1p(row = {}) {
+  return n(first(
+    row.depthMinUsd1p,
+    row.minDepthUsd1p,
+    row.depthUsd1p,
+    row.depthUsd,
+    row.orderbookDepthUsd,
+    row.liquidityDepthUsd
+  ), NaN);
+}
+
+function getRowCostR(row = {}) {
+  return n(first(row.estimatedCostR, row.costR, row.avgCostR), NaN);
+}
+
+function detectStructureSignal(row = {}) {
+  const text = rowText(row);
+
+  return Boolean(
+    row.retestConfirmed ||
+    row.pullbackConfirmed ||
+    row.sweepConfirmed ||
+    row.breakoutConfirmed ||
+    row.continuationConfirmed ||
+    row.compressionConfirmed ||
+    row.setupConfirmed ||
+    row.structureAlign ||
+    row.structureAligned ||
+    text.includes('RETEST') ||
+    text.includes('PULLBACK') ||
+    text.includes('SWEEP') ||
+    text.includes('STOP_RUN') ||
+    text.includes('BREAKOUT') ||
+    text.includes('BREAKDOWN') ||
+    text.includes('CONTINUATION') ||
+    text.includes('COMPRESSION') ||
+    text.includes('SQUEEZE')
+  );
+}
+
+function detectFlowSignal(row = {}, marketContext = {}) {
+  const text = rowText(row);
+  const obRelation = upper(row.obRelation);
+  const btcRelation = upper(row.btcRelation);
+  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
+
+  return Boolean(
+    row.flowAlign ||
+    row.flowAligned ||
+    row.momentumAlign ||
+    row.askFlowAlign ||
+    row.bearFlow ||
+    row.sellFlow ||
+    currentTrendSide === TARGET_TRADE_SIDE ||
+    obRelation === 'WITH' ||
+    obRelation === 'ASK_HEAVY' ||
+    btcRelation === 'BTC_WITH' ||
+    text.includes('FLOW_ALIGN') ||
+    text.includes('BEAR_FLOW') ||
+    text.includes('SELL_FLOW') ||
+    text.includes('ASK_FLOW') ||
+    text.includes('TREND')
+  );
+}
+
+function detectVolumeSignal(row = {}) {
+  const text = rowText(row);
+  const relVol = n(first(row.relativeVolume, row.relVolume, row.volumeExpansion, row.volumeScore, row.volumeStrength), NaN);
+
+  return Boolean(
+    row.volumeSpike ||
+    row.volumeConfirmed ||
+    row.volumeAlign ||
+    row.volumeAligned ||
+    row.volumeSpikeConfirmed ||
+    row.quoteVolumeSpike ||
+    row.obVolumeAlign ||
+    text.includes('VOLUME_ALIGN') ||
+    text.includes('VOL_ALIGN') ||
+    text.includes('VOLUME_SPIKE') ||
+    text.includes('VOL_EXP') ||
+    (Number.isFinite(relVol) && relVol >= 1.4)
+  );
+}
+
+function weakContraApplies(row = {}, marketContext = {}) {
+  const confirmation = confirmationFromRow(row, marketContext);
+  const text = rowText(row);
+  const obRelation = upper(row.obRelation);
+  const btcRelation = upper(row.btcRelation);
+  const currentFit = upper(row.currentFit || row.entryCurrentFit);
+  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
+
+  return Boolean(
+    confirmation === 'E_WEAK_CONTRA' ||
+    row.weakContra === true ||
+    row.contraSignal === true ||
+    row.bullishDivergence === true ||
+    row.avoidShort === true ||
+    row.doNotShort === true ||
+    row.fakeBreakout === true ||
+    row.fakeBreakoutRisk === true ||
+    currentFit === 'MISFIT' ||
+    currentTrendSide === OPPOSITE_TRADE_SIDE ||
+    obRelation === 'AGAINST' ||
+    btcRelation === 'BTC_AGAINST' ||
+    hasLongSignal(text) ||
+    text.includes('E_WEAK_CONTRA') ||
+    text.includes('WEAK_CONTRA') ||
+    text.includes('CONTRA')
+  );
+}
+
+function buildWeakContraEntryGate(row = {}, marketContext = {}) {
+  const cfg = weakContraGateConfig();
+  const confirmationProfile = confirmationFromRow(row, marketContext);
+  const applies = weakContraApplies(row, marketContext);
+  const structureAligned = detectStructureSignal(row);
+  const flowAligned = detectFlowSignal(row, marketContext);
+  const volumeAligned = detectVolumeSignal(row);
+
+  const confluence = getRowConfluence(row);
+  const rr = getRowRR(row);
+  const spreadPct = getRowSpreadPct(row);
+  const depthUsd1p = getRowDepthUsd1p(row);
+  const costR = getRowCostR(row);
+
+  const failures = [];
+
+  if (!cfg.enabled || !applies) {
+    return {
+      version: WEAK_CONTRA_ENTRY_GATE_VERSION,
+      enabled: Boolean(cfg.enabled),
+      applies: Boolean(applies),
+      passed: true,
+      allowed: true,
+      rejected: false,
+      reason: !cfg.enabled ? 'E_WEAK_CONTRA_GATE_DISABLED' : 'NOT_E_WEAK_CONTRA',
+      failures: [],
+
+      confirmationProfile,
+      structureAligned,
+      flowAligned,
+      volumeAligned,
+
+      confluence,
+      minConfluence: cfg.minConfluence,
+      rr,
+      minRR: cfg.minRR,
+      spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+      maxSpreadPct: cfg.maxSpreadPct,
+      depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+      minDepthUsd1p: cfg.minDepthUsd1p,
+      costR: Number.isFinite(costR) ? costR : null,
+      maxCostR: cfg.maxCostR
+    };
+  }
+
+  if (confluence < cfg.minConfluence) failures.push('E_WEAK_CONTRA_CONFLUENCE_BELOW_MIN');
+  if (rr < cfg.minRR) failures.push('E_WEAK_CONTRA_RR_BELOW_MIN');
+
+  if (!Number.isFinite(spreadPct)) {
+    failures.push('E_WEAK_CONTRA_SPREAD_UNKNOWN');
+  } else if (spreadPct > cfg.maxSpreadPct) {
+    failures.push('E_WEAK_CONTRA_SPREAD_TOO_WIDE');
+  }
+
+  if (cfg.requireDepthData && !Number.isFinite(depthUsd1p)) {
+    failures.push('E_WEAK_CONTRA_DEPTH_UNKNOWN');
+  } else if (Number.isFinite(depthUsd1p) && depthUsd1p < cfg.minDepthUsd1p) {
+    failures.push('E_WEAK_CONTRA_DEPTH_TOO_LOW');
+  }
+
+  if (Number.isFinite(costR) && costR > cfg.maxCostR) {
+    failures.push('E_WEAK_CONTRA_COST_R_TOO_HIGH');
+  }
+
+  if (cfg.requireStructure && !structureAligned) {
+    failures.push('E_WEAK_CONTRA_STRUCTURE_NOT_CONFIRMED');
+  }
+
+  if (cfg.requireFlowOrVolume && !flowAligned && !volumeAligned) {
+    failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
+  }
+
+  if (
+    cfg.rejectFakeBreakout &&
+    (
+      row.fakeBreakout === true ||
+      row.fakeBreakoutRisk === true
+    )
+  ) {
+    failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
+  }
+
+  const passed = failures.length === 0;
+
+  return {
+    version: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    enabled: Boolean(cfg.enabled),
+    applies: true,
+    passed,
+    allowed: passed,
+    rejected: !passed,
+    reason: passed ? 'E_WEAK_CONTRA_GATE_PASSED' : failures[0],
+    failures,
+
+    confirmationProfile,
+    structureAligned,
+    flowAligned,
+    volumeAligned,
+
+    confluence,
+    minConfluence: cfg.minConfluence,
+    rr,
+    minRR: cfg.minRR,
+    spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+    maxSpreadPct: cfg.maxSpreadPct,
+    depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+    minDepthUsd1p: cfg.minDepthUsd1p,
+    costR: Number.isFinite(costR) ? costR : null,
+    maxCostR: cfg.maxCostR,
+
+    requireStructure: Boolean(cfg.requireStructure),
+    requireFlowOrVolume: Boolean(cfg.requireFlowOrVolume),
+    requireDepthData: Boolean(cfg.requireDepthData),
+    rejectFakeBreakout: Boolean(cfg.rejectFakeBreakout)
+  };
 }
 
 function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
@@ -1243,13 +1622,30 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     };
   }
 
+  const rowWithExact75 = {
+    ...row,
+    trueMicroFamilyId,
+    microFamilyId: trueMicroFamilyId,
+    childTrueMicroFamilyId: trueMicroFamilyId,
+    parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
+    setupType: parsed.setup,
+    regimeBucket: parsed.regime,
+    confirmationProfile: parsed.confirmationProfile
+  };
+
+  const weakContraEntryGate = buildWeakContraEntryGate(rowWithExact75, marketContext);
+
   const executionHash = executionHashFromRow(
-    { ...row, childTrueMicroFamilyId: trueMicroFamilyId },
+    {
+      ...rowWithExact75,
+      weakContraEntryGate,
+      weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null
+    },
     trueMicroFamilyId
   );
 
   const microMicroFamilyId = getMicroMicroFamilyId({
-    ...row,
+    ...rowWithExact75,
     childTrueMicroFamilyId: trueMicroFamilyId,
     executionFingerprintHash: executionHash
   });
@@ -1279,6 +1675,15 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     regimeBucket: parsed.regime,
     confirmationProfile: parsed.confirmationProfile,
 
+    weakContraEntryGate,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraEntryAllowed: weakContraEntryGate.allowed,
+    weakContraRejected: weakContraEntryGate.rejected,
+    weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null,
+    blockVirtualEntry: weakContraEntryGate.rejected,
+    virtualObservationAllowed: !weakContraEntryGate.rejected,
+    tradeCandidateAllowed: !weakContraEntryGate.rejected,
+
     exact75ChildTrueMicro: true,
     exactMicroMicro: Boolean(microMicroFamilyId),
     fallbackExact75: !getTrueMicroFamilyId(row),
@@ -1287,7 +1692,11 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     executionFingerprintHash: executionHash || row.executionFingerprintHash || null,
     executionFingerprintParts: Array.isArray(row.executionFingerprintParts)
       ? row.executionFingerprintParts
-      : buildExecutionFingerprintParts(row, trueMicroFamilyId),
+      : buildExecutionFingerprintParts({
+          ...row,
+          weakContraEntryGate,
+          weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null
+        }, trueMicroFamilyId),
     executionMicroFamilyId: executionHash
       ? `${trueMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionHash}`
       : row.executionMicroFamilyId || null,
@@ -1752,9 +2161,18 @@ function standardizedRiskMetrics(candidate = {}, reason = 'STANDARDIZED_SHORT_LE
   };
 
   const row = applyAdaptiveShortRisk(baseRow, reason);
+  const weakContraEntryGate = buildWeakContraEntryGate(row);
 
   return {
     ...row,
+    weakContraEntryGate,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraEntryAllowed: weakContraEntryGate.allowed,
+    weakContraRejected: weakContraEntryGate.rejected,
+    weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null,
+    blockVirtualEntry: weakContraEntryGate.rejected,
+    virtualObservationAllowed: !weakContraEntryGate.rejected,
+    tradeCandidateAllowed: !weakContraEntryGate.rejected,
     liveRiskValid: hasValidRiskShape(row) && row.liveRiskValid !== false
   };
 }
@@ -1816,6 +2234,15 @@ function validateVirtualEntry(row = {}) {
     return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_MICRO_MICRO_FAMILY_ID' };
   }
 
+  if (row.weakContraRejected === true || row.blockVirtualEntry === true) {
+    return {
+      ok: false,
+      reason: row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'E_WEAK_CONTRA_ENTRY_GATE_REJECTED',
+      weakContraEntryGate: row.weakContraEntryGate || null,
+      weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION
+    };
+  }
+
   if (!hasValidRiskShape(row)) {
     return { ok: false, reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID' };
   }
@@ -1837,7 +2264,9 @@ function validateVirtualEntry(row = {}) {
     rewardPct: n(row.rewardPct, 0),
     estimatedCostR: n(row.estimatedCostR, 0),
     rrShadowGridEnabled: true,
-    rrShadowGridVersion: RR_SHADOW_GRID_VERSION
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    weakContraEntryGate: row.weakContraEntryGate || null,
+    weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION
   };
 }
 
@@ -2317,6 +2746,13 @@ function buildVirtualEntryAction({
     regimeBucket: parsed.regime,
     confirmationProfile: parsed.confirmationProfile,
 
+    weakContraEntryGate: row.weakContraEntryGate || normalized.weakContraEntryGate || null,
+    weakContraEntryGateVersion: row.weakContraEntryGateVersion || normalized.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraEntryAllowed: row.weakContraEntryAllowed ?? normalized.weakContraEntryAllowed ?? true,
+    weakContraRejected: row.weakContraRejected ?? normalized.weakContraRejected ?? false,
+    weakContraRejectReason: row.weakContraRejectReason || normalized.weakContraRejectReason || null,
+    blockVirtualEntry: row.blockVirtualEntry ?? normalized.blockVirtualEntry ?? false,
+
     selectedRotationId: alertContext.rotationId,
     activeRotationId: alertContext.rotationId,
     selectedMicroFamilyAlert: Boolean(finalDiscordAlertEligible),
@@ -2698,6 +3134,7 @@ function inferPrimaryBottleneck({
   virtualExitRows,
   waitRows,
   skippedByExistingSymbol,
+  weakContraRejectedRows,
   openPositionCountAfterEntries
 }) {
   if (candidates <= 0) return 'NO_SHORT_CANDIDATES';
@@ -2708,6 +3145,7 @@ function inferPrimaryBottleneck({
   if (analyzedRiskValidRows <= 0) return 'ANALYZE_DID_NOT_RETURN_RISK_VALID_ROWS';
   if (analyzedExact75Rows <= 0) return 'ANALYZE_DID_NOT_ASSIGN_EXACT_75_CHILD_TRUE_MICRO_FAMILY';
   if (analyzedMicroMicroRows <= 0) return 'ANALYZE_DID_NOT_ASSIGN_EXACT_MICRO_MICRO_FAMILY';
+  if (virtualCreatedRows <= 0 && weakContraRejectedRows > 0) return 'E_WEAK_CONTRA_ENTRY_GATE_REJECTED';
   if (virtualCreatedRows <= 0 && skippedByExistingSymbol > 0) return 'SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION';
   if (virtualCreatedRows <= 0 && waitRows > 0) return 'VIRTUAL_ENTRY_GATE_WAIT_REASONS';
   if (virtualCreatedRows <= 0) return 'VIRTUAL_ENTRY_GATE_OR_SYMBOL_ALREADY_OPEN';
@@ -2752,6 +3190,7 @@ function buildQualityAudit({
     virtualExitRows,
     waitRows: counts.waitRows,
     skippedByExistingSymbol: counts.skippedByExistingSymbol,
+    weakContraRejectedRows: counts.weakContraRejectedRows || 0,
     openPositionCountAfterEntries
   });
 
@@ -2775,6 +3214,10 @@ function buildQualityAudit({
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
     microMicroVersion: MICRO_MICRO_VERSION,
+
+    weakContraEntryGateEnabled: true,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraRejectedBlocksVirtualEntry: true,
 
     microMicroRequiredForVirtualEntry: true,
     micro75ContextOnlyForDiscord: true,
@@ -2838,6 +3281,8 @@ function buildQualityAudit({
       analyzedExact75Rows: counts.analyzedExact75Rows,
       analyzedMicroMicroRows: counts.analyzedMicroMicroRows,
       fallbackExact75Rows: counts.fallbackExact75Rows || 0,
+      weakContraRejectedRows: counts.weakContraRejectedRows || 0,
+      weakContraAllowedRows: counts.weakContraAllowedRows || 0,
       entryRows: counts.entryRows,
       virtualCreatedRows: counts.virtualCreatedRows,
       virtualExitRows,
@@ -2857,6 +3302,7 @@ function buildQualityAudit({
       analyzedRiskValidPerAnalyzed: pct(counts.analyzedRiskValidRows, analyzedRowsCount),
       analyzedExact75PerAnalyzedRiskValid: pct(counts.analyzedExact75Rows, counts.analyzedRiskValidRows),
       analyzedMicroMicroPerAnalyzedExact75: pct(counts.analyzedMicroMicroRows, counts.analyzedExact75Rows),
+      weakContraRejectedPerAnalyzed: pct(counts.weakContraRejectedRows || 0, analyzedRowsCount),
       virtualCreatedPerMicroMicro: pct(counts.virtualCreatedRows, counts.analyzedMicroMicroRows),
       virtualExitPerCreatedThisRun: pct(virtualExitRows, counts.virtualCreatedRows)
     },
@@ -2981,6 +3427,7 @@ async function saveRunMeta(result) {
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
     ...sideFlags(),
     ...virtualFlags(),
     ...isolationFlags(),
@@ -3015,6 +3462,7 @@ async function saveRunMeta(result) {
       waitRows: finalResult.waitRows || 0,
       analyzedRows: finalResult.analyzedRows || 0,
       analyzedMicroMicroRows: finalResult.analyzedMicroMicroRows || 0,
+      weakContraRejectedRows: finalResult.weakContraRejectedRows || 0,
       virtualCreatedRows: finalResult.virtualCreatedRows || 0,
       virtualExitRows: finalResult.virtualExitRows || 0,
       discordAlertsSent: finalResult.discordAlertsSent || 0,
@@ -3027,6 +3475,7 @@ async function saveRunMeta(result) {
       riskPlanVersion: SHORT_RISK_PLAN_VERSION,
       rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
       microMicroVersion: MICRO_MICRO_VERSION,
+      weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
       ...sideFlags(),
       ...virtualFlags(),
       ...isolationFlags()
@@ -3096,6 +3545,7 @@ function baseEarlyReturnPayload({
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
 
     ...sideFlags(),
     ...virtualFlags(),
@@ -3495,10 +3945,24 @@ function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
         ...isolationFlags()
       }, marketContext);
 
-      return applyAdaptiveShortRisk(
+      const riskRow = applyAdaptiveShortRisk(
         normalizeExactTrueMicroRow(contextualRow, marketContext),
         'ADAPTIVE_SHORT_RR_AFTER_ANALYZE_OR_FALLBACK_EXACT_75'
       );
+
+      const weakContraEntryGate = buildWeakContraEntryGate(riskRow, marketContext);
+
+      return {
+        ...riskRow,
+        weakContraEntryGate,
+        weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+        weakContraEntryAllowed: weakContraEntryGate.allowed,
+        weakContraRejected: weakContraEntryGate.rejected,
+        weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null,
+        blockVirtualEntry: weakContraEntryGate.rejected,
+        virtualObservationAllowed: !weakContraEntryGate.rejected,
+        tradeCandidateAllowed: !weakContraEntryGate.rejected
+      };
     })
     .filter((row) => Boolean(getTrueMicroFamilyId(row)))
     .filter((row) => Boolean(getMicroMicroFamilyId(row)));
@@ -3882,6 +4346,8 @@ export async function runTradeSystem(options = {}) {
           currentFitBlocksLearning: false,
           currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
           currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+          weakContraEntryGateEnabled: true,
+          weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
           riskPlanVersion: SHORT_RISK_PLAN_VERSION,
           rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
           riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3923,6 +4389,8 @@ export async function runTradeSystem(options = {}) {
     const analyzedMicroMicroRows = analyzedRows.filter((row) => Boolean(getMicroMicroFamilyId(row))).length;
     const fallbackExact75Rows = analyzedRows.filter((row) => row.fallbackExact75).length;
     const analyzedStandardizedLearningRiskRows = analyzedRows.filter((row) => row.standardizedLearningRisk).length;
+    const weakContraRejectedRows = analyzedRows.filter((row) => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
+    const weakContraAllowedRows = analyzedRows.filter((row) => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length;
 
     const openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings);
     const openSymbolSet = buildOpenSymbolSet(openPositions);
@@ -3975,6 +4443,10 @@ export async function runTradeSystem(options = {}) {
           trueMicroMicroFamilyId: microMicroFamilyId || null,
           exactMicroMicroFamilyId: microMicroFamilyId || null,
           virtualGate,
+          weakContraEntryGate: row.weakContraEntryGate || virtualGate.weakContraEntryGate || null,
+          weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
+          weakContraRejected: row.weakContraRejected || row.blockVirtualEntry || false,
+          weakContraRejectReason: row.weakContraRejectReason || virtualGate.reason || null,
           virtualTracked: false,
           liveEligible: false,
           ...sideFlags(),
@@ -4121,6 +4593,8 @@ export async function runTradeSystem(options = {}) {
         analyzedExact75Rows,
         analyzedMicroMicroRows,
         fallbackExact75Rows,
+        weakContraRejectedRows,
+        weakContraAllowedRows,
         entryRows,
         virtualCreatedRows,
         waitRows,
@@ -4159,6 +4633,9 @@ export async function runTradeSystem(options = {}) {
       riskPlanVersion: SHORT_RISK_PLAN_VERSION,
       rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
       microMicroVersion: MICRO_MICRO_VERSION,
+      weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+      weakContraRejectedRows,
+      weakContraAllowedRows,
 
       defaultRR: cfg.defaultRR,
       minRR: cfg.minRR,
