@@ -4,11 +4,14 @@
 // Risk contribution = fraction of equity lost if a virtual SHORT position hits initial SL.
 // Required SHORT risk geometry: tp < entry < sl.
 // No real orders. No LONG sizing.
-// Supports:
-// - parent 15: MICRO_SHORT_{SETUP}_{REGIME}                          context only
-// - child 75:  MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}           selectable fallback
-// - MM hash:   MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH} selectable exact
-// - MM bucket: MM_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_{ENTRY}_{SPREAD}_{BTC}_{RISK} selectable exact
+//
+// Belangrijk:
+// - Sizing volgt de SL-afstand.
+// - Brede structurele SL => lagere notional.
+// - Geen vaste 10x die de SL-afstand negeert.
+// - Liquidation buffer wordt bewaakt via leverage cap.
+// - Parent 15 en child 75 zijn context/rollup.
+// - Alleen exact micro-micro is selecteerbaar.
 
 import { CONFIG } from '../config.js';
 import {
@@ -36,7 +39,7 @@ const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const MICRO_MICRO_LEARNING_GRANULARITY =
-  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_ENTRY_SPREAD_BTC_RISK_V1';
+  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
@@ -117,13 +120,13 @@ function round6(value) {
   return Number(safeNumber(value, 0).toFixed(6));
 }
 
+function round4(value) {
+  return Number(safeNumber(value, 0).toFixed(4));
+}
+
 function upper(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text ? text.toUpperCase() : fallback;
-}
-
-function hasOwn(row = {}, key) {
-  return Object.prototype.hasOwnProperty.call(row || {}, key);
 }
 
 function firstValue(...values) {
@@ -158,10 +161,17 @@ function normalizeRatioOrPct(value, fallback = 0) {
   const n = safeNumber(value, NaN);
 
   if (!Number.isFinite(n)) return fallback;
-
   if (n > 1.5) return n / 100;
 
   return n;
+}
+
+function finiteOrInfinity(value, fallback = Number.POSITIVE_INFINITY) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) return fallback;
+
+  return Math.max(0, n);
 }
 
 function sizingConfig() {
@@ -275,6 +285,62 @@ function sizingConfig() {
           CONFIG.sizing?.maxAvgCostR,
         0.55
       )
+    ),
+
+    maxLeverage: Math.max(
+      0.1,
+      safeNumber(
+        CONFIG.short?.sizing?.maxLeverage ??
+          CONFIG.sizing?.shortMaxLeverage ??
+          CONFIG.sizing?.maxLeverage,
+        10
+      )
+    ),
+
+    liquidationSafetyEnabled:
+      CONFIG.short?.sizing?.liquidationSafetyEnabled ??
+      CONFIG.sizing?.shortLiquidationSafetyEnabled ??
+      CONFIG.sizing?.liquidationSafetyEnabled ??
+      true,
+
+    maintenanceMarginPct: Math.max(
+      0,
+      normalizeRatioOrPct(
+        CONFIG.short?.sizing?.maintenanceMarginPct ??
+          CONFIG.sizing?.shortMaintenanceMarginPct ??
+          CONFIG.sizing?.maintenanceMarginPct,
+        0.005
+      )
+    ),
+
+    liquidationFeeBufferPct: Math.max(
+      0,
+      normalizeRatioOrPct(
+        CONFIG.short?.sizing?.liquidationFeeBufferPct ??
+          CONFIG.sizing?.shortLiquidationFeeBufferPct ??
+          CONFIG.sizing?.liquidationFeeBufferPct,
+        0.002
+      )
+    ),
+
+    minLiquidationBufferPct: Math.max(
+      0,
+      normalizeRatioOrPct(
+        CONFIG.short?.sizing?.minLiquidationBufferPct ??
+          CONFIG.sizing?.shortMinLiquidationBufferPct ??
+          CONFIG.sizing?.minLiquidationBufferPct,
+        0.015
+      )
+    ),
+
+    liquidationBufferRiskMult: Math.max(
+      1,
+      safeNumber(
+        CONFIG.short?.sizing?.liquidationBufferRiskMult ??
+          CONFIG.sizing?.shortLiquidationBufferRiskMult ??
+          CONFIG.sizing?.liquidationBufferRiskMult,
+        1.25
+      )
     )
   };
 }
@@ -303,7 +369,7 @@ function baseModeFlags() {
     virtualLearning: true,
     virtualOnly: true,
     virtualTracked: true,
-    shadowOnly: true,
+    shadowOnly: false,
 
     realTrade: false,
     realOrder: false,
@@ -321,9 +387,10 @@ function baseModeFlags() {
     scannerFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsMetadataOnly: true,
     executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_OR_MICRO_MICRO_FAMILY',
+    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
     hashesExcludedFromFamilyId: true,
@@ -338,9 +405,10 @@ function baseModeFlags() {
     microMicroSelectionEnabled: true,
     exactMicroMicroOnly: true,
 
-    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_OR_EXACT_75_CHILD',
-    discordOnlyForExactTrueMicroMatch: true,
+    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
+    discordOnlyForExactTrueMicroMatch: false,
     discordOnlyForExactMicroMicroMatch: true,
+    discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -350,22 +418,23 @@ function baseModeFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
 
-    learningGranularity: LEARNING_GRANULARITY,
+    learningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    child75LearningGranularity: LEARNING_GRANULARITY,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
     parentLearningEnabled: true,
     childLearningEnabled: true,
     microMicroLearningEnabled: true,
 
-    selectionGranularity: 'EXACT_MICRO_MICRO_PREFERRED_FALLBACK_EXACT_75_CHILD',
+    selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED_THEN_MICRO_75_UNTIL_MM_MIN_COMPLETED',
 
     minCompletedForActiveLearning: MIN_COMPLETED_ACTIVE_LEARNING,
@@ -388,6 +457,12 @@ function baseModeFlags() {
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    sizingFollowsStopDistance: true,
+    sizingFormula: 'notional = (equity * riskFraction) / stopRiskPct',
+    leverageIsDerivedFromStopRisk: true,
+    fixedLeverageDisabled: true,
+    liquidationSafetyEnabled: true,
 
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
@@ -429,6 +504,10 @@ function cleanSideText(value = '') {
     .replaceAll('LONG-ONLY', 'LONG');
 }
 
+function isModernMicroMicroId(id = '') {
+  return /^MICRO_SHORT_.+_MM_[A-Z0-9]{6,24}$/u.test(upper(id));
+}
+
 function isScannerFingerprintId(id = '') {
   const value = upper(id);
 
@@ -449,6 +528,8 @@ function isScannerFingerprintId(id = '') {
 
 function isExecutionFingerprintId(id = '') {
   const value = upper(id);
+
+  if (isModernMicroMicroId(value)) return false;
 
   return (
     value.includes('_XR_') ||
@@ -479,6 +560,7 @@ function parseChildOrParentMicroShortId(id = '') {
       selectable: false,
       isParent: false,
       isChild: false,
+      isMicroMicro: false,
       rawId: String(id || '').trim()
     };
   }
@@ -536,7 +618,8 @@ function parseChildOrParentMicroShortId(id = '') {
 
   return {
     valid: validParent || validChild || Boolean(microMicroFamilyId),
-    selectable: validChild || Boolean(microMicroFamilyId),
+    selectable: Boolean(microMicroFamilyId),
+    selectableForDiscord: Boolean(microMicroFamilyId),
     isParent: validParent && !validChild && !microMicroFamilyId,
     isChild: validChild && !microMicroFamilyId,
     isMicroMicro: Boolean(microMicroFamilyId),
@@ -547,28 +630,39 @@ function parseChildOrParentMicroShortId(id = '') {
     confirmationProfile,
 
     parentTrueMicroFamilyId: validParent ? parentId : null,
-    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+    trueMicroFamilyId: microMicroFamilyId
+      ? microMicroFamilyId
+      : validChild
+        ? childId
+        : validParent
+          ? parentId
+          : null,
     childTrueMicroFamilyId: validChild ? childId : null,
+    base75ChildTrueMicroFamilyId: validChild ? childId : null,
 
     microMicroFamilyId,
     trueMicroMicroFamilyId: microMicroFamilyId,
     exactMicroMicroFamilyId: microMicroFamilyId,
     microMicroHash,
 
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: microMicroFamilyId ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: microMicroFamilyId ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
 
-    learningGranularity: LEARNING_GRANULARITY,
+    learningGranularity: microMicroFamilyId
+      ? MICRO_MICRO_LEARNING_GRANULARITY
+      : LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    child75LearningGranularity: LEARNING_GRANULARITY,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
     selectionGranularity: microMicroFamilyId
-      ? 'EXACT_MICRO_MICRO'
+      ? 'EXACT_MICRO_MICRO_ONLY'
       : validChild
-        ? 'EXACT_75_CHILD'
+        ? 'EXACT_75_CHILD_CONTEXT_ONLY'
         : 'PARENT_15_CONTEXT_ONLY'
   };
 }
@@ -614,6 +708,9 @@ function parseBucketMicroMicroId(id = '') {
                 return {
                   valid: true,
                   selectable: true,
+                  selectableForDiscord: true,
+                  isParent: false,
+                  isChild: false,
                   isMicroMicro: true,
                   rawId,
 
@@ -626,24 +723,27 @@ function parseBucketMicroMicroId(id = '') {
                   riskBucket,
 
                   parentTrueMicroFamilyId,
-                  trueMicroFamilyId: childTrueMicroFamilyId,
+                  trueMicroFamilyId: microMicroFamilyId,
                   childTrueMicroFamilyId,
+                  base75ChildTrueMicroFamilyId: childTrueMicroFamilyId,
 
                   microMicroFamilyId,
                   trueMicroMicroFamilyId: microMicroFamilyId,
                   exactMicroMicroFamilyId: microMicroFamilyId,
 
-                  trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+                  trueMicroFamilySchema: MICRO_MICRO_SCHEMA,
+                  exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
                   parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
                   childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
                   microMicroFamilySchema: MICRO_MICRO_SCHEMA,
                   trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
 
-                  learningGranularity: LEARNING_GRANULARITY,
+                  learningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
                   parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+                  child75LearningGranularity: LEARNING_GRANULARITY,
                   microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
-                  selectionGranularity: 'EXACT_MICRO_MICRO'
+                  selectionGranularity: 'EXACT_MICRO_MICRO_ONLY'
                 };
               }
             }
@@ -679,16 +779,6 @@ function parseLearningFamilyId(id = '') {
   if (value.startsWith('MM_SHORT_')) return parseBucketMicroMicroId(value);
 
   return parseChildOrParentMicroShortId(value);
-}
-
-function isExactShortChildTrueMicroId(id = '') {
-  const parsed = parseLearningFamilyId(id);
-  return Boolean(parsed.valid && parsed.isChild && parsed.childTrueMicroFamilyId);
-}
-
-function isExactShortMicroMicroId(id = '') {
-  const parsed = parseLearningFamilyId(id);
-  return Boolean(parsed.valid && parsed.isMicroMicro && parsed.microMicroFamilyId);
 }
 
 function normalizeTradeSide(value) {
@@ -805,6 +895,7 @@ function idText(row = {}) {
     row.selectedMicroMicroFamilyId,
 
     row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
     row.trueMicroFamilyId,
     row.microFamilyId,
     row.analyzeMicroFamilyId,
@@ -1004,6 +1095,7 @@ function extractLearningFamilyId(row = {}) {
     row.selectedMicroMicroFamilyId,
 
     row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
     row.trueMicroFamilyId,
     row.microFamilyId,
     row.analyzeMicroFamilyId,
@@ -1036,6 +1128,7 @@ function taxonomyIdentity(row = {}) {
 
       parentTrueMicroFamilyId: null,
       childTrueMicroFamilyId: null,
+      base75ChildTrueMicroFamilyId: null,
       trueMicroFamilyId: id || null,
 
       microMicroFamilyId: null,
@@ -1061,7 +1154,10 @@ function taxonomyIdentity(row = {}) {
 
     parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
     childTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
-    trueMicroFamilyId: parsed.childTrueMicroFamilyId || parsed.trueMicroFamilyId,
+    base75ChildTrueMicroFamilyId: parsed.base75ChildTrueMicroFamilyId || parsed.childTrueMicroFamilyId,
+    trueMicroFamilyId: parsed.isMicroMicro
+      ? parsed.microMicroFamilyId
+      : parsed.childTrueMicroFamilyId || parsed.trueMicroFamilyId,
 
     microMicroFamilyId: parsed.microMicroFamilyId || null,
     trueMicroMicroFamilyId: parsed.trueMicroMicroFamilyId || null,
@@ -1086,7 +1182,7 @@ function exactSelectableRequiredButMissing(row = {}) {
 
   const parsed = parseLearningFamilyId(id);
 
-  return !(parsed.isChild || parsed.isMicroMicro);
+  return !parsed.isMicroMicro;
 }
 
 function completedCount(row = {}) {
@@ -1186,7 +1282,9 @@ function stopRiskPct(row = {}) {
     row.stopLossDistancePct
   );
 
-  if (Number.isFinite(direct) && direct > 0) return direct;
+  if (Number.isFinite(direct) && direct > 0) {
+    return normalizeRatioOrPct(direct, 0);
+  }
 
   const entry = safeNumber(row.entry, 0);
   const sl = safeNumber(row.sl ?? row.stopLoss ?? row.initialSl, 0);
@@ -1250,6 +1348,7 @@ function shortModeFlags(extra = {}) {
 
     parentTrueMicroFamilyId: taxonomy.parentTrueMicroFamilyId,
     childTrueMicroFamilyId: taxonomy.childTrueMicroFamilyId,
+    base75ChildTrueMicroFamilyId: taxonomy.base75ChildTrueMicroFamilyId,
     trueMicroFamilyId: taxonomy.trueMicroFamilyId,
     microFamilyId: taxonomy.trueMicroFamilyId,
 
@@ -1426,9 +1525,9 @@ function sizingConfidence(row = {}, cfg = sizingConfig()) {
 
   const currentFit = upper(row.currentFit || row.entryCurrentFit, 'UNKNOWN');
   const currentFitBoost =
-    currentFit === 'MATCH'
+    currentFit === 'MATCH' || currentFit === 'FIT'
       ? 0.08
-      : currentFit === 'WEAK_MATCH'
+      : currentFit === 'WEAK_MATCH' || currentFit === 'OK'
         ? 0.03
         : currentFit === 'MISFIT'
           ? -0.12
@@ -1506,6 +1605,46 @@ export function riskFractionForEntry({
   return round6(cfg.baseRiskPct * mult);
 }
 
+function liquidationRequiredDistancePct(stopRisk, cfg) {
+  const risk = Math.max(0, safeNumber(stopRisk, 0));
+
+  return Math.max(
+    risk + cfg.minLiquidationBufferPct,
+    risk * cfg.liquidationBufferRiskMult
+  );
+}
+
+function maxSafeLeverageForStopRisk(stopRisk, cfg) {
+  if (!cfg.liquidationSafetyEnabled) return cfg.maxLeverage;
+
+  const requiredDistance = liquidationRequiredDistancePct(stopRisk, cfg);
+  const denominator =
+    requiredDistance +
+    cfg.maintenanceMarginPct +
+    cfg.liquidationFeeBufferPct;
+
+  if (denominator <= 0) return cfg.maxLeverage;
+
+  return clamp(
+    1 / denominator,
+    0.1,
+    cfg.maxLeverage
+  );
+}
+
+function estimatedShortLiquidationDistancePct(leverage, cfg) {
+  const lev = safeNumber(leverage, 0);
+
+  if (lev <= 0) return Number.POSITIVE_INFINITY;
+
+  return Math.max(
+    0,
+    1 / lev -
+      cfg.maintenanceMarginPct -
+      cfg.liquidationFeeBufferPct
+  );
+}
+
 export function positionSizeForStopRisk({
   equity,
   riskFraction,
@@ -1515,16 +1654,21 @@ export function positionSizeForStopRisk({
   maxNotional = Infinity,
   minNotional = 0
 } = {}) {
+  const cfg = sizingConfig();
+
   const accountEquity = safeNumber(equity, 0);
   const risk = normalizeRiskFraction(riskFraction);
   const entryPrice = safeNumber(entry, 0);
   const stopPrice = safeNumber(sl, 0);
 
-  const riskPct = safeNumber(
-    explicitStopRiskPct,
+  const derivedStopRiskPct =
     entryPrice > 0 && stopPrice > entryPrice
       ? (stopPrice - entryPrice) / entryPrice
-      : 0
+      : 0;
+
+  const riskPct = normalizeRatioOrPct(
+    explicitStopRiskPct,
+    derivedStopRiskPct
   );
 
   if (accountEquity <= 0 || risk <= 0 || entryPrice <= 0 || riskPct <= 0) {
@@ -1539,31 +1683,163 @@ export function positionSizeForStopRisk({
       notional: 0,
       quantity: 0,
       riskUsd: 0,
+      rawNotional: 0,
+      actualRiskUsd: 0,
+      actualRiskFraction: 0,
+      effectiveLeverage: 0,
+      maxSafeLeverage: 0,
+      liquidationSafetyOk: false,
       ...baseModeFlags()
     };
   }
 
+  const requestedMaxNotional = finiteOrInfinity(maxNotional, Number.POSITIVE_INFINITY);
+  const requestedMinNotional = Math.max(0, safeNumber(minNotional, 0));
+
   const riskUsd = accountEquity * risk;
   const rawNotional = riskUsd / riskPct;
 
-  const cappedNotional = clamp(
-    rawNotional,
-    Math.max(0, safeNumber(minNotional, 0)),
-    Math.max(0, safeNumber(maxNotional, Number.POSITIVE_INFINITY))
+  const maxSafeLeverage = maxSafeLeverageForStopRisk(riskPct, cfg);
+  const maxNotionalByConfiguredLeverage = accountEquity * cfg.maxLeverage;
+  const maxNotionalByLiquidationBuffer = accountEquity * maxSafeLeverage;
+
+  const effectiveMaxNotional = Math.min(
+    requestedMaxNotional,
+    maxNotionalByConfiguredLeverage,
+    maxNotionalByLiquidationBuffer
   );
 
+  if (requestedMinNotional > effectiveMaxNotional) {
+    return {
+      ok: false,
+      reason: 'POSITION_SIZE_MIN_NOTIONAL_EXCEEDS_LIQUIDATION_SAFE_CAP',
+      equity: round6(accountEquity),
+      riskFraction: round6(risk),
+      riskUsd: round6(riskUsd),
+      entry: entryPrice,
+      sl: stopPrice,
+      stopRiskPct: round6(riskPct),
+      notional: 0,
+      rawNotional: round6(rawNotional),
+      quantity: 0,
+      actualRiskUsd: 0,
+      actualRiskFraction: 0,
+
+      requestedMinNotional: round6(requestedMinNotional),
+      requestedMaxNotional: Number.isFinite(requestedMaxNotional)
+        ? round6(requestedMaxNotional)
+        : null,
+
+      maxConfiguredLeverage: round4(cfg.maxLeverage),
+      maxSafeLeverage: round4(maxSafeLeverage),
+      maxNotionalByConfiguredLeverage: round6(maxNotionalByConfiguredLeverage),
+      maxNotionalByLiquidationBuffer: round6(maxNotionalByLiquidationBuffer),
+      effectiveMaxNotional: round6(effectiveMaxNotional),
+
+      liquidationSafetyEnabled: Boolean(cfg.liquidationSafetyEnabled),
+      requiredLiquidationDistancePct: round6(liquidationRequiredDistancePct(riskPct, cfg)),
+      estimatedLiquidationDistancePct: 0,
+      liquidationBufferPct: 0,
+      liquidationSafetyOk: false,
+
+      side: TARGET_DASHBOARD_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+      positionSide: TARGET_TRADE_SIDE,
+      direction: TARGET_TRADE_SIDE,
+
+      ...baseModeFlags()
+    };
+  }
+
+  const cappedNotional = clamp(
+    rawNotional,
+    requestedMinNotional,
+    effectiveMaxNotional
+  );
+
+  const effectiveLeverage =
+    accountEquity > 0
+      ? cappedNotional / accountEquity
+      : 0;
+
+  const estimatedLiquidationDistance = estimatedShortLiquidationDistancePct(
+    effectiveLeverage,
+    cfg
+  );
+
+  const requiredLiquidationDistance = liquidationRequiredDistancePct(riskPct, cfg);
+  const liquidationBufferPct = estimatedLiquidationDistance - riskPct;
+
+  const liquidationSafetyOk =
+    !cfg.liquidationSafetyEnabled ||
+    estimatedLiquidationDistance >= requiredLiquidationDistance;
+
+  const actualRiskUsd = cappedNotional * riskPct;
+  const actualRiskFraction =
+    accountEquity > 0
+      ? actualRiskUsd / accountEquity
+      : 0;
+
+  let reason = 'POSITION_SIZE_OK';
+
+  if (cappedNotional < rawNotional) {
+    if (effectiveMaxNotional === maxNotionalByLiquidationBuffer) {
+      reason = 'POSITION_SIZE_CAPPED_BY_LIQUIDATION_BUFFER';
+    } else if (effectiveMaxNotional === maxNotionalByConfiguredLeverage) {
+      reason = 'POSITION_SIZE_CAPPED_BY_MAX_LEVERAGE';
+    } else {
+      reason = 'POSITION_SIZE_CAPPED_BY_MAX_NOTIONAL';
+    }
+  }
+
   return {
-    ok: true,
-    reason: cappedNotional < rawNotional ? 'POSITION_SIZE_CAPPED_BY_MAX_NOTIONAL' : 'POSITION_SIZE_OK',
+    ok: liquidationSafetyOk,
+    reason: liquidationSafetyOk ? reason : 'POSITION_SIZE_LIQUIDATION_BUFFER_TOO_SMALL',
+
     equity: round6(accountEquity),
     riskFraction: round6(risk),
+    requestedRiskFraction: round6(risk),
     riskUsd: round6(riskUsd),
+
     entry: entryPrice,
     sl: stopPrice,
     stopRiskPct: round6(riskPct),
+
     notional: round6(cappedNotional),
     rawNotional: round6(rawNotional),
     quantity: round6(cappedNotional / entryPrice),
+
+    actualRiskUsd: round6(actualRiskUsd),
+    actualRiskFraction: round6(actualRiskFraction),
+    actualRiskFractionReducedByCap: actualRiskFraction < risk,
+
+    effectiveLeverage: round4(effectiveLeverage),
+    maxConfiguredLeverage: round4(cfg.maxLeverage),
+    maxSafeLeverage: round4(maxSafeLeverage),
+
+    requestedMaxNotional: Number.isFinite(requestedMaxNotional)
+      ? round6(requestedMaxNotional)
+      : null,
+    requestedMinNotional: round6(requestedMinNotional),
+
+    maxNotionalByConfiguredLeverage: round6(maxNotionalByConfiguredLeverage),
+    maxNotionalByLiquidationBuffer: round6(maxNotionalByLiquidationBuffer),
+    effectiveMaxNotional: round6(effectiveMaxNotional),
+
+    liquidationSafetyEnabled: Boolean(cfg.liquidationSafetyEnabled),
+    maintenanceMarginPct: round6(cfg.maintenanceMarginPct),
+    liquidationFeeBufferPct: round6(cfg.liquidationFeeBufferPct),
+    minLiquidationBufferPct: round6(cfg.minLiquidationBufferPct),
+    liquidationBufferRiskMult: round4(cfg.liquidationBufferRiskMult),
+    requiredLiquidationDistancePct: round6(requiredLiquidationDistance),
+    estimatedLiquidationDistancePct: Number.isFinite(estimatedLiquidationDistance)
+      ? round6(estimatedLiquidationDistance)
+      : null,
+    liquidationBufferPct: Number.isFinite(liquidationBufferPct)
+      ? round6(liquidationBufferPct)
+      : null,
+    liquidationSafetyOk,
+
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
     positionSide: TARGET_TRADE_SIDE,
@@ -1572,6 +1848,10 @@ export function positionSizeForStopRisk({
     virtualOnly: true,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     sizingFormula: 'notional = (equity * riskFraction) / stopRiskPct',
+    sizingFollowsStopDistance: true,
+    leverageIsDerivedFromStopRisk: true,
+    fixedLeverageDisabled: true,
+
     ...baseModeFlags()
   };
 }
@@ -1661,6 +1941,7 @@ export function summarizeOpenRisk(openPositions = []) {
     scannerFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsMetadataOnly: true,
     executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     ...baseModeFlags()
   };
@@ -1775,10 +2056,10 @@ export function checkRiskCaps({
     };
   }
 
-  if (extractLearningFamilyId(requestRow) && !identity.exactChild && !identity.exactMicroMicro) {
+  if (extractLearningFamilyId(requestRow) && !identity.exactMicroMicro) {
     return {
       ok: false,
-      reason: 'EXACT_75_CHILD_OR_EXACT_MICRO_MICRO_FAMILY_ID_REQUIRED',
+      reason: 'EXACT_MICRO_MICRO_FAMILY_ID_REQUIRED',
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       riskFraction: 0,
@@ -1877,13 +2158,15 @@ export function checkRiskCaps({
     };
   }
 
+  const riskDistance = stopRiskPct(requestRow);
+  const maxSafeLeverage = maxSafeLeverageForStopRisk(riskDistance, cfg);
+  const requiredLiquidationDistance = liquidationRequiredDistancePct(riskDistance, cfg);
+
   return {
     ok: true,
     reason: identity.exactMicroMicro
       ? 'RISK_CAPS_OK_EXACT_MICRO_MICRO'
-      : identity.exactChild
-        ? 'RISK_CAPS_OK_EXACT_75_CHILD'
-        : 'RISK_CAPS_OK_SHORT',
+      : 'RISK_CAPS_OK_SHORT_NO_ID',
 
     riskFraction: want,
     openRiskBefore: open.total,
@@ -1893,7 +2176,16 @@ export function checkRiskCaps({
       ? round6(open.counterBtcRisk + want)
       : open.counterBtcRisk,
 
-    stopRiskPct: round6(stopRiskPct(requestRow)),
+    stopRiskPct: round6(riskDistance),
+    maxSafeLeverage: round4(maxSafeLeverage),
+    maxConfiguredLeverage: round4(cfg.maxLeverage),
+    requiredLiquidationDistancePct: round6(requiredLiquidationDistance),
+    liquidationSafetyEnabled: Boolean(cfg.liquidationSafetyEnabled),
+
+    sizingFollowsStopDistance: true,
+    leverageIsDerivedFromStopRisk: true,
+    fixedLeverageDisabled: true,
+
     riskState: open,
 
     ...shortModeFlags(requestRow)
