@@ -6,12 +6,14 @@
 // - Parent 15: MICRO_SHORT_{SETUP}_{REGIME}
 // - Micro 75: MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}
 // - Micro-micro: MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}
-// - XR blijft metadata, geen learning-ID.
+// - XR blijft metadata/hash-bron, geen learning-ID.
 // - Scanner families blijven metadata, geen learning-ID.
 // - Coin/symbol zit niet in de family-ID.
 // - SHORT-only, virtual/shadow only, geen real orders.
 // - 75-child is context/rollup.
 // - Micro-micro is de exacte Discord/selectie-laag.
+// - E_WEAK_CONTRA krijgt een strengere entry-gate voordat tradeSystem hem
+//   virtueel mag vastleggen.
 
 import { CONFIG } from '../config.js';
 import {
@@ -28,7 +30,7 @@ const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 
-const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
+const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
 const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
@@ -55,6 +57,7 @@ const MICRO_MICRO_MIN_COMPLETED_HARD = 35;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
 const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V1';
+const E_WEAK_CONTRA_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V1';
 
 const SETUP_TYPES = Object.freeze([
   'BREAKOUT',
@@ -239,6 +242,79 @@ function shouldBuildExecutionFingerprintMetadata() {
 
 function shouldBuildMicroMicroFamily() {
   return CONFIG?.analyze?.buildMicroMicroFamily !== false;
+}
+
+function weakContraGateConfig() {
+  return {
+    enabled:
+      CONFIG.short?.weakContra?.enabled ??
+      CONFIG.analyze?.weakContra?.enabled ??
+      CONFIG.trade?.weakContra?.enabled ??
+      true,
+
+    minConfluence: safeNumber(
+      CONFIG.short?.weakContra?.minConfluence ??
+        CONFIG.analyze?.weakContra?.minConfluence ??
+        CONFIG.trade?.weakContra?.minConfluence,
+      72
+    ),
+
+    minRR: safeNumber(
+      CONFIG.short?.weakContra?.minRR ??
+        CONFIG.analyze?.weakContra?.minRR ??
+        CONFIG.trade?.weakContra?.minRR,
+      1.15
+    ),
+
+    maxSpreadPct: safeNumber(
+      CONFIG.short?.weakContra?.maxSpreadPct ??
+        CONFIG.analyze?.weakContra?.maxSpreadPct ??
+        CONFIG.trade?.weakContra?.maxSpreadPct,
+      0.0015
+    ),
+
+    minDepthUsd1p: safeNumber(
+      CONFIG.short?.weakContra?.minDepthUsd1p ??
+        CONFIG.analyze?.weakContra?.minDepthUsd1p ??
+        CONFIG.trade?.weakContra?.minDepthUsd1p,
+      100000
+    ),
+
+    maxCostR: safeNumber(
+      CONFIG.short?.weakContra?.maxCostR ??
+        CONFIG.analyze?.weakContra?.maxCostR ??
+        CONFIG.trade?.weakContra?.maxCostR,
+      0.35
+    ),
+
+    requireStructure: (
+      CONFIG.short?.weakContra?.requireStructure ??
+      CONFIG.analyze?.weakContra?.requireStructure ??
+      CONFIG.trade?.weakContra?.requireStructure ??
+      true
+    ),
+
+    requireFlowOrVolume: (
+      CONFIG.short?.weakContra?.requireFlowOrVolume ??
+      CONFIG.analyze?.weakContra?.requireFlowOrVolume ??
+      CONFIG.trade?.weakContra?.requireFlowOrVolume ??
+      true
+    ),
+
+    requireDepthData: (
+      CONFIG.short?.weakContra?.requireDepthData ??
+      CONFIG.analyze?.weakContra?.requireDepthData ??
+      CONFIG.trade?.weakContra?.requireDepthData ??
+      false
+    ),
+
+    rejectFakeBreakout: (
+      CONFIG.short?.weakContra?.rejectFakeBreakout ??
+      CONFIG.analyze?.weakContra?.rejectFakeBreakout ??
+      CONFIG.trade?.weakContra?.rejectFakeBreakout ??
+      true
+    )
+  };
 }
 
 function toUpper(value, fallback = 'UNKNOWN') {
@@ -596,7 +672,7 @@ function modeFlags() {
     currentFitBlocksVirtualLearning: false,
     currentFitBlocksShadowLearning: false,
 
-    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ONLY',
+    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
     discordOnlyForSelectedMicroFamilies: false,
     discordOnlyForSelectedMicroMicroFamilies: true,
     discordOnlyForExactTrueMicroMatch: false,
@@ -611,11 +687,12 @@ function modeFlags() {
     legacy25BucketsMetadataOnly: true,
 
     executionFingerprintsMetadataOnly: false,
-    executionFingerprintsUsedAsLearningFamily: true,
+    executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsCanDeriveMicroMicroContextHash: true,
     executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
 
     analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_PARENT_MICRO_MICRO_LAYERED',
+    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
     exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
@@ -625,7 +702,7 @@ function modeFlags() {
     exactTrueMicroOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     fixedTaxonomyPreferred: true,
     fixedTaxonomyLearningId: true,
@@ -651,8 +728,8 @@ function modeFlags() {
     parentLearningEnabled: true,
     childLearningEnabled: true,
     micro75LearningEnabled: true,
-    selectionGranularity: 'EXACT_MICRO_MICRO',
-    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+    selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED_THEN_MICRO_75_UNTIL_MM_MIN_COMPLETED',
 
     learningGranularity: LEARNING_GRANULARITY,
@@ -660,6 +737,11 @@ function modeFlags() {
 
     bucketGranularity: 'LOW_MID_HIGH',
     bucketsCoarseOnly: true,
+
+    weakContraEntryGateEnabled: true,
+    weakContraEntryGateVersion: E_WEAK_CONTRA_GATE_VERSION,
+    weakContraRejectedBlocksVirtualEntry: true,
+    weakContraRejectedBlocksLearning: false,
 
     autoRotationDisabled: true,
     activateNextDisabled: true,
@@ -1167,6 +1249,27 @@ function getSpreadPct(metrics = {}) {
   return NaN;
 }
 
+function getDepthUsd1p(metrics = {}) {
+  return firstFinite(
+    metrics.depthMinUsd1p,
+    metrics.minDepthUsd1p,
+    metrics.depthUsd1p,
+    metrics.depthUsd,
+    metrics.orderbookDepthUsd,
+    metrics.liquidityDepthUsd
+  );
+}
+
+function getRR(metrics = {}) {
+  return firstFinite(
+    metrics.rr,
+    metrics.riskReward,
+    metrics.rewardRisk,
+    metrics.primaryRR,
+    metrics.rrPrimary
+  );
+}
+
 function normalizeSetupType(value = '') {
   const raw = normalizeToken(value, '', 80);
 
@@ -1454,10 +1557,11 @@ function parseShortTaxonomyMicroId(id = '') {
 
     learningGranularity: isMicroMicro ? MICRO_MICRO_LEARNING_GRANULARITY : LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    child75LearningGranularity: LEARNING_GRANULARITY,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
     selectionGranularity: isMicroMicro
-      ? 'EXACT_MICRO_MICRO'
+      ? 'EXACT_MICRO_MICRO_ONLY'
       : isChild
         ? 'EXACT_75_CHILD_CONTEXT_ONLY'
         : 'PARENT_15_CONTEXT_ONLY'
@@ -1506,6 +1610,13 @@ function validLearningId(id = '') {
   return true;
 }
 
+function hashParts(parts = [], length = MICRO_MICRO_HASH_LEN) {
+  return String(stableHash(parts.join('|'), length))
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '')
+    .slice(0, length);
+}
+
 export function parseMicroMicroFamilyId(id = '') {
   const rawId = String(id || '').trim();
   const value = rawId.toUpperCase();
@@ -1544,7 +1655,7 @@ export function parseMicroMicroFamilyId(id = '') {
       microMicroFamilySchema: MICRO_MICRO_SCHEMA,
       trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
       microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-      selectionGranularity: 'EXACT_MICRO_MICRO'
+      selectionGranularity: 'EXACT_MICRO_MICRO_ONLY'
     };
   }
 
@@ -1621,7 +1732,7 @@ export function parseMicroMicroFamilyId(id = '') {
                   microMicroFamilySchema: MICRO_MICRO_SCHEMA,
                   trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
                   microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-                  selectionGranularity: 'EXACT_MICRO_MICRO'
+                  selectionGranularity: 'EXACT_MICRO_MICRO_ONLY'
                 };
               }
             }
@@ -1734,13 +1845,6 @@ function uniqueStrings(values = []) {
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )];
-}
-
-function hashParts(parts = [], length = MICRO_MICRO_HASH_LEN) {
-  return String(stableHash(parts.join('|'), length))
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '')
-    .slice(0, length);
 }
 
 function buildMicroMicroFamilyIdFromHash(childTrueMicroFamilyId, hashInput) {
@@ -2032,6 +2136,139 @@ function detectHardContra(metrics = {}) {
     hasLongSignal(metrics.obBias);
 }
 
+function buildWeakContraEntryGate(metrics = {}, taxonomy = {}) {
+  const cfg = weakContraGateConfig();
+  const confirmationProfile = taxonomy.confirmationProfile || normalizeConfirmationProfile(metrics.confirmationProfile || '');
+
+  const applies =
+    confirmationProfile === 'E_WEAK_CONTRA' ||
+    detectHardContra(metrics) ||
+    Boolean(metrics.weakContra || metrics.contraSignal);
+
+  const structureAligned = detectStructureAligned(metrics);
+  const flowAligned = detectFlowAligned(metrics);
+  const volumeAligned = detectVolumeAligned(metrics);
+
+  const confluence = safeNumber(getConfluenceScore(metrics), 0);
+  const rr = safeNumber(getRR(metrics), 0);
+  const spreadPct = getSpreadPct(metrics);
+  const depthUsd1p = getDepthUsd1p(metrics);
+  const costR = getCostR(metrics);
+
+  const failures = [];
+
+  if (!cfg.enabled || !applies) {
+    return {
+      version: E_WEAK_CONTRA_GATE_VERSION,
+      enabled: Boolean(cfg.enabled),
+      applies: Boolean(applies),
+      passed: true,
+      allowed: true,
+      rejected: false,
+      reason: !cfg.enabled
+        ? 'E_WEAK_CONTRA_GATE_DISABLED'
+        : 'NOT_E_WEAK_CONTRA',
+      failures: [],
+
+      confirmationProfile,
+      structureAligned,
+      flowAligned,
+      volumeAligned,
+
+      confluence,
+      minConfluence: cfg.minConfluence,
+      rr,
+      minRR: cfg.minRR,
+      spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+      maxSpreadPct: cfg.maxSpreadPct,
+      depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+      minDepthUsd1p: cfg.minDepthUsd1p,
+      costR: Number.isFinite(costR) ? costR : null,
+      maxCostR: cfg.maxCostR
+    };
+  }
+
+  if (confluence < cfg.minConfluence) {
+    failures.push('E_WEAK_CONTRA_CONFLUENCE_BELOW_MIN');
+  }
+
+  if (rr < cfg.minRR) {
+    failures.push('E_WEAK_CONTRA_RR_BELOW_MIN');
+  }
+
+  if (Number.isFinite(spreadPct) && spreadPct > cfg.maxSpreadPct) {
+    failures.push('E_WEAK_CONTRA_SPREAD_TOO_WIDE');
+  }
+
+  if (!Number.isFinite(spreadPct)) {
+    failures.push('E_WEAK_CONTRA_SPREAD_UNKNOWN');
+  }
+
+  if (cfg.requireDepthData && !Number.isFinite(depthUsd1p)) {
+    failures.push('E_WEAK_CONTRA_DEPTH_UNKNOWN');
+  }
+
+  if (Number.isFinite(depthUsd1p) && depthUsd1p < cfg.minDepthUsd1p) {
+    failures.push('E_WEAK_CONTRA_DEPTH_TOO_LOW');
+  }
+
+  if (Number.isFinite(costR) && costR > cfg.maxCostR) {
+    failures.push('E_WEAK_CONTRA_COST_R_TOO_HIGH');
+  }
+
+  if (cfg.requireStructure && !structureAligned) {
+    failures.push('E_WEAK_CONTRA_STRUCTURE_NOT_CONFIRMED');
+  }
+
+  if (cfg.requireFlowOrVolume && !flowAligned && !volumeAligned) {
+    failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
+  }
+
+  if (
+    cfg.rejectFakeBreakout &&
+    (
+      metrics.fakeBreakout === true ||
+      metrics.fakeBreakoutRisk === true
+    )
+  ) {
+    failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
+  }
+
+  const passed = failures.length === 0;
+
+  return {
+    version: E_WEAK_CONTRA_GATE_VERSION,
+    enabled: Boolean(cfg.enabled),
+    applies: true,
+    passed,
+    allowed: passed,
+    rejected: !passed,
+    reason: passed ? 'E_WEAK_CONTRA_GATE_PASSED' : failures[0],
+    failures,
+
+    confirmationProfile,
+    structureAligned,
+    flowAligned,
+    volumeAligned,
+
+    confluence,
+    minConfluence: cfg.minConfluence,
+    rr,
+    minRR: cfg.minRR,
+    spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+    maxSpreadPct: cfg.maxSpreadPct,
+    depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+    minDepthUsd1p: cfg.minDepthUsd1p,
+    costR: Number.isFinite(costR) ? costR : null,
+    maxCostR: cfg.maxCostR,
+
+    requireStructure: Boolean(cfg.requireStructure),
+    requireFlowOrVolume: Boolean(cfg.requireFlowOrVolume),
+    requireDepthData: Boolean(cfg.requireDepthData),
+    rejectFakeBreakout: Boolean(cfg.rejectFakeBreakout)
+  };
+}
+
 function classifyConfirmationProfile(metrics = {}) {
   const explicit = normalizeConfirmationProfile(
     metrics.confirmationProfile ||
@@ -2090,6 +2327,11 @@ function buildTaxonomyFamilyId(metrics = {}) {
 
   if (explicitChild) {
     const parsed = parseShortTaxonomyMicroId(explicitChild);
+    const weakContraGate = buildWeakContraEntryGate(metrics, {
+      setup: parsed.setup,
+      regime: parsed.regime,
+      confirmationProfile: parsed.confirmationProfile
+    });
 
     return {
       setup: parsed.setup,
@@ -2101,7 +2343,15 @@ function buildTaxonomyFamilyId(metrics = {}) {
       childTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
       microFamilyId: parsed.childTrueMicroFamilyId,
       trueMicroFamilyId: parsed.childTrueMicroFamilyId,
-      selectable: false
+      selectable: false,
+
+      weakContraEntryGate,
+      weakContraEntryAllowed: weakContraGate.allowed,
+      weakContraRejected: weakContraGate.rejected,
+      weakContraRejectReason: weakContraGate.rejected ? weakContraGate.reason : null,
+      blockVirtualEntry: weakContraGate.rejected,
+      virtualObservationAllowed: !weakContraGate.rejected,
+      tradeCandidateAllowed: !weakContraGate.rejected
     };
   }
 
@@ -2111,6 +2361,11 @@ function buildTaxonomyFamilyId(metrics = {}) {
 
   const parentTrueMicroFamilyId = `MICRO_SHORT_${setup}_${regime}`;
   const childTrueMicroFamilyId = `${parentTrueMicroFamilyId}_${confirmationProfile}`;
+  const weakContraGate = buildWeakContraEntryGate(metrics, {
+    setup,
+    regime,
+    confirmationProfile
+  });
 
   return {
     setup,
@@ -2122,7 +2377,15 @@ function buildTaxonomyFamilyId(metrics = {}) {
     childTrueMicroFamilyId,
     microFamilyId: childTrueMicroFamilyId,
     trueMicroFamilyId: childTrueMicroFamilyId,
-    selectable: false
+    selectable: false,
+
+    weakContraEntryGate,
+    weakContraEntryAllowed: weakContraGate.allowed,
+    weakContraRejected: weakContraGate.rejected,
+    weakContraRejectReason: weakContraGate.rejected ? weakContraGate.reason : null,
+    blockVirtualEntry: weakContraGate.rejected,
+    virtualObservationAllowed: !weakContraGate.rejected,
+    tradeCandidateAllowed: !weakContraGate.rejected
   };
 }
 
@@ -2219,7 +2482,11 @@ function buildExecutionFingerprintParts(metrics = {}, parent = {}, taxonomy = {}
     `confluence=${scoreBucket(confluence, 'CONF')}`,
     `entryQuality=${normalizeToken(entryQuality(metrics))}`,
     `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
-    `fakeBreakoutRisk=${boolToken(metrics.fakeBreakoutRisk)}`
+    `fakeBreakoutRisk=${boolToken(metrics.fakeBreakoutRisk)}`,
+
+    `weakContraGate=${taxonomy.weakContraEntryGate?.reason || 'NA'}`,
+    `weakContraAllowed=${boolToken(taxonomy.weakContraEntryAllowed)}`,
+    `weakContraRejected=${boolToken(taxonomy.weakContraRejected)}`
   ];
 }
 
@@ -2289,7 +2556,8 @@ function buildMicroMicroTaxonomy(metrics = {}, taxonomy = {}, parent = {}) {
       riskBucket,
       spreadTier(getSpreadPct(metrics)),
       rrTier(metrics.rr),
-      scoreTier(getConfluenceScore(metrics), 'CONF')
+      scoreTier(getConfluenceScore(metrics), 'CONF'),
+      taxonomy.weakContraEntryGate?.reason || 'NA'
     ];
 
   const microMicroHash = hashParts(hashSeedParts, MICRO_MICRO_HASH_LEN);
@@ -2330,7 +2598,7 @@ function buildMicroMicroTaxonomy(metrics = {}, taxonomy = {}, parent = {}) {
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-    selectionGranularity: 'EXACT_MICRO_MICRO',
+    selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
 
     hashSeedParts,
     source: 'DERIVED_EXECUTION_CONTEXT_HASH'
@@ -2368,6 +2636,10 @@ function buildMacroDefinitionParts(metrics = {}, familyId, taxonomy = null) {
     `entryQuality=${entryQuality(metrics)}`,
     `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
     `scannerReason=${scannerReason}`,
+    `weakContraEntryGateVersion=${E_WEAK_CONTRA_GATE_VERSION}`,
+    `weakContraEntryAllowed=${boolToken(taxonomy?.weakContraEntryAllowed)}`,
+    `weakContraRejected=${boolToken(taxonomy?.weakContraRejected)}`,
+    `weakContraRejectReason=${taxonomy?.weakContraRejectReason || 'NONE'}`,
     `selectionEngine=${SELECTION_ENGINE_VERSION}`,
     'currentFitPolarity=BEARISH_POSITIVE_BULLISH_NEGATIVE',
     'riskGeometryRule=SHORT:tp<entry<sl',
@@ -2446,6 +2718,11 @@ function buildMicroDefinitionParts(metrics = {}, parent, taxonomy) {
     `fakeBreakout=${boolToken(metrics.fakeBreakout)}`,
     `fakeBreakoutRisk=${boolToken(metrics.fakeBreakoutRisk)}`,
     `scannerReason=${coarseScannerReason(metrics.scannerReason)}`,
+    `weakContraEntryGateVersion=${E_WEAK_CONTRA_GATE_VERSION}`,
+    `weakContraEntryAllowed=${boolToken(taxonomy.weakContraEntryAllowed)}`,
+    `weakContraRejected=${boolToken(taxonomy.weakContraRejected)}`,
+    `weakContraRejectReason=${taxonomy.weakContraRejectReason || 'NONE'}`,
+    `blockVirtualEntry=${boolToken(taxonomy.blockVirtualEntry)}`,
     `selectionEngine=${SELECTION_ENGINE_VERSION}`,
     'selectionUsesWeeklyWinnerOnly=false',
     'selectionUsesLCBAvgR=true',
@@ -2487,6 +2764,11 @@ function buildMicroMicroDefinitionParts(metrics = {}, parent, taxonomy = {}, mic
     `spreadBucket=${microMicro.spreadBucket}`,
     `btcBucket=${microMicro.btcBucket}`,
     `riskBucket=${microMicro.riskBucket}`,
+    `weakContraEntryGateVersion=${E_WEAK_CONTRA_GATE_VERSION}`,
+    `weakContraEntryAllowed=${boolToken(taxonomy.weakContraEntryAllowed)}`,
+    `weakContraRejected=${boolToken(taxonomy.weakContraRejected)}`,
+    `weakContraRejectReason=${taxonomy.weakContraRejectReason || 'NONE'}`,
+    `blockVirtualEntry=${boolToken(taxonomy.blockVirtualEntry)}`,
     `learningHierarchy=PARENT_15>MICRO_75>MICRO_MICRO`,
     `rollupParent15=${taxonomy.parentTrueMicroFamilyId}`,
     `rollupMicro75=${taxonomy.childTrueMicroFamilyId}`,
@@ -2494,7 +2776,7 @@ function buildMicroMicroDefinitionParts(metrics = {}, parent, taxonomy = {}, mic
     'selectionUsesWeeklyWinnerOnly=false',
     'selectionUsesLCBAvgR=true',
     'selectionRequiresEligibleGate=true',
-    'microMicroSelectionGranularity=EXACT_MICRO_MICRO',
+    'microMicroSelectionGranularity=EXACT_MICRO_MICRO_ONLY',
     `microMicroMinCompletedSoft=${MICRO_MICRO_MIN_COMPLETED_SOFT}`,
     `microMicroMinCompletedHard=${MICRO_MICRO_MIN_COMPLETED_HARD}`,
     'microMicroFallbackRule=USE_MICRO_75_CONTEXT_UNTIL_MICRO_MICRO_HAS_SAMPLE',
@@ -2503,6 +2785,9 @@ function buildMicroMicroDefinitionParts(metrics = {}, parent, taxonomy = {}, mic
     'microMicroRollsUpToParent15=true',
     'discordSelectionPriority=MICRO_MICRO_ONLY',
     'discordSelectionRule=EXACT_MICRO_MICRO_ONLY',
+    'executionFingerprintRole=MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    'executionFingerprintsUsedAsLearningFamily=false',
+    'executionFingerprintsCanDeriveMicroMicroContextHash=true',
     'currentFitPolarity=BEARISH_POSITIVE_BULLISH_NEGATIVE',
     'currentFitDefinition=SHORT_MIRRORED_CURRENT_FIT',
     'riskGeometryRule=SHORT:tp<entry<sl',
@@ -2552,7 +2837,7 @@ export function buildMicroFamilyV1(metrics = {}) {
     ...modeFlags(),
 
     schema,
-    version: 'parent-fixed-taxonomy-15-v3',
+    version: 'parent-fixed-taxonomy-15-v4',
     macroSchema: schema,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     learningGranularity: PARENT_LEARNING_GRANULARITY,
@@ -2571,6 +2856,15 @@ export function buildMicroFamilyV1(metrics = {}) {
     setupType: taxonomy.setup,
     regimeBucket: taxonomy.regime,
     confirmationProfile: null,
+
+    weakContraEntryGate: taxonomy.weakContraEntryGate,
+    weakContraEntryGateVersion: E_WEAK_CONTRA_GATE_VERSION,
+    weakContraEntryAllowed: taxonomy.weakContraEntryAllowed,
+    weakContraRejected: taxonomy.weakContraRejected,
+    weakContraRejectReason: taxonomy.weakContraRejectReason,
+    blockVirtualEntry: taxonomy.blockVirtualEntry,
+    virtualObservationAllowed: taxonomy.virtualObservationAllowed,
+    tradeCandidateAllowed: taxonomy.tradeCandidateAllowed,
 
     definition: definitionParts.join(' | '),
     definitionParts,
@@ -2678,6 +2972,13 @@ export function buildMicroFamilyV2(metrics = {}) {
     microMicro?.spreadBucket ? `microMicroSpreadBucket=${microMicro.spreadBucket}` : null,
     microMicro?.btcBucket ? `microMicroBtcBucket=${microMicro.btcBucket}` : null,
     microMicro?.riskBucket ? `microMicroRiskBucket=${microMicro.riskBucket}` : null,
+    `weakContraEntryGateVersion=${E_WEAK_CONTRA_GATE_VERSION}`,
+    `weakContraEntryAllowed=${boolToken(taxonomy.weakContraEntryAllowed)}`,
+    `weakContraRejected=${boolToken(taxonomy.weakContraRejected)}`,
+    `weakContraRejectReason=${taxonomy.weakContraRejectReason || 'NONE'}`,
+    `blockVirtualEntry=${boolToken(taxonomy.blockVirtualEntry)}`,
+    `virtualObservationAllowed=${boolToken(taxonomy.virtualObservationAllowed)}`,
+    `tradeCandidateAllowed=${boolToken(taxonomy.tradeCandidateAllowed)}`,
     `learningGranularity=${LEARNING_GRANULARITY}`,
     `parentLearningGranularity=${PARENT_LEARNING_GRANULARITY}`,
     `microMicroLearningGranularity=${MICRO_MICRO_LEARNING_GRANULARITY}`,
@@ -2690,13 +2991,16 @@ export function buildMicroFamilyV2(metrics = {}) {
     'selectionUsesWeeklyWinnerOnly=false',
     'selectionUsesLCBAvgR=true',
     'selectionRequiresEligibleGate=true',
-    'learningIdentity=ANALYZE_TRUE_MICRO_FAMILY_FIXED_TAXONOMY_75_CHILD',
+    'learningIdentity=ANALYZE_MICRO_MICRO_FAMILY_FIXED_TAXONOMY',
     'learningHierarchy=PARENT_15>MICRO_75>MICRO_MICRO',
     'microMicroDoesNotReplaceMicro75Learning=true',
     'microMicroRollsUpToMicro75=true',
     'microMicroRollsUpToParent15=true',
     'scannerFingerprintRole=METADATA_ONLY',
+    'scannerFingerprintsUsedAsLearningFamily=false',
     'executionFingerprintRole=MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    'executionFingerprintsUsedAsLearningFamily=false',
+    'executionFingerprintsCanDeriveMicroMicroContextHash=true',
     'currentFitPolarity=BEARISH_POSITIVE_BULLISH_NEGATIVE',
     'currentFitDefinition=SHORT_MIRRORED_CURRENT_FIT',
     'riskGeometryRule=SHORT:tp<entry<sl',
@@ -2720,7 +3024,7 @@ export function buildMicroFamilyV2(metrics = {}) {
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    version: 'child-fixed-taxonomy-75-with-hash-micro-micro-v3',
+    version: 'child-fixed-taxonomy-75-with-hash-micro-micro-v4',
 
     familyId: parent.familyId,
 
@@ -2761,7 +3065,7 @@ export function buildMicroFamilyV2(metrics = {}) {
     microMicroDefinitionParts,
     microMicroSelectable: Boolean(microMicroFamilyId),
     microMicroSelectionAllowed: Boolean(microMicroFamilyId),
-    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
 
     microMicroEntryBucket: microMicro?.entryBucket || null,
     microMicroSpreadBucket: microMicro?.spreadBucket || null,
@@ -2779,6 +3083,15 @@ export function buildMicroFamilyV2(metrics = {}) {
     setupType: taxonomy.setup,
     regimeBucket: taxonomy.regime,
     confirmationProfile: taxonomy.confirmationProfile,
+
+    weakContraEntryGate: taxonomy.weakContraEntryGate,
+    weakContraEntryGateVersion: E_WEAK_CONTRA_GATE_VERSION,
+    weakContraEntryAllowed: taxonomy.weakContraEntryAllowed,
+    weakContraRejected: taxonomy.weakContraRejected,
+    weakContraRejectReason: taxonomy.weakContraRejectReason,
+    blockVirtualEntry: taxonomy.blockVirtualEntry,
+    virtualObservationAllowed: taxonomy.virtualObservationAllowed,
+    tradeCandidateAllowed: taxonomy.tradeCandidateAllowed,
 
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
@@ -2815,7 +3128,8 @@ export function buildMicroFamilyV2(metrics = {}) {
     executionMicroFamilyId,
     executionFingerprintRole: executionFingerprintHash ? 'MICRO_MICRO_IDENTITY_HASH_SOURCE' : 'METADATA_ONLY',
     executionFingerprintsMetadataOnly: !executionFingerprintHash,
-    executionFingerprintsUsedAsLearningFamily: Boolean(executionFingerprintHash),
+    executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsCanDeriveMicroMicroContextHash: Boolean(executionFingerprintHash),
 
     parentDefinition: parent.definition,
     parentDefinitionParts: parent.definitionParts,
@@ -2935,6 +3249,13 @@ export function getMicroMicroFamilyId(metrics = {}) {
 
 export function getParentMacroFamilyId(metrics = {}) {
   return buildMicroFamilyV1(metrics).microFamilyId;
+}
+
+export function getWeakContraEntryGate(metrics = {}) {
+  const sideSafeMetrics = assertShortOnly(metrics);
+  const taxonomy = buildTaxonomyFamilyId(sideSafeMetrics);
+
+  return buildWeakContraEntryGate(sideSafeMetrics, taxonomy);
 }
 
 export function isMicroFamilyV1Id(id) {
@@ -3059,7 +3380,7 @@ export function attachMicroFamilies(metrics = {}) {
 
     microMicroSelectable: micro.microMicroSelectable,
     microMicroSelectionAllowed: micro.microMicroSelectionAllowed,
-    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO',
+    microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     microMicroDoesNotReplaceMicro75Learning: true,
     microMicroRollsUpToMicro75: true,
     microMicroRollsUpToParent15: true,
@@ -3080,6 +3401,15 @@ export function attachMicroFamilies(metrics = {}) {
     regimeBucket: micro.regimeBucket,
     confirmationProfile: micro.confirmationProfile,
 
+    weakContraEntryGate: micro.weakContraEntryGate,
+    weakContraEntryGateVersion: E_WEAK_CONTRA_GATE_VERSION,
+    weakContraEntryAllowed: micro.weakContraEntryAllowed,
+    weakContraRejected: micro.weakContraRejected,
+    weakContraRejectReason: micro.weakContraRejectReason,
+    blockVirtualEntry: micro.blockVirtualEntry,
+    virtualObservationAllowed: micro.virtualObservationAllowed,
+    tradeCandidateAllowed: micro.tradeCandidateAllowed,
+
     learningGranularity: micro.learningGranularity,
     parentLearningGranularity: micro.parentLearningGranularity,
     learningHashInputParts: micro.learningHashInputParts,
@@ -3097,13 +3427,14 @@ export function attachMicroFamilies(metrics = {}) {
     executionMicroFamilyId: micro.executionMicroFamilyId,
     executionFingerprintRole: micro.executionFingerprintRole,
     executionFingerprintsMetadataOnly: micro.executionFingerprintsMetadataOnly,
-    executionFingerprintsUsedAsLearningFamily: micro.executionFingerprintsUsedAsLearningFamily,
+    executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsCanDeriveMicroMicroContextHash: micro.executionFingerprintsCanDeriveMicroMicroContextHash,
 
     schema: micro.schema,
     microFamilySchema: micro.microFamilySchema,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
 
@@ -3120,7 +3451,7 @@ export function attachMicroFamilies(metrics = {}) {
     scannerFingerprintsUsedAsLearningFamily: false,
 
     analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_PARENT_MICRO_MICRO_LAYERED',
+    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
     exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
