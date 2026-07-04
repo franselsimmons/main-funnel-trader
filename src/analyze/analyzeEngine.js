@@ -1,17 +1,12 @@
 // ================= FILE: src/analyze/analyzeEngine.js =================
 //
-// SHORT-only Analyze engine.
-// Doel:
-// - Parent 15: MICRO_SHORT_{SETUP}_{REGIME}
-// - Micro 75: MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}
-// - Micro-micro: MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}
-// - Scanner fingerprints blijven metadata-only.
-// - XR/execution fingerprint blijft alleen hash-source, geen learning-family.
-// - Learning rolt altijd op naar Parent 15 + Micro 75 + Micro-micro.
-// - Discord/selectie mag alleen exact micro-micro.
-// - CurrentFit blokkeert learning nooit.
-// - E_WEAK_CONTRA krijgt een strengere entry-gate voor virtual entry metadata,
-//   maar observatie-learning blijft wel tellen.
+// SHORT analyze engine.
+// Fix:
+// - micro-micro is nu de primaire learning identity.
+// - child75 blijft context/rollup.
+// - parent15 blijft context/rollup.
+// - recordOutcome() schrijft altijd MM als primary row wanneer MM beschikbaar is.
+// - getWeekMicros() normaliseert oude rows opnieuw zodat MM niet meer als child75 verdwijnt.
 
 import { createHash } from 'crypto';
 import { CONFIG } from '../config.js';
@@ -74,6 +69,8 @@ const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V1';
 const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V3';
 const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V1';
 
+const PRIMARY_LEARNING_ID_RULE = 'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V2';
+
 const SETUP_ORDER = Object.freeze([
   'BREAKOUT',
   'RETEST',
@@ -118,17 +115,6 @@ function finite(value) {
   return Number.isFinite(x);
 }
 
-function bool(value) {
-  if (value === true) return true;
-  if (value === false) return false;
-  if (value === 1) return true;
-  if (value === 0) return false;
-
-  const raw = String(value ?? '').trim().toLowerCase();
-
-  return ['true', '1', 'yes', 'y', 'on'].includes(raw);
-}
-
 function hashText(value, len = EXECUTION_MICRO_HASH_LEN) {
   return createHash('sha256')
     .update(String(value || ''))
@@ -151,6 +137,7 @@ function flattenSafe(values = [], maxDepth = 5) {
           depth: item.depth + 1
         });
       }
+
       continue;
     }
 
@@ -271,16 +258,20 @@ function modeFlags() {
 
     analyzeMicroFamiliesOnly: true,
     learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+    child75ContextOnly: true,
+    parent15ContextOnly: true,
 
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
 
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-    learningGranularity: LEARNING_GRANULARITY,
+    learningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
     child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
@@ -358,125 +349,6 @@ function flags(row = {}) {
   };
 }
 
-function slimOutcome(row = {}) {
-  if (!row || typeof row !== 'object') return row;
-
-  return flags({
-    type: row.type || 'OUTCOME',
-    source: row.source || row.outcomeSource || 'VIRTUAL',
-    outcomeSource: row.outcomeSource || row.source || 'VIRTUAL',
-
-    symbol: row.symbol || null,
-    contractSymbol: row.contractSymbol || null,
-    tradeId: row.tradeId || null,
-    positionId: row.positionId || null,
-
-    entry: n(row.entry, 0),
-    exit: n(row.exit ?? row.exitPrice, 0),
-    exitPrice: n(row.exitPrice ?? row.exit, 0),
-    exitReason: row.exitReason || row.reason || null,
-
-    openedAt: row.openedAt || row.createdAt || null,
-    closedAt: row.closedAt || row.completedAt || row.ts || null,
-    completedAt: row.completedAt || row.closedAt || row.ts || null,
-
-    netR: n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0),
-    shortNetR: n(row.shortNetR ?? row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0),
-    exitR: n(row.exitR ?? row.netR ?? row.realizedR ?? row.r, 0),
-    realizedNetR: n(row.realizedNetR ?? row.netR ?? row.exitR ?? row.r, 0),
-    realizedR: n(row.realizedR ?? row.netR ?? row.exitR ?? row.r, 0),
-    r: n(row.r ?? row.netR ?? row.exitR ?? row.realizedR, 0),
-
-    grossR: n(row.grossR ?? row.shortGrossR ?? row.rawR, 0),
-    shortGrossR: n(row.shortGrossR ?? row.grossR ?? row.rawR, 0),
-    rawR: n(row.rawR ?? row.grossR ?? row.shortGrossR, 0),
-
-    costR: n(row.costR ?? row.avgCostR, 0),
-    avgCostR: n(row.avgCostR ?? row.costR, 0),
-
-    win: row.win === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) > 0,
-    loss: row.loss === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) < 0,
-    flat: row.flat === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) === 0,
-
-    directSL: Boolean(row.directSL || row.directToSL),
-    directToSL: Boolean(row.directSL || row.directToSL),
-
-    parentTrueMicroFamilyId: row.parentTrueMicroFamilyId || null,
-    childTrueMicroFamilyId: row.childTrueMicroFamilyId || null,
-    base75ChildTrueMicroFamilyId: row.base75ChildTrueMicroFamilyId || row.childTrueMicroFamilyId || null,
-
-    microMicroFamilyId: row.microMicroFamilyId || row.trueMicroMicroFamilyId || row.exactMicroMicroFamilyId || null,
-    trueMicroMicroFamilyId: row.trueMicroMicroFamilyId || row.microMicroFamilyId || row.exactMicroMicroFamilyId || null,
-    exactMicroMicroFamilyId: row.exactMicroMicroFamilyId || row.microMicroFamilyId || row.trueMicroMicroFamilyId || null,
-
-    trueMicroFamilyId: row.trueMicroFamilyId || null,
-    microFamilyId: row.microFamilyId || null,
-    learningMicroFamilyId: row.learningMicroFamilyId || null,
-    analyzeMicroFamilyId: row.analyzeMicroFamilyId || null,
-
-    outcomeDedupeKey: row.outcomeDedupeKey || null,
-    outcomeDedupeVersion: row.outcomeDedupeVersion || OUTCOME_DEDUPE_VERSION
-  });
-}
-
-function sanitizeStatsRow(row = {}) {
-  if (!row || typeof row !== 'object') return {};
-
-  const clone = {
-    ...row
-  };
-
-  delete clone.recordOutcomeResult;
-  delete clone.openPositionDeleteResult;
-  delete clone.discordExitAlertResult;
-  delete clone.position;
-  delete clone.outcome;
-  delete clone.raw;
-  delete clone.rawPosition;
-  delete clone.rawOutcome;
-  delete clone.rawSnapshot;
-  delete clone.scannerSnapshot;
-  delete clone.currentMarketUniverse;
-  delete clone.entryMarketUniverse;
-  delete clone.marketUniverseRows;
-  delete clone.universeRows;
-
-  clone.definitionParts = Array.isArray(row.definitionParts)
-    ? row.definitionParts.slice(0, 64)
-    : [];
-
-  clone.parentDefinitionParts = Array.isArray(row.parentDefinitionParts)
-    ? row.parentDefinitionParts.slice(0, 48)
-    : [];
-
-  clone.microMicroDefinitionParts = Array.isArray(row.microMicroDefinitionParts)
-    ? row.microMicroDefinitionParts.slice(0, 64)
-    : [];
-
-  clone.executionFingerprintParts = Array.isArray(row.executionFingerprintParts)
-    ? row.executionFingerprintParts.slice(0, 64)
-    : [];
-
-  clone.examples = Array.isArray(row.examples)
-    ? row.examples.slice(-8).map((example) => (
-      example && typeof example === 'object'
-        ? {
-          symbol: example.symbol || null,
-          contractSymbol: example.contractSymbol || null,
-          createdAt: example.createdAt || example.openedAt || null,
-          source: example.source || 'VIRTUAL'
-        }
-        : example
-    ))
-    : [];
-
-  clone.recentOutcomes = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes.slice(-40).map(slimOutcome)
-    : [];
-
-  return clone;
-}
-
 function jsonSafe(value) {
   const seen = new WeakSet();
 
@@ -490,81 +362,6 @@ function jsonSafe(value) {
 
     return val;
   }));
-}
-
-function safeRefreshStats(row = {}) {
-  const safeRow = sanitizeStatsRow(row);
-
-  try {
-    return refreshStats(safeRow);
-  } catch (error) {
-    const outcomes = Array.isArray(safeRow.recentOutcomes)
-      ? safeRow.recentOutcomes
-      : [];
-
-    let wins = n(safeRow.wins, 0);
-    let losses = n(safeRow.losses, 0);
-    let flats = n(safeRow.flats, 0);
-    let totalR = n(safeRow.totalR, 0);
-    let totalCostR = n(safeRow.totalCostR, 0);
-    let directSLCount = n(safeRow.directSLCount, 0);
-
-    if (outcomes.length) {
-      wins = 0;
-      losses = 0;
-      flats = 0;
-      totalR = 0;
-      totalCostR = 0;
-      directSLCount = 0;
-
-      for (const outcome of outcomes) {
-        const netR = n(outcome.netR ?? outcome.exitR ?? outcome.realizedR ?? outcome.r, 0);
-        const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
-
-        totalR += netR;
-        totalCostR += costR;
-
-        if (netR > 0) wins += 1;
-        else if (netR < 0) losses += 1;
-        else flats += 1;
-
-        if (outcome.directSL || outcome.directToSL) directSLCount += 1;
-      }
-    }
-
-    const completed = Math.max(
-      n(safeRow.completed, 0),
-      n(safeRow.outcomeSample, 0),
-      wins + losses + flats,
-      outcomes.length
-    );
-
-    const avgR = completed > 0 ? totalR / completed : 0;
-    const avgCostR = completed > 0 ? totalCostR / completed : 0;
-    const winrate = completed > 0 ? wins / completed : 0;
-
-    return {
-      ...safeRow,
-      refreshStatsFallbackUsed: true,
-      refreshStatsFallbackReason: error?.message || String(error),
-
-      wins,
-      losses,
-      flats,
-      completed,
-      outcomeSample: completed,
-
-      totalR,
-      avgR,
-      winrate,
-
-      totalCostR,
-      avgCostR,
-
-      directSLCount,
-      directSLPct: completed > 0 ? directSLCount / completed : 0
-    };
-  }
 }
 
 function parseShortTaxonomyMicroId(id = '') {
@@ -704,9 +501,13 @@ function childIdFrom(id = '', row = {}) {
   const direct = [
     row.childTrueMicroFamilyId,
     row.base75ChildTrueMicroFamilyId,
+    row.baseTrueMicroFamilyId,
+    row.trueMicro75FamilyId,
     row.trueMicroFamilyId,
     row.microFamilyId,
     row.learningMicroFamilyId,
+    row.learningFamilyId,
+    row.analyzeMicroFamilyId,
     row.microMicroFamilyId,
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId
@@ -735,7 +536,12 @@ function microMicroIdFrom(id = '', row = {}) {
     row.microMicroFamilyId,
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId,
+    row.selectedMicroMicroFamilyId,
+    row.selectedTrueMicroMicroFamilyId,
+    row.selectedExactMicroMicroFamilyId,
+    row.learningFamilyId,
     row.learningMicroFamilyId,
+    row.analyzeMicroFamilyId,
     row.microFamilyId,
     row.trueMicroFamilyId
   ]
@@ -780,11 +586,12 @@ function normalizeLearningFamilyId(id = '', row = {}) {
   if (p.isParent) return p.parentTrueMicroFamilyId;
 
   const direct = [
-    row.learningFamilyId,
-    row.learningMicroFamilyId,
     row.id,
     row.key,
     row.rowId,
+    row.learningFamilyId,
+    row.learningMicroFamilyId,
+    row.analyzeMicroFamilyId,
     row.microMicroFamilyId,
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId,
@@ -813,15 +620,30 @@ function normalizeLearningFamilyId(id = '', row = {}) {
 }
 
 function rowIdentityId(row = {}) {
-  return normalizeLearningFamilyId(
-    row.learningFamilyId ||
-      row.learningMicroFamilyId ||
-      row.id ||
+  const explicitMicroMicro = microMicroIdFrom(
+    row.id ||
       row.key ||
       row.rowId ||
       row.microMicroFamilyId ||
       row.trueMicroMicroFamilyId ||
       row.exactMicroMicroFamilyId ||
+      row.learningFamilyId ||
+      row.learningMicroFamilyId ||
+      row.analyzeMicroFamilyId,
+    row
+  );
+
+  if (explicitMicroMicro && isMicroMicroId(explicitMicroMicro)) {
+    return explicitMicroMicro;
+  }
+
+  return normalizeLearningFamilyId(
+    row.learningFamilyId ||
+      row.learningMicroFamilyId ||
+      row.analyzeMicroFamilyId ||
+      row.id ||
+      row.key ||
+      row.rowId ||
       row.microFamilyId ||
       row.trueMicroFamilyId ||
       row.childTrueMicroFamilyId ||
@@ -849,7 +671,9 @@ function inferTradeSide(row = {}) {
   if (direct) return direct;
 
   const text = upper([
+    row.learningFamilyId,
     row.learningMicroFamilyId,
+    row.analyzeMicroFamilyId,
     row.microFamilyId,
     row.trueMicroFamilyId,
     row.childTrueMicroFamilyId,
@@ -873,6 +697,222 @@ function inferTradeSide(row = {}) {
 
 function isShort(row = {}) {
   return inferTradeSide(row) === TARGET_TRADE_SIDE;
+}
+
+function slimOutcome(row = {}) {
+  if (!row || typeof row !== 'object') return row;
+
+  const mm = microMicroIdFrom(
+    row.microMicroFamilyId ||
+      row.trueMicroMicroFamilyId ||
+      row.exactMicroMicroFamilyId ||
+      row.learningFamilyId ||
+      row.learningMicroFamilyId ||
+      row.analyzeMicroFamilyId ||
+      row.microFamilyId ||
+      row.trueMicroFamilyId,
+    row
+  );
+
+  const child = childIdFrom(mm || row.childTrueMicroFamilyId || row.trueMicroFamilyId || row.microFamilyId, row);
+  const parent = parentIdFrom(child || mm, row);
+  const primaryId = mm || child || parent || null;
+
+  return flags({
+    type: row.type || 'OUTCOME',
+    source: row.source || row.outcomeSource || 'VIRTUAL',
+    outcomeSource: row.outcomeSource || row.source || 'VIRTUAL',
+
+    symbol: row.symbol || null,
+    contractSymbol: row.contractSymbol || null,
+    tradeId: row.tradeId || null,
+    positionId: row.positionId || null,
+
+    entry: n(row.entry, 0),
+    exit: n(row.exit ?? row.exitPrice, 0),
+    exitPrice: n(row.exitPrice ?? row.exit, 0),
+    exitReason: row.exitReason || row.reason || null,
+
+    openedAt: row.openedAt || row.createdAt || null,
+    closedAt: row.closedAt || row.completedAt || row.ts || null,
+    completedAt: row.completedAt || row.closedAt || row.ts || null,
+
+    netR: n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0),
+    shortNetR: n(row.shortNetR ?? row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0),
+    exitR: n(row.exitR ?? row.netR ?? row.realizedR ?? row.r, 0),
+    realizedNetR: n(row.realizedNetR ?? row.netR ?? row.exitR ?? row.r, 0),
+    realizedR: n(row.realizedR ?? row.netR ?? row.exitR ?? row.r, 0),
+    r: n(row.r ?? row.netR ?? row.exitR ?? row.realizedR, 0),
+
+    grossR: n(row.grossR ?? row.shortGrossR ?? row.rawR, 0),
+    shortGrossR: n(row.shortGrossR ?? row.grossR ?? row.rawR, 0),
+    rawR: n(row.rawR ?? row.grossR ?? row.shortGrossR, 0),
+
+    costR: n(row.costR ?? row.avgCostR, 0),
+    avgCostR: n(row.avgCostR ?? row.costR, 0),
+
+    win: row.win === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) > 0,
+    loss: row.loss === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) < 0,
+    flat: row.flat === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) === 0,
+
+    directSL: Boolean(row.directSL || row.directToSL),
+    directToSL: Boolean(row.directSL || row.directToSL),
+
+    primaryLearningFamilyId: primaryId,
+    primaryLearningIdentity: mm ? 'MICRO_MICRO' : child ? 'CHILD75_CONTEXT' : 'PARENT15_CONTEXT',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
+    learningFamilyId: primaryId,
+    learningMicroFamilyId: primaryId,
+    analyzeMicroFamilyId: primaryId,
+
+    microFamilyId: primaryId,
+    trueMicroFamilyId: primaryId,
+
+    childTrueMicroFamilyId: child || null,
+    base75ChildTrueMicroFamilyId: child || null,
+    parentTrueMicroFamilyId: parent || null,
+
+    microMicroFamilyId: mm || null,
+    trueMicroMicroFamilyId: mm || null,
+    exactMicroMicroFamilyId: mm || null,
+
+    outcomeDedupeKey: row.outcomeDedupeKey || null,
+    outcomeDedupeVersion: row.outcomeDedupeVersion || OUTCOME_DEDUPE_VERSION
+  });
+}
+
+function sanitizeStatsRow(row = {}) {
+  if (!row || typeof row !== 'object') return {};
+
+  const clone = {
+    ...row
+  };
+
+  delete clone.recordOutcomeResult;
+  delete clone.openPositionDeleteResult;
+  delete clone.discordExitAlertResult;
+  delete clone.position;
+  delete clone.outcome;
+  delete clone.raw;
+  delete clone.rawPosition;
+  delete clone.rawOutcome;
+  delete clone.rawSnapshot;
+  delete clone.scannerSnapshot;
+  delete clone.currentMarketUniverse;
+  delete clone.entryMarketUniverse;
+  delete clone.marketUniverseRows;
+  delete clone.universeRows;
+
+  clone.definitionParts = Array.isArray(row.definitionParts)
+    ? row.definitionParts.slice(0, 64)
+    : [];
+
+  clone.parentDefinitionParts = Array.isArray(row.parentDefinitionParts)
+    ? row.parentDefinitionParts.slice(0, 48)
+    : [];
+
+  clone.microMicroDefinitionParts = Array.isArray(row.microMicroDefinitionParts)
+    ? row.microMicroDefinitionParts.slice(0, 64)
+    : [];
+
+  clone.executionFingerprintParts = Array.isArray(row.executionFingerprintParts)
+    ? row.executionFingerprintParts.slice(0, 64)
+    : [];
+
+  clone.examples = Array.isArray(row.examples)
+    ? row.examples.slice(-8).map((example) => (
+      example && typeof example === 'object'
+        ? {
+          symbol: example.symbol || null,
+          contractSymbol: example.contractSymbol || null,
+          createdAt: example.createdAt || example.openedAt || null,
+          source: example.source || 'VIRTUAL'
+        }
+        : example
+    ))
+    : [];
+
+  clone.recentOutcomes = Array.isArray(row.recentOutcomes)
+    ? row.recentOutcomes.slice(-40).map(slimOutcome)
+    : [];
+
+  return clone;
+}
+
+function safeRefreshStats(row = {}) {
+  const safeRow = sanitizeStatsRow(row);
+
+  try {
+    return refreshStats(safeRow);
+  } catch (error) {
+    const outcomes = Array.isArray(safeRow.recentOutcomes)
+      ? safeRow.recentOutcomes
+      : [];
+
+    let wins = n(safeRow.wins, 0);
+    let losses = n(safeRow.losses, 0);
+    let flats = n(safeRow.flats, 0);
+    let totalR = n(safeRow.totalR, 0);
+    let totalCostR = n(safeRow.totalCostR, 0);
+    let directSLCount = n(safeRow.directSLCount, 0);
+
+    if (outcomes.length) {
+      wins = 0;
+      losses = 0;
+      flats = 0;
+      totalR = 0;
+      totalCostR = 0;
+      directSLCount = 0;
+
+      for (const outcome of outcomes) {
+        const netR = n(outcome.netR ?? outcome.exitR ?? outcome.realizedR ?? outcome.r, 0);
+        const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
+
+        totalR += netR;
+        totalCostR += costR;
+
+        if (netR > 0) wins += 1;
+        else if (netR < 0) losses += 1;
+        else flats += 1;
+
+        if (outcome.directSL || outcome.directToSL) directSLCount += 1;
+      }
+    }
+
+    const completed = Math.max(
+      n(safeRow.completed, 0),
+      n(safeRow.outcomeSample, 0),
+      wins + losses + flats,
+      outcomes.length
+    );
+
+    const avgR = completed > 0 ? totalR / completed : 0;
+    const avgCostR = completed > 0 ? totalCostR / completed : 0;
+    const winrate = completed > 0 ? wins / completed : 0;
+
+    return {
+      ...safeRow,
+      refreshStatsFallbackUsed: true,
+      refreshStatsFallbackReason: error?.message || String(error),
+
+      wins,
+      losses,
+      flats,
+      completed,
+      outcomeSample: completed,
+
+      totalR,
+      avgR,
+      winrate,
+
+      totalCostR,
+      avgCostR,
+
+      directSLCount,
+      directSLPct: completed > 0 ? directSLCount / completed : 0
+    };
+  }
 }
 
 function normalizeSetup(value = '') {
@@ -922,6 +962,8 @@ function classifyTaxonomy(row = {}, classified = {}) {
     row.trueMicroFamilyId,
     row.microFamilyId,
     row.learningMicroFamilyId,
+    row.learningFamilyId,
+    row.analyzeMicroFamilyId,
     classified.trueMicroFamilyId,
     classified.microFamilyId,
     classified.childTrueMicroFamilyId,
@@ -1038,8 +1080,13 @@ function buildMicroMicroFromChildAndRow(child, row = {}) {
     row.microMicroFamilyId ||
       row.trueMicroMicroFamilyId ||
       row.exactMicroMicroFamilyId ||
-      row.learningMicroFamilyId,
-    row
+      row.learningFamilyId ||
+      row.learningMicroFamilyId ||
+      row.analyzeMicroFamilyId,
+    {
+      ...row,
+      childTrueMicroFamilyId: child
+    }
   );
 
   if (direct && isMicroMicroId(direct)) return direct;
@@ -1244,13 +1291,13 @@ function enrichWithMicroFamily(row = {}) {
   try {
     macro = classifyMacroFamily(row) || {};
   } catch {
-    // ignore classifier failure; fallback taxonomy below
+    // Fallback taxonomy below.
   }
 
   try {
     micro = classifyMicroFamily(row) || {};
   } catch {
-    // ignore classifier failure; fallback taxonomy below
+    // Fallback taxonomy below.
   }
 
   const classified = {
@@ -1281,12 +1328,20 @@ function enrichWithMicroFamily(row = {}) {
   return flags({
     ...row,
 
-    familyId: row.familyId || 'SHORT_FIXED_TAXONOMY',
+    familyId: microMicroId,
+    learningFamilyId: microMicroId,
+    learningMicroFamilyId: microMicroId,
+    analyzeMicroFamilyId: microMicroId,
+    primaryLearningFamilyId: microMicroId,
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
 
-    microFamilyId: taxonomy.childId,
-    trueMicroFamilyId: taxonomy.childId,
+    microFamilyId: microMicroId,
+    trueMicroFamilyId: microMicroId,
+
     childTrueMicroFamilyId: taxonomy.childId,
     base75ChildTrueMicroFamilyId: taxonomy.childId,
+    child75ContextFamilyId: taxonomy.childId,
 
     parentTrueMicroFamilyId: taxonomy.parentId,
     coarseMicroFamilyId: taxonomy.parentId,
@@ -1295,6 +1350,7 @@ function enrichWithMicroFamily(row = {}) {
     parentMicroFamilyId: taxonomy.parentId,
     macroFamilyId: taxonomy.parentId,
     parentMacroFamilyId: taxonomy.parentId,
+    parent15ContextFamilyId: taxonomy.parentId,
 
     microMicroFamilyId: microMicroId,
     trueMicroMicroFamilyId: microMicroId,
@@ -1307,6 +1363,7 @@ function enrichWithMicroFamily(row = {}) {
 
     definitionParts: [
       `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
+      `PRIMARY_LEARNING=${microMicroId}`,
       `TRUE_MICRO=${taxonomy.childId}`,
       `PARENT_TRUE_MICRO=${taxonomy.parentId}`,
       `SETUP=${taxonomy.setup}`,
@@ -1414,6 +1471,7 @@ function applyLayerIdentity(row = {}, id = '') {
   const layer = parsed.learningLayer;
   const minCompleted = minCompletedFor(learningId);
   const layerSchema = schemaFor(learningId);
+  const primaryId = isMicroMicro ? mm : learningId;
 
   return flags({
     ...sanitizeStatsRow(row),
@@ -1425,17 +1483,27 @@ function applyLayerIdentity(row = {}, id = '') {
     learningFamilyId: learningId,
     learningMicroFamilyId: learningId,
     analyzeMicroFamilyId: learningId,
+    primaryLearningFamilyId: primaryId,
+    primaryLearningIdentity: isMicroMicro
+      ? 'MICRO_MICRO'
+      : isChild
+        ? 'CHILD75_CONTEXT'
+        : 'PARENT15_CONTEXT',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
 
     // Belangrijk:
-    // - Voor micro-micro rows is de learning-id exact MM.
-    // - trueMicroFamilyId blijft de 75-child context.
-    // - microMicroFamilyId is de selectie/Discord-id.
-    microFamilyId: isMicroMicro ? child : learningId,
-    trueMicroFamilyId: isMicroMicro ? child : learningId,
+    // - MM-row: microFamilyId/trueMicroFamilyId zijn exact de MM-id.
+    // - Child75 blijft alleen childTrueMicroFamilyId/base75ChildTrueMicroFamilyId.
+    // - Parent15 blijft alleen context/rollup.
+    microFamilyId: primaryId,
+    trueMicroFamilyId: primaryId,
 
     childTrueMicroFamilyId: child || null,
     base75ChildTrueMicroFamilyId: child || null,
+    child75ContextFamilyId: child || null,
+
     parentTrueMicroFamilyId: parent || null,
+    parent15ContextFamilyId: parent || null,
 
     coarseMicroFamilyId: parent || null,
     baseMicroFamilyId: parent || null,
@@ -1461,7 +1529,8 @@ function applyLayerIdentity(row = {}, id = '') {
 
     schema: layerSchema,
     microFamilySchema: layerSchema,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: layerSchema,
+    exactTrueMicroFamilySchema: isMicroMicro ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
@@ -1529,7 +1598,9 @@ function compactMicro(row = {}) {
       id,
       key: id,
       rowId: id,
-      learningMicroFamilyId: id
+      learningFamilyId: id,
+      learningMicroFamilyId: id,
+      analyzeMicroFamilyId: id
     },
     id
   );
@@ -1543,7 +1614,9 @@ function compactMicro(row = {}) {
       id,
       key: id,
       rowId: id,
-      learningMicroFamilyId: id
+      learningFamilyId: id,
+      learningMicroFamilyId: id,
+      analyzeMicroFamilyId: id
     },
     id
   );
@@ -1602,7 +1675,7 @@ function extractMicrosPayload(raw = {}) {
 function normalizeMicros(micros = {}) {
   const input = extractMicrosPayload(micros);
   const entries = Array.isArray(input)
-    ? input.map((row, index) => [String(row?.id || row?.key || index), row])
+    ? input.map((row, index) => [String(row?.id || row?.key || row?.rowId || index), row])
     : Object.entries(input || {});
 
   const out = {};
@@ -1611,7 +1684,11 @@ function normalizeMicros(micros = {}) {
     try {
       if (!row || typeof row !== 'object') continue;
 
-      const id = normalizeLearningFamilyId(key, row) || rowIdentityId(row);
+      const id = rowIdentityId({
+        ...row,
+        key: row.key || key
+      });
+
       if (!id) continue;
 
       const compact = compactMicro({
@@ -1619,7 +1696,9 @@ function normalizeMicros(micros = {}) {
         id,
         key: id,
         rowId: id,
-        learningMicroFamilyId: id
+        learningFamilyId: id,
+        learningMicroFamilyId: id,
+        analyzeMicroFamilyId: id
       });
 
       if (compact && isShort(compact)) {
@@ -1650,7 +1729,8 @@ function compareRows(a = {}, b = {}) {
   const eligible = (x) => Number(
     x.tradingEligible === true ||
       x.eligible === true ||
-      x.eligibleGatePassed === true
+      x.eligibleGatePassed === true ||
+      x.discordActivationEligible === true
   );
 
   return eligible(br) - eligible(ar) ||
@@ -1761,12 +1841,17 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     layerCounts,
     count: ids.length,
     rowsAreLayered: true,
+
     sourceMicroMicroRows: layerCounts.microMicro,
     sourceChild75Rows: layerCounts.micro75,
     sourceParent15Rows: layerCounts.parent15,
+
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
     microMicroVersion: MICRO_MICRO_VERSION,
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
     manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY'
   });
@@ -1775,7 +1860,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: clean,
     microFamilies: ids.length,
-    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS',
+    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY',
     uiShowsOnlyMicroMicro: true,
     uiAllowsOnlyMicroMicroSelection: true
   };
@@ -1792,7 +1877,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: topRows,
     count: Object.keys(topRows).length,
-    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT'
+    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY'
   });
 
   await setJsonEverywhere(getWeekTradingCandidatesKey(weekKey), {
@@ -1822,19 +1907,39 @@ function getOrCreateMicro(micros, classified, learningId) {
   const child = parsed.childTrueMicroFamilyId || childIdFrom(id, classified);
   const parent = parsed.parentTrueMicroFamilyId || parentIdFrom(id, classified);
   const mm = parsed.isMicroMicro ? parsed.microMicroFamilyId : null;
+  const primaryId = parsed.isMicroMicro ? mm : id;
 
   if (!micros[id]) {
     micros[id] = createMicroStats({
-      microFamilyId: parsed.isMicroMicro ? child : id,
-      trueMicroFamilyId: parsed.isMicroMicro ? child : id,
+      id,
+      key: id,
+      rowId: id,
+
+      microFamilyId: primaryId,
+      trueMicroFamilyId: primaryId,
+
       learningMicroFamilyId: id,
       learningFamilyId: id,
-      familyId: classified.familyId || 'SHORT_FIXED_TAXONOMY',
+      analyzeMicroFamilyId: id,
+      primaryLearningFamilyId: primaryId,
+      primaryLearningIdentity: parsed.isMicroMicro
+        ? 'MICRO_MICRO'
+        : parsed.isChild
+          ? 'CHILD75_CONTEXT'
+          : 'PARENT15_CONTEXT',
+      primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
+      familyId: primaryId,
       childTrueMicroFamilyId: child || null,
+      base75ChildTrueMicroFamilyId: child || null,
+      child75ContextFamilyId: child || null,
       parentTrueMicroFamilyId: parent || null,
+      parent15ContextFamilyId: parent || null,
+
       microMicroFamilyId: mm,
       trueMicroMicroFamilyId: mm,
       exactMicroMicroFamilyId: mm,
+
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       definitionParts: classified.definitionParts || []
@@ -1847,7 +1952,9 @@ function getOrCreateMicro(micros, classified, learningId) {
     id,
     key: id,
     rowId: id,
-    learningMicroFamilyId: id
+    learningFamilyId: id,
+    learningMicroFamilyId: id,
+    analyzeMicroFamilyId: id
   }, id);
 
   Object.assign(micros[id], layered);
@@ -1898,7 +2005,7 @@ async function claim(redis, key, ttlSec, type) {
         };
       }
     } catch {
-      // try next
+      // Try next syntax.
     }
   }
 
@@ -1950,7 +2057,7 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
   const analyzed = [];
 
   for (const row of rows) {
-    const child = childIdFrom(row.trueMicroFamilyId, row);
+    const child = childIdFrom(row.childTrueMicroFamilyId || row.trueMicroFamilyId || row.microFamilyId, row);
     const parent = parentIdFrom(child, row);
     const mm = buildMicroMicroFromChildAndRow(child, row);
     const ids = uniq([parent, child, mm]).filter(isLearningId);
@@ -1985,7 +2092,12 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
         ...row,
         childTrueMicroFamilyId: child,
         base75ChildTrueMicroFamilyId: child,
+        child75ContextFamilyId: child,
         parentTrueMicroFamilyId: parent,
+        parent15ContextFamilyId: parent,
+        microMicroFamilyId: mm,
+        trueMicroMicroFamilyId: mm,
+        exactMicroMicroFamilyId: mm,
         relatedMicroMicroFamilyId: mm,
         source: 'VIRTUAL',
         weekKey
@@ -2027,11 +2139,20 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
     analyzed.push(flags({
       ...row,
 
-      trueMicroFamilyId: child,
-      microFamilyId: child,
+      learningFamilyId: mm,
+      learningMicroFamilyId: mm,
+      analyzeMicroFamilyId: mm,
+      primaryLearningFamilyId: mm,
+      primaryLearningIdentity: 'MICRO_MICRO',
+      primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
+      trueMicroFamilyId: mm,
+      microFamilyId: mm,
       childTrueMicroFamilyId: child,
       base75ChildTrueMicroFamilyId: child,
+      child75ContextFamilyId: child,
       parentTrueMicroFamilyId: parent,
+      parent15ContextFamilyId: parent,
 
       microMicroFamilyId: mm,
       trueMicroMicroFamilyId: mm,
@@ -2099,6 +2220,13 @@ function isDirectSL(position = {}, reason = '') {
 }
 
 function stableOutcomeIdentity(outcome = {}, child = '') {
+  const mm = microMicroIdFrom(
+    outcome.microMicroFamilyId ||
+      outcome.trueMicroMicroFamilyId ||
+      outcome.exactMicroMicroFamilyId,
+    outcome
+  );
+
   const raw = [
     TARGET_TRADE_SIDE,
     outcome.tradeId || outcome.positionId || '',
@@ -2108,7 +2236,7 @@ function stableOutcomeIdentity(outcome = {}, child = '') {
     outcome.exitReason || outcome.reason || 'NO_REASON',
     n(outcome.exit ?? outcome.exitPrice, 0).toFixed(8),
     child,
-    outcome.microMicroFamilyId || outcome.trueMicroMicroFamilyId || outcome.exactMicroMicroFamilyId || ''
+    mm
   ].join('|');
 
   return hashText(raw, 24);
@@ -2116,10 +2244,13 @@ function stableOutcomeIdentity(outcome = {}, child = '') {
 
 function hasMicroIds(row = {}) {
   return Boolean(childIdFrom(
-    row.trueMicroFamilyId ||
-      row.microFamilyId ||
-      row.childTrueMicroFamilyId ||
+    row.childTrueMicroFamilyId ||
       row.base75ChildTrueMicroFamilyId ||
+      row.trueMicroFamilyId ||
+      row.microFamilyId ||
+      row.learningFamilyId ||
+      row.learningMicroFamilyId ||
+      row.analyzeMicroFamilyId ||
       row.microMicroFamilyId,
     row
   ));
@@ -2133,10 +2264,13 @@ function ensureOutcomeIds(outcome = {}) {
   if (!enriched) return null;
 
   const child = childIdFrom(
-    enriched.trueMicroFamilyId ||
-      enriched.microFamilyId ||
-      enriched.childTrueMicroFamilyId ||
+    enriched.childTrueMicroFamilyId ||
       enriched.base75ChildTrueMicroFamilyId ||
+      enriched.trueMicroFamilyId ||
+      enriched.microFamilyId ||
+      enriched.learningFamilyId ||
+      enriched.learningMicroFamilyId ||
+      enriched.analyzeMicroFamilyId ||
       enriched.microMicroFamilyId,
     enriched
   );
@@ -2149,12 +2283,22 @@ function ensureOutcomeIds(outcome = {}) {
   return flags({
     ...enriched,
 
-    trueMicroFamilyId: child,
-    microFamilyId: child,
+    learningFamilyId: mm,
+    learningMicroFamilyId: mm,
+    analyzeMicroFamilyId: mm,
+    primaryLearningFamilyId: mm,
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
+    trueMicroFamilyId: mm,
+    microFamilyId: mm,
+
     childTrueMicroFamilyId: child,
     base75ChildTrueMicroFamilyId: child,
+    child75ContextFamilyId: child,
 
     parentTrueMicroFamilyId: parent,
+    parent15ContextFamilyId: parent,
     coarseMicroFamilyId: parent,
     baseMicroFamilyId: parent,
     legacyMicroFamilyId: parent,
@@ -2199,6 +2343,8 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
   const netR = n(cost.netR, grossR - costR);
   const closedAt = n(position.closedAt || position.completedAt, now());
   const ids = ensureOutcomeIds(position) || {};
+  const child = ids.childTrueMicroFamilyId || childIdFrom(ids.microMicroFamilyId || ids.trueMicroFamilyId, ids);
+  const mm = ids.microMicroFamilyId || ids.trueMicroMicroFamilyId || ids.exactMicroMicroFamilyId || '';
 
   const identity = [
     TARGET_TRADE_SIDE,
@@ -2208,8 +2354,8 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
     closedAt,
     exitReason || '',
     exit,
-    ids.trueMicroFamilyId || '',
-    ids.microMicroFamilyId || ''
+    child || '',
+    mm || ''
   ].join('|');
 
   return flags({
@@ -2298,23 +2444,23 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     return flags({
       ...outcome,
       skipped: true,
-      reason: 'SHORT_ONLY_CLASSIFICATION_SKIPPED_OR_EXACT_75_CHILD_MISSING',
+      reason: 'SHORT_ONLY_CLASSIFICATION_SKIPPED_OR_EXACT_MICRO_MICRO_MISSING',
       source,
       weekKey,
       recordedAt: now()
     });
   }
 
-  const child = childIdFrom(row.trueMicroFamilyId, row);
+  const child = childIdFrom(row.childTrueMicroFamilyId || row.trueMicroFamilyId || row.microFamilyId, row);
   const parent = parentIdFrom(child, row);
   const mm = buildMicroMicroFromChildAndRow(child, row);
   const ids = uniq([parent, child, mm]).filter(isLearningId);
 
-  if (!ids.length) {
+  if (!ids.length || !mm || !isMicroMicroId(mm)) {
     return flags({
       ...row,
       skipped: true,
-      reason: 'NO_LAYERED_LEARNING_IDS_FOR_OUTCOME',
+      reason: 'NO_EXACT_MICRO_MICRO_LEARNING_ID_FOR_OUTCOME',
       source,
       weekKey,
       recordedAt: now()
@@ -2354,9 +2500,23 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
       directToSL: Boolean(row.directSL || row.directToSL)
     }),
 
+    learningFamilyId: mm,
+    learningMicroFamilyId: mm,
+    analyzeMicroFamilyId: mm,
+    primaryLearningFamilyId: mm,
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
+    trueMicroFamilyId: mm,
+    microFamilyId: mm,
+
     childTrueMicroFamilyId: child,
     base75ChildTrueMicroFamilyId: child,
+    child75ContextFamilyId: child,
+
     parentTrueMicroFamilyId: parent,
+    parent15ContextFamilyId: parent,
+
     microMicroFamilyId: mm,
     trueMicroMicroFamilyId: mm,
     exactMicroMicroFamilyId: mm
@@ -2380,7 +2540,12 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
       ...normalizedOutcome,
       childTrueMicroFamilyId: child,
       base75ChildTrueMicroFamilyId: child,
+      child75ContextFamilyId: child,
       parentTrueMicroFamilyId: parent,
+      parent15ContextFamilyId: parent,
+      microMicroFamilyId: mm,
+      trueMicroMicroFamilyId: mm,
+      exactMicroMicroFamilyId: mm,
       relatedMicroMicroFamilyId: mm
     }, id);
 
@@ -2426,11 +2591,22 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
   return flags({
     ...normalizedOutcome,
 
-    trueMicroFamilyId: child,
-    microFamilyId: child,
+    learningFamilyId: mm,
+    learningMicroFamilyId: mm,
+    analyzeMicroFamilyId: mm,
+    primaryLearningFamilyId: mm,
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
+
+    trueMicroFamilyId: mm,
+    microFamilyId: mm,
+
     childTrueMicroFamilyId: child,
     base75ChildTrueMicroFamilyId: child,
+    child75ContextFamilyId: child,
+
     parentTrueMicroFamilyId: parent,
+    parent15ContextFamilyId: parent,
 
     microMicroFamilyId: mm,
     trueMicroMicroFamilyId: mm,
@@ -2524,25 +2700,31 @@ export async function getWeeklyTradingCandidates(
         learningFamilyId: id,
         learningMicroFamilyId: id,
         analyzeMicroFamilyId: id,
+        primaryLearningFamilyId: id,
+        primaryLearningIdentity: 'MICRO_MICRO',
+        primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
 
-        microFamilyId: parsed.childTrueMicroFamilyId,
-        trueMicroFamilyId: parsed.childTrueMicroFamilyId,
+        microFamilyId: id,
+        trueMicroFamilyId: id,
+
         childTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
         base75ChildTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
+        child75ContextFamilyId: parsed.childTrueMicroFamilyId,
 
         microMicroFamilyId: id,
         trueMicroMicroFamilyId: id,
         exactMicroMicroFamilyId: id,
 
         parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
+        parent15ContextFamilyId: parsed.parentTrueMicroFamilyId,
         coarseMicroFamilyId: parsed.parentTrueMicroFamilyId,
         baseMicroFamilyId: parsed.parentTrueMicroFamilyId,
         legacyMicroFamilyId: parsed.parentTrueMicroFamilyId,
 
         discordMatchId: id,
         selectedLearningFamilyId: id,
-        selectedMicroFamilyId: parsed.childTrueMicroFamilyId,
-        selectedTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
+        selectedMicroFamilyId: id,
+        selectedTrueMicroFamilyId: id,
         selectedChildTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
         selectedMicroMicroFamilyId: id,
         selectedTrueMicroMicroFamilyId: id,
@@ -2567,6 +2749,8 @@ export async function getWeeklyTradingCandidates(
     requireCurrentFitMatch,
     selectionEngineVersion: SELECTION_ENGINE_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
+    primaryLearningIdentity: 'MICRO_MICRO',
+    primaryLearningIdRule: PRIMARY_LEARNING_ID_RULE,
     rules: {
       selectionUsesWeeklyWinnerOnly: false,
       selectionUsesLifetimeStats: true,
