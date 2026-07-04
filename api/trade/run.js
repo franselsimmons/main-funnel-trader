@@ -9,6 +9,7 @@
 // - SHORT-only, virtual/shadow learning only, geen real orders.
 // - Micro-micro is de enige Discord/selectie-laag.
 // - Parent 15 en Micro 75 blijven rollup/context.
+// - XR/execution fingerprint is alleen hash-source, geen learning-family.
 // - Deze route forceert NIET meer zelf monitor-only bij dezelfde snapshot.
 //   tradeSystem.js bepaalt zelf of een snapshot opnieuw verwerkt moet worden.
 
@@ -56,15 +57,26 @@ const DEFAULT_ROTATION_TIMEOUT_MS = 1200;
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
+const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
 const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+const CHILD75_LEARNING_GRANULARITY = LEARNING_GRANULARITY;
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
-const TRADE_RUN_ROUTE_VERSION = 'SHORT_API_TRADE_RUN_DEBUG_SAFE_MICRO_MICRO_V7';
+const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
+const RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V11';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
+const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V3';
+const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V1';
+
+const TRADE_RUN_ROUTE_VERSION = 'SHORT_API_TRADE_RUN_DEBUG_SAFE_MICRO_MICRO_V8';
 
 const RUN_SCOPE = 'TRADE_FAST_STALE_SAFE_LOCK_MONITOR_FIRST_DEBUG_SAFE_IMPORT';
 const WRITE_SCOPE = 'TRADE_AND_ANALYZE_PARTIAL_ONLY';
@@ -769,7 +781,7 @@ function baseFlags() {
     executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
     executionFingerprintOnlyMetadata: false,
     executionFingerprintsMetadataOnly: false,
-    executionFingerprintsUsedAsLearningFamily: true,
+    executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     analyzeMicroFamiliesOnly: true,
@@ -782,7 +794,7 @@ function baseFlags() {
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
 
     microMicroEnabled: true,
@@ -791,12 +803,14 @@ function baseFlags() {
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+    microMicroVersion: MICRO_MICRO_VERSION,
     microMicroDoesNotReplaceMicro75Learning: true,
     microMicroRollsUpToMicro75: true,
     microMicroRollsUpToParent15: true,
 
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
+    child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
@@ -808,6 +822,18 @@ function baseFlags() {
     parentFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}',
     micro75FamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}',
     microMicroFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}_MM_{HASH}',
+
+    riskPlanVersion: RISK_PLAN_VERSION,
+    costModelVersion: COST_MODEL_VERSION,
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+    adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+
+    weakContraEntryGateEnabled: true,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraRejectedBlocksVirtualEntry: true,
+    weakContraRejectedBlocksLearning: false,
 
     positionTimeStopMinDefault: DEFAULT_POSITION_TIME_STOP_MIN,
     positionTimeStopMin: getPositionTimeStopMin(),
@@ -891,15 +917,23 @@ function setHeaders(res) {
   res.setHeader('X-No-Real-Orders', 'true');
   res.setHeader('X-Scanner-Fingerprint-Role', 'METADATA_ONLY');
   res.setHeader('X-Execution-Fingerprint-Role', 'MICRO_MICRO_IDENTITY_HASH_SOURCE');
+  res.setHeader('X-Execution-Fingerprints-Used-As-Learning-Family', 'false');
   res.setHeader('X-Learning-Identity-Source', 'ANALYZE_MICRO_MICRO_FAMILY');
   res.setHeader('X-Selection-Granularity', 'EXACT_MICRO_MICRO_ONLY');
   res.setHeader('X-Discord-Selection-Rule', 'EXACT_MICRO_MICRO_ONLY');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
   res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Micro-Micro-Family-Schema', MICRO_MICRO_SCHEMA);
+  res.setHeader('X-Micro-Micro-Version', MICRO_MICRO_VERSION);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
   res.setHeader('X-Parent-Learning-Granularity', PARENT_LEARNING_GRANULARITY);
   res.setHeader('X-Micro-Micro-Learning-Granularity', MICRO_MICRO_LEARNING_GRANULARITY);
+  res.setHeader('X-Risk-Plan-Version', RISK_PLAN_VERSION);
+  res.setHeader('X-Cost-Model-Version', COST_MODEL_VERSION);
+  res.setHeader('X-Measurement-Fix-Version', MEASUREMENT_FIX_VERSION);
+  res.setHeader('X-Observation-Dedupe-Version', OBSERVATION_DEDUPE_VERSION);
+  res.setHeader('X-Outcome-Dedupe-Version', OUTCOME_DEDUPE_VERSION);
+  res.setHeader('X-Weak-Contra-Entry-Gate-Version', WEAK_CONTRA_ENTRY_GATE_VERSION);
   res.setHeader('X-Run-Scope', RUN_SCOPE);
   res.setHeader('X-Write-Scope', WRITE_SCOPE);
   res.setHeader('X-Scanner-Write', 'false');
@@ -1387,6 +1421,10 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
         trueMicroMicroFamilyId: row.trueMicroMicroFamilyId || row.microMicroFamilyId || row.exactMicroMicroFamilyId || null,
         exactMicroMicroFamilyId: row.exactMicroMicroFamilyId || row.microMicroFamilyId || row.trueMicroMicroFamilyId || null,
 
+        weakContraRejected: Boolean(row.weakContraRejected || row.blockVirtualEntry),
+        weakContraRejectReason: row.weakContraRejectReason || row.weakContraEntryGate?.reason || null,
+        weakContraEntryGate: row.weakContraEntryGate || null,
+
         entry: row.entry ?? row.entryPrice ?? null,
         sl: row.sl ?? row.stopLoss ?? row.initialSl ?? null,
         tp: row.tp ?? row.takeProfit ?? null,
@@ -1539,6 +1577,10 @@ function compactRunPayload(payload, { debug = false } = {}) {
     analyzedRiskValidRows: safeNumber(payload.analyzedRiskValidRows, 0),
     analyzedExact75Rows: safeNumber(payload.analyzedExact75Rows, 0),
     analyzedMicroMicroRows: safeNumber(payload.analyzedMicroMicroRows, 0),
+    fallbackExact75Rows: safeNumber(payload.fallbackExact75Rows, 0),
+
+    weakContraRejectedRows: safeNumber(payload.weakContraRejectedRows, 0),
+    weakContraAllowedRows: safeNumber(payload.weakContraAllowedRows, 0),
 
     entryRows: entryCount,
     waitRows: waitCount,
@@ -1625,7 +1667,11 @@ function compactRunPayload(payload, { debug = false } = {}) {
           conversionRatesPct: payload.qualityAudit.conversionRatesPct || null,
           topWaitReasons: Array.isArray(payload.qualityAudit.topWaitReasons)
             ? payload.qualityAudit.topWaitReasons.slice(0, 20)
-            : []
+            : [],
+          weakContraEntryGateVersion:
+            payload.qualityAudit.weakContraEntryGateVersion ||
+            payload.weakContraEntryGateVersion ||
+            WEAK_CONTRA_ENTRY_GATE_VERSION
         }
       : null,
 
@@ -1733,6 +1779,10 @@ function responseCountsFromPayload(payload = {}, monitorPreflightPayload = null)
     analyzedRiskValidRows: safeNumber(payload.analyzedRiskValidRows, 0),
     analyzedExact75Rows: safeNumber(payload.analyzedExact75Rows, 0),
     analyzedMicroMicroRows: safeNumber(payload.analyzedMicroMicroRows, 0),
+    fallbackExact75Rows: safeNumber(payload.fallbackExact75Rows, 0),
+
+    weakContraRejectedRows: safeNumber(payload.weakContraRejectedRows, 0),
+    weakContraAllowedRows: safeNumber(payload.weakContraAllowedRows, 0),
 
     entryRows: safeNumber(payload.entryRows, 0),
     waitRows: safeNumber(payload.waitRows, 0),
@@ -1853,6 +1903,7 @@ async function readLastProcessedSnapshotInfo() {
     processedAt: value.processedAt || null,
     analyzedRows: safeNumber(value.analyzedRows, 0),
     analyzedMicroMicroRows: safeNumber(value.analyzedMicroMicroRows, 0),
+    weakContraRejectedRows: safeNumber(value.weakContraRejectedRows, 0),
     virtualCreatedRows: safeNumber(value.virtualCreatedRows, 0),
     waitRows: safeNumber(value.waitRows, 0),
     reason: value.reason || null
@@ -2035,7 +2086,7 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
     executionFingerprintOnlyMetadata: false,
     executionFingerprintsMetadataOnly: false,
-    executionFingerprintsUsedAsLearningFamily: true,
+    executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
     analyzeMicroFamiliesOnly: true,
@@ -2046,7 +2097,7 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     exactTrueMicroOnly: true,
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
     broadTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
 
     microMicroEnabled: true,
@@ -2055,18 +2106,32 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+    microMicroVersion: MICRO_MICRO_VERSION,
     microMicroDoesNotReplaceMicro75Learning: true,
     microMicroRollsUpToMicro75: true,
     microMicroRollsUpToParent15: true,
 
     fixedTaxonomyPreferred: true,
     learningGranularity: LEARNING_GRANULARITY,
+    child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
 
     selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+
+    riskPlanVersion: RISK_PLAN_VERSION,
+    costModelVersion: COST_MODEL_VERSION,
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+    outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+    adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+
+    weakContraEntryGateEnabled: true,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraRejectedBlocksVirtualEntry: true,
+    weakContraRejectedBlocksLearning: false,
 
     allowLearningWithoutActiveRotation: true,
     ignoreMaxOpenPositionsForLearning: true,
@@ -2234,6 +2299,8 @@ function buildScannerPreloadOptions(req, body = {}) {
     currentFitBlocksLearning: false,
 
     microMicroEnabled: true,
+    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    microMicroVersion: MICRO_MICRO_VERSION,
     microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY'
   };
 }
@@ -2321,6 +2388,8 @@ async function mirrorOneMarketKey({
       currentFitSoftOnly: true,
       currentFitBlocksLearning: false,
       microMicroEnabled: true,
+      microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+      microMicroVersion: MICRO_MICRO_VERSION,
       microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
       ...baseFlags()
     }
@@ -2484,7 +2553,10 @@ async function persistShortRunMeta(
           primaryBottleneck: payload.qualityAudit.primaryBottleneck || null,
           pipelineCounts: payload.qualityAudit.pipelineCounts || null,
           conversionRatesPct: payload.qualityAudit.conversionRatesPct || null,
-          topWaitReasons: payload.qualityAudit.topWaitReasons || []
+          topWaitReasons: payload.qualityAudit.topWaitReasons || [],
+          weakContraEntryGateVersion:
+            payload.qualityAudit.weakContraEntryGateVersion ||
+            WEAK_CONTRA_ENTRY_GATE_VERSION
         }
       : null,
 
@@ -2548,6 +2620,8 @@ async function persistShortRunMeta(
         processScannerSnapshot: true,
         analyzedRows: safeNumber(payload.analyzedRows, 0),
         analyzedMicroMicroRows: safeNumber(payload.analyzedMicroMicroRows, 0),
+        weakContraRejectedRows: safeNumber(payload.weakContraRejectedRows, 0),
+        weakContraAllowedRows: safeNumber(payload.weakContraAllowedRows, 0),
         virtualCreatedRows: safeNumber(payload.virtualCreatedRows, 0),
         waitRows: safeNumber(payload.waitRows, 0),
         reason: payload.reason || null,
@@ -2927,7 +3001,17 @@ export default async function handler(req, res) {
           monitorPreflightVirtualExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.virtualExitRows, 0),
           monitorPreflightShadowExitRows: safeNumber(unwrapRunResult(rawMonitorPreflight)?.shadowExitRows, 0),
           snapshotInfoFromRoute: snapshotInfo,
-          routeDoesNotForceMonitorOnlyOnSameSnapshot: true
+          routeDoesNotForceMonitorOnlyOnSameSnapshot: true,
+
+          microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+          trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+          microMicroVersion: MICRO_MICRO_VERSION,
+          selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+          microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+          executionFingerprintsUsedAsLearningFamily: false,
+          executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+          weakContraEntryGateEnabled: true,
+          weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION
         });
       }
     });
@@ -3089,6 +3173,10 @@ export default async function handler(req, res) {
       waitRows: safeNumber(payload?.waitRows, 0),
       virtualCreatedRows: safeNumber(payload?.virtualCreatedRows, 0),
 
+      weakContraRejectedRows: safeNumber(payload?.weakContraRejectedRows, 0),
+      weakContraAllowedRows: safeNumber(payload?.weakContraAllowedRows, 0),
+      weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+
       entryRowsList: debug && Array.isArray(payload?.entryRowsList)
         ? payload.entryRowsList
         : [],
@@ -3198,6 +3286,9 @@ export default async function handler(req, res) {
           : null,
         scannerPreloadEnabled && scannerPreload?.mirror?.marketWeatherMirrored !== true
           ? 'MARKET_WEATHER_NOT_MIRRORED_TO_DURABLE'
+          : null,
+        payload?.weakContraRejectedRows > 0
+          ? `E_WEAK_CONTRA_ENTRY_GATE_REJECTED:${payload.weakContraRejectedRows}`
           : null,
         payload?.skippedByExistingSymbol > 0
           ? `SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION:${payload.skippedByExistingSymbol}`
