@@ -1,22 +1,4 @@
 // ================= FILE: src/analyze/scoring.js =================
-//
-// SHORT-only scoring.
-// Doel:
-// - Parent 15 en Micro 75 blijven rollup/context.
-// - Micro-micro is de enige selecteerbare/Discord-laag.
-// - Scanner fingerprints blijven metadata-only.
-// - Execution/XR fingerprints zijn alleen hash-source voor micro-micro, geen learning-family.
-// - Scores gebruiken netR, avgR LCB95, directSL, avgCostR en profitFactor.
-// - CurrentFit blokkeert learning nooit, alleen trading-candidate selectie indien gevraagd.
-//
-// FIX:
-// - profitFactor wordt primair opgebouwd uit netR outcomes:
-//   grossWinR = som van positieve netR
-//   grossLossR = som van absolute negatieve netR
-//   profitFactor = grossWinR / grossLossR
-// - Als oude rows wel wins/losses/totalR hebben maar grossWinR/grossLossR missen,
-//   wordt een conservatieve fallback berekend zodat PF niet foutief 0 blijft.
-// - eligibleGate refresht zichzelf niet meer, om refreshStats-recursion te voorkomen.
 
 import { CONFIG } from '../config.js';
 import { clamp, safeNumber, sideToTradeSide } from '../utils.js';
