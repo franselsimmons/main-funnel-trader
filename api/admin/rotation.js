@@ -145,9 +145,6 @@ const MAX_AVAILABLE_LIMIT = 500;
 const DEFAULT_ACTIVE_ROWS_LIMIT = 160;
 const MAX_ACTIVE_ROWS_LIMIT = 500;
 
-const TRUE_WORDS = new Set(['true', '1', 'yes', 'y', 'on']);
-const FALSE_WORDS = new Set(['false', '0', 'no', 'n', 'off']);
-
 function now() {
   return Date.now();
 }
@@ -184,22 +181,22 @@ function firstValue(value, fallback = null) {
   return hasValue(value) ? value : fallback;
 }
 
+function toLimit(value, fallback, max) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
 function isTrue(value, fallback = false) {
   if (!hasValue(value)) return fallback;
   if (value === true || value === 1) return true;
   if (value === false || value === 0) return false;
 
   const raw = lower(value);
-  if (TRUE_WORDS.has(raw)) return true;
-  if (FALSE_WORDS.has(raw)) return false;
+  if (['true', '1', 'yes', 'y', 'on'].includes(raw)) return true;
+  if (['false', '0', 'no', 'n', 'off'].includes(raw)) return false;
 
   return fallback;
-}
-
-function toLimit(value, fallback, max) {
-  const parsed = Math.floor(Number(value));
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.min(parsed, max);
 }
 
 function flattenValues(values = []) {
@@ -295,39 +292,6 @@ function stableHash10(input = '') {
 function normalizeHash(value = '') {
   const raw = upper(value).replace(/[^A-Z0-9]/g, '');
   return raw.length >= 3 ? raw.slice(0, MICRO_MICRO_HASH_LEN) : '';
-}
-
-function cleanSideText(value = '') {
-  return upper(value)
-    .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
-    .replaceAll('LONGDISABLED_TRUE', 'SHORT')
-    .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
-    .replaceAll('LONG_DISABLED_FALSE', '')
-    .replaceAll('LONGDISABLED_FALSE', '')
-    .replaceAll('BLOCK_LONG_FALSE', '')
-    .replaceAll('LONG_ENABLED_FALSE', '')
-    .replaceAll('LONG_ONLY_FALSE', '')
-    .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('SHORTDISABLED_FALSE', '')
-    .replaceAll('BLOCK_SHORT_FALSE', '')
-    .replaceAll('SHORT_ENABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
-    .replaceAll('BLOCK_LONG', 'SHORT')
-    .replaceAll('LONG_DISABLED', 'SHORT')
-    .replaceAll('LONGDISABLED', 'SHORT')
-    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
-    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
-    .replaceAll('BLOCK_SHORT', 'LONG')
-    .replaceAll('SHORT_DISABLED', 'LONG')
-    .replaceAll('SHORTDISABLED', 'LONG')
-    .replaceAll('LONG_ONLY_MODE', 'LONG')
-    .replaceAll('LONG_ONLY', 'LONG')
-    .replaceAll('LONG-ONLY', 'LONG')
-    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
-    .replaceAll('SHORT_ONLY', 'SHORT')
-    .replaceAll('SHORT-ONLY', 'SHORT');
 }
 
 function activationGateConfig() {
@@ -772,7 +736,7 @@ function getChildTrueMicroFamilyIdFromId(id = '') {
 }
 
 function normalizeDirectSide(value) {
-  const raw = cleanSideText(value);
+  const raw = upper(value);
   if (!raw) return 'UNKNOWN';
 
   const converted = sideToTradeSide(raw);
@@ -785,26 +749,13 @@ function normalizeDirectSide(value) {
   return 'UNKNOWN';
 }
 
-function definitionHaystack(row = {}) {
-  return [
-    row.definition,
-    row.microDefinition,
-    row.microMicroDefinition,
-    row.macroDefinition,
-    ...getArray(row.definitionParts),
-    ...getArray(row.microDefinitionParts),
-    ...getArray(row.microMicroDefinitionParts),
-    ...getArray(row.executionFingerprintParts)
-  ].map(cleanSideText).filter(Boolean).join(' | ');
-}
-
 function inferTradeSide(input = {}) {
   if (typeof input === 'string') {
     const parsed = parseShortTaxonomyMicroId(input);
     if (parsed.valid) return TARGET_TRADE_SIDE;
     if (parsed.reason === 'LONG_DISABLED_SHORT_ONLY') return OPPOSITE_TRADE_SIDE;
 
-    const value = cleanSideText(input);
+    const value = upper(input);
     if (value.includes('MICRO_LONG_') || value.includes('MM_LONG_')) return OPPOSITE_TRADE_SIDE;
     if (value.includes('MICRO_SHORT_') || value.includes('MM_SHORT_')) return TARGET_TRADE_SIDE;
     if (value.includes('LONG') || value.includes('BULL') || value.includes('BUY')) return OPPOSITE_TRADE_SIDE;
@@ -831,7 +782,7 @@ function inferTradeSide(input = {}) {
     if (side === OPPOSITE_TRADE_SIDE) return OPPOSITE_TRADE_SIDE;
   }
 
-  const idText = cleanSideText([
+  const idText = upper([
     input.microMicroFamilyId,
     input.trueMicroMicroFamilyId,
     input.exactMicroMicroFamilyId,
@@ -843,15 +794,14 @@ function inferTradeSide(input = {}) {
     input.microFamilyId,
     input.parentTrueMicroFamilyId,
     input.id,
-    input.key
+    input.key,
+    input.definition,
+    input.microDefinition,
+    input.microMicroDefinition
   ].filter(Boolean).join(' | '));
 
   if (idText.includes('MICRO_LONG_') || idText.includes('MM_LONG_')) return OPPOSITE_TRADE_SIDE;
-  if (parseShortTaxonomyMicroId(idText).valid || idText.includes('MICRO_SHORT_') || idText.includes('MM_SHORT_')) return TARGET_TRADE_SIDE;
-
-  const definition = definitionHaystack(input);
-  if (definition.includes('MICRO_LONG_') || definition.includes('MM_LONG_')) return OPPOSITE_TRADE_SIDE;
-  if (definition.includes('MICRO_SHORT_') || definition.includes('MM_SHORT_')) return TARGET_TRADE_SIDE;
+  if (idText.includes('MICRO_SHORT_') || idText.includes('MM_SHORT_')) return TARGET_TRADE_SIDE;
 
   if (input.shortOnly === true || input.longDisabled === true) return TARGET_TRADE_SIDE;
   if (input.longOnly === true || input.shortDisabled === true) return OPPOSITE_TRADE_SIDE;
@@ -1372,18 +1322,6 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
     selectedTier: tier,
     rotationEligibilityTier: tier,
 
-    rsiZone: row.rsiZone || null,
-    rsiCoarse: row.rsiCoarse || null,
-    flow: row.flow || null,
-    flowCoarse: row.flowCoarse || null,
-    obRelation: row.obRelation || null,
-    btcState: row.btcState || null,
-    btcRelation: row.btcRelation || null,
-    regime: row.regime || null,
-    regimeCoarse: row.regimeCoarse || null,
-    scannerReason: row.scannerReason || null,
-    scannerReasonCoarse: row.scannerReasonCoarse || null,
-
     scannerMicroFamilyId: row.scannerMicroFamilyId || null,
     scannerFamilyId: row.scannerFamilyId || null,
     scannerFingerprintRole: 'METADATA_ONLY',
@@ -1397,15 +1335,6 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
     executionFingerprintsMetadataOnly: true,
     executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
-
-    definitionParts: [
-      ...getArray(row.definitionParts),
-      ...getArray(row.microDefinitionParts),
-      ...getArray(row.microMicroDefinitionParts)
-    ],
-    definition: row.definition || row.microDefinition || '',
-    microDefinition: row.microDefinition || row.definition || '',
-    microMicroDefinition: row.microMicroDefinition || '',
 
     sourceWeekKey: row.sourceWeekKey || PERSISTENT_LEARNING_KEY,
     sourceWeekPrimary: row.sourceWeekPrimary !== false,
