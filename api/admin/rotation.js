@@ -1,32 +1,4 @@
 // ================= FILE: api/admin/rotation.js =================
-//
-// SHORT-only admin rotation endpoint.
-//
-// Doel:
-// - Alleen exacte SHORT micro-micro IDs zijn selecteerbaar voor Discord.
-// - Parent 15 blijft metadata/context.
-// - 75-child blijft context/rollup en is niet selecteerbaar.
-// - Geen macro/parent expansion.
-// - Geen auto-rotation.
-// - Alleen manual Discord selectie.
-// - SHORT-only, virtual-only, geen real orders.
-// - Discord activation heeft harde netto-edge gate:
-//   completed >= 35, avgR > 0, totalR > 0, PF > 1,
-//   avgCostR <= 0.35, directSLPct <= 25%, CurrentFit != MISFIT,
-//   E_WEAK_CONTRA niet activeerbaar voor Discord.
-//
-// Selecteerbaar:
-// - MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_MM_{HASH}
-// - MM_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}_{CONTEXT_TAGS}
-//   wordt genormaliseerd naar canonical MICRO_SHORT_..._MM_{HASH}
-//
-// Niet selecteerbaar:
-// - MICRO_SHORT_{SETUP}_{REGIME}
-// - MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION}
-// - scanner fingerprints
-// - raw XR execution fingerprints
-// - LONG ids
-// - negatieve of te dure micro-micro families voor Discord activation
 
 import { safeNumber, sideToTradeSide } from '../../src/utils.js';
 import { getWeekMicros } from '../../src/analyze/analyzeEngine.js';
@@ -49,7 +21,7 @@ const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_MICRO_MICRO_ACTIVE_LEARNING = 35;
 const MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES = 2;
 
-const DISCORD_ACTIVATION_GATE_VERSION = 'SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V1';
+const DISCORD_ACTIVATION_GATE_VERSION = 'SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V2_ADMIN_RUNTIME_CLEANUP';
 const MIN_DISCORD_ACTIVATION_COMPLETED = 35;
 const MIN_DISCORD_ACTIVATION_AVG_R = 0;
 const MIN_DISCORD_ACTIVATION_TOTAL_R = 0;
@@ -73,11 +45,11 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const POSITION_COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V11';
+const POSITION_COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V13_MM_OUTCOME_RUNTIME_GATE';
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
 const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V3';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V5_MM_IDENTITY_RUNTIME_GATE';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V4';
 
 const SETUP_ORDER = Object.freeze([
   'BREAKOUT',
@@ -404,6 +376,10 @@ function modeFlags() {
     discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
     discordActivationGate: activationGateConfig(),
 
+    adminGetFiltersBlockedActiveSelections: true,
+    adminPostRejectsBlockedSelections: true,
+    oldRedisActiveSelectionCleanup: true,
+
     persistentLearningOnly: true,
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
     requestedWeekKeyIgnored: true,
@@ -524,6 +500,7 @@ function invalidParsed(rawId = '', reason = 'INVALID_SHORT_TAXONOMY_ID') {
     regime: null,
     confirmationProfile: null,
     microMicroHash: null,
+    microMicroContext: '',
     parentTrueMicroFamilyId: null,
     childTrueMicroFamilyId: null,
     trueMicroFamilyId: null,
@@ -825,15 +802,81 @@ function sourceEntries(value = {}) {
   return Object.entries(value);
 }
 
+function aggregateRecentOutcomes(row = {}) {
+  const recent = Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [];
+
+  return recent.reduce((acc, outcome) => {
+    if (!outcome || typeof outcome !== 'object') return acc;
+
+    const source = upper(outcome.source || outcome.outcomeSource || 'VIRTUAL');
+    if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) return acc;
+
+    const r = num(
+      outcome.netR ??
+        outcome.exitR ??
+        outcome.realizedNetR ??
+        outcome.realizedR ??
+        outcome.r,
+      0
+    );
+
+    const costR = Math.max(0, num(outcome.costR ?? outcome.avgCostR, 0));
+
+    acc.completed += 1;
+    acc.totalR += r;
+    acc.totalCostR += costR;
+
+    if (r > 0) {
+      acc.wins += 1;
+      acc.grossWinR += r;
+    } else if (r < 0) {
+      acc.losses += 1;
+      acc.grossLossR += Math.abs(r);
+    } else {
+      acc.flats += 1;
+    }
+
+    if (
+      outcome.directSL ||
+      outcome.directToSL ||
+      outcome.directStopLoss ||
+      outcome.isDirectSL ||
+      upper(outcome.exitReason) === 'SL'
+    ) {
+      acc.directSLCount += 1;
+    }
+
+    return acc;
+  }, {
+    completed: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    totalR: 0,
+    totalCostR: 0,
+    grossWinR: 0,
+    grossLossR: 0,
+    directSLCount: 0
+  });
+}
+
 function outcomeCounts(row = {}) {
-  const wins = Math.max(0, num(row.virtualWins, 0) + num(row.shadowWins, 0), num(row.wins, 0));
-  const losses = Math.max(0, num(row.virtualLosses, 0) + num(row.shadowLosses, 0), num(row.losses, 0));
-  const flats = Math.max(0, num(row.virtualFlats, 0) + num(row.shadowFlats, 0), num(row.flats, 0));
+  const recent = aggregateRecentOutcomes(row);
+
+  const sourceWins = num(row.virtualWins, 0) + num(row.shadowWins, 0);
+  const sourceLosses = num(row.virtualLosses, 0) + num(row.shadowLosses, 0);
+  const sourceFlats = num(row.virtualFlats, 0) + num(row.shadowFlats, 0);
+
+  const wins = Math.max(0, sourceWins, num(row.wins, 0), recent.wins);
+  const losses = Math.max(0, sourceLosses, num(row.losses, 0), recent.losses);
+  const flats = Math.max(0, sourceFlats, num(row.flats, 0), recent.flats);
+
   const completed = Math.max(
     wins + losses + flats,
     num(row.virtualCompleted, 0) + num(row.shadowCompleted, 0),
     num(row.completed, 0),
-    num(row.outcomeSample, 0)
+    num(row.outcomeSample, 0),
+    recent.completed
   );
 
   return {
@@ -860,10 +903,14 @@ function observationSample(row = {}) {
 
 function totalR(row = {}) {
   const completed = completedSample(row);
+  const recent = aggregateRecentOutcomes(row);
+
   if (completed <= 0) return 0;
 
   const virtualShadowTotalR = num(row.virtualTotalR, 0) + num(row.shadowTotalR, 0);
   if (virtualShadowTotalR !== 0) return virtualShadowTotalR;
+
+  if (recent.completed > 0) return recent.totalR;
 
   return num(row.shortNetTotalR ?? row.netShortTotalR ?? row.netTotalR ?? row.totalNetR ?? row.totalR, 0);
 }
@@ -881,10 +928,13 @@ function avgR(row = {}) {
 
 function totalCostR(row = {}) {
   const completed = completedSample(row);
+  const recent = aggregateRecentOutcomes(row);
+
   if (completed <= 0) return 0;
 
   const virtualShadowCost = Math.max(0, num(row.virtualTotalCostR, 0)) + Math.max(0, num(row.shadowTotalCostR, 0));
   if (virtualShadowCost > 0) return virtualShadowCost;
+  if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
   if (hasValue(row.totalCostR)) return Math.max(0, num(row.totalCostR, 0));
   if (hasValue(row.avgCostR)) return Math.max(0, num(row.avgCostR, 0)) * completed;
   if (hasValue(row.costR)) return Math.max(0, num(row.costR, 0)) * completed;
@@ -898,42 +948,59 @@ function avgCostR(row = {}) {
 }
 
 function directSLCount(row = {}) {
+  const recent = aggregateRecentOutcomes(row);
+
   return Math.max(
     0,
     num(row.virtualDirectSLCount, 0) + num(row.shadowDirectSLCount, 0),
-    num(row.directSLCount, 0)
+    num(row.directSLCount, 0),
+    recent.directSLCount
   );
 }
 
 function directSLPct(row = {}) {
+  const explicit = num(row.directSLPct, NaN);
+
+  if (Number.isFinite(explicit)) {
+    return explicit > 1 ? clamp(explicit / 100, 0, 1) : clamp(explicit, 0, 1);
+  }
+
   const completed = completedSample(row);
   return completed > 0 ? clamp(directSLCount(row) / completed, 0, 1) : 0;
 }
 
 function profitFactor(row = {}) {
-  if (hasValue(row.netProfitFactor)) return num(row.netProfitFactor, 0);
-  if (hasValue(row.profitFactor)) return num(row.profitFactor, 0);
+  const recent = aggregateRecentOutcomes(row);
 
   const winR = Math.max(
     num(row.virtualWinR, 0) + num(row.shadowWinR, 0),
+    num(row.virtualGrossWinR, 0) + num(row.shadowGrossWinR, 0),
     num(row.netWinR, 0),
     num(row.totalWinR, 0),
     num(row.grossWinR, 0),
+    recent.grossWinR,
     0
   );
 
   const lossR = Math.max(
     Math.abs(num(row.virtualLossR, 0) + num(row.shadowLossR, 0)),
+    Math.abs(num(row.virtualGrossLossR, 0) + num(row.shadowGrossLossR, 0)),
     Math.abs(num(row.netLossR, 0)),
     Math.abs(num(row.totalLossR, 0)),
     Math.abs(num(row.grossLossR, 0)),
+    recent.grossLossR,
     0
   );
 
-  if (winR <= 0 && lossR <= 0) return 0;
-  if (lossR <= 0) return winR > 0 ? 99 : 0;
+  if (winR > 0 || lossR > 0) {
+    if (lossR <= 0) return 99;
+    return winR / lossR;
+  }
 
-  return winR / lossR;
+  const explicit = num(row.netProfitFactor ?? row.profitFactor ?? row.pf, NaN);
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
+
+  return 0;
 }
 
 function wilsonLowerBound(successes, trials, z = 1.96) {
@@ -1032,14 +1099,30 @@ function getShortCurrentFit(row = {}) {
     row.currentFitShort,
     row.currentFitBear,
     row.shortFitScore,
-    row.bearFitScore
+    row.bearFitScore,
+    row.shortCurrentFitScore,
+    row.bearCurrentFitScore
   ].find((value) => Number.isFinite(Number(value)));
 
   if (hasValue(direct)) {
     return {
       score: Number(direct),
-      label: currentFitLabel(Number(direct), row.currentFit || 'UNKNOWN'),
+      label: currentFitLabel(Number(direct), row.currentFit || row.currentFitLabel || 'UNKNOWN'),
       source: 'EXPLICIT_SHORT_OR_BEAR_CURRENT_FIT'
+    };
+  }
+
+  const explicitLabel = upper(row.currentFit || row.currentFitLabel || row.entryCurrentFit || '');
+  if (
+    explicitLabel.includes('MISFIT') ||
+    explicitLabel.includes('MISMATCH') ||
+    explicitLabel.includes('AGAINST') ||
+    explicitLabel.includes('NO_MATCH')
+  ) {
+    return {
+      score: -25,
+      label: 'MISFIT',
+      source: 'EXPLICIT_CURRENT_FIT_LABEL'
     };
   }
 
@@ -1054,7 +1137,7 @@ function getShortCurrentFit(row = {}) {
   if (!hasValue(raw)) {
     return {
       score: 0,
-      label: row.currentFit || row.currentFitLabel || 'UNKNOWN',
+      label: explicitLabel || 'UNKNOWN',
       source: 'NO_NUMERIC_CURRENT_FIT'
     };
   }
@@ -1315,9 +1398,20 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set()) {
     discordActivationBlockedReason: gate.blocked ? gate.reason : null,
     discordActivationBlockedReasons: gate.reasons,
     discordActivationGate: gate,
+
     activationEligible: gate.eligible,
     activationBlocked: gate.blocked,
     activationBlockedReason: gate.blocked ? gate.reason : null,
+
+    runtimeGateApproved: gate.eligible,
+    runtimeDiscordGateApproved: gate.eligible,
+    discordRuntimeGateApproved: gate.eligible,
+    exitAlertRuntimeGateApproved: gate.eligible,
+
+    activeRotationRuntimeGateApproved: gate.eligible,
+    activeRotationRuntimeGateBlocked: gate.blocked,
+    activeRotationRuntimeGateReason: gate.blocked ? gate.reason : null,
+    activeRotationRuntimeGateReasons: gate.reasons,
 
     selectedTier: tier,
     rotationEligibilityTier: tier,
@@ -1562,7 +1656,7 @@ function manualActiveRowFromId(id, index = 0, activeSet = new Set()) {
     active: true,
     selectedTier: 'RAW',
     rotationEligibilityTier: 'RAW',
-    microMicroStatsSource: 'MANUAL_ACTIVE_MICRO_MICRO_ID'
+    microMicroStatsSource: 'MANUAL_ACTIVE_MICRO_MICRO_ID_WITHOUT_STATS_BLOCKED_UNTIL_GATE_PASS'
   }, index, activeSet);
 }
 
@@ -1598,6 +1692,10 @@ function compactActiveRotation(rotation = null) {
       activeMacroFamilyIds: [],
       parentTrueMicroFamilyIds: [],
       microFamilies: [],
+      filteredBlockedMicroMicroIds: [],
+      filteredBlockedMicroMicroRows: [],
+      activeRotationBlockedFilteredCount: 0,
+      activeRotationCleaned: false,
       count: 0,
       activeCount: 0,
       activeMicroMicroCount: 0,
@@ -1607,10 +1705,9 @@ function compactActiveRotation(rotation = null) {
     };
   }
 
-  const activeMicroMicroFamilyIds = extractIdsFromRotation(activeRotation);
-  const activeParentIds = extractParentIdsFromIds(activeMicroMicroFamilyIds);
+  const requestedActiveMicroMicroFamilyIds = extractIdsFromRotation(activeRotation);
   const legacyChild75ActiveIdsIgnored = extractLegacyActiveChild75Ids(activeRotation);
-  const activeSet = new Set(activeMicroMicroFamilyIds);
+  const requestedSet = new Set(requestedActiveMicroMicroFamilyIds);
 
   const sourceRows = [
     ...getArray(activeRotation.microFamilies),
@@ -1620,24 +1717,65 @@ function compactActiveRotation(rotation = null) {
   ];
 
   const rows = [];
+  const rejectedRows = [];
   const existing = new Set();
 
   for (const row of sourceRows) {
     const id = getExplicitMicroMicroId(row, row?.key);
-    if (!id || !activeSet.has(id) || existing.has(id)) continue;
+    if (!id || !requestedSet.has(id) || existing.has(id)) continue;
 
-    const normalized = normalizeRotationRow({ ...row, active: true }, rows.length, activeSet);
-    if (!normalized) continue;
+    const normalized = normalizeRotationRow({ ...row, active: true }, rows.length, requestedSet);
+
+    if (!normalized) {
+      rejectedRows.push({
+        id,
+        reason: 'ACTIVE_ROW_COULD_NOT_NORMALIZE_TO_EXACT_MICRO_MICRO'
+      });
+      existing.add(id);
+      continue;
+    }
+
+    if (normalized.discordActivationEligible !== true) {
+      rejectedRows.push({
+        id,
+        reason: normalized.discordActivationBlockedReason || 'DISCORD_ACTIVATION_GATE_REJECTED',
+        reasons: normalized.discordActivationBlockedReasons || [],
+        discordActivationGate: normalized.discordActivationGate || null,
+        row: normalized
+      });
+      existing.add(id);
+      continue;
+    }
 
     rows.push(normalized);
     existing.add(id);
   }
 
-  for (const id of activeMicroMicroFamilyIds) {
+  for (const id of requestedActiveMicroMicroFamilyIds) {
     if (existing.has(id)) continue;
 
-    const manualRow = manualActiveRowFromId(id, rows.length, activeSet);
-    if (!manualRow) continue;
+    const manualRow = manualActiveRowFromId(id, rows.length, requestedSet);
+
+    if (!manualRow) {
+      rejectedRows.push({
+        id,
+        reason: 'MANUAL_ACTIVE_ID_COULD_NOT_BUILD_ROW'
+      });
+      existing.add(id);
+      continue;
+    }
+
+    if (manualRow.discordActivationEligible !== true) {
+      rejectedRows.push({
+        id,
+        reason: manualRow.discordActivationBlockedReason || 'DISCORD_ACTIVATION_GATE_REJECTED',
+        reasons: manualRow.discordActivationBlockedReasons || [],
+        discordActivationGate: manualRow.discordActivationGate || null,
+        row: manualRow
+      });
+      existing.add(id);
+      continue;
+    }
 
     rows.push(manualRow);
     existing.add(id);
@@ -1645,7 +1783,18 @@ function compactActiveRotation(rotation = null) {
 
   rows.sort(compareRows);
 
+  const activeMicroMicroFamilyIds = rows
+    .map((row) => row.trueMicroFamilyId)
+    .filter(Boolean)
+    .slice(0, MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES);
+
+  const activeParentIds = extractParentIdsFromIds(activeMicroMicroFamilyIds);
   const childIds = uniqueStrings(activeMicroMicroFamilyIds.map(getChildTrueMicroFamilyIdFromId).filter(Boolean));
+
+  const emptyReason =
+    requestedActiveMicroMicroFamilyIds.length > 0 && activeMicroMicroFamilyIds.length === 0
+      ? 'ACTIVE_ROTATION_ALL_SELECTED_MICRO_MICROS_BLOCKED_BY_NET_EDGE_GATE'
+      : 'NO_MANUAL_SHORT_EXACT_MICRO_MICRO_SELECTION_ACTIVE';
 
   return {
     rotationId: activeRotation.rotationId || activeRotation.id || null,
@@ -1665,9 +1814,14 @@ function compactActiveRotation(rotation = null) {
     liveSelectable: activeMicroMicroFamilyIds.length > 0,
 
     empty: activeMicroMicroFamilyIds.length === 0,
-    emptyReason: activeMicroMicroFamilyIds.length === 0
-      ? 'NO_MANUAL_SHORT_EXACT_MICRO_MICRO_SELECTION_ACTIVE'
-      : null,
+    emptyReason: activeMicroMicroFamilyIds.length === 0 ? emptyReason : null,
+
+    requestedActiveMicroMicroFamilyIds,
+    filteredBlockedMicroMicroIds: rejectedRows.map((row) => row.id).filter(Boolean),
+    filteredBlockedMicroMicroRows: rejectedRows,
+    activeRotationBlockedFilteredCount: rejectedRows.length,
+    activeRotationCleaned: rejectedRows.length > 0,
+    activeRotationFilteredBlockedRedisSelections: rejectedRows.length > 0,
 
     microFamilyIds: activeMicroMicroFamilyIds,
     activeMicroFamilyIds: activeMicroMicroFamilyIds,
@@ -1742,7 +1896,8 @@ function parseSelectedIds(body = {}) {
     .filter(Boolean)
     .filter(isSelectableMicroMicroId);
 
-  const acceptedIds = uniqueStrings(normalizedCandidates).slice(0, MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES);
+  const uniqueNormalized = uniqueStrings(normalizedCandidates);
+  const acceptedIds = uniqueNormalized.slice(0, MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES);
 
   const ignoredRequestedIds = requestedIds
     .filter((id) => !acceptedIds.includes(parseShortTaxonomyMicroId(id).trueMicroFamilyId))
@@ -1790,7 +1945,7 @@ function parseSelectedIds(body = {}) {
     macroFamilyIds: [],
     requestedMacroFamilyIds: macroFamilyIds,
     ignoredRequestedIds,
-    ignoredAboveLimitIds: uniqueStrings(normalizedCandidates).slice(MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES)
+    ignoredAboveLimitIds: uniqueNormalized.slice(MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES)
   };
 }
 
@@ -2082,6 +2237,9 @@ async function handleGet(req, res) {
     (active.legacyChild75ActiveIdsIgnored || []).length > 0
       ? `LEGACY_CHILD75_ACTIVE_IDS_IGNORED:${active.legacyChild75ActiveIdsIgnored.length}`
       : null,
+    active.activeRotationCleaned
+      ? `OLD_ACTIVE_SELECTION_CLEANED_BLOCKED_IDS:${active.activeRotationBlockedFilteredCount}`
+      : null,
     availableRows.length === 0 ? 'NO_AVAILABLE_EXPLICIT_MICRO_MICRO_ROWS' : null,
     availableRows.length > 0 && activation.eligible === 0 ? 'NO_DISCORD_ACTIVATION_ELIGIBLE_MICRO_MICRO_ROWS_NET_EDGE_GATE' : null
   ]);
@@ -2118,6 +2276,13 @@ async function handleGet(req, res) {
     selectedMicroMicroFamilyIds: active?.selectedMicroMicroFamilyIds || active?.activeMicroMicroFamilyIds || [],
     activeMacroFamilyIds: active?.activeMacroFamilyIds || [],
     legacyChild75ActiveIdsIgnored: active?.legacyChild75ActiveIdsIgnored || [],
+
+    requestedActiveMicroMicroFamilyIds: active?.requestedActiveMicroMicroFamilyIds || [],
+    filteredBlockedMicroMicroIds: active?.filteredBlockedMicroMicroIds || [],
+    filteredBlockedMicroMicroRows: active?.filteredBlockedMicroMicroRows || [],
+    activeRotationCleaned: Boolean(active?.activeRotationCleaned),
+    activeRotationFilteredBlockedRedisSelections: Boolean(active?.activeRotationFilteredBlockedRedisSelections),
+    activeRotationBlockedFilteredCount: active?.activeRotationBlockedFilteredCount || 0,
 
     activeRows: (active?.microFamilies || []).slice(0, activeRowsLimit),
     activeCount: active?.activeMicroMicroFamilyIds?.length || 0,
@@ -2175,7 +2340,7 @@ async function handleGet(req, res) {
 
     perf: {
       durationMs: now() - startedAt,
-      source: 'short_manual_selection_exact_micro_micro_only_rotation_dashboard'
+      source: 'short_manual_selection_exact_micro_micro_only_rotation_dashboard_admin_cleaned'
     },
 
     serverTs: Date.now()
@@ -2249,6 +2414,9 @@ async function handlePost(req, res) {
   const activationIds = activationValidation.eligibleIds;
 
   if (!activationValidation.ok) {
+    const activeRotationRaw = await getActiveRotation(rotationOptions()).catch(() => null);
+    const active = compactActiveRotation(activeRotationRaw);
+
     return res.status(400).json({
       ok: false,
       fixed: true,
@@ -2265,6 +2433,11 @@ async function handlePost(req, res) {
       activationRejectedRows: activationValidation.rejectedRows,
       ignoredRequestedIds: selected.ignoredRequestedIds,
       ignoredAboveLimitIds: selected.ignoredAboveLimitIds,
+
+      activeRotation: active,
+      active,
+      activeRotationCleaned: Boolean(active?.activeRotationCleaned),
+      filteredBlockedMicroMicroIds: active?.filteredBlockedMicroMicroIds || [],
 
       discordActivationGate: activationGateConfig(),
       discordActivationSummary: activationValidation.activationSummary,
@@ -2336,6 +2509,35 @@ async function handlePost(req, res) {
 
   const activeRotationRaw = await getActiveRotation(rotationOptions()).catch(() => activation);
   const active = compactActiveRotation(activeRotationRaw || activation);
+
+  if (!active?.activeMicroMicroFamilyIds?.length) {
+    return res.status(400).json({
+      ok: false,
+      fixed: true,
+      reason: 'ACTIVATION_RESULT_EMPTY_AFTER_RUNTIME_NET_EDGE_CLEANUP',
+      action,
+
+      ...modeFlags(),
+      taxonomy: taxonomyMeta(),
+
+      requestedIds: selected.requestedIds,
+      parsedAcceptedIds: selected.acceptedIds,
+      activationAcceptedIds: activationIds,
+      rawActivation: activation,
+      activeRotation: active,
+      active,
+      filteredBlockedMicroMicroIds: active?.filteredBlockedMicroMicroIds || [],
+
+      noSelectionMeansNoDiscord: true,
+
+      perf: {
+        durationMs: now() - startedAt,
+        source: 'activateSelectedShortExactMicroMicro_empty_after_cleanup'
+      },
+
+      serverTs: Date.now()
+    });
+  }
 
   return res.status(200).json({
     ok: true,
@@ -2410,7 +2612,7 @@ async function handlePost(req, res) {
 
     perf: {
       durationMs: now() - startedAt,
-      source: 'activateSelectedShortExactMicroMicro_manual_only_exact_match_net_edge_gate'
+      source: 'activateSelectedShortExactMicroMicro_manual_only_exact_match_net_edge_gate_admin_cleaned'
     },
 
     serverTs: Date.now()
@@ -2419,7 +2621,7 @@ async function handlePost(req, res) {
 
 function setHeaders(res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Rotation-Mode', 'short-only-manual-selection-exact-micro-micro-only-v5-net-edge-gate');
+  res.setHeader('X-Admin-Rotation-Mode', 'short-only-manual-selection-exact-micro-micro-only-v6-net-edge-gate-admin-cleanup');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -2460,6 +2662,8 @@ function setHeaders(res) {
   res.setHeader('X-Discord-Activation-Max-AvgCostR', String(MAX_DISCORD_ACTIVATION_AVG_COST_R));
   res.setHeader('X-Discord-Activation-Max-DirectSLPct', String(MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT));
   res.setHeader('X-Discord-Activation-Blocks-E-Weak-Contra', String(BLOCK_E_WEAK_CONTRA_FOR_DISCORD_ACTIVATION));
+  res.setHeader('X-Admin-GET-Filters-Blocked-Active-Selections', 'true');
+  res.setHeader('X-Admin-POST-Rejects-Blocked-Selections', 'true');
 }
 
 export default async function handler(req, res) {
