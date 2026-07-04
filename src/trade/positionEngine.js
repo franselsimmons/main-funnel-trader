@@ -42,14 +42,17 @@ const MICRO_MICRO_HASH_LEN = 10;
 
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
-const MICRO_MICRO_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
+const MICRO_MICRO_LEARNING_GRANULARITY =
+  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
 const RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V11';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V12_HARD_TIME_STOP';
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
 const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V4_HARD_TIME_STOP';
+
+const HARD_TIME_STOP_CLEANUP_VERSION = 'SHORT_POSITION_ENGINE_HARD_TIME_STOP_PRE_PRICE_EXIT_V1';
 
 const LAYER_PARENT_15 = 'PARENT_15';
 const LAYER_MICRO_75 = 'MICRO_75';
@@ -61,20 +64,20 @@ const OUTCOME_SOURCE = 'VIRTUAL';
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
-const DEFAULT_OPEN_POSITION_SCAN_LIMIT = 150;
-const DEFAULT_OPEN_POSITION_HYDRATE_LIMIT = 150;
-const DEFAULT_OPEN_POSITION_READ_CONCURRENCY = 3;
-const DEFAULT_OPEN_POSITION_KEYS_TIMEOUT_MS = 450;
-const DEFAULT_OPEN_POSITION_READ_TIMEOUT_MS = 750;
+const DEFAULT_OPEN_POSITION_SCAN_LIMIT = 300;
+const DEFAULT_OPEN_POSITION_HYDRATE_LIMIT = 300;
+const DEFAULT_OPEN_POSITION_READ_CONCURRENCY = 4;
+const DEFAULT_OPEN_POSITION_KEYS_TIMEOUT_MS = 900;
+const DEFAULT_OPEN_POSITION_READ_TIMEOUT_MS = 1800;
 
-const DEFAULT_MONITOR_POSITION_LIMIT = 30;
-const DEFAULT_MONITOR_BATCH_SIZE = 30;
-const DEFAULT_MONITOR_CONCURRENCY = 2;
-const DEFAULT_MONITOR_RUNTIME_MS = 6000;
-const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 1800;
+const DEFAULT_MONITOR_POSITION_LIMIT = 150;
+const DEFAULT_MONITOR_BATCH_SIZE = 100;
+const DEFAULT_MONITOR_CONCURRENCY = 3;
+const DEFAULT_MONITOR_RUNTIME_MS = 12000;
+const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 2500;
 const DEFAULT_PRICE_FETCH_TIMEOUT_MS = 350;
 const DEFAULT_CANDLE_FETCH_TIMEOUT_MS = 1200;
-const DEFAULT_RECORD_OUTCOME_TIMEOUT_MS = 1200;
+const DEFAULT_RECORD_OUTCOME_TIMEOUT_MS = 1500;
 const DEFAULT_DISCORD_EXIT_TIMEOUT_MS = 1200;
 
 const BITGET_BASE_URL = 'https://api.bitget.com';
@@ -301,7 +304,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.dataConcurrency,
       DEFAULT_MONITOR_CONCURRENCY,
       1,
-      3
+      5
     ),
 
     positionTimeStopMin: Math.max(
@@ -313,6 +316,16 @@ function tradeConfig(options = {}) {
         DEFAULT_POSITION_TIME_STOP_MIN
       )
     ),
+
+    hardTimeStopNoPriceExit:
+      options.hardTimeStopNoPriceExit !== false &&
+      CONFIG.short?.trade?.hardTimeStopNoPriceExit !== false &&
+      CONFIG.trade?.hardTimeStopNoPriceExit !== false,
+
+    closeExpiredBeforePriceFetch:
+      options.closeExpiredBeforePriceFetch !== false &&
+      CONFIG.short?.trade?.closeExpiredBeforePriceFetch !== false &&
+      CONFIG.trade?.closeExpiredBeforePriceFetch !== false,
 
     openPositionScanLimit: clampInt(
       options.limit ??
@@ -332,7 +345,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.openPositionHydrateLimit,
       DEFAULT_OPEN_POSITION_HYDRATE_LIMIT,
       0,
-      250
+      1000
     ),
 
     readConcurrency: clampInt(
@@ -341,7 +354,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.openPositionReadConcurrency,
       DEFAULT_OPEN_POSITION_READ_CONCURRENCY,
       1,
-      6
+      8
     ),
 
     keysTimeoutMs: clampInt(
@@ -350,7 +363,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.openPositionKeysTimeoutMs,
       DEFAULT_OPEN_POSITION_KEYS_TIMEOUT_MS,
       100,
-      3000
+      5000
     ),
 
     readTimeoutMs: clampInt(
@@ -359,7 +372,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.openPositionReadTimeoutMs,
       DEFAULT_OPEN_POSITION_READ_TIMEOUT_MS,
       100,
-      5000
+      8000
     ),
 
     monitorPositionLimit: clampInt(
@@ -369,7 +382,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.openPositionMonitorLimit,
       DEFAULT_MONITOR_POSITION_LIMIT,
       1,
-      250
+      500
     ),
 
     monitorBatchSize: clampInt(
@@ -378,7 +391,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.monitorBatchSize,
       DEFAULT_MONITOR_BATCH_SIZE,
       1,
-      250
+      300
     ),
 
     monitorRuntimeMs: clampInt(
@@ -387,8 +400,8 @@ function tradeConfig(options = {}) {
         CONFIG.short?.trade?.monitorTimeoutMs ??
         CONFIG.trade?.monitorTimeoutMs,
       DEFAULT_MONITOR_RUNTIME_MS,
-      500,
-      15000
+      1000,
+      30000
     ),
 
     monitorOnePositionTimeoutMs: clampInt(
@@ -397,7 +410,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.monitorOnePositionTimeoutMs,
       DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS,
       250,
-      5000
+      8000
     ),
 
     priceFetchTimeoutMs: clampInt(
@@ -407,7 +420,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.monitorPriceFetchTimeoutMs,
       DEFAULT_PRICE_FETCH_TIMEOUT_MS,
       50,
-      2000
+      2500
     ),
 
     candleFetchTimeoutMs: clampInt(
@@ -419,7 +432,7 @@ function tradeConfig(options = {}) {
         CONFIG.trade?.monitorCandleFetchTimeoutMs,
       DEFAULT_CANDLE_FETCH_TIMEOUT_MS,
       150,
-      5000
+      8000
     ),
 
     monitorCandleRangeEnabled:
@@ -606,7 +619,13 @@ function parseMicroShortFormat(value = '', rawId = '') {
   const isMicroMicro = Boolean(microMicroFamilyId);
   const isChild = validChild && !isMicroMicro;
   const isParent = validParent && !validChild && !isMicroMicro;
-  const learningLayer = isMicroMicro ? LAYER_MICRO_MICRO : isChild ? LAYER_MICRO_75 : isParent ? LAYER_PARENT_15 : 'UNKNOWN';
+  const learningLayer = isMicroMicro
+    ? LAYER_MICRO_MICRO
+    : isChild
+      ? LAYER_MICRO_75
+      : isParent
+        ? LAYER_PARENT_15
+        : 'UNKNOWN';
 
   return {
     valid: validParent || validChild || isMicroMicro,
@@ -750,7 +769,10 @@ function stripSymbolTokensFromLearningId(id = '', row = {}) {
     isParentShortTrueMicroId(raw)
   ) {
     const parsed = parseShortTaxonomyMicroId(raw);
-    return parsed.microMicroFamilyId || parsed.childTrueMicroFamilyId || parsed.parentTrueMicroFamilyId || raw.toUpperCase();
+    return parsed.microMicroFamilyId ||
+      parsed.childTrueMicroFamilyId ||
+      parsed.parentTrueMicroFamilyId ||
+      raw.toUpperCase();
   }
 
   const tokens = symbolTokensFromRow(row);
@@ -1494,6 +1516,8 @@ function identityFlags() {
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
     observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
     outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+
     directSLDefinition: 'SL_EXIT_WITHOUT_MEANINGFUL_MFE',
     directSLMfeThresholdR: 0.25,
     seenDefinition: 'DEDUPED_UNIQUE_OBSERVATION_KEY',
@@ -1518,7 +1542,7 @@ function identityFlags() {
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
-    monitorRule: '1m candle range since last check; range result wins over current price',
+    monitorRule: 'hard time-stop pre-price; 1m candle range after; range result wins over current price',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
@@ -1870,6 +1894,44 @@ function fallbackExitPrice(position = {}) {
   );
 
   return price > 0 ? price : safeNumber(position.entry, 0);
+}
+
+function buildHardTimeStopExit(position = {}, timestamp = now(), options = {}) {
+  const cfg = tradeConfig(options);
+
+  if (!cfg.hardTimeStopNoPriceExit) {
+    return {
+      shouldExit: false,
+      reason: null,
+      trigger: null,
+      exitPrice: 0
+    };
+  }
+
+  if (!isTimeStopExpired(position, timestamp, options)) {
+    return {
+      shouldExit: false,
+      reason: null,
+      trigger: null,
+      exitPrice: 0
+    };
+  }
+
+  const exitPrice = fallbackExitPrice(position);
+
+  return {
+    shouldExit: exitPrice > 0,
+    reason: 'TIME_STOP',
+    trigger: 'HARD_TIME_STOP_PRE_PRICE_FALLBACK_EXIT',
+    exitPrice,
+    priceSource: 'POSITION_FALLBACK_PRICE_PRE_PRICE_HARD_TIME_STOP',
+    rangeStart: null,
+    rangeEnd: null,
+    firstTouch: null,
+    conservativeExit: false,
+    hardTimeStop: true,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
+  };
 }
 
 function bitgetSymbol(position = {}) {
@@ -2479,7 +2541,8 @@ function detectExit({
       exitPrice: fallback,
       priceSource: current > 0 ? probe.source : 'POSITION_FALLBACK_PRICE',
       rangeStart: probe.rangeStart,
-      rangeEnd: probe.rangeEnd
+      rangeEnd: probe.rangeEnd,
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
     };
   }
 
@@ -2726,6 +2789,7 @@ function applyNetCostModelToOutcome({
     costModelVersion: COST_MODEL_VERSION,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
 
     scoringRSource: 'netR',
     winsLossesFlatsSource: 'netR',
@@ -2738,13 +2802,18 @@ function applyNetCostModelToOutcome({
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
-    monitorRule: '1m candle range since last check; range result wins over current price',
+    monitorRule: 'hard time-stop pre-price; 1m candle range after; range result wins over current price',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)'
   });
 }
 
 function sortOpenPositions(a, b) {
+  const aExpired = isTimeStopExpired(a, now(), {}) ? 1 : 0;
+  const bExpired = isTimeStopExpired(b, now(), {}) ? 1 : 0;
+
+  if (aExpired !== bExpired) return bExpired - aExpired;
+
   const aOpened = safeNumber(a.openedAt || a.createdAt, 0);
   const bOpened = safeNumber(b.openedAt || b.createdAt, 0);
 
@@ -3055,7 +3124,7 @@ export function updatePathMetrics(position, price) {
   position.tpHitRule = 'SHORT: candle.low <= tp';
   position.slHitRule = 'SHORT: candle.high >= sl';
   position.sameCandleBothHitRule = 'CONSERVATIVE_SL_FIRST';
-  position.monitorRule = '1m candle range since last check; range result wins over current price';
+  position.monitorRule = 'hard time-stop pre-price; 1m candle range after; range result wins over current price';
   position.grossRFormula = '(entry - exitPrice) / (initialSl - entry)';
   position.currentRFormula = '(entry - currentPrice) / (initialSl - entry)';
   position.updatedAt = now();
@@ -3179,13 +3248,15 @@ export function buildOpenPositionFromEntry(entry) {
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
-    monitorRule: '1m candle range since last check; range result wins over current price',
+    monitorRule: 'hard time-stop pre-price; 1m candle range after; range result wins over current price',
     shortExitRules: {
       tp: 'candle.low <= tp',
       sl: 'candle.high >= sl',
       sameCandleBothHit: 'CONSERVATIVE_SL_FIRST',
-      timeStop: 'TIME_STOP'
-    }
+      timeStop: 'TIME_STOP',
+      hardTimeStopPrePrice: true
+    },
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
   });
 
   assertPositionPersistable(position);
@@ -3411,6 +3482,8 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
             ? 'TIME_STOP'
             : null,
 
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+
     validShortRiskShape: validShortRiskGeometry(position),
     shortRiskFormula: 'tp < entry < sl',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
@@ -3419,7 +3492,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
-    monitorRule: '1m candle range since last check; range result wins over current price',
+    monitorRule: 'hard time-stop pre-price; 1m candle range after; range result wins over current price',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
 
@@ -3538,7 +3611,8 @@ async function persistOutcomeNonBlocking(outcome, options = {}) {
       microMicroFamilySchema: MICRO_MICRO_SCHEMA,
       learningGranularity: LEARNING_GRANULARITY,
       parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-      microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY
+      microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
     }),
     options.recordOutcomeTimeoutMs || DEFAULT_RECORD_OUTCOME_TIMEOUT_MS,
     'RECORD_OUTCOME_TIMEOUT',
@@ -3576,6 +3650,8 @@ async function closePosition({
     exitRangeEnd: exit.rangeEnd || null,
     firstTouch: exit.firstTouch || null,
     conservativeExit: Boolean(exit.conservativeExit),
+    hardTimeStop: Boolean(exit.hardTimeStop),
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
     outcomeSource: OUTCOME_SOURCE,
     source: POSITION_SOURCE,
     directToSL: directSL,
@@ -3603,6 +3679,8 @@ async function closePosition({
       exitRangeEnd: exit.rangeEnd || null,
       firstTouch: exit.firstTouch || null,
       conservativeExit: Boolean(exit.conservativeExit),
+      hardTimeStop: Boolean(exit.hardTimeStop),
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
       source: OUTCOME_SOURCE,
       outcomeSource: OUTCOME_SOURCE,
       directToSL: directSL,
@@ -3683,6 +3761,23 @@ async function monitorOnePosition({
         position,
         outcome: null
       };
+    }
+
+    if (cfg.closeExpiredBeforePriceFetch) {
+      const hardTimeStopExit = buildHardTimeStopExit(position, timestamp, options);
+
+      if (hardTimeStopExit.shouldExit) {
+        return closePosition({
+          position: forceShortPositionFields({
+            ...position,
+            hardTimeStopPrePriceExit: true,
+            hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
+          }),
+          exit: hardTimeStopExit,
+          timestamp,
+          options
+        });
+      }
     }
 
     const priceProbe = await resolveMonitorPriceProbe({
@@ -3779,17 +3874,25 @@ export async function monitorOpenPositions(options = {}) {
         cfg.monitorBatchSize
       )
     }),
-    Math.min(900, cfg.monitorRuntimeMs),
+    Math.min(2500, cfg.monitorRuntimeMs),
     'GET_OPEN_POSITIONS_TIMEOUT',
     []
   );
 
-  const positions = (Array.isArray(openPositions) ? openPositions : [])
+  const allPositions = (Array.isArray(openPositions) ? openPositions : [])
     .filter((row) => row?.openPositionKeyOnly !== true)
     .filter(isCleanMicroMicroRow)
-    .slice(0, Math.min(cfg.monitorPositionLimit, cfg.monitorBatchSize));
+    .sort(sortOpenPositions);
 
-  if (!positions.length) return [];
+  if (!allPositions.length) return [];
+
+  const expired = allPositions.filter((row) => isTimeStopExpired(row, timestamp, options));
+  const fresh = allPositions.filter((row) => !isTimeStopExpired(row, timestamp, options));
+
+  const positions = [
+    ...expired,
+    ...fresh
+  ].slice(0, Math.min(cfg.monitorPositionLimit, cfg.monitorBatchSize));
 
   const results = await mapConcurrent(
     positions,
