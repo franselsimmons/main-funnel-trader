@@ -8,6 +8,15 @@
 // - Execution/XR fingerprints zijn alleen hash-source voor micro-micro, geen learning-family.
 // - Scores gebruiken netR, avgR LCB95, directSL, avgCostR en profitFactor.
 // - CurrentFit blokkeert learning nooit, alleen trading-candidate selectie indien gevraagd.
+//
+// FIX:
+// - profitFactor wordt primair opgebouwd uit netR outcomes:
+//   grossWinR = som van positieve netR
+//   grossLossR = som van absolute negatieve netR
+//   profitFactor = grossWinR / grossLossR
+// - Als oude rows wel wins/losses/totalR hebben maar grossWinR/grossLossR missen,
+//   wordt een conservatieve fallback berekend zodat PF niet foutief 0 blijft.
+// - eligibleGate refresht zichzelf niet meer, om refreshStats-recursion te voorkomen.
 
 import { CONFIG } from '../config.js';
 import { clamp, safeNumber, sideToTradeSide } from '../utils.js';
@@ -56,10 +65,10 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
-const MICRO_MICRO_MEASUREMENT_VERSION = 'SHORT_MICRO_MICRO_ROLLUP_SELECTION_V3_LCB_AVGR_EXACT_ONLY';
+const MICRO_MICRO_MEASUREMENT_VERSION = 'SHORT_MICRO_MICRO_ROLLUP_SELECTION_V4_NETR_PROFIT_FACTOR_FIX';
 const LCB_MODEL_VERSION = 'SHORT_AVGR_LCB95_SELECTION_V1';
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
-const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V1';
+const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V2_NETR_PF_FIX';
 
 const SOURCE_VIRTUAL = 'VIRTUAL';
 const SOURCE_REAL = 'REAL';
@@ -123,7 +132,6 @@ function positive(value) {
 
 function finiteOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
-
   const x = Number(value);
   return Number.isFinite(x) ? x : null;
 }
@@ -190,39 +198,6 @@ function observationDedupeCacheLimit() {
   );
 }
 
-function schemaConfig() {
-  const macroSchema = String(
-    CONFIG.short?.analyze?.macroSchema ??
-      CONFIG.analyze?.macroSchema ??
-      CONFIG.analyze?.legacySchema ??
-      'MF_V1'
-  ).toUpperCase();
-
-  const configuredLegacyMicroSchema = String(
-    CONFIG.short?.analyze?.legacyMicroSchema ??
-      CONFIG.short?.analyze?.microSchema ??
-      CONFIG.analyze?.legacyMicroSchema ??
-      CONFIG.analyze?.microSchema ??
-      'MF_V2'
-  ).toUpperCase();
-
-  return {
-    currentSchema: TRUE_MICRO_SCHEMA,
-    macroSchema,
-    microSchema: TRUE_MICRO_SCHEMA,
-    legacyMicroSchema: configuredLegacyMicroSchema,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-    trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
-    learningGranularity: LEARNING_GRANULARITY,
-    child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-    microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY
-  };
-}
-
 function shadowWeight() {
   return clamp(analyzeNumber('shadowWeight', 0.35), 0, 1);
 }
@@ -264,10 +239,6 @@ function eligibleMinCompletedForLayer(layer = LAYER_MICRO_MICRO) {
 
   if (layer === LAYER_MICRO_MICRO) {
     return Math.max(MIN_COMPLETED_MICRO_MICRO_ACTIVE, configured);
-  }
-
-  if (layer === LAYER_MICRO_75) {
-    return Math.max(MIN_COMPLETED_ACTIVE, configured);
   }
 
   return Math.max(MIN_COMPLETED_ACTIVE, configured);
@@ -561,10 +532,6 @@ function isSelectableShortChildTrueMicroId(id = '') {
 
 function isParentShortTrueMicroId(id = '') {
   return parseShortTaxonomyMicroId(id).isParent === true;
-}
-
-function isSelectableLearningFamilyId(id = '') {
-  return isSelectableShortMicroMicroFamilyId(id);
 }
 
 function learningLayerFromId(id = '') {
@@ -1255,6 +1222,39 @@ function definitionHasSchema(row = {}, schema) {
   return definitionText(row).includes(`SCHEMA=${target}`);
 }
 
+function schemaConfig() {
+  const macroSchema = String(
+    CONFIG.short?.analyze?.macroSchema ??
+      CONFIG.analyze?.macroSchema ??
+      CONFIG.analyze?.legacySchema ??
+      'MF_V1'
+  ).toUpperCase();
+
+  const configuredLegacyMicroSchema = String(
+    CONFIG.short?.analyze?.legacyMicroSchema ??
+      CONFIG.short?.analyze?.microSchema ??
+      CONFIG.analyze?.legacyMicroSchema ??
+      CONFIG.analyze?.microSchema ??
+      'MF_V2'
+  ).toUpperCase();
+
+  return {
+    currentSchema: TRUE_MICRO_SCHEMA,
+    macroSchema,
+    microSchema: TRUE_MICRO_SCHEMA,
+    legacyMicroSchema: configuredLegacyMicroSchema,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+    learningGranularity: LEARNING_GRANULARITY,
+    child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY
+  };
+}
+
 function idLooksLikeSimpleMacroFamily(id = '') {
   const value = String(id || '').trim();
 
@@ -1301,7 +1301,6 @@ function isTrueAnalyzeMicroRow(row = {}) {
     return false;
   }
 
-  // Alleen micro-micro is selecteerbaar/zichtbaar voor ranking en Discord.
   return isSelectableShortMicroMicroFamilyId(id);
 }
 
@@ -1666,7 +1665,7 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
   stats.observationDedupeRequired = true;
   stats.observationAlwaysCounted = false;
 
-  stats.defaultRanking = 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR';
+  stats.defaultRanking = 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR|profitFactor';
   stats.bareWinrateRankingDisabled = true;
   stats.rawWinrateRankingDisabled = true;
   stats.rankingUsesBalancedScore = true;
@@ -1675,6 +1674,7 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
   stats.rankingUsesAvgR = true;
   stats.rankingUsesAvgCostR = true;
   stats.rankingUsesAvgRLCB95 = true;
+  stats.rankingUsesProfitFactor = true;
 
   stats.currentFitSoftOnly = true;
   stats.currentFitBlocksLearning = false;
@@ -2201,10 +2201,6 @@ function aggregateRecentOutcomes(stats = {}) {
   );
 }
 
-function maxPositive(...values) {
-  return Math.max(0, ...values.map((value) => positive(value)));
-}
-
 function chooseTotal({
   sourceValue,
   storedValue,
@@ -2348,8 +2344,152 @@ function learningStatus(stats = {}) {
   return 'ACTIVE_LEARNING';
 }
 
+function netRProfitFactorFromOutcomes(outcomes = [], fallbackWeight = 1) {
+  let grossWinR = 0;
+  let grossLossR = 0;
+  let wins = 0;
+  let losses = 0;
+  let flats = 0;
+  let totalR = 0;
+  let completed = 0;
+  let sumSquaredR = 0;
+
+  for (const outcome of outcomes) {
+    if (!outcome || typeof outcome !== 'object') continue;
+    if (!isShortRow(outcome)) continue;
+
+    const src = normalizeSource(outcome.source);
+    if (src !== SOURCE_VIRTUAL && src !== SOURCE_SHADOW) continue;
+
+    const weight = src === SOURCE_SHADOW ? shadowWeight() : fallbackWeight;
+    const netR = outcomeExitR(outcome);
+
+    completed += weight;
+    totalR += netR * weight;
+    sumSquaredR += netR * netR * weight;
+
+    if (netR > 0) {
+      wins += weight;
+      grossWinR += netR * weight;
+    } else if (netR < 0) {
+      losses += weight;
+      grossLossR += Math.abs(netR) * weight;
+    } else {
+      flats += weight;
+    }
+  }
+
+  const profitFactor = grossLossR > 0
+    ? grossWinR / grossLossR
+    : grossWinR > 0
+      ? 99
+      : 0;
+
+  return {
+    completed,
+    wins,
+    losses,
+    flats,
+    totalR,
+    sumSquaredR,
+    grossWinR,
+    grossLossR,
+    profitFactor
+  };
+}
+
+function repairProfitFactorComponents({
+  grossWinR,
+  grossLossR,
+  totalR,
+  weightedWins,
+  weightedLosses,
+  recentGrossWinR,
+  recentGrossLossR,
+  stats = {}
+} = {}) {
+  let winR = Math.max(
+    0,
+    safeNumber(grossWinR, 0),
+    safeNumber(recentGrossWinR, 0),
+    safeNumber(stats.grossWinR, 0),
+    safeNumber(stats.virtualGrossWinR, 0),
+    safeNumber(stats.shadowGrossWinR, 0)
+  );
+
+  let lossR = Math.max(
+    0,
+    safeNumber(grossLossR, 0),
+    safeNumber(recentGrossLossR, 0),
+    safeNumber(stats.grossLossR, 0),
+    safeNumber(stats.virtualGrossLossR, 0),
+    safeNumber(stats.shadowGrossLossR, 0)
+  );
+
+  const wins = safeNumber(weightedWins, 0);
+  const losses = safeNumber(weightedLosses, 0);
+  const netTotal = safeNumber(totalR, 0);
+
+  if (winR <= 0 && losses <= 0 && wins > 0 && netTotal > 0) {
+    winR = netTotal;
+  }
+
+  if (lossR <= 0 && wins <= 0 && losses > 0 && netTotal < 0) {
+    lossR = Math.abs(netTotal);
+  }
+
+  if (winR <= 0 && netTotal > 0 && wins > 0) {
+    winR = netTotal + lossR;
+  }
+
+  if (lossR <= 0 && netTotal < 0 && losses > 0) {
+    lossR = Math.abs(netTotal) + winR;
+  }
+
+  // Oude rows kunnen wins/losses/totalR hebben maar geen grossWinR/grossLossR.
+  // Dan is PF=0 fout. We maken een conservatieve reconstructie uit net totalR + counts.
+  if (winR <= 0 && lossR <= 0 && wins > 0 && losses > 0 && netTotal !== 0) {
+    const nonFlat = Math.max(1, wins + losses);
+    const absUnit = Math.max(0.0001, Math.abs(netTotal) / nonFlat);
+
+    if (netTotal > 0) {
+      lossR = absUnit * losses;
+      winR = netTotal + lossR;
+    } else {
+      winR = absUnit * wins;
+      lossR = Math.abs(netTotal) + winR;
+    }
+  }
+
+  if (lossR <= 0 && losses > 0 && winR > 0 && netTotal > 0) {
+    const nonFlat = Math.max(1, wins + losses);
+    lossR = Math.max(0.0001, Math.abs(netTotal) * (losses / nonFlat));
+    winR = Math.max(winR, netTotal + lossR);
+  }
+
+  if (winR <= 0 && wins > 0 && lossR > 0 && netTotal < 0) {
+    const nonFlat = Math.max(1, wins + losses);
+    winR = Math.max(0.0001, Math.abs(netTotal) * (wins / nonFlat));
+    lossR = Math.max(lossR, Math.abs(netTotal) + winR);
+  }
+
+  const profitFactor = lossR > 0
+    ? winR / lossR
+    : winR > 0
+      ? 99
+      : 0;
+
+  return {
+    grossWinR: winR,
+    grossLossR: lossR,
+    profitFactor
+  };
+}
+
 function eligibleGate(stats = {}, options = {}) {
-  const row = refreshStats({ ...stats });
+  // Niet refreshStats() hier aanroepen.
+  // Anders krijg je refreshStats -> eligibleGate -> refreshStats recursion.
+  const row = { ...stats };
 
   const layer = rowLearningLayer(row);
   const completed = safeNumber(row.completed, 0);
@@ -2413,7 +2553,7 @@ function eligibleGate(stats = {}, options = {}) {
     currentFitMatched,
     requireCurrentFitMatch,
     lcbModelVersion: LCB_MODEL_VERSION,
-    gateVersion: 'SHORT_LIFETIME_ELIGIBLE_LCB_CURRENTFIT_MICRO_MICRO_ONLY_V2'
+    gateVersion: 'SHORT_LIFETIME_ELIGIBLE_LCB_CURRENTFIT_MICRO_MICRO_ONLY_V3_NETR_PF_FIX'
   };
 }
 
@@ -2689,6 +2829,7 @@ export function createMicroStats({
     sampleReliabilityOld: 0,
 
     profitFactor: 0,
+    profitFactorSource: 'NET_R_OUTCOMES',
     sampleReliability: 0,
     balancedScore: 0,
     dashboardBalancedScore: 0,
@@ -2705,6 +2846,7 @@ export function createMicroStats({
 
     costStatsInferredFromRecent: false,
     directSLStatsInferredFromRecent: false,
+    profitFactorRepairedFromNetR: false,
 
     tradingEligible: false,
     eligible: false,
@@ -2773,7 +2915,7 @@ export function createMicroStats({
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     observationDedupeRequired: true,
 
-    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR',
+    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR|profitFactor',
     bareWinrateRankingDisabled: true,
     rawWinrateRankingDisabled: true,
     rankingUsesBalancedScore: true,
@@ -2782,6 +2924,7 @@ export function createMicroStats({
     rankingUsesAvgR: true,
     rankingUsesAvgCostR: true,
     rankingUsesAvgRLCB95: true,
+    rankingUsesProfitFactor: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -3050,6 +3193,9 @@ function ensureStatsShape(stats = {}) {
   stats.child75MatchTriggersDiscord = false;
   stats.micro75MatchDoesNotTriggerDiscord = true;
   stats.scannerMatchTriggersDiscord = false;
+
+  stats.profitFactorSource = stats.profitFactorSource || 'NET_R_OUTCOMES';
+  stats.profitFactorFixVersion = MICRO_MICRO_MEASUREMENT_VERSION;
 
   stats.adaptiveLayerBuilt = false;
   stats.adaptiveScoreBuilt = false;
@@ -3407,8 +3553,8 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     exitR,
     netR: safeNumber(row.netR ?? row.shortNetR ?? exitR, exitR),
     shortNetR: safeNumber(row.shortNetR ?? row.netR ?? exitR, exitR),
-    grossR: safeNumber(row.grossR ?? row.rawR ?? row.realizedGrossR ?? geometry.shortGrossR, 0),
-    shortGrossR: safeNumber(row.shortGrossR ?? geometry.shortGrossR ?? row.grossR, 0),
+    grossR: safeNumber(row.grossR ?? row.rawR ?? row.realizedGrossR ?? geometry.shortGrossR, exitR),
+    shortGrossR: safeNumber(row.shortGrossR ?? geometry.shortGrossR ?? row.grossR, exitR),
     shortCurrentR: safeNumber(row.shortCurrentR ?? geometry.shortCurrentR, 0),
 
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
@@ -3492,6 +3638,9 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     longOnly: false,
     shortDisabled: false,
 
+    profitFactorSource: 'NET_R_OUTCOME',
+    profitFactorFixVersion: MICRO_MICRO_MEASUREMENT_VERSION,
+
     ts: row.closedAt || row.completedAt || now()
   });
 
@@ -3559,7 +3708,7 @@ function buildBalancedScore({
     sampleRel * 25 +
     totalRComponent +
     avgRComponent +
-    pfNorm * 8 +
+    pfNorm * 12 +
     nearTpPct * 4 +
     reachedOneRPct * 4 -
     directSLPct * 35 -
@@ -3597,7 +3746,7 @@ function buildAvgRScore({
     fair * 35 +
     sampleRel * 25 +
     totalRComponent +
-    pfNorm * 8 +
+    pfNorm * 12 +
     nearTpPct * 3 +
     reachedOneRPct * 3 -
     directSLPct * 35 -
@@ -3736,21 +3885,20 @@ export function refreshStats(stats) {
     totalFundingCostR = recentAvgFundingCostR * weightedCompletedForR;
   }
 
-  const grossWinR = hasBuckets
-    ? sourceTotals.grossWinR
-    : maxPositive(
-      stats.grossWinR,
-      recent.grossWinR,
-      totalR > 0 && weightedLosses <= 0 ? totalR : 0
-    );
+  const pfComponents = repairProfitFactorComponents({
+    grossWinR: sourceTotals.grossWinR,
+    grossLossR: sourceTotals.grossLossR,
+    totalR,
+    weightedWins,
+    weightedLosses,
+    recentGrossWinR: recent.grossWinR,
+    recentGrossLossR: recent.grossLossR,
+    stats
+  });
 
-  const grossLossR = hasBuckets
-    ? sourceTotals.grossLossR
-    : maxPositive(
-      stats.grossLossR,
-      recent.grossLossR,
-      totalR < 0 && weightedWins <= 0 ? Math.abs(totalR) : 0
-    );
+  const grossWinR = pfComponents.grossWinR;
+  const grossLossR = pfComponents.grossLossR;
+  const profitFactor = pfComponents.profitFactor;
 
   const sumR = chooseTotal({
     sourceValue: sourceTotals.sumR,
@@ -3814,11 +3962,6 @@ export function refreshStats(stats) {
   const avgLossR = weightedLosses > 0
     ? -grossLossR / weightedLosses
     : 0;
-
-  const profitFactor =
-    grossLossR > 0 ? grossWinR / grossLossR :
-      grossWinR > 0 ? 99 :
-        0;
 
   const directSLCount = safeNumber(stats.directSLCount, 0) > 0
     ? safeNumber(stats.directSLCount, 0)
@@ -4046,6 +4189,13 @@ export function refreshStats(stats) {
     avgRScore: round4(avgRScore),
 
     profitFactor: round4(profitFactor),
+    profitFactorSource: 'NET_R_OUTCOMES',
+    profitFactorFixVersion: MICRO_MICRO_MEASUREMENT_VERSION,
+    profitFactorRepairedFromNetR: (
+      round4(profitFactor) > 0 &&
+      safeNumber(sourceTotals.grossWinR, 0) <= 0 &&
+      safeNumber(sourceTotals.grossLossR, 0) <= 0
+    ),
 
     directSLCount: round4(directSLCount),
     nearTpCount: round4(nearTpCount),
@@ -4198,7 +4348,7 @@ export function refreshStats(stats) {
     observationDedupeRequired: true,
     observationAlwaysCounted: false,
 
-    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR',
+    defaultRanking: 'eligible|avgRLCB95|totalR|avgR|fairWinrate|directSLPct|avgCostR|profitFactor',
     bareWinrateRankingDisabled: true,
     rawWinrateRankingDisabled: true,
     rankingUsesBalancedScore: true,
@@ -4207,6 +4357,7 @@ export function refreshStats(stats) {
     rankingUsesAvgR: true,
     rankingUsesAvgCostR: true,
     rankingUsesAvgRLCB95: true,
+    rankingUsesProfitFactor: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -4321,7 +4472,8 @@ function compareEligibility(a, b) {
       Number(a.tradingEligible === true || a.eligible === true) ||
     safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
-    safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0)
+    safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0)
   );
 }
 
@@ -4335,6 +4487,7 @@ function compareWinrate(a, b) {
     safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
     safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
     sortById(a, b)
   );
@@ -4351,6 +4504,7 @@ function compareAvgR(a, b) {
     safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
     safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
     sortById(a, b)
   );
@@ -4365,6 +4519,7 @@ function compareTotalR(a, b) {
     safeNumber(b.avgRLCB95, 0) - safeNumber(a.avgRLCB95, 0) ||
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
     safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
     safeNumber(b.sampleReliability, 0) - safeNumber(a.sampleReliability, 0) ||
     sortById(a, b)
@@ -4381,6 +4536,7 @@ function compareBalanced(a, b) {
     safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
     safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
     safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+    safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
     safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
     compareWinrate(a, b)
   );
@@ -4418,6 +4574,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
         safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
         safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
         safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+        safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
         safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
         safeNumber(b.winrateSample, 0) - safeNumber(a.winrateSample, 0) ||
         sortById(a, b)
@@ -4435,6 +4592,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
         safeNumber(b.fairWinrate, 0) - safeNumber(a.fairWinrate, 0) ||
         safeNumber(b.totalR, 0) - safeNumber(a.totalR, 0) ||
         safeNumber(b.avgR, 0) - safeNumber(a.avgR, 0) ||
+        safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
         safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
         sortById(a, b)
       );
@@ -4452,6 +4610,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
         compareEligibility(a, b) ||
         safeNumber(a.directSLPct, 0) - safeNumber(b.directSLPct, 0) ||
         safeNumber(a.avgCostR, 0) - safeNumber(b.avgCostR, 0) ||
+        safeNumber(b.profitFactor, 0) - safeNumber(a.profitFactor, 0) ||
         sortById(a, b)
       );
     }
@@ -4463,7 +4622,7 @@ export function rankMicros(micros = {}, mode = 'balanced') {
 }
 
 export function isEligibleTradingCandidate(row = {}, options = {}) {
-  return eligibleGate(row, options);
+  return eligibleGate(refreshStats({ ...row }), options);
 }
 
 export function getWeeklyTradingCandidates(micros = {}, options = {}) {
