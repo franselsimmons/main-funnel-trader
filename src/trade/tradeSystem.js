@@ -12,6 +12,7 @@
 // - CurrentFit blokkeert learning nooit, alleen Discord.
 // - E_WEAK_CONTRA wordt vóór virtual entry geblokkeerd.
 // - Geen real orders, geen exchange orders.
+// - Monitor sluit verlopen virtual positions hard vóór live price/candle fetch.
 // - Snapshot wordt pas processed na echte micro-micro/analyze/entry/exit output.
 
 import { createHash } from 'crypto';
@@ -76,13 +77,14 @@ const SELECTION_PARENT_CONTEXT = 'PARENT_15_CONTEXT_ONLY';
 const SELECTION_75_CHILD_CONTEXT = 'MICRO_75_CONTEXT_ONLY';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
-const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_NEWEST_SNAPSHOT_V10';
-const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V4';
-const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V7';
+const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_MICRO_MICRO_HARD_TIME_STOP_CLEANUP_V11';
+const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_V5_HARD_TIME_STOP';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_FULL_PIPELINE_V8_HARD_TIME_STOP';
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
 const RR_SHADOW_GRID_VERSION = 'SHORT_RR_SHADOW_GRID_1_125_15_175_2_V1';
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
 const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V2';
+const HARD_TIME_STOP_CLEANUP_VERSION = 'SHORT_TRADE_SYSTEM_MONITOR_HARD_TIME_STOP_PRE_PRICE_V1';
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
 const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 10;
@@ -111,19 +113,23 @@ const DEFAULT_DISCORD_REQUIRE_CURRENT_FIT = true;
 const DEFAULT_DISCORD_MIN_CURRENT_FIT_CONFIDENCE = 35;
 const DEFAULT_CURRENT_FIT_MAX_WEATHER_AGE_SEC = 15 * 60;
 
-const DEFAULT_MONITOR_TIMEOUT_MS = 2500;
-const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 800;
-const DEFAULT_CANDIDATE_TIMEOUT_MS = 1800;
+const DEFAULT_MONITOR_TIMEOUT_MS = 9500;
+const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 650;
+const DEFAULT_CANDIDATE_TIMEOUT_MS = 1600;
 const DEFAULT_ANALYZE_TIMEOUT_MS = 3500;
 const DEFAULT_ROTATION_TIMEOUT_MS = 900;
 const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 900;
-const DEFAULT_MAX_RUNTIME_MS = 24000;
-const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 900;
+const DEFAULT_MAX_RUNTIME_MS = 26000;
+const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 2500;
 const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 1200;
-const DEFAULT_MONITOR_BATCH_SIZE = 40;
-const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 120;
+const DEFAULT_MONITOR_BATCH_SIZE = 150;
+const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 250;
 const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 3;
 const DEFAULT_ENTRY_LOOP_RESERVE_MS = 900;
+
+const DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT = true;
+const DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH = true;
+const DEFAULT_MONITOR_CANDLE_RANGE_ENABLED = true;
 
 const BITGET_BASE_URL = 'https://api.bitget.com';
 const BITGET_PRODUCT_TYPE = 'USDT-FUTURES';
@@ -197,6 +203,11 @@ function first(...values) {
 
 function int(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
   return Math.max(min, Math.min(max, Math.floor(n(value, fallback))));
+}
+
+function minRuntimeFloor(value, fallback, minFloor, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = int(value, fallback, min, max);
+  return Math.max(minFloor, parsed);
 }
 
 function clamp(value, min, max) {
@@ -387,7 +398,9 @@ function isolationFlags() {
     oneOpenPositionPerSymbol: true,
     maxOneOpenPositionPerSymbol: true,
     monitorOpenPositionsBeforeEntries: true,
-    monitorTimeoutDoesNotBlockEntries: true
+    monitorTimeoutDoesNotBlockEntries: true,
+
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
   };
 }
 
@@ -498,6 +511,10 @@ function virtualFlags(row = {}) {
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+    hardTimeStopNoPriceExit: DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT,
+    closeExpiredBeforePriceFetch: DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH,
 
     ...microPolicyFlags()
   };
@@ -1011,6 +1028,7 @@ function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
     `WEAK_CONTRA_GATE=${row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'NA'}`,
     `CURRENT_FIT=${normalizeBucketText(row.currentFit || row.entryCurrentFit || 'NA')}`,
     `RISK_PLAN=${row.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`,
+    `HARD_TIME_STOP=${HARD_TIME_STOP_CLEANUP_VERSION}`,
     'EXECUTION_FINGERPRINT_ROLE=MICRO_MICRO_HASH_SOURCE'
   ];
 }
@@ -1856,6 +1874,42 @@ function tradeConfig() {
     CONFIG.trade?.maxRiskPct
   ), DEFAULT_MAX_RISK_PCT);
 
+  const requestedMonitorTimeoutMs = first(
+    options.monitorTimeoutMs,
+    CONFIG.short?.trade?.monitorTimeoutMs,
+    CONFIG.trade?.monitorTimeoutMs
+  );
+
+  const monitorTimeoutMs = minRuntimeFloor(
+    requestedMonitorTimeoutMs,
+    DEFAULT_MONITOR_TIMEOUT_MS,
+    DEFAULT_MONITOR_TIMEOUT_MS,
+    1000,
+    15000
+  );
+
+  const requestedMonitorBatchSize = first(
+    options.monitorBatchSize,
+    CONFIG.short?.trade?.monitorBatchSize,
+    CONFIG.trade?.monitorBatchSize
+  );
+
+  const monitorBatchSize = Math.max(
+    DEFAULT_MONITOR_BATCH_SIZE,
+    int(requestedMonitorBatchSize, DEFAULT_MONITOR_BATCH_SIZE, 5, 250)
+  );
+
+  const requestedOpenPositionMonitorLimit = first(
+    options.openPositionMonitorLimit,
+    CONFIG.short?.trade?.openPositionMonitorLimit,
+    CONFIG.trade?.openPositionMonitorLimit
+  );
+
+  const openPositionMonitorLimit = Math.max(
+    DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
+    int(requestedOpenPositionMonitorLimit, DEFAULT_OPEN_POSITION_MONITOR_LIMIT, 10, 500)
+  );
+
   return {
     maxCandidatesPerSnapshot: int(
       first(options.maxCandidatesPerSnapshot, CONFIG.short?.trade?.maxCandidatesPerSnapshot, CONFIG.trade?.maxCandidatesPerSnapshot),
@@ -1897,17 +1951,22 @@ function tradeConfig() {
     analyzeTimeoutMs: int(first(options.analyzeTimeoutMs, CONFIG.short?.trade?.analyzeTimeoutMs, CONFIG.trade?.analyzeTimeoutMs), DEFAULT_ANALYZE_TIMEOUT_MS, 500, 4500),
     rotationTimeoutMs: int(first(options.rotationTimeoutMs, CONFIG.short?.trade?.rotationTimeoutMs, CONFIG.trade?.rotationTimeoutMs), DEFAULT_ROTATION_TIMEOUT_MS, 150, 1500),
     marketContextTimeoutMs: int(first(options.marketContextTimeoutMs, CONFIG.short?.trade?.marketContextTimeoutMs, CONFIG.trade?.marketContextTimeoutMs), DEFAULT_MARKET_CONTEXT_TIMEOUT_MS, 200, 1500),
-    monitorTimeoutMs: int(first(options.monitorTimeoutMs, CONFIG.short?.trade?.monitorTimeoutMs, CONFIG.trade?.monitorTimeoutMs), DEFAULT_MONITOR_TIMEOUT_MS, 500, 3500),
+
+    monitorTimeoutMs,
     monitorPriceFetchTimeoutMs: int(first(options.monitorPriceFetchTimeoutMs, CONFIG.short?.trade?.monitorPriceFetchTimeoutMs, CONFIG.trade?.monitorPriceFetchTimeoutMs), DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS, 100, 1200),
-    monitorBatchSize: int(first(options.monitorBatchSize, CONFIG.short?.trade?.monitorBatchSize, CONFIG.trade?.monitorBatchSize), DEFAULT_MONITOR_BATCH_SIZE, 5, 80),
-    openPositionMonitorLimit: int(first(options.openPositionMonitorLimit, CONFIG.short?.trade?.openPositionMonitorLimit, CONFIG.trade?.openPositionMonitorLimit), DEFAULT_OPEN_POSITION_MONITOR_LIMIT, 10, 150),
-    openPositionLoadTimeoutMs: int(first(options.openPositionLoadTimeoutMs, CONFIG.short?.trade?.openPositionLoadTimeoutMs, CONFIG.trade?.openPositionLoadTimeoutMs), DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS, 250, 1500),
+    monitorBatchSize,
+    openPositionMonitorLimit,
+    openPositionLoadTimeoutMs: int(first(options.openPositionLoadTimeoutMs, CONFIG.short?.trade?.openPositionLoadTimeoutMs, CONFIG.trade?.openPositionLoadTimeoutMs), DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS, 250, 4000),
     savePositionTimeoutMs: int(first(options.savePositionTimeoutMs, CONFIG.short?.trade?.savePositionTimeoutMs, CONFIG.trade?.savePositionTimeoutMs), DEFAULT_SAVE_POSITION_TIMEOUT_MS, 250, 2500),
     minEntryLoopAttempts: int(first(options.minEntryLoopAttempts, CONFIG.short?.trade?.minEntryLoopAttempts, CONFIG.trade?.minEntryLoopAttempts), DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS, 1, 8),
     entryLoopReserveMs: int(first(options.entryLoopReserveMs, CONFIG.short?.trade?.entryLoopReserveMs, CONFIG.trade?.entryLoopReserveMs), DEFAULT_ENTRY_LOOP_RESERVE_MS, 250, 2500),
-    maxRuntimeMs: int(first(options.maxRuntimeMs, CONFIG.short?.trade?.maxRuntimeMs, CONFIG.trade?.maxRuntimeMs), DEFAULT_MAX_RUNTIME_MS, 8000, 26000),
+    maxRuntimeMs: int(first(options.maxRuntimeMs, CONFIG.short?.trade?.maxRuntimeMs, CONFIG.trade?.maxRuntimeMs), DEFAULT_MAX_RUNTIME_MS, 8000, 30000),
     positionTimeStopMin: n(first(options.positionTimeStopMin, CONFIG.short?.trade?.positionTimeStopMin, CONFIG.trade?.positionTimeStopMin), 720),
-    monitorLivePriceFetchEnabled: bool(first(options.monitorLivePriceFetchEnabled, CONFIG.short?.trade?.monitorLivePriceFetchEnabled, CONFIG.trade?.monitorLivePriceFetchEnabled), true)
+    monitorLivePriceFetchEnabled: bool(first(options.monitorLivePriceFetchEnabled, CONFIG.short?.trade?.monitorLivePriceFetchEnabled, CONFIG.trade?.monitorLivePriceFetchEnabled), true),
+
+    hardTimeStopNoPriceExit: bool(first(options.hardTimeStopNoPriceExit, CONFIG.short?.trade?.hardTimeStopNoPriceExit, CONFIG.trade?.hardTimeStopNoPriceExit), DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT),
+    closeExpiredBeforePriceFetch: bool(first(options.closeExpiredBeforePriceFetch, CONFIG.short?.trade?.closeExpiredBeforePriceFetch, CONFIG.trade?.closeExpiredBeforePriceFetch), DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH),
+    monitorCandleRangeEnabled: bool(first(options.monitorCandleRangeEnabled, CONFIG.short?.trade?.monitorCandleRangeEnabled, CONFIG.trade?.monitorCandleRangeEnabled), DEFAULT_MONITOR_CANDLE_RANGE_ENABLED)
   };
 }
 
@@ -2211,7 +2270,8 @@ function applyAdaptiveShortRisk(row = {}, reason = 'ADAPTIVE_SHORT_RR_TP_SL') {
     shortRiskRule: 'tp < entry < sl',
     shortTpExitRule: 'price <= tp',
     shortSlExitRule: 'price >= sl',
-    shortTimeStopExitRule: 'TIME_STOP'
+    shortTimeStopExitRule: 'TIME_STOP',
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
   };
 }
 
@@ -2930,7 +2990,9 @@ function buildVirtualEntryAction({
     entryCurrentTrendSide: row.entryCurrentTrendSide || row.currentTrendSide || null,
     entryCurrentFit: row.entryCurrentFit || row.currentFit || null,
     entryCurrentFitConfidence: row.entryCurrentFitConfidence ?? row.currentFitConfidence ?? null,
-    entryCreatedAt: now()
+    entryCreatedAt: now(),
+
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
   };
 }
 
@@ -3044,6 +3106,7 @@ function buildDiscordEntryAlertPayload(entry = {}) {
     rrShadowGridEnabled: Boolean(entry.rrShadowGridEnabled),
     rrShadowGridVersion: entry.rrShadowGridVersion || RR_SHADOW_GRID_VERSION,
     rrShadowPlans: Array.isArray(entry.rrShadowPlans) ? entry.rrShadowPlans : [],
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
     discordPayloadSanitizedForEntryAlert: true
   };
 }
@@ -3197,6 +3260,8 @@ function buildVirtualExitAction(outcome = {}) {
     tpHitNow: Boolean(outcome.tpHitNow || outcome.shortTpHit || outcome.exitReason === 'TP'),
     slHitNow: Boolean(outcome.slHitNow || outcome.shortSlHit || outcome.exitReason === 'SL'),
     timeStopHitNow: Boolean(outcome.timeStopHitNow || outcome.exitReason === 'TIME_STOP'),
+    hardTimeStop: Boolean(outcome.hardTimeStop),
+    hardTimeStopCleanupVersion: outcome.hardTimeStopCleanupVersion || HARD_TIME_STOP_CLEANUP_VERSION,
 
     riskPlanVersion: outcome.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
     riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -3268,9 +3333,14 @@ function inferPrimaryBottleneck({
   waitRows,
   skippedByExistingSymbol,
   weakContraRejectedRows,
-  openPositionCountAfterEntries
+  openPositionCountBeforeEntries,
+  openPositionCountAfterEntries,
+  monitorTimeout
 }) {
   if (candidates <= 0) return 'NO_SHORT_CANDIDATES';
+  if (monitorTimeout && openPositionCountBeforeEntries > 0 && virtualExitRows <= 0) return 'MONITOR_TIMEOUT_OPEN_POSITIONS_NOT_FULLY_CLEANED';
+  if (openPositionCountBeforeEntries >= 80 && virtualExitRows <= 0) return 'MANY_OPEN_POSITIONS_WAITING_FOR_TP_SL_OR_TIME_STOP';
+  if (virtualExitRows > 0) return 'VIRTUAL_EXITS_RECORDED_LEARNING_UPDATED';
   if (processed <= 0) return 'NO_CANDIDATES_PROCESSED';
   if (liveRows <= 0) return 'NO_LIVE_ROWS_OR_NO_FALLBACK_PRICE';
   if (riskValidRows <= 0) return 'NO_COST_AWARE_TP_SL_AVAILABLE';
@@ -3309,6 +3379,7 @@ function buildQualityAudit({
   const analyzedRowsRawCount = analyzedRowsRaw.length;
   const analyzedRowsCount = analyzedRows.length;
   const virtualExitRows = virtualExits.length;
+  const monitorTimeout = runtimeWarnings.includes('MONITOR_OPEN_POSITIONS_TIMEOUT_CONTINUING_TO_ENTRY_LOOP');
 
   const primaryBottleneck = inferPrimaryBottleneck({
     candidates: candidateCount,
@@ -3324,7 +3395,9 @@ function buildQualityAudit({
     waitRows: counts.waitRows,
     skippedByExistingSymbol: counts.skippedByExistingSymbol,
     weakContraRejectedRows: counts.weakContraRejectedRows || 0,
-    openPositionCountAfterEntries
+    openPositionCountBeforeEntries,
+    openPositionCountAfterEntries,
+    monitorTimeout
   });
 
   return {
@@ -3333,6 +3406,7 @@ function buildQualityAudit({
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -3378,6 +3452,13 @@ function buildQualityAudit({
     slHitRule: 'SHORT: candle.high >= sl',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    monitorHardTimeStop: {
+      enabled: true,
+      noPriceExit: DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT,
+      closeExpiredBeforePriceFetch: DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH,
+      reason: 'EXPIRED_POSITIONS_CLOSE_BEFORE_LIVE_FETCH_TO_PREVENT_100_OPEN_POSITION_BACKLOG'
+    },
 
     marketWeather: {
       available: Boolean(marketContext?.ok),
@@ -3444,7 +3525,7 @@ function buildQualityAudit({
     runtimeWarnings,
     primaryBottleneck,
     topWaitReasons: topReasonCounts(actions, 12),
-    measurementPrinciple: 'Alles SHORT virtueel laten leren; Discord alleen exact geselecteerde micro-micro met geldige CurrentFit.'
+    measurementPrinciple: 'Alles SHORT virtueel laten leren; verlopen posities hard sluiten; Discord alleen exact geselecteerde micro-micro met geldige CurrentFit.'
   };
 }
 
@@ -3562,6 +3643,7 @@ async function saveRunMeta(result) {
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
     weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
     ...sideFlags(),
     ...virtualFlags(),
     ...isolationFlags(),
@@ -3610,6 +3692,7 @@ async function saveRunMeta(result) {
       rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
       microMicroVersion: MICRO_MICRO_VERSION,
       weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
       ...sideFlags(),
       ...virtualFlags(),
       ...isolationFlags()
@@ -3672,6 +3755,11 @@ function baseEarlyReturnPayload({
     monitorOnly: reason === 'MONITOR_ONLY',
     monitorPriceHintCount: priceHints.size,
     monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+    monitorTimeoutMs: cfg.monitorTimeoutMs,
+    monitorBatchSize: cfg.monitorBatchSize,
+    openPositionMonitorLimit: cfg.openPositionMonitorLimit,
+    hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
+    closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
     monitorPriceSource: cfg.monitorLivePriceFetchEnabled
       ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
       : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
@@ -3680,6 +3768,7 @@ function baseEarlyReturnPayload({
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
     weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
 
     ...sideFlags(),
     ...virtualFlags(),
@@ -4110,7 +4199,17 @@ async function loadOpenPositionsFast(cfg, runtimeWarnings) {
       side: TARGET_DASHBOARD_SIDE,
       namespace: SHORT_NAMESPACE,
       keyPrefix: SHORT_KEY_PREFIX,
-      virtualOnly: true
+      virtualOnly: true,
+      requireFullRows: true,
+      includeKeyOnly: false,
+      monitorMode: true,
+      limit: cfg.openPositionMonitorLimit,
+      hydrateLimit: cfg.openPositionMonitorLimit,
+      openPositionLimit: cfg.openPositionMonitorLimit,
+      maxOpenPositionsToRead: cfg.openPositionMonitorLimit,
+      openPositionHydrateLimit: cfg.openPositionMonitorLimit,
+      openPositionReadTimeoutMs: cfg.openPositionLoadTimeoutMs,
+      openPositionKeysTimeoutMs: cfg.openPositionLoadTimeoutMs
     }).catch((error) => ({
       __openPositionError: true,
       error: error?.message || String(error)
@@ -4210,12 +4309,29 @@ export async function runTradeSystem(options = {}) {
         realOrdersDisabled: true,
         bitgetOrdersDisabled: true,
         exchangeCallsDisabled: true,
+
         monitorTimeoutMs: cfg.monitorTimeoutMs,
         timeoutMs: cfg.monitorTimeoutMs,
+        maxRuntimeMs: cfg.monitorTimeoutMs,
         monitorBatchSize: cfg.monitorBatchSize,
         openPositionMonitorLimit: cfg.openPositionMonitorLimit,
         maxOpenPositionsToMonitor: cfg.openPositionMonitorLimit,
-        monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled
+        openPositionLimit: cfg.openPositionMonitorLimit,
+        maxOpenPositionsToRead: cfg.openPositionMonitorLimit,
+        hydrateLimit: cfg.openPositionMonitorLimit,
+        openPositionHydrateLimit: cfg.openPositionMonitorLimit,
+
+        monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+        priceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+        monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+        monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
+
+        positionTimeStopMin: cfg.positionTimeStopMin,
+        hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
+        closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
+        persistNoPriceFailures: false,
+
+        hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
       }).catch((error) => ({
         __monitorError: true,
         error: error?.message || String(error)
@@ -4238,6 +4354,10 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push(`MONITOR_OPEN_POSITIONS_ERROR_CONTINUING_TO_ENTRY_LOOP:${monitorResult.error}`);
     }
 
+    if (virtualExits.length > 0) {
+      runtimeWarnings.push(`VIRTUAL_EXITS_RECORDED_THIS_RUN:${virtualExits.length}`);
+    }
+
     const shadowExits = virtualExits;
     const realExits = [];
 
@@ -4254,7 +4374,15 @@ export async function runTradeSystem(options = {}) {
         runtimeWarnings,
         marketContext,
         processScannerSnapshot: false,
-        priceHints
+        priceHints,
+        extra: {
+          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+          virtualExitRows: virtualExits.length,
+          shadowExitRows: shadowExits.length,
+          monitorTimeoutMs: cfg.monitorTimeoutMs,
+          monitorBatchSize: cfg.monitorBatchSize,
+          openPositionMonitorLimit: cfg.openPositionMonitorLimit
+        }
       }));
     }
 
@@ -4271,7 +4399,11 @@ export async function runTradeSystem(options = {}) {
         runtimeWarnings,
         marketContext,
         processScannerSnapshot: false,
-        priceHints
+        priceHints,
+        extra: {
+          virtualExitRows: virtualExits.length,
+          shadowExitRows: shadowExits.length
+        }
       }));
     }
 
@@ -4295,7 +4427,11 @@ export async function runTradeSystem(options = {}) {
         marketContext,
         processScannerSnapshot: false,
         priceHints,
-        extra: { snapshotAgeSec: Math.round(snapshotAgeSec) }
+        extra: {
+          snapshotAgeSec: Math.round(snapshotAgeSec),
+          virtualExitRows: virtualExits.length,
+          shadowExitRows: shadowExits.length
+        }
       }));
     }
 
@@ -4323,7 +4459,9 @@ export async function runTradeSystem(options = {}) {
         priceHints,
         extra: {
           lastProcessedSnapshotId: lastProcessed?.snapshotId || null,
-          lastProcessedAnalyzedMicroMicroRows: lastProcessed?.analyzedMicroMicroRows || 0
+          lastProcessedAnalyzedMicroMicroRows: lastProcessed?.analyzedMicroMicroRows || 0,
+          virtualExitRows: virtualExits.length,
+          shadowExitRows: shadowExits.length
         }
       }));
     }
@@ -4528,7 +4666,8 @@ export async function runTradeSystem(options = {}) {
           slHitRule: 'SHORT: candle.high >= sl',
           grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
           currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-          microMicroVersion: MICRO_MICRO_VERSION
+          microMicroVersion: MICRO_MICRO_VERSION,
+          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
         }),
         cfg.analyzeTimeoutMs,
         'ANALYZE_CANDIDATES_TIMEOUT'
@@ -4630,6 +4769,7 @@ export async function runTradeSystem(options = {}) {
           weakContraRejectReason: row.weakContraRejectReason || virtualGate.reason || null,
           virtualTracked: false,
           liveEligible: false,
+          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...sideFlags(),
           ...virtualFlags(row),
           ...isolationFlags()
@@ -4656,6 +4796,7 @@ export async function runTradeSystem(options = {}) {
           microMicroFamilyId: microMicroFamilyId || null,
           trueMicroMicroFamilyId: microMicroFamilyId || null,
           exactMicroMicroFamilyId: microMicroFamilyId || null,
+          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...sideFlags(),
           ...virtualFlags(row),
           ...isolationFlags()
@@ -4728,6 +4869,7 @@ export async function runTradeSystem(options = {}) {
           discordAlertQueued: Boolean(discordResult.queued),
           discordAlertSent: Boolean(discordResult.sent),
           discordAlertFailed: Boolean(discordResult.failed),
+          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...isolationFlags()
         });
       } catch (error) {
@@ -4746,6 +4888,7 @@ export async function runTradeSystem(options = {}) {
           microMicroFamilyId: microMicroFamilyId || null,
           trueMicroMicroFamilyId: microMicroFamilyId || null,
           exactMicroMicroFamilyId: microMicroFamilyId || null,
+          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...sideFlags(),
           ...virtualFlags(row),
           ...isolationFlags()
@@ -4818,6 +4961,10 @@ export async function runTradeSystem(options = {}) {
       weakContraRejectedRows,
       weakContraAllowedRows,
 
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+      hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
+      closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
+
       defaultRR: cfg.defaultRR,
       minRR: cfg.minRR,
       maxRR: cfg.maxRR,
@@ -4839,6 +4986,7 @@ export async function runTradeSystem(options = {}) {
       monitorTimeoutMs: cfg.monitorTimeoutMs,
       monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
       monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+      monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
       monitorBatchSize: cfg.monitorBatchSize,
       openPositionMonitorLimit: cfg.openPositionMonitorLimit,
       minEntryLoopAttempts: cfg.minEntryLoopAttempts,
