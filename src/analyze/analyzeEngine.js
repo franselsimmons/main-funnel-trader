@@ -26,7 +26,7 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_75_MICRO_MICRO_V1';
+const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
 
 const MICRO_MICRO_SUFFIX = 'MM';
 const MICRO_MICRO_HASH_LEN = 10;
@@ -42,19 +42,17 @@ const LAYER_PARENT_15 = 'PARENT_15';
 const LAYER_MICRO_75 = 'MICRO_75';
 const LAYER_MICRO_MICRO = 'MICRO_MICRO';
 
-const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO';
-
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
-const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 6;
+const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_LAYERED_MICRO_MICRO_V6';
-const POSITION_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V3';
-const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_CHILD_75_MICRO_MICRO_SELECTABLE_V4';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
+const POSITION_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
+const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
 const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_LAYERED_ENTRY_V5';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_STABLE_CLOSED_POSITION_LAYERED_V6';
-const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V2';
+const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3';
+const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V1';
 
 const SETUP_ORDER = Object.freeze([
   'BREAKOUT',
@@ -103,11 +101,33 @@ function hashText(value, len = EXECUTION_MICRO_HASH_LEN) {
     .slice(0, len);
 }
 
+function flattenSafe(values = [], maxDepth = 5) {
+  const out = [];
+  const stack = [{ value: values, depth: 0 }];
+
+  while (stack.length) {
+    const item = stack.shift();
+
+    if (Array.isArray(item.value) && item.depth < maxDepth) {
+      for (const child of item.value) {
+        stack.push({
+          value: child,
+          depth: item.depth + 1
+        });
+      }
+      continue;
+    }
+
+    out.push(item.value);
+  }
+
+  return out;
+}
+
 function uniq(values = []) {
   return [
     ...new Set(
-      (Array.isArray(values) ? values : [values])
-        .flat(Infinity)
+      flattenSafe(values)
         .map((x) => String(x || '').trim())
         .filter(Boolean)
     )
@@ -167,8 +187,10 @@ async function readJsonAny(key, fallback = null) {
 }
 
 async function setJsonEverywhere(key, value) {
-  await setJson(getDurableRedis(), key, value);
-  await setJson(getVolatileRedis(), key, value).catch(() => null);
+  const safeValue = jsonSafe(value);
+
+  await setJson(getDurableRedis(), key, safeValue);
+  await setJson(getVolatileRedis(), key, safeValue).catch(() => null);
 }
 
 function modeFlags() {
@@ -285,6 +307,215 @@ function flags(row = {}) {
   };
 }
 
+function slimOutcome(row = {}) {
+  if (!row || typeof row !== 'object') return row;
+
+  return flags({
+    type: row.type || 'OUTCOME',
+    source: row.source || row.outcomeSource || 'VIRTUAL',
+    outcomeSource: row.outcomeSource || row.source || 'VIRTUAL',
+
+    symbol: row.symbol || null,
+    contractSymbol: row.contractSymbol || null,
+    tradeId: row.tradeId || null,
+    positionId: row.positionId || null,
+
+    entry: n(row.entry, 0),
+    exit: n(row.exit ?? row.exitPrice, 0),
+    exitPrice: n(row.exitPrice ?? row.exit, 0),
+    exitReason: row.exitReason || row.reason || null,
+
+    openedAt: row.openedAt || row.createdAt || null,
+    closedAt: row.closedAt || row.completedAt || row.ts || null,
+    completedAt: row.completedAt || row.closedAt || row.ts || null,
+
+    netR: n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0),
+    shortNetR: n(row.shortNetR ?? row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0),
+    exitR: n(row.exitR ?? row.netR ?? row.realizedR ?? row.r, 0),
+    realizedNetR: n(row.realizedNetR ?? row.netR ?? row.exitR ?? row.r, 0),
+    realizedR: n(row.realizedR ?? row.netR ?? row.exitR ?? row.r, 0),
+    r: n(row.r ?? row.netR ?? row.exitR ?? row.realizedR, 0),
+
+    grossR: n(row.grossR ?? row.shortGrossR ?? row.rawR, 0),
+    shortGrossR: n(row.shortGrossR ?? row.grossR ?? row.rawR, 0),
+    rawR: n(row.rawR ?? row.grossR ?? row.shortGrossR, 0),
+
+    costR: n(row.costR ?? row.avgCostR, 0),
+    avgCostR: n(row.avgCostR ?? row.costR, 0),
+
+    win: row.win === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) > 0,
+    loss: row.loss === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) < 0,
+    flat: row.flat === true || n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0) === 0,
+
+    directSL: Boolean(row.directSL || row.directToSL),
+    directToSL: Boolean(row.directSL || row.directToSL),
+
+    parentTrueMicroFamilyId: row.parentTrueMicroFamilyId || null,
+    childTrueMicroFamilyId: row.childTrueMicroFamilyId || null,
+    base75ChildTrueMicroFamilyId: row.base75ChildTrueMicroFamilyId || row.childTrueMicroFamilyId || null,
+
+    microMicroFamilyId: row.microMicroFamilyId || row.trueMicroMicroFamilyId || row.exactMicroMicroFamilyId || null,
+    trueMicroMicroFamilyId: row.trueMicroMicroFamilyId || row.microMicroFamilyId || row.exactMicroMicroFamilyId || null,
+    exactMicroMicroFamilyId: row.exactMicroMicroFamilyId || row.microMicroFamilyId || row.trueMicroMicroFamilyId || null,
+
+    trueMicroFamilyId: row.trueMicroFamilyId || null,
+    microFamilyId: row.microFamilyId || null,
+    learningMicroFamilyId: row.learningMicroFamilyId || null,
+    analyzeMicroFamilyId: row.analyzeMicroFamilyId || null,
+
+    outcomeDedupeKey: row.outcomeDedupeKey || null,
+    outcomeDedupeVersion: row.outcomeDedupeVersion || OUTCOME_DEDUPE_VERSION
+  });
+}
+
+function sanitizeStatsRow(row = {}) {
+  if (!row || typeof row !== 'object') return {};
+
+  const clone = {
+    ...row
+  };
+
+  delete clone.recordOutcomeResult;
+  delete clone.openPositionDeleteResult;
+  delete clone.discordExitAlertResult;
+  delete clone.position;
+  delete clone.outcome;
+  delete clone.raw;
+  delete clone.rawPosition;
+  delete clone.rawOutcome;
+  delete clone.rawSnapshot;
+  delete clone.scannerSnapshot;
+  delete clone.currentMarketUniverse;
+  delete clone.entryMarketUniverse;
+  delete clone.marketUniverseRows;
+  delete clone.universeRows;
+
+  clone.definitionParts = Array.isArray(row.definitionParts)
+    ? row.definitionParts.slice(0, 64)
+    : [];
+
+  clone.parentDefinitionParts = Array.isArray(row.parentDefinitionParts)
+    ? row.parentDefinitionParts.slice(0, 48)
+    : [];
+
+  clone.microMicroDefinitionParts = Array.isArray(row.microMicroDefinitionParts)
+    ? row.microMicroDefinitionParts.slice(0, 64)
+    : [];
+
+  clone.executionFingerprintParts = Array.isArray(row.executionFingerprintParts)
+    ? row.executionFingerprintParts.slice(0, 64)
+    : [];
+
+  clone.examples = Array.isArray(row.examples)
+    ? row.examples.slice(-8).map((example) => (
+      example && typeof example === 'object'
+        ? {
+          symbol: example.symbol || null,
+          contractSymbol: example.contractSymbol || null,
+          createdAt: example.createdAt || example.openedAt || null,
+          source: example.source || 'VIRTUAL'
+        }
+        : example
+    ))
+    : [];
+
+  clone.recentOutcomes = Array.isArray(row.recentOutcomes)
+    ? row.recentOutcomes.slice(-40).map(slimOutcome)
+    : [];
+
+  return clone;
+}
+
+function jsonSafe(value) {
+  const seen = new WeakSet();
+
+  return JSON.parse(JSON.stringify(value, (key, val) => {
+    if (typeof val === 'bigint') return Number(val);
+
+    if (val && typeof val === 'object') {
+      if (seen.has(val)) return undefined;
+      seen.add(val);
+    }
+
+    return val;
+  }));
+}
+
+function safeRefreshStats(row = {}) {
+  const safeRow = sanitizeStatsRow(row);
+
+  try {
+    return refreshStats(safeRow);
+  } catch (error) {
+    const outcomes = Array.isArray(safeRow.recentOutcomes)
+      ? safeRow.recentOutcomes
+      : [];
+
+    let wins = n(safeRow.wins, 0);
+    let losses = n(safeRow.losses, 0);
+    let flats = n(safeRow.flats, 0);
+    let totalR = n(safeRow.totalR, 0);
+    let totalCostR = n(safeRow.totalCostR, 0);
+    let directSLCount = n(safeRow.directSLCount, 0);
+
+    if (outcomes.length) {
+      wins = 0;
+      losses = 0;
+      flats = 0;
+      totalR = 0;
+      totalCostR = 0;
+      directSLCount = 0;
+
+      for (const outcome of outcomes) {
+        const netR = n(outcome.netR ?? outcome.exitR ?? outcome.realizedR ?? outcome.r, 0);
+        const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
+
+        totalR += netR;
+        totalCostR += costR;
+
+        if (netR > 0) wins += 1;
+        else if (netR < 0) losses += 1;
+        else flats += 1;
+
+        if (outcome.directSL || outcome.directToSL) directSLCount += 1;
+      }
+    }
+
+    const completed = Math.max(
+      n(safeRow.completed, 0),
+      n(safeRow.outcomeSample, 0),
+      wins + losses + flats,
+      outcomes.length
+    );
+
+    const avgR = completed > 0 ? totalR / completed : 0;
+    const avgCostR = completed > 0 ? totalCostR / completed : 0;
+    const winrate = completed > 0 ? wins / completed : 0;
+
+    return {
+      ...safeRow,
+      refreshStatsFallbackUsed: true,
+      refreshStatsFallbackReason: error?.message || String(error),
+
+      wins,
+      losses,
+      flats,
+      completed,
+      outcomeSample: completed,
+
+      totalR,
+      avgR,
+      winrate,
+
+      totalCostR,
+      avgCostR,
+
+      directSLCount,
+      directSLPct: completed > 0 ? directSLCount / completed : 0
+    };
+  }
+}
+
 function parseShortTaxonomyMicroId(id = '') {
   const rawId = String(id || '').trim();
   const value = upper(rawId);
@@ -304,6 +535,7 @@ function parseShortTaxonomyMicroId(id = '') {
   let microMicroHash = null;
 
   const mm = /^(MICRO_SHORT_.+)_MM_([A-Z0-9]{6,24})$/u.exec(value);
+
   if (mm) {
     baseValue = mm[1];
     microMicroHash = mm[2].slice(0, MICRO_MICRO_HASH_LEN);
@@ -356,18 +588,30 @@ function parseShortTaxonomyMicroId(id = '') {
     isMicroMicro,
     rawId,
     id: microMicroFamilyId || childId || parentId || value,
+
     setup,
     regime,
     setupType: setup,
     regimeBucket: regime,
     confirmationProfile,
+
     parentTrueMicroFamilyId: validParent ? parentId : null,
     childTrueMicroFamilyId: validChild ? childId : null,
-    trueMicroFamilyId: validChild ? childId : validParent ? parentId : null,
+    base75ChildTrueMicroFamilyId: validChild ? childId : null,
+
+    trueMicroFamilyId: isMicroMicro
+      ? microMicroFamilyId
+      : validChild
+        ? childId
+        : validParent
+          ? parentId
+          : null,
+
     microMicroFamilyId,
     trueMicroMicroFamilyId: microMicroFamilyId,
     exactMicroMicroFamilyId: microMicroFamilyId,
     microMicroHash,
+
     learningLayer: isMicroMicro
       ? LAYER_MICRO_MICRO
       : isChild
@@ -397,10 +641,14 @@ function isLearningId(id = '') {
 
 function childIdFrom(id = '', row = {}) {
   const p = parseShortTaxonomyMicroId(id);
-  if (p.isMicroMicro || p.isChild) return p.childTrueMicroFamilyId || '';
+
+  if (p.isMicroMicro || p.isChild) {
+    return p.childTrueMicroFamilyId || '';
+  }
 
   const direct = [
     row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
     row.trueMicroFamilyId,
     row.microFamilyId,
     row.learningMicroFamilyId,
@@ -416,6 +664,7 @@ function childIdFrom(id = '', row = {}) {
 
 function parentIdFrom(id = '', row = {}) {
   const p = parseShortTaxonomyMicroId(id);
+
   if (p.valid) return p.parentTrueMicroFamilyId || '';
 
   const child = childIdFrom(id, row);
@@ -424,6 +673,7 @@ function parentIdFrom(id = '', row = {}) {
 
 function microMicroIdFrom(id = '', row = {}) {
   const p = parseShortTaxonomyMicroId(id);
+
   if (p.isMicroMicro) return p.microMicroFamilyId;
 
   const direct = [
@@ -431,7 +681,8 @@ function microMicroIdFrom(id = '', row = {}) {
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId,
     row.learningMicroFamilyId,
-    row.microFamilyId
+    row.microFamilyId,
+    row.trueMicroFamilyId
   ]
     .map((x) => parseShortTaxonomyMicroId(x))
     .find((x) => x.isMicroMicro);
@@ -484,6 +735,7 @@ function normalizeLearningFamilyId(id = '', row = {}) {
     row.microFamilyId,
     row.trueMicroFamilyId,
     row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
     row.parentTrueMicroFamilyId
   ];
 
@@ -516,6 +768,7 @@ function rowIdentityId(row = {}) {
       row.microFamilyId ||
       row.trueMicroFamilyId ||
       row.childTrueMicroFamilyId ||
+      row.base75ChildTrueMicroFamilyId ||
       row.parentTrueMicroFamilyId,
     row
   );
@@ -543,6 +796,7 @@ function inferTradeSide(row = {}) {
     row.microFamilyId,
     row.trueMicroFamilyId,
     row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
     row.microMicroFamilyId,
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId,
@@ -607,6 +861,7 @@ function classifyTaxonomy(row = {}, classified = {}) {
     row.trueMicroMicroFamilyId,
     row.exactMicroMicroFamilyId,
     row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
     row.trueMicroFamilyId,
     row.microFamilyId,
     row.learningMicroFamilyId,
@@ -712,6 +967,7 @@ function buildExecutionParts(row = {}, classified = {}, taxonomy = {}) {
 
 function buildMicroMicroFromChildAndRow(child, row = {}) {
   const parsed = parseShortTaxonomyMicroId(child);
+
   if (!parsed.isChild) return '';
 
   const direct = microMicroIdFrom(
@@ -763,11 +1019,15 @@ function enrichWithMicroFamily(row = {}) {
 
   try {
     macro = classifyMacroFamily(row) || {};
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   try {
     micro = classifyMicroFamily(row) || {};
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   const classified = {
     ...macro,
@@ -799,6 +1059,7 @@ function enrichWithMicroFamily(row = {}) {
     microFamilyId: taxonomy.childId,
     trueMicroFamilyId: taxonomy.childId,
     childTrueMicroFamilyId: taxonomy.childId,
+    base75ChildTrueMicroFamilyId: taxonomy.childId,
 
     parentTrueMicroFamilyId: taxonomy.parentId,
     coarseMicroFamilyId: taxonomy.parentId,
@@ -913,14 +1174,14 @@ function applyLayerIdentity(row = {}, id = '') {
   const layerSchema = schemaFor(learningId);
 
   const trueMicroFamilyId = isMicroMicro
-    ? child
+    ? mm
     : learningId;
 
   const microFamilyId = learningId;
   const learningMicroFamilyId = learningId;
 
   return flags({
-    ...row,
+    ...sanitizeStatsRow(row),
 
     id: learningId,
     key: learningId,
@@ -933,6 +1194,7 @@ function applyLayerIdentity(row = {}, id = '') {
     trueMicroFamilyId,
 
     childTrueMicroFamilyId: child || null,
+    base75ChildTrueMicroFamilyId: child || null,
     parentTrueMicroFamilyId: parent || null,
 
     coarseMicroFamilyId: parent || null,
@@ -959,7 +1221,7 @@ function applyLayerIdentity(row = {}, id = '') {
 
     schema: layerSchema,
     microFamilySchema: layerSchema,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: isMicroMicro ? MICRO_MICRO_SCHEMA : TRUE_MICRO_SCHEMA,
     childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
@@ -1016,28 +1278,14 @@ function applyLayerIdentity(row = {}, id = '') {
   });
 }
 
-function layerIds(row = {}) {
-  const child = childIdFrom(
-    row.childTrueMicroFamilyId ||
-      row.trueMicroFamilyId ||
-      row.microFamilyId ||
-      row.learningMicroFamilyId,
-    row
-  );
-
-  const parent = parentIdFrom(child, row);
-  const mm = buildMicroMicroFromChildAndRow(child, row);
-
-  return uniq([parent, child, mm]).filter(isLearningId);
-}
-
 function compactMicro(row = {}) {
   const id = rowIdentityId(row);
+
   if (!id) return null;
 
   const baseLayered = applyLayerIdentity(
     {
-      ...row,
+      ...sanitizeStatsRow(row),
       id,
       key: id,
       rowId: id,
@@ -1048,7 +1296,7 @@ function compactMicro(row = {}) {
 
   if (!baseLayered) return null;
 
-  const refreshed = refreshStats(baseLayered);
+  const refreshed = safeRefreshStats(baseLayered);
   const layered = applyLayerIdentity(
     {
       ...refreshed,
@@ -1087,7 +1335,7 @@ function compactMicro(row = {}) {
       ? layered.examples.slice(-8)
       : [],
     recentOutcomes: Array.isArray(layered.recentOutcomes)
-      ? layered.recentOutcomes.slice(-8)
+      ? layered.recentOutcomes.slice(-40).map(slimOutcome)
       : [],
 
     minCompletedForActiveLearning: min,
@@ -1098,32 +1346,56 @@ function compactMicro(row = {}) {
   });
 }
 
+function extractMicrosPayload(raw = {}) {
+  if (!raw) return {};
+  if (Array.isArray(raw)) return raw;
+
+  if (raw.rows && typeof raw.rows === 'object') return raw.rows;
+  if (raw.micros && typeof raw.micros === 'object') return raw.micros;
+  if (raw.microFamilies && typeof raw.microFamilies === 'object' && !Number.isFinite(Number(raw.microFamilies))) {
+    return raw.microFamilies;
+  }
+
+  return raw;
+}
+
 function normalizeMicros(micros = {}) {
-  return Object.fromEntries(
-    Object.entries(micros || {})
-      .map(([key, row]) => {
-        if (!row) return null;
+  const input = extractMicrosPayload(micros);
+  const entries = Array.isArray(input)
+    ? input.map((row, index) => [String(row?.id || row?.key || index), row])
+    : Object.entries(input || {});
 
-        const id = normalizeLearningFamilyId(key, row) || rowIdentityId(row);
-        if (!id) return null;
+  const out = {};
 
-        const compact = compactMicro({
-          ...row,
-          id,
-          key: id,
-          rowId: id,
-          learningMicroFamilyId: id
-        });
+  for (const [key, row] of entries) {
+    try {
+      if (!row || typeof row !== 'object') continue;
 
-        return compact && isShort(compact) ? [id, compact] : null;
-      })
-      .filter(Boolean)
-  );
+      const id = normalizeLearningFamilyId(key, row) || rowIdentityId(row);
+      if (!id) continue;
+
+      const compact = compactMicro({
+        ...row,
+        id,
+        key: id,
+        rowId: id,
+        learningMicroFamilyId: id
+      });
+
+      if (compact && isShort(compact)) {
+        out[id] = compact;
+      }
+    } catch {
+      // Skip corrupt row instead of killing the entire admin endpoint.
+    }
+  }
+
+  return out;
 }
 
 function compareRows(a = {}, b = {}) {
-  const ar = refreshStats(a);
-  const br = refreshStats(b);
+  const ar = safeRefreshStats(a);
+  const br = safeRefreshStats(b);
 
   const layerScore = (x) => {
     const id = rowIdentityId(x);
@@ -1165,9 +1437,26 @@ function topObject(micros = {}, limit = 300) {
 
 export async function getWeekMicros(weekKey = PERSISTENT_LEARNING_KEY) {
   const raw = await readJsonAny(getWeekMicrosBaseKey(weekKey), null).catch(() => null);
-  if (!raw) return {};
 
-  return normalizeMicros(raw.rows || raw.micros || raw || {});
+  if (raw) {
+    const normalized = normalizeMicros(extractMicrosPayload(raw));
+
+    if (Object.keys(normalized).length) {
+      return normalized;
+    }
+  }
+
+  const topRaw = await readJsonAny(getWeekMicrosTopKey(weekKey), null).catch(() => null);
+
+  if (topRaw) {
+    const topNormalized = normalizeMicros(extractMicrosPayload(topRaw));
+
+    if (Object.keys(topNormalized).length) {
+      return topNormalized;
+    }
+  }
+
+  return {};
 }
 
 export async function getWeekTopMicros(weekKey = PERSISTENT_LEARNING_KEY, { limit = 25 } = {}) {
@@ -1301,7 +1590,7 @@ function getOrCreateMicro(micros, classified, learningId) {
 
   const layered = applyLayerIdentity({
     ...classified,
-    ...micros[id],
+    ...sanitizeStatsRow(micros[id]),
     id,
     key: id,
     rowId: id,
@@ -1355,7 +1644,9 @@ async function claim(redis, key, ttlSec, type) {
           type
         };
       }
-    } catch {}
+    } catch {
+      // try next
+    }
   }
 
   const existing = await redis.get(key).catch(() => null);
@@ -1440,6 +1731,7 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
       const layerRow = applyLayerIdentity({
         ...row,
         childTrueMicroFamilyId: child,
+        base75ChildTrueMicroFamilyId: child,
         parentTrueMicroFamilyId: parent,
         relatedMicroMicroFamilyId: mm,
         source: 'VIRTUAL',
@@ -1467,7 +1759,7 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
       Object.assign(
         micro,
         applyLayerIdentity(
-          refreshStats(micro),
+          safeRefreshStats(micro),
           id
         )
       );
@@ -1485,6 +1777,7 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
       trueMicroFamilyId: child,
       microFamilyId: child,
       childTrueMicroFamilyId: child,
+      base75ChildTrueMicroFamilyId: child,
       parentTrueMicroFamilyId: parent,
 
       microMicroFamilyId: mm,
@@ -1563,6 +1856,7 @@ function hasMicroIds(row = {}) {
     row.trueMicroFamilyId ||
       row.microFamilyId ||
       row.childTrueMicroFamilyId ||
+      row.base75ChildTrueMicroFamilyId ||
       row.microMicroFamilyId,
     row
   ));
@@ -1579,6 +1873,7 @@ function ensureOutcomeIds(outcome = {}) {
     enriched.trueMicroFamilyId ||
       enriched.microFamilyId ||
       enriched.childTrueMicroFamilyId ||
+      enriched.base75ChildTrueMicroFamilyId ||
       enriched.microMicroFamilyId,
     enriched
   );
@@ -1594,6 +1889,7 @@ function ensureOutcomeIds(outcome = {}) {
     trueMicroFamilyId: child,
     microFamilyId: child,
     childTrueMicroFamilyId: child,
+    base75ChildTrueMicroFamilyId: child,
 
     parentTrueMicroFamilyId: parent,
     coarseMicroFamilyId: parent,
@@ -1770,27 +2066,36 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
   const netR = n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0);
 
   const normalizedOutcome = flags({
-    ...row,
-    source,
-    outcomeSource: source,
-    weekKey,
+    ...slimOutcome({
+      ...row,
+      source,
+      outcomeSource: source,
+      weekKey,
 
-    netR,
-    shortNetR: netR,
-    exitR: netR,
-    realizedNetR: netR,
-    realizedR: netR,
-    r: netR,
+      netR,
+      shortNetR: netR,
+      exitR: netR,
+      realizedNetR: netR,
+      realizedR: netR,
+      r: netR,
 
-    costR: n(row.costR ?? row.avgCostR, 0),
-    avgCostR: n(row.avgCostR ?? row.costR, 0),
+      costR: n(row.costR ?? row.avgCostR, 0),
+      avgCostR: n(row.avgCostR ?? row.costR, 0),
 
-    win: netR > 0,
-    loss: netR < 0,
-    flat: netR === 0,
+      win: netR > 0,
+      loss: netR < 0,
+      flat: netR === 0,
 
-    directSL: Boolean(row.directSL || row.directToSL),
-    directToSL: Boolean(row.directSL || row.directToSL)
+      directSL: Boolean(row.directSL || row.directToSL),
+      directToSL: Boolean(row.directSL || row.directToSL)
+    }),
+
+    childTrueMicroFamilyId: child,
+    base75ChildTrueMicroFamilyId: child,
+    parentTrueMicroFamilyId: parent,
+    microMicroFamilyId: mm,
+    trueMicroMicroFamilyId: mm,
+    exactMicroMicroFamilyId: mm
   });
 
   for (const id of ids) {
@@ -1810,6 +2115,7 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     const layerRow = applyLayerIdentity({
       ...normalizedOutcome,
       childTrueMicroFamilyId: child,
+      base75ChildTrueMicroFamilyId: child,
       parentTrueMicroFamilyId: parent,
       relatedMicroMicroFamilyId: mm
     }, id);
@@ -1833,7 +2139,7 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     Object.assign(
       micro,
       applyLayerIdentity(
-        refreshStats(micro),
+        safeRefreshStats(micro),
         id
       )
     );
@@ -1859,6 +2165,7 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     trueMicroFamilyId: child,
     microFamilyId: child,
     childTrueMicroFamilyId: child,
+    base75ChildTrueMicroFamilyId: child,
     parentTrueMicroFamilyId: parent,
 
     microMicroFamilyId: mm,
@@ -1955,8 +2262,10 @@ export async function getWeeklyTradingCandidates(
         microMicroFamilyId: id,
         trueMicroMicroFamilyId: id,
         exactMicroMicroFamilyId: id,
+
         childTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
-        trueMicroFamilyId: parsed.childTrueMicroFamilyId,
+        base75ChildTrueMicroFamilyId: parsed.childTrueMicroFamilyId,
+        trueMicroFamilyId: id,
         parentTrueMicroFamilyId: parsed.parentTrueMicroFamilyId,
 
         discordMatchId: id,
