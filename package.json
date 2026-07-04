@@ -12,7 +12,7 @@
     "trace:scanner": "node --trace-deprecation scripts/runScanner.js",
     "trace:trade": "node --trace-deprecation scripts/runTradeSystem.js",
     "check:node": "node -v",
-    "check:syntax": "node --check src/trade/tradeSystem.js && node --check api/trade/run.js && find src api scripts -name '*.js' -exec node --check {} \\;",
+    "check:syntax": "set -e; for file in $(find src api scripts -name '*.js' -type f | sort); do echo \"CHECKING_SYNTAX:$file\"; node --check \"$file\"; done",
     "build": "npm run check:syntax"
   },
   "dependencies": {
