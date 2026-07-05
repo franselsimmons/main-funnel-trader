@@ -45,7 +45,9 @@ const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY
 const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V5_MM_IDENTITY_RUNTIME_GATE';
 const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V4';
 
-const ACTIVE_ROTATION_RUNTIME_GATE_VERSION = 'SHORT_ACTIVE_ROTATION_RUNTIME_NET_EDGE_GATE_V1';
+const ACTIVE_ROTATION_RUNTIME_GATE_VERSION = 'SHORT_ACTIVE_ROTATION_RUNTIME_NET_EDGE_GATE_V2_AUTO_BEST_MICRO_MICRO';
+const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MM_AUTO_BEST_RUNTIME_NET_EDGE_GATE_V1_INLINE_ROTATION_ENGINE';
+const MICRO_MICRO_BEST_SELECTOR_VERSION = 'SHORT_MM_AUTO_BEST_SELECTOR_NET_EDGE_FIRST_V1_INLINE_ROTATION_ENGINE';
 
 const EXECUTION_MICRO_SUFFIX = 'XR';
 
@@ -464,18 +466,25 @@ function modeFlags() {
     adaptiveUiVersion: ADAPTIVE_UI_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
 
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+    automaticBestMicroMicroFamilies: true,
+    automaticBestMicroMicroRanking: true,
+    rankingPrinciple: 'PASSED_NET_EDGE_FIRST_OBSERVING_SECOND_REJECTED_AND_POLICY_BLOCKED_BOTTOM',
+
     activeRotationRuntimeGateRequired: true,
     activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
     activeRotationBlocksNegativeNetEdge: true,
     activeRotationFiltersBlockedRedisSelections: true,
 
     statusRules: {
-      MICRO_MICRO_OBSERVING: 'completed == 0',
-      MICRO_MICRO_EARLY: `completed > 0 && completed < ${DEFAULT_MIN_MICRO_MICRO_COMPLETED}`,
-      MICRO_MICRO_ACTIVE: `completed >= ${DEFAULT_MIN_MICRO_MICRO_COMPLETED}`
+      OBSERVING: `completed < ${DEFAULT_MIN_MICRO_MICRO_COMPLETED}`,
+      PASSED: `completed >= ${DEFAULT_MIN_MICRO_MICRO_COMPLETED} && avgR > 0 && totalR > 0 && profitFactor > 1`,
+      REJECTED: `completed >= ${DEFAULT_MIN_MICRO_MICRO_COMPLETED} && net-edge failed`,
+      POLICY_BLOCKED: 'E_WEAK_CONTRA || CURRENTFIT_MISFIT || non-short || non-exact-micro-micro'
     },
 
-    defaultRanking: 'cleanMeasurement|adaptiveScore|fairWinrate|totalR|avgR|profitFactor|directSL|avgCostR|completed',
+    defaultRanking: 'microMicroStatus|netEdgeScore|avgR|totalR|profitFactor|directSL|avgCostR|completed',
     rankingUsesAdaptiveScore: true,
     rankingUsesFairWinrate: true,
     rankingUsesTotalR: true,
@@ -1504,11 +1513,14 @@ function avgR(row = {}) {
   const completed = completedCount(row);
   if (completed <= 0) return 0;
 
+  const t = totalR(row);
+
+  if (t !== 0) return t / completed;
   if (hasValue(row.avgNetR)) return num(row.avgNetR, 0);
   if (hasValue(row.netAvgR)) return num(row.netAvgR, 0);
   if (hasValue(row.avgR)) return num(row.avgR, 0);
 
-  return totalR(row) / completed;
+  return 0;
 }
 
 function totalCostR(row = {}) {
@@ -1949,20 +1961,14 @@ function adaptiveSelectionScore(row = {}) {
 }
 
 function rotationEligibilityTier(row = {}) {
-  const completed = completedCount(row);
-  const observed = observationSample(row);
+  const gate = microMicroRuntimeGate(row);
 
-  if (completed >= minMicroMicroCompleted()) return 'MICRO_MICRO';
-  if (completed > 0 && allowSoftRotationFallback()) return 'MICRO_MICRO_SOFT';
-  if (observed > 0 && allowObservationRotationFallback()) return 'OBSERVATION';
-  if (allowRawRotationFallback()) return 'RAW';
+  if (gate.status === 'PASSED') return 'MICRO_MICRO';
+  if (gate.status === 'OBSERVING') return 'OBSERVATION';
+  if (gate.status === 'REJECTED') return 'REJECTED';
+  if (gate.status === 'POLICY_BLOCKED') return 'POLICY_BLOCKED';
 
   return 'NONE';
-}
-
-function isEligibleForCandidate(row = {}) {
-  if (!isTrueMicroFamily(row)) return false;
-  return rotationEligibilityTier(row) !== 'NONE';
 }
 
 function confirmationProfileOf(row = {}, id = '') {
@@ -1975,11 +1981,16 @@ function confirmationProfileOf(row = {}, id = '') {
   );
 }
 
-function activeRotationRuntimeGate(row = {}) {
-  const id = rowId(row, { allowProxy: false }) || explicitMicroMicroIdFrom(row);
+function microMicroRuntimeGate(row = {}) {
+  const id =
+    rowId(row, { allowProxy: false }) ||
+    explicitMicroMicroIdFrom(row) ||
+    rowId(row, { allowProxy: true });
+
   const parsed = parseShortTaxonomyMicroId(id);
 
   const completed = completedCount(row);
+  const observed = observationSample(row);
   const averageR = avgR(row);
   const pnlR = totalR(row);
   const pf = profitFactor(row);
@@ -2001,20 +2012,140 @@ function activeRotationRuntimeGate(row = {}) {
     confirmationProfileOk: profile !== 'E_WEAK_CONTRA'
   };
 
-  const approved = Object.values(checks).every(Boolean);
-  const reasons = Object.entries(checks)
-    .filter(([, ok]) => !ok)
-    .map(([key]) => key);
+  const policyReasons = [];
+
+  if (!checks.exactMicroMicroOk) policyReasons.push('EXACT_MICRO_MICRO_ID_REQUIRED');
+  if (!checks.shortOnlyOk) policyReasons.push('SHORT_ONLY_REQUIRED');
+  if (!checks.confirmationProfileOk) policyReasons.push('E_WEAK_CONTRA_BLOCKED');
+  if (!checks.currentFitOk) policyReasons.push('CURRENTFIT_MISFIT_BLOCKED');
+
+  if (policyReasons.length > 0) {
+    return {
+      version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+      selectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+      status: 'POLICY_BLOCKED',
+      eligible: false,
+      approved: false,
+      blocked: true,
+      allowVirtualEntry: false,
+      allowDiscord: false,
+      reason: policyReasons[0],
+      firstReason: policyReasons[0],
+      reasons: policyReasons,
+      checks,
+      id: parsed.trueMicroFamilyId || id || null,
+      parsed,
+      completed,
+      observed,
+      minCompleted: activeGateMinCompleted(),
+      avgR: averageR,
+      minAvgR: activeGateMinAvgR(),
+      totalR: pnlR,
+      minTotalR: activeGateMinTotalR(),
+      profitFactor: pf,
+      minProfitFactor: activeGateMinProfitFactor(),
+      avgCostR: cost,
+      maxAvgCostR: activeGateMaxAvgCostR(),
+      directSLPct: slPct,
+      maxDirectSLPct: activeGateMaxDirectSLPct(),
+      currentFit: fit,
+      confirmationProfile: profile
+    };
+  }
+
+  if (completed < activeGateMinCompleted()) {
+    return {
+      version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+      selectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+      status: 'OBSERVING',
+      eligible: false,
+      approved: false,
+      blocked: false,
+      allowVirtualEntry: true,
+      allowDiscord: false,
+      reason: `COMPLETED_BELOW_${activeGateMinCompleted()}`,
+      firstReason: `COMPLETED_BELOW_${activeGateMinCompleted()}`,
+      reasons: [`COMPLETED_BELOW_${activeGateMinCompleted()}`],
+      checks,
+      id: parsed.trueMicroFamilyId || id || null,
+      parsed,
+      completed,
+      observed,
+      minCompleted: activeGateMinCompleted(),
+      avgR: averageR,
+      minAvgR: activeGateMinAvgR(),
+      totalR: pnlR,
+      minTotalR: activeGateMinTotalR(),
+      profitFactor: pf,
+      minProfitFactor: activeGateMinProfitFactor(),
+      avgCostR: cost,
+      maxAvgCostR: activeGateMaxAvgCostR(),
+      directSLPct: slPct,
+      maxDirectSLPct: activeGateMaxDirectSLPct(),
+      currentFit: fit,
+      confirmationProfile: profile
+    };
+  }
+
+  const failedReasons = [];
+
+  if (!checks.avgROk) failedReasons.push('AVG_R_NET_NOT_POSITIVE');
+  if (!checks.totalROk) failedReasons.push('TOTAL_R_NET_NOT_POSITIVE');
+  if (!checks.profitFactorOk) failedReasons.push('PROFIT_FACTOR_NOT_ABOVE_1');
+  if (!checks.avgCostROk) failedReasons.push('AVG_COST_R_TOO_HIGH');
+  if (!checks.directSLOk) failedReasons.push('DIRECT_SL_PCT_TOO_HIGH');
+
+  if (failedReasons.length > 0) {
+    return {
+      version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+      selectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+      status: 'REJECTED',
+      eligible: false,
+      approved: false,
+      blocked: true,
+      allowVirtualEntry: false,
+      allowDiscord: false,
+      reason: failedReasons[0],
+      firstReason: failedReasons[0],
+      reasons: failedReasons,
+      checks,
+      id: parsed.trueMicroFamilyId || id || null,
+      parsed,
+      completed,
+      observed,
+      minCompleted: activeGateMinCompleted(),
+      avgR: averageR,
+      minAvgR: activeGateMinAvgR(),
+      totalR: pnlR,
+      minTotalR: activeGateMinTotalR(),
+      profitFactor: pf,
+      minProfitFactor: activeGateMinProfitFactor(),
+      avgCostR: cost,
+      maxAvgCostR: activeGateMaxAvgCostR(),
+      directSLPct: slPct,
+      maxDirectSLPct: activeGateMaxDirectSLPct(),
+      currentFit: fit,
+      confirmationProfile: profile
+    };
+  }
 
   return {
-    approved,
-    blocked: !approved,
+    version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    selectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+    status: 'PASSED',
+    eligible: true,
+    approved: true,
+    blocked: false,
+    allowVirtualEntry: true,
+    allowDiscord: true,
+    reason: 'PASSED_NET_EDGE_GATE',
+    firstReason: null,
+    reasons: [],
     checks,
-    reasons,
-    firstReason: reasons[0] || null,
-
     id: parsed.trueMicroFamilyId || id || null,
+    parsed,
     completed,
+    observed,
     minCompleted: activeGateMinCompleted(),
     avgR: averageR,
     minAvgR: activeGateMinAvgR(),
@@ -2027,9 +2158,126 @@ function activeRotationRuntimeGate(row = {}) {
     directSLPct: slPct,
     maxDirectSLPct: activeGateMaxDirectSLPct(),
     currentFit: fit,
-    confirmationProfile: profile,
-    version: ACTIVE_ROTATION_RUNTIME_GATE_VERSION
+    confirmationProfile: profile
   };
+}
+
+function activeRotationRuntimeGate(row = {}) {
+  const gate = microMicroRuntimeGate(row);
+
+  return {
+    ...gate,
+    approved: gate.status === 'PASSED',
+    blocked: gate.status !== 'PASSED',
+    eligible: gate.status === 'PASSED',
+    version: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION
+  };
+}
+
+function microMicroStatusRank(row = {}) {
+  const gate = microMicroRuntimeGate(row);
+
+  if (gate.status === 'PASSED') return 4;
+  if (gate.status === 'OBSERVING') return 3;
+  if (gate.status === 'REJECTED') return 2;
+  if (gate.status === 'POLICY_BLOCKED') return 1;
+
+  return 0;
+}
+
+function netEdgeScore(row = {}) {
+  const gate = microMicroRuntimeGate(row);
+  const reliability = sampleReliability(gate.completed, 100);
+  const cappedPf = Math.min(Math.max(0, gate.profitFactor), 10);
+
+  const statusBoost =
+    gate.status === 'PASSED'
+      ? 100000
+      : gate.status === 'OBSERVING'
+        ? 1000
+        : gate.status === 'REJECTED'
+          ? -100000
+          : gate.status === 'POLICY_BLOCKED'
+            ? -200000
+            : 0;
+
+  return (
+    statusBoost +
+    gate.avgR * 120 +
+    gate.totalR * 1.5 +
+    cappedPf * 12 +
+    reliability * 25 +
+    adaptiveSelectionScore(row) * 0.15 -
+    gate.avgCostR * 45 -
+    gate.directSLPct * 90
+  );
+}
+
+function compareBestMicroMicroRows(a = {}, b = {}) {
+  const ga = microMicroRuntimeGate(a);
+  const gb = microMicroRuntimeGate(b);
+
+  return (
+    microMicroStatusRank(b) - microMicroStatusRank(a) ||
+    netEdgeScore(b) - netEdgeScore(a) ||
+    cleanMeasurementScore(b) - cleanMeasurementScore(a) ||
+    gb.avgR - ga.avgR ||
+    gb.totalR - ga.totalR ||
+    gb.profitFactor - ga.profitFactor ||
+    ga.avgCostR - gb.avgCostR ||
+    ga.directSLPct - gb.directSLPct ||
+    gb.completed - ga.completed ||
+    gb.observed - ga.observed ||
+    String(rowId(a)).localeCompare(String(rowId(b)))
+  );
+}
+
+function compareAdaptiveRows(a = {}, b = {}) {
+  return compareBestMicroMicroRows(a, b);
+}
+
+function sortAdaptiveRows(rows = []) {
+  return [...rows].sort(compareAdaptiveRows);
+}
+
+function runtimeGateSummary(rows = []) {
+  const summary = {
+    version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    selectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+    total: 0,
+    passed: 0,
+    observing: 0,
+    rejected: 0,
+    policyBlocked: 0,
+    blocked: 0,
+    discordEligible: 0,
+    virtualEntryAllowed: 0,
+    reasonCounts: {}
+  };
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const gate = microMicroRuntimeGate(row);
+    summary.total += 1;
+
+    if (gate.status === 'PASSED') summary.passed += 1;
+    if (gate.status === 'OBSERVING') summary.observing += 1;
+    if (gate.status === 'REJECTED') summary.rejected += 1;
+    if (gate.status === 'POLICY_BLOCKED') summary.policyBlocked += 1;
+    if (gate.blocked) summary.blocked += 1;
+    if (gate.allowDiscord) summary.discordEligible += 1;
+    if (gate.allowVirtualEntry) summary.virtualEntryAllowed += 1;
+
+    const reason = gate.reason || 'UNKNOWN';
+    summary.reasonCounts[reason] = (summary.reasonCounts[reason] || 0) + 1;
+  }
+
+  return summary;
+}
+
+function isEligibleForCandidate(row = {}) {
+  if (!isTrueMicroFamily(row)) return false;
+  return microMicroRuntimeGate(row).status === 'PASSED';
 }
 
 function applyActiveRuntimeGateFields(row = {}) {
@@ -2037,6 +2285,29 @@ function applyActiveRuntimeGateFields(row = {}) {
 
   return {
     ...row,
+
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+    microMicroRuntimeGate: gate,
+    microMicroStatus: gate.status,
+    microMicroRuntimeStatus: gate.status,
+    microMicroRuntimeEligible: gate.eligible,
+    microMicroRuntimeBlocked: gate.blocked,
+    microMicroRuntimeReason: gate.reason,
+    microMicroRuntimeReasons: gate.reasons,
+
+    eligibleForBestList: gate.status === 'PASSED',
+    observingForLearning: gate.status === 'OBSERVING',
+    rejectedForLearning: gate.status === 'REJECTED',
+    policyBlockedForLearning: gate.status === 'POLICY_BLOCKED',
+
+    allowVirtualEntry: gate.allowVirtualEntry,
+    virtualEntryAllowedByMicroMicroGate: gate.allowVirtualEntry,
+    virtualEntryBlockedByMicroMicroGate: !gate.allowVirtualEntry,
+    virtualEntryBlockedReason: gate.allowVirtualEntry ? null : gate.reason,
+
+    netEdgeScore: round(netEdgeScore(row), 4),
+    bestMicroMicroScore: round(netEdgeScore(row), 4),
 
     runtimeGateApproved: gate.approved,
     runtimeDiscordGateApproved: gate.approved,
@@ -2050,33 +2321,13 @@ function applyActiveRuntimeGateFields(row = {}) {
     activeRotationRuntimeGateChecks: gate.checks,
     activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
 
-    discordActivationEligible: gate.approved,
-    discordActivationBlocked: gate.blocked,
-    discordActivationBlockedReason: gate.firstReason,
+    discordActivationEligible: gate.allowDiscord,
+    discordActivationBlocked: !gate.allowDiscord,
+    discordActivationReason: gate.allowDiscord ? 'PASSED_NET_EDGE_GATE' : gate.reason,
+    discordActivationBlockedReason: gate.allowDiscord ? null : gate.reason,
     discordActivationBlockedReasons: gate.reasons,
     discordActivationGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION
   };
-}
-
-function compareAdaptiveRows(a = {}, b = {}) {
-  return (
-    cleanMeasurementScore(b) - cleanMeasurementScore(a) ||
-    activeRotationRuntimeGate(b).approved - activeRotationRuntimeGate(a).approved ||
-    adaptiveSelectionScore(b) - adaptiveSelectionScore(a) ||
-    sampleAdjustedWinrate(b).score - sampleAdjustedWinrate(a).score ||
-    totalR(b) - totalR(a) ||
-    avgR(b) - avgR(a) ||
-    profitFactor(b) - profitFactor(a) ||
-    directSLPct(a) - directSLPct(b) ||
-    avgCostR(a) - avgCostR(b) ||
-    completedCount(b) - completedCount(a) ||
-    observationSample(b) - observationSample(a) ||
-    String(rowId(a)).localeCompare(String(rowId(b)))
-  );
-}
-
-function sortAdaptiveRows(rows = []) {
-  return [...rows].sort(compareAdaptiveRows);
 }
 
 function shortRiskGeometry(row = {}) {
@@ -2135,6 +2386,7 @@ function compactRotationRow(row = {}, rank = 0) {
   const fitLabel = runtimeCurrentFitLabel(row);
   const risk = shortRiskGeometry(row);
   const schema = schemaForId(id);
+  const runtimeGate = microMicroRuntimeGate(row);
 
   const baseRow = {
     rank,
@@ -2181,15 +2433,15 @@ function compactRotationRow(row = {}, rank = 0) {
     parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
 
-    version: row.version || 'short-exact-micro-micro-rotation-v2-runtime-gated',
+    version: row.version || 'short-exact-micro-micro-rotation-v3-auto-best-runtime-gated',
 
     isTrueMicro: true,
     isChildTrueMicro: false,
     isMicroMicro: true,
     isLegacyMacro: false,
     isParentTrueMicro: false,
-    selectable: true,
-    selectableMicroMicro: true,
+    selectable: runtimeGate.status === 'PASSED',
+    selectableMicroMicro: runtimeGate.status === 'PASSED',
     selectable75Child: false,
     selectableParent: false,
 
@@ -2210,11 +2462,11 @@ function compactRotationRow(row = {}, rank = 0) {
     microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
     rotationEligibilityTier: tier,
-    rotationEligible: tier !== 'NONE',
-    hardEligible: tier === 'MICRO_MICRO',
-    softEligible: tier === 'MICRO_MICRO_SOFT',
-    observationEligible: tier === 'OBSERVATION',
-    rawEligible: tier === 'RAW',
+    rotationEligible: runtimeGate.status === 'PASSED',
+    hardEligible: runtimeGate.status === 'PASSED',
+    softEligible: false,
+    observationEligible: runtimeGate.status === 'OBSERVING',
+    rawEligible: false,
 
     learningStatus: status,
     status,
@@ -2281,7 +2533,7 @@ function compactRotationRow(row = {}, rank = 0) {
     adaptiveScore: round(adaptiveSelectionScore(row), 4),
 
     adaptiveScoreFormula:
-      'cleanMeasurement + adaptiveScore + fairWinrate + totalR + avgR + profitFactor + currentFit - directSL - avgCostR',
+      'PASSED first + netEdgeScore + avgR + totalR + profitFactor - directSL - avgCostR',
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -2458,7 +2710,8 @@ function buildRowsByMicroMicroId(rows = []) {
 function buildSelectionIndexes(microFamilies = []) {
   const rows = microFamilies
     .filter(Boolean)
-    .filter((row) => isSelectableMicroMicroId(row.trueMicroFamilyId || row.microMicroFamilyId));
+    .filter((row) => isSelectableMicroMicroId(row.trueMicroFamilyId || row.microMicroFamilyId))
+    .filter((row) => microMicroRuntimeGate(row).status === 'PASSED');
 
   const microMicroFamilyIds = uniqueStrings(
     rows.map((row) => row.trueMicroFamilyId || row.microMicroFamilyId)
@@ -2543,11 +2796,11 @@ function buildSelectionIndexes(microFamilies = []) {
 }
 
 function bestShortRow(rows = []) {
-  return sortAdaptiveRows(rows).find((row) => microSide(row) === TARGET_TRADE_SIDE) || null;
+  return sortAdaptiveRows(rows).find((row) => microSide(row) === TARGET_TRADE_SIDE && microMicroRuntimeGate(row).status === 'PASSED') || null;
 }
 
 function missingSides(rows = []) {
-  return rows.some((row) => microSide(row) === TARGET_TRADE_SIDE)
+  return rows.some((row) => microSide(row) === TARGET_TRADE_SIDE && microMicroRuntimeGate(row).status === 'PASSED')
     ? []
     : [TARGET_TRADE_SIDE];
 }
@@ -2561,32 +2814,43 @@ function buildRankingsFromRows(rows = []) {
 
   return {
     adaptive: compacted,
+    best: compacted,
+    passed: compacted.filter((row) => row.microMicroRuntimeStatus === 'PASSED'),
+    observing: compacted.filter((row) => row.microMicroRuntimeStatus === 'OBSERVING'),
+    rejected: compacted.filter((row) => row.microMicroRuntimeStatus === 'REJECTED' || row.microMicroRuntimeStatus === 'POLICY_BLOCKED'),
     balanced: compacted,
     winrate: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(b.fairWinrate, 0) - num(a.fairWinrate, 0) ||
       compareAdaptiveRows(a, b)
     )),
     totalR: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(b.totalR, 0) - num(a.totalR, 0) ||
       compareAdaptiveRows(a, b)
     )),
     avgR: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(b.avgR, 0) - num(a.avgR, 0) ||
       compareAdaptiveRows(a, b)
     )),
     directSL: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(a.directSLPct, 0) - num(b.directSLPct, 0) ||
       compareAdaptiveRows(a, b)
     )),
     observed: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(b.observationSample, 0) - num(a.observationSample, 0) ||
       compareAdaptiveRows(a, b)
     )),
     cost: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(a.avgCostR, 0) - num(b.avgCostR, 0) ||
       compareAdaptiveRows(a, b)
     )),
     currentFit: [...compacted].sort((a, b) => (
+      microMicroStatusRank(b) - microMicroStatusRank(a) ||
       num(b.currentFitScore, 0) - num(a.currentFitScore, 0) ||
       compareAdaptiveRows(a, b)
     ))
@@ -2658,13 +2922,14 @@ function selectRotationCandidates(rows = []) {
 
   return {
     selected,
-    eligible: candidates.filter((row) => rotationEligibilityTier(row) === 'MICRO_MICRO'),
-    softEligible: candidates.filter((row) => rotationEligibilityTier(row) === 'MICRO_MICRO_SOFT'),
-    observationEligible: candidates.filter((row) => rotationEligibilityTier(row) === 'OBSERVATION'),
-    rawFallback: candidates.filter((row) => rotationEligibilityTier(row) === 'RAW'),
-    usedSoftFallback: selected.some((row) => rotationEligibilityTier(row) === 'MICRO_MICRO_SOFT'),
-    usedObservationFallback: selected.some((row) => rotationEligibilityTier(row) === 'OBSERVATION'),
-    usedRawFallback: selected.some((row) => rotationEligibilityTier(row) === 'RAW'),
+    eligible: candidates.filter((row) => microMicroRuntimeGate(row).status === 'PASSED'),
+    softEligible: [],
+    observationEligible: rows.filter((row) => microMicroRuntimeGate(row).status === 'OBSERVING'),
+    rawFallback: [],
+    rejected: rows.filter((row) => ['REJECTED', 'POLICY_BLOCKED'].includes(microMicroRuntimeGate(row).status)),
+    usedSoftFallback: false,
+    usedObservationFallback: false,
+    usedRawFallback: false,
     missingSides: missingSides(selected)
   };
 }
@@ -2679,6 +2944,7 @@ function buildEmptyRotation({
   softEligible = [],
   observationEligible = [],
   rawFallback = [],
+  rejected = [],
   usedPreviousWeekMerge = false,
   usedPersistentLearningKey = false,
   primaryRows = 0,
@@ -2727,11 +2993,14 @@ function buildEmptyRotation({
     softEligibleCount: softEligible?.length || 0,
     observationEligibleCount: observationEligible?.length || 0,
     rawFallbackCount: rawFallback?.length || 0,
+    rejectedCount: rejected?.length || 0,
     rankedCount: rows.length,
     microCount: Object.keys(micros || {}).length,
     microMicroCount: rows.length,
     child75ContextRows: rows.filter((row) => Boolean(row.generatedMicroMicroFromChild75)).length,
     parentTrueMicroCount: 0,
+
+    microMicroRuntimeGateSummary: runtimeGateSummary(rows),
 
     primaryRows,
     previousRows,
@@ -2786,6 +3055,7 @@ export async function buildRotationFromWeek({
     softEligible,
     observationEligible,
     rawFallback,
+    rejected,
     usedSoftFallback,
     usedObservationFallback,
     usedRawFallback,
@@ -2803,19 +3073,21 @@ export async function buildRotationFromWeek({
       softEligible,
       observationEligible,
       rawFallback,
+      rejected,
       usedPreviousWeekMerge,
       usedPersistentLearningKey,
       primaryRows,
       previousRows,
       emptyReason: rows.length === 0
         ? 'NO_SHORT_SELECTABLE_MICRO_MICRO_FOUND'
-        : 'NO_SHORT_SELECTABLE_MICRO_MICRO_AVAILABLE_FOR_CANDIDATE_SNAPSHOT'
+        : 'NO_PASSED_SHORT_MICRO_MICRO_AVAILABLE_FOR_CANDIDATE_SNAPSHOT'
     });
   }
 
   const microFamilies = sortAdaptiveRows(selected)
     .map((row, index) => compactRotationRow(row, index + 1))
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((row) => microMicroRuntimeGate(row).status === 'PASSED');
 
   const indexes = buildSelectionIndexes(microFamilies);
   const meta = schemaMeta();
@@ -2859,11 +3131,14 @@ export async function buildRotationFromWeek({
     softEligibleCount: softEligible.length,
     observationEligibleCount: observationEligible.length,
     rawFallbackCount: rawFallback.length,
+    rejectedCount: rejected.length,
     rankedCount: rows.length,
     microCount: Object.keys(micros || {}).length,
     microMicroCount: rows.length,
     child75ContextRows: rows.filter((row) => Boolean(row.generatedMicroMicroFromChild75)).length,
     parentTrueMicroCount: 0,
+
+    microMicroRuntimeGateSummary: runtimeGateSummary(rows),
 
     primaryRows,
     previousRows,
@@ -2946,6 +3221,8 @@ export async function freezeWeeklyRotation({
     candidateMicroMicroFamilies: rotation.microMicroFamilyIds.length,
     candidateParentTrueMicroFamilies: rotation.parentTrueMicroFamilyIds.length,
 
+    microMicroRuntimeGateSummary: rotation.microMicroRuntimeGateSummary || null,
+
     missingSides: rotation.missingSides || [],
     bestShort: rotation.bestShort?.microFamilyId || null,
     bestLong: null
@@ -2986,6 +3263,8 @@ export async function freezeWeeklyRotation({
     candidateChildTrueMicroFamilies: rotation.childTrueMicroFamilyIds.length,
     candidateMicroMicroFamilies: rotation.microMicroFamilyIds.length,
     candidateParentTrueMicroFamilies: rotation.parentTrueMicroFamilyIds.length,
+
+    microMicroRuntimeGateSummary: rotation.microMicroRuntimeGateSummary || null,
 
     missingSides: rotation.missingSides || [],
     bestShort: rotation.bestShort,
@@ -3111,8 +3390,9 @@ function sanitizeActiveRotation(rotation = {}, {
     if (!gate.approved) {
       rejectedRows.push({
         id,
-        reason: gate.firstReason || 'ACTIVE_ROTATION_RUNTIME_GATE_BLOCKED',
+        reason: gate.firstReason || gate.reason || 'ACTIVE_ROTATION_RUNTIME_GATE_BLOCKED',
         reasons: gate.reasons,
+        status: gate.status,
         gate
       });
       continue;
@@ -3170,6 +3450,8 @@ function sanitizeActiveRotation(rotation = {}, {
     filteredBlockedMicroMicroRows: rejectedRows,
     activeRotationRuntimeGateRequired: true,
     activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateSummary: runtimeGateSummary([...sortedRows, ...rejectedRows.map((row) => row.gate || row)]),
     activeRotationFilteredBlockedRedisSelections: rejectedRows.length > 0,
     activeRotationBlockedFilteredCount: rejectedRows.length,
     activeRotationApprovedCount: sortedRows.length
@@ -3236,6 +3518,7 @@ export async function getActiveRotation() {
     raw?.microMicroFamilySchema !== MICRO_MICRO_SCHEMA ||
     raw?.discordSelectionRule !== SELECTION_EXACT_MICRO_MICRO_ONLY ||
     raw?.manualSelectionMatchMode !== 'EXACT_MICRO_MICRO_ID' ||
+    raw?.microMicroRuntimeGateVersion !== MICRO_MICRO_RUNTIME_GATE_VERSION ||
     sanitized.activeRotationFilteredBlockedRedisSelections === true ||
     uniqueStrings(raw?.microMicroFamilyIds || []).length !== sanitized.microMicroFamilyIds.length;
 
@@ -3271,7 +3554,6 @@ export async function getActiveRotationSet() {
 }
 
 export async function getActiveMacroRotationSet() {
-  // Bewust leeg: parent/macro matches mogen Discord nooit triggeren.
   return new Set();
 }
 
@@ -3351,8 +3633,8 @@ function buildManualOnlyRow(id, rank = 1) {
     isChildTrueMicro: false,
     isMicroMicro: true,
     isLegacyMacro: false,
-    selectable: true,
-    selectableMicroMicro: true,
+    selectable: false,
+    selectableMicroMicro: false,
     manualOnly: true,
     unverifiedManualId: true,
 
@@ -3386,6 +3668,14 @@ function buildManualOnlyRow(id, rank = 1) {
     totalCostR: 0,
     avgCostR: 0,
     adaptiveScore: 0,
+    netEdgeScore: -999999,
+
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: 'OBSERVING',
+    microMicroRuntimeStatus: 'OBSERVING',
+    microMicroRuntimeEligible: false,
+    microMicroRuntimeBlocked: false,
+    microMicroRuntimeReason: `COMPLETED_BELOW_${activeGateMinCompleted()}`,
 
     runtimeGateApproved: false,
     runtimeDiscordGateApproved: false,
@@ -3393,7 +3683,7 @@ function buildManualOnlyRow(id, rank = 1) {
     exitAlertRuntimeGateApproved: false,
     activeRotationRuntimeGateApproved: false,
     activeRotationRuntimeGateBlocked: true,
-    activeRotationRuntimeGateReason: 'completedOk',
+    activeRotationRuntimeGateReason: `COMPLETED_BELOW_${activeGateMinCompleted()}`,
     activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
 
     definitionParts: [
@@ -3561,7 +3851,7 @@ function resolveManualSelection({
         id: requestedId,
         normalizedId: parsed.trueMicroFamilyId,
         side,
-        reason: `RUNTIME_GATE_BLOCKED_${gate.firstReason || 'UNKNOWN'}`,
+        reason: `RUNTIME_GATE_BLOCKED_${gate.firstReason || gate.reason || 'UNKNOWN'}`,
         gate
       });
       continue;
@@ -3737,9 +4027,9 @@ export async function activateSelectedMicroFamilies(options = {}) {
     liveSelectable: indexes.microMicroFamilyIds.length > 0,
 
     usedLegacyFallback: false,
-    usedSoftFallback: microFamilies.some((row) => row.rotationEligibilityTier === 'MICRO_MICRO_SOFT'),
-    usedObservationFallback: microFamilies.some((row) => row.rotationEligibilityTier === 'OBSERVATION'),
-    usedRawFallback: microFamilies.some((row) => row.rotationEligibilityTier === 'RAW'),
+    usedSoftFallback: false,
+    usedObservationFallback: false,
+    usedRawFallback: false,
     usedPreviousWeekMerge,
     usedPersistentLearningKey,
 
@@ -3778,7 +4068,8 @@ export async function activateSelectedMicroFamilies(options = {}) {
     skipped: false,
     changed: true,
     activePreserved: false,
-    activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION
+    activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION
   };
 
   await setJson(redis, activeRotationKey(), finalActive);
@@ -3926,6 +4217,11 @@ export async function getRotationDashboard() {
     manualOnly: true,
     autoRotationActivationDisabled: true,
     activeLiveSelectable: Boolean(active?.liveSelectable),
+
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+    activeMicroMicroRuntimeGateSummary: active?.microMicroRuntimeGateSummary || null,
+    nextMicroMicroRuntimeGateSummary: next?.microMicroRuntimeGateSummary || null,
 
     activeRotationRuntimeGateRequired: true,
     activeRotationRuntimeGateVersion: ACTIVE_ROTATION_RUNTIME_GATE_VERSION,
