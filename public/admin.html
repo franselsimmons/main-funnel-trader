@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SHORT Micro-Micro Learning Admin</title>
+  <title>SHORT Micro-Micro MarketWeather Admin</title>
 
   <style>
     :root {
@@ -335,8 +335,13 @@
     .pill.mm { background: #ede9fe; color: #5b21b6; }
     .pill.passed { background: #dcfce7; color: #166534; }
     .pill.rejected { background: #fee2e2; color: #991b1b; }
+    .pill.veto { background: #fef2f2; color: #7f1d1d; border: 1px solid #fca5a5; }
     .pill.blocked { background: #fecaca; color: #7f1d1d; }
     .pill.best { background: #0f172a; color: white; }
+    .pill.trade-ready { background: #dcfce7; color: #166534; }
+    .pill.watch { background: #dbeafe; color: #1d4ed8; }
+    .pill.observe { background: #fef9c3; color: #854d0e; }
+    .pill.weather { background: #e0f2fe; color: #075985; }
 
     .score-bar {
       height: 8px;
@@ -367,7 +372,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1700px;
+      min-width: 2450px;
       background: white;
     }
 
@@ -459,6 +464,13 @@
       line-height: 1.5;
     }
 
+    .reason-cell {
+      max-width: 420px;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.4;
+    }
+
     .empty {
       padding: 22px;
       text-align: center;
@@ -473,7 +485,7 @@
       right: 0;
       top: 0;
       bottom: 0;
-      width: min(900px, 94vw);
+      width: min(920px, 94vw);
       background: white;
       border-left: 1px solid var(--border);
       box-shadow: -12px 0 42px rgba(15, 23, 42, 0.18);
@@ -528,11 +540,11 @@
   <header>
     <div class="header-inner">
       <div class="brand-title">
-        <div class="brand-logo">MM</div>
+        <div class="brand-logo">MW</div>
         <div>
-          <strong>SHORT Micro-Micro Learning Admin</strong>
+          <strong>SHORT Micro-Micro MarketWeather Admin</strong>
           <div class="brand-subtitle">
-            Beste micro-micro staat bovenaan op netto edge. Parent 15 en 75-child blijven context/rollup.
+            Exact micro-micro learning · MarketWeather capture live · selector/sizing/FDR observe · empirical veto apart van policy-blocked.
           </div>
         </div>
       </div>
@@ -540,7 +552,7 @@
       <div class="header-actions">
         <div class="live-pill">
           <span class="live-dot"></span>
-          <span id="liveLabel">SHORT-only · exact micro-micro · best net-edge first</span>
+          <span id="liveLabel">SHORT-only · MarketWeather V1 · empirical veto</span>
         </div>
         <button id="refreshBtn" type="button">Refresh</button>
       </div>
@@ -550,7 +562,7 @@
   <main>
     <div class="tabs">
       <button type="button" class="tab active" data-tab="overview">Overview</button>
-      <button type="button" class="tab" data-tab="market">Market</button>
+      <button type="button" class="tab" data-tab="market">MarketWeather</button>
       <button type="button" class="tab" data-tab="scanner">Scanner</button>
       <button type="button" class="tab" data-tab="trade">TradeSystem</button>
       <button type="button" class="tab" data-tab="micros">Micro-Micro</button>
@@ -588,27 +600,48 @@
       const MAX_ACTIVE_DISCORD_MICRO_FAMILIES = 2;
       const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
-      const MICRO_MICRO_RUNTIME_GATE_VERSION = "SHORT_MM_FRONTEND_BEST_NET_EDGE_RUNTIME_STATUS_V2";
-      const MICRO_MICRO_BEST_SELECTOR_VERSION = "SHORT_MM_FRONTEND_BEST_SELECTOR_NET_EDGE_FIRST_V2";
+      const MARKET_WEATHER_KEY_VERSION = "SHORT_MARKET_WEATHER_KEY_V1";
+      const MARKET_WEATHER_AGGREGATION_VERSION = "SHORT_MARKET_WEATHER_AGGREGATION_V1_REGIME_REGIMETREND";
+      const MARKET_WEATHER_SELECTOR_VERSION = "SHORT_CURRENT_MARKET_PLAYBOOK_SELECTOR_V1_OBSERVE";
+      const MARKET_WEATHER_FDR_VERSION = "SHORT_MARKET_WEATHER_PLAYBOOK_FDR_FINAL_SLOTS_V1_OBSERVE";
+      const MARKET_WEATHER_FEATURE_FLAGS_VERSION = "SHORT_MARKET_WEATHER_FEATURE_FLAGS_V1_OBSERVE";
+
+      const EMPIRICAL_VETO_VERSION = "SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V1";
+
+      const MICRO_MICRO_RUNTIME_GATE_VERSION = "SHORT_MM_RUNTIME_GATE_OBSERVING_PASSED_REJECTED_EMPIRICAL_VETO_POLICY_BLOCKED_V3_FRONTEND";
+      const MICRO_MICRO_BEST_SELECTOR_VERSION = "SHORT_MM_BEST_SELECTOR_CURRENT_MARKET_WEATHER_NET_EDGE_V3_FRONTEND";
 
       const MICRO_MICRO_STATUS_OBSERVING = "OBSERVING";
       const MICRO_MICRO_STATUS_PASSED = "PASSED";
       const MICRO_MICRO_STATUS_REJECTED = "REJECTED";
+      const MICRO_MICRO_STATUS_EMPIRICAL_VETO = "EMPIRICAL_VETO";
       const MICRO_MICRO_STATUS_POLICY_BLOCKED = "POLICY_BLOCKED";
 
       const MICRO_MICRO_STATUS_RANK = Object.freeze({
         [MICRO_MICRO_STATUS_PASSED]: 0,
         [MICRO_MICRO_STATUS_OBSERVING]: 1,
         [MICRO_MICRO_STATUS_REJECTED]: 2,
-        [MICRO_MICRO_STATUS_POLICY_BLOCKED]: 3,
-        UNKNOWN: 4
+        [MICRO_MICRO_STATUS_EMPIRICAL_VETO]: 3,
+        [MICRO_MICRO_STATUS_POLICY_BLOCKED]: 4,
+        UNKNOWN: 99
       });
+
+      const SIGNAL_TYPE_TRADE_READY = "TRADE_READY";
+      const SIGNAL_TYPE_WATCH_ONLY = "WATCH_ONLY";
+      const SIGNAL_TYPE_OBSERVE_ONLY = "OBSERVE_ONLY";
+      const SIGNAL_TYPE_BLOCKED = "BLOCKED";
+
+      const PROOF_TIER_MICRO_MICRO_MARKET = "MICRO_MICRO_MARKET_PROOF";
+      const PROOF_TIER_MICRO_MICRO_LIFETIME = "MICRO_MICRO_LIFETIME_PROOF";
+      const PROOF_TIER_OBSERVATION_ONLY = "OBSERVATION_ONLY";
+      const PROOF_TIER_EMPIRICAL_VETO = "EMPIRICAL_VETO";
+      const PROOF_TIER_POLICY_BLOCKED = "POLICY_BLOCKED";
 
       const PARENT_TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_15";
       const CHILD_TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_75";
       const TRUE_MICRO_SCHEMA = CHILD_TRUE_MICRO_SCHEMA;
       const MICRO_MICRO_SCHEMA = "FIXED_TAXONOMY_MICRO_MICRO_V1";
-      const MICRO_MICRO_VERSION = "SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1";
+      const MICRO_MICRO_VERSION = "SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V2_MARKET_WEATHER";
 
       const PARENT_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1";
       const CHILD75_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1";
@@ -619,8 +652,8 @@
       const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1";
       const OBSERVATION_DEDUPE_VERSION = "SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2";
       const OUTCOME_DEDUPE_VERSION = "SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3";
-      const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V3";
-      const DISCORD_ACTIVATION_GATE_VERSION = "SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V1";
+      const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_FRONTEND_V1";
+      const DISCORD_ACTIVATION_GATE_VERSION = "SHORT_MM_DISCORD_ACTIVATION_GATE_EMPIRICAL_VETO_RISK_ZERO_V4_FRONTEND";
 
       const MICRO_SHORT_PREFIX = "MICRO_SHORT_";
       const MM_SHORT_PREFIX = "MM_SHORT_";
@@ -648,7 +681,7 @@
       };
 
       const tabs = ["overview", "market", "scanner", "trade", "micros", "rotation", "discord", "reset"];
-      const microModes = ["best", "passed", "adaptive", "winrate", "totalR", "avgR", "directSL", "cost", "currentFit", "observed", "clean"];
+      const microModes = ["currentMarket", "best", "tradeReady", "watch", "observe", "passed", "adaptive", "winrate", "totalR", "avgR", "directSL", "cost", "currentFit", "observed", "clean"];
 
       const state = {
         activeTab: "overview",
@@ -659,11 +692,14 @@
         micros: null,
         rotation: null,
         discord: null,
-        microMode: "best",
+        microMode: "currentMarket",
         microSearch: "",
         apiTimeoutMs: 22000,
         microLimit: 260,
-        bestLimit: 220
+        bestLimit: 220,
+        currentMarketWeatherRegime: "",
+        currentMarketWeatherTrendSide: "",
+        currentMarketWeatherKey: ""
       };
 
       const $ = (id) => document.getElementById(id);
@@ -806,12 +842,6 @@
             <div class="empty">Data ophalen voor ${escapeHtml(tabId)}...</div>
           </div>
         `;
-      }
-
-      function scoreBar(value, min = 0, max = 100) {
-        const n = Number(value);
-        const width = Number.isFinite(n) ? Math.max(0, Math.min(100, ((n - min) / (max - min)) * 100)) : 0;
-        return `<div class="score-bar"><span style="--w:${width.toFixed(1)}%"></span></div>`;
       }
 
       function flattenValues(values = []) {
@@ -1220,6 +1250,42 @@
         return done > 0 ? netTotalR(row) / done : 0;
       }
 
+      function lcb95AvgR(row = {}) {
+        const direct = firstFinite(
+          row.lcb95AvgR,
+          row.avgRLCB95,
+          row.avgRLcb95,
+          row.avgRLowerBound95,
+          row.avgRLowerConfidenceBound,
+          row.lowerConfidenceBoundAvgR,
+          row.shrunkLCB95AvgR,
+          row.shrunkLcb95AvgR,
+          row.shrunkAvgRLCB95,
+          row.currentMarketCandidate?.shrunkLCB95AvgR
+        );
+        return direct;
+      }
+
+      function shrunkAvgR(row = {}) {
+        const direct = firstFinite(
+          row.shrunkAvgR,
+          row.marketShrunkAvgR,
+          row.currentMarketCandidate?.shrunkAvgR
+        );
+        return direct ?? netAvgR(row);
+      }
+
+      function shrunkLCB95AvgR(row = {}) {
+        const direct = firstFinite(
+          row.shrunkLCB95AvgR,
+          row.shrunkLcb95AvgR,
+          row.shrunkAvgRLCB95,
+          row.marketShrunkLCB95AvgR,
+          row.currentMarketCandidate?.shrunkLCB95AvgR
+        );
+        return direct ?? lcb95AvgR(row) ?? netAvgR(row);
+      }
+
       function avgCostR(row = {}) {
         if (Number.isFinite(Number(row.avgCostR))) return Math.max(0, Number(row.avgCostR));
         if (Number.isFinite(Number(row.costR))) return Math.max(0, Number(row.costR));
@@ -1239,6 +1305,7 @@
       function profitFactor(row = {}) {
         if (Number.isFinite(Number(row.netProfitFactor))) return Number(row.netProfitFactor);
         if (Number.isFinite(Number(row.profitFactor))) return Number(row.profitFactor);
+        if (Number.isFinite(Number(row.pf))) return Number(row.pf);
         return 0;
       }
 
@@ -1260,31 +1327,6 @@
         if (Number.isFinite(direct)) return direct;
         const done = completed(row);
         return done > 0 ? clamp(Math.sqrt(Math.min(done, 50) / 50), 0, 1) : 0;
-      }
-
-      function learningStatus(row = {}) {
-        const done = completed(row);
-        if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO_ACTIVE";
-        if (done > 0) return "MICRO_MICRO_EARLY";
-        return "MICRO_MICRO_OBSERVING";
-      }
-
-      function tier(row = {}) {
-        const runtime = runtimeStatus(row);
-        if (runtime === MICRO_MICRO_STATUS_PASSED) return "PASSED";
-        if (runtime === MICRO_MICRO_STATUS_REJECTED) return "REJECTED";
-        if (runtime === MICRO_MICRO_STATUS_POLICY_BLOCKED) return "POLICY_BLOCKED";
-
-        const done = completed(row);
-        const obs = observationSample(row);
-        if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO";
-        if (done > 0) return "MICRO_MICRO_SOFT";
-        if (obs > 0) return "OBSERVATION";
-        return upper(row.selectedTier || row.rotationEligibilityTier || row.tier || "RAW");
-      }
-
-      function tooEarly(row = {}) {
-        return completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE;
       }
 
       function currentFitScore(row = {}) {
@@ -1327,6 +1369,28 @@
         return '<span class="pill raw">UNKNOWN</span>';
       }
 
+      function hasRiskGeometry(row = {}) {
+        return (
+          row.entry !== undefined ||
+          row.entryPrice !== undefined ||
+          row.sl !== undefined ||
+          row.stopLoss !== undefined ||
+          row.initialSl !== undefined ||
+          row.tp !== undefined ||
+          row.takeProfit !== undefined
+        );
+      }
+
+      function validShortGeometry(row = {}) {
+        if (!hasRiskGeometry(row)) return true;
+
+        const entry = Number(row.entry ?? row.entryPrice ?? row.avgEntryPrice ?? row.openPrice);
+        const sl = Number(row.sl ?? row.stopLoss ?? row.initialSl ?? row.initialStopLoss);
+        const tp = Number(row.tp ?? row.takeProfit ?? row.targetPrice);
+
+        return Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp) && tp < entry && entry < sl;
+      }
+
       function cleanMeasurementScore(row = {}) {
         if (row.measurementClean === true || row.cleanMeasurement === true || row.cleanLearningRow === true) return 1;
 
@@ -1345,25 +1409,147 @@
         return fixOk && riskOk && costOk && obsOk && outOk ? 1 : 0;
       }
 
+      function normalizeMarketWeatherRegime(value = "") {
+        const raw = upper(value);
+        if (raw.includes("SQUEEZE") || raw.includes("COMPRESS")) return "SQUEEZE";
+        if (raw.includes("CHOP") || raw.includes("RANGE") || raw.includes("SIDEWAYS")) return "CHOP";
+        if (raw.includes("TREND") || raw.includes("FLOW") || raw.includes("MOMENTUM")) return "TREND";
+        return raw || "UNKNOWN";
+      }
+
+      function normalizeMarketWeatherTrendSide(value = "") {
+        const raw = upper(value);
+        if (raw.includes("BEAR") || raw.includes("SHORT") || raw.includes("SELL") || raw.includes("DOWN")) return "BEARISH";
+        if (raw.includes("BULL") || raw.includes("LONG") || raw.includes("BUY") || raw.includes("UP")) return "BULLISH";
+        if (raw.includes("NEUTRAL") || raw.includes("MIXED") || raw.includes("FLAT")) return "NEUTRAL";
+        return raw || "UNKNOWN";
+      }
+
+      function buildMarketWeatherKey(regime, trendSide) {
+        return `${normalizeMarketWeatherRegime(regime)}|${normalizeMarketWeatherTrendSide(trendSide)}`;
+      }
+
+      function currentMarketWeather() {
+        const regime = normalizeMarketWeatherRegime(state.currentMarketWeatherRegime);
+        const trendSide = normalizeMarketWeatherTrendSide(state.currentMarketWeatherTrendSide);
+        const explicitKey = upper(state.currentMarketWeatherKey);
+
+        if (explicitKey && explicitKey.includes("|")) {
+          const [r, t] = explicitKey.split("|");
+          return {
+            currentMarketWeatherKey: `${normalizeMarketWeatherRegime(r)}|${normalizeMarketWeatherTrendSide(t)}`,
+            currentMarketWeatherRegime: normalizeMarketWeatherRegime(r),
+            currentMarketWeatherTrendSide: normalizeMarketWeatherTrendSide(t)
+          };
+        }
+
+        return {
+          currentMarketWeatherKey: buildMarketWeatherKey(regime, trendSide),
+          currentMarketWeatherRegime: regime,
+          currentMarketWeatherTrendSide: trendSide
+        };
+      }
+
+      function entryMarketWeather(row = {}) {
+        const directKey = upper(row.entryMarketWeatherKey || row.currentMarketWeatherKey || row.marketWeatherKey || row.currentMarketCandidate?.currentMarketWeatherKey || "");
+        const directRegime = normalizeMarketWeatherRegime(row.entryMarketWeatherRegime || row.currentMarketWeatherRegime || row.marketWeatherRegime || row.currentMarketCandidate?.currentMarketWeatherRegime || "");
+        const directTrend = normalizeMarketWeatherTrendSide(row.entryMarketWeatherTrendSide || row.currentMarketWeatherTrendSide || row.marketWeatherTrendSide || row.currentMarketCandidate?.currentMarketWeatherTrendSide || "");
+
+        if (directKey && directKey.includes("|")) {
+          const [r, t] = directKey.split("|");
+          return {
+            entryMarketWeatherKey: `${normalizeMarketWeatherRegime(r)}|${normalizeMarketWeatherTrendSide(t)}`,
+            entryMarketWeatherRegime: normalizeMarketWeatherRegime(r),
+            entryMarketWeatherTrendSide: normalizeMarketWeatherTrendSide(t),
+            entryMarketWeatherKeyVersion: row.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
+            entryMarketWeatherCapturedAt: row.entryMarketWeatherCapturedAt || null,
+            entryMarketWeatherRaw: row.entryMarketWeatherRaw || null,
+            entryMarketWeatherRawAvailableFields: Array.isArray(row.entryMarketWeatherRawAvailableFields) ? row.entryMarketWeatherRawAvailableFields : []
+          };
+        }
+
+        return {
+          entryMarketWeatherKey: buildMarketWeatherKey(directRegime, directTrend),
+          entryMarketWeatherRegime: directRegime,
+          entryMarketWeatherTrendSide: directTrend,
+          entryMarketWeatherKeyVersion: row.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
+          entryMarketWeatherCapturedAt: row.entryMarketWeatherCapturedAt || null,
+          entryMarketWeatherRaw: row.entryMarketWeatherRaw || null,
+          entryMarketWeatherRawAvailableFields: Array.isArray(row.entryMarketWeatherRawAvailableFields) ? row.entryMarketWeatherRawAvailableFields : []
+        };
+      }
+
+      function marketWeatherPill(row = {}) {
+        const mw = entryMarketWeather(row);
+        return `<span class="pill weather">${escapeHtml(mw.entryMarketWeatherKey || "UNKNOWN|UNKNOWN")}</span>`;
+      }
+
       function normalizeRuntimeStatus(value = "") {
         const raw = upper(value);
         if (raw === MICRO_MICRO_STATUS_PASSED || raw === "GATE_OK" || raw === "APPROVED" || raw === "ELIGIBLE") return MICRO_MICRO_STATUS_PASSED;
         if (raw === MICRO_MICRO_STATUS_OBSERVING || raw === "MICRO_MICRO_OBSERVING" || raw === "EARLY" || raw === "MICRO_MICRO_EARLY") return MICRO_MICRO_STATUS_OBSERVING;
         if (raw === MICRO_MICRO_STATUS_REJECTED || raw === "FAILED" || raw === "BAD" || raw === "BLOCKED_BY_NET_EDGE") return MICRO_MICRO_STATUS_REJECTED;
+        if (raw === MICRO_MICRO_STATUS_EMPIRICAL_VETO || raw === "MICRO_MICRO_EMPIRICAL_VETO" || raw === "EXACT_MICRO_MICRO_LCB95_NEGATIVE") return MICRO_MICRO_STATUS_EMPIRICAL_VETO;
         if (raw === MICRO_MICRO_STATUS_POLICY_BLOCKED || raw === "POLICY_BLOCKED" || raw === "MISFIT" || raw === "E_WEAK_CONTRA") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
         return "";
       }
 
+      function knownForbiddenFamily(row = {}) {
+        const text = upper([
+          row.familyId,
+          row.trueMicroFamilyId,
+          row.microFamilyId,
+          row.microMicroFamilyId,
+          row.definition,
+          row.microDefinition,
+          row.microMicroDefinition,
+          row.policyBlockedReason,
+          row.reason
+        ].filter(Boolean).join("|"));
+
+        return text.includes("KNOWN_FORBIDDEN_FAMILY") || text.includes("FORBIDDEN_FAMILY") || text.includes("BLACKLISTED_FAMILY");
+      }
+
+      function policyBlocked(row = {}) {
+        const confirmation = upper(row.confirmationProfile || parseShortTaxonomyId(microId(row))?.confirmationProfile || "");
+        return (
+          !rowIsExactShortMicroMicro(row) ||
+          inferSide(row) === OPPOSITE_SIDE ||
+          confirmation === "E_WEAK_CONTRA" ||
+          currentFit(row) === "MISFIT" ||
+          !validShortGeometry(row) ||
+          knownForbiddenFamily(row) ||
+          row.policyBlocked === true ||
+          upper(row.policyBlockedReason) !== ""
+        );
+      }
+
+      function empiricalVeto(row = {}) {
+        if (row.empiricalVeto === true) return true;
+        const directStatus = normalizeRuntimeStatus(row.microMicroRuntimeGateStatus || row.microMicroStatus || row.status || row.currentMarketCandidate?.microMicroRuntimeStatus || "");
+        if (directStatus === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return true;
+
+        const lcb = lcb95AvgR(row);
+        return rowIsExactShortMicroMicro(row) && completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && lcb !== null && lcb < 0;
+      }
+
+      function empiricalVetoReason(row = {}) {
+        if (!empiricalVeto(row)) return "";
+        return row.empiricalVetoReason || row.microMicroRuntimeGate?.empiricalVetoReason || "EXACT_MICRO_MICRO_LCB95_NEGATIVE";
+      }
+
       function positiveNetEdge(row = {}) {
+        const lcb = lcb95AvgR(row);
         return (
           completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE &&
           netAvgR(row) > 0 &&
           netTotalR(row) > 0 &&
           profitFactor(row) > 1 &&
+          (lcb === null || lcb > 0) &&
           avgCostR(row) <= 0.35 &&
           directSLPct(row) <= 0.25 &&
-          currentFit(row) !== "MISFIT" &&
-          upper(row.confirmationProfile) !== "E_WEAK_CONTRA"
+          !policyBlocked(row) &&
+          !empiricalVeto(row)
         );
       }
 
@@ -1380,10 +1566,8 @@
         );
 
         if (direct) return direct;
-
-        const confirmation = upper(row.confirmationProfile || parseShortTaxonomyId(microId(row))?.confirmationProfile || "");
-        if (confirmation === "E_WEAK_CONTRA") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
-        if (currentFit(row) === "MISFIT") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+        if (policyBlocked(row)) return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+        if (empiricalVeto(row)) return MICRO_MICRO_STATUS_EMPIRICAL_VETO;
         if (completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE) return MICRO_MICRO_STATUS_OBSERVING;
         if (positiveNetEdge(row)) return MICRO_MICRO_STATUS_PASSED;
         return MICRO_MICRO_STATUS_REJECTED;
@@ -1399,45 +1583,106 @@
         if (status === MICRO_MICRO_STATUS_PASSED) return '<span class="pill passed">PASSED</span>';
         if (status === MICRO_MICRO_STATUS_OBSERVING) return `<span class="pill observation">OBSERVING · ${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`;
         if (status === MICRO_MICRO_STATUS_REJECTED) return '<span class="pill rejected">REJECTED</span>';
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return '<span class="pill veto">EMPIRICAL VETO</span>';
         if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return '<span class="pill blocked">POLICY BLOCKED</span>';
         return '<span class="pill raw">UNKNOWN</span>';
       }
 
-      function microMicroRuntimeGate(row = {}) {
+      function proofTier(row = {}) {
+        const direct = upper(row.proofTier || row.currentMarketCandidate?.proofTier || "");
+        if (direct) return direct;
+
         const status = runtimeStatus(row);
-        const reasons = [];
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return PROOF_TIER_POLICY_BLOCKED;
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return PROOF_TIER_EMPIRICAL_VETO;
+        if (status !== MICRO_MICRO_STATUS_PASSED) return PROOF_TIER_OBSERVATION_ONLY;
 
-        if (!rowIsExactShortMicroMicro(row)) reasons.push("EXACT_SHORT_MICRO_MICRO_ID_REQUIRED");
-        if (upper(row.confirmationProfile) === "E_WEAK_CONTRA") reasons.push("E_WEAK_CONTRA_POLICY_BLOCK");
-        if (currentFit(row) === "MISFIT") reasons.push("CURRENTFIT_MISFIT_POLICY_BLOCK");
-        if (completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE) reasons.push(`COMPLETED_BELOW_${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`);
-        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && netAvgR(row) <= 0) reasons.push("AVG_R_NET_NOT_POSITIVE");
-        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && netTotalR(row) <= 0) reasons.push("TOTAL_R_NET_NOT_POSITIVE");
-        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && profitFactor(row) <= 1) reasons.push("PROFIT_FACTOR_NOT_ABOVE_1");
-        if (avgCostR(row) > 0.35) reasons.push("AVG_COST_R_TOO_HIGH");
-        if (directSLPct(row) > 0.25) reasons.push("DIRECT_SL_PCT_TOO_HIGH");
+        const marketResolution = upper(row.marketResolution || row.currentMarketCandidate?.marketResolution || "");
+        if (marketResolution === "REGIME_TREND" || marketResolution === "REGIME") return PROOF_TIER_MICRO_MICRO_MARKET;
 
-        return {
-          version: MICRO_MICRO_RUNTIME_GATE_VERSION,
-          status,
-          eligible: status === MICRO_MICRO_STATUS_PASSED,
-          discordEligible: status === MICRO_MICRO_STATUS_PASSED,
-          virtualLearningAllowed: status === MICRO_MICRO_STATUS_OBSERVING || status === MICRO_MICRO_STATUS_PASSED,
-          virtualEntryAllowed: status === MICRO_MICRO_STATUS_OBSERVING || status === MICRO_MICRO_STATUS_PASSED,
-          blocksNewVirtualEntry: status === MICRO_MICRO_STATUS_REJECTED || status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
-          reason: status === MICRO_MICRO_STATUS_PASSED ? "PASSED_NET_EDGE_GATE" : reasons[0] || status,
-          reasons,
-          completed: completed(row),
-          observed: observationSample(row),
-          avgR: netAvgR(row),
-          totalR: netTotalR(row),
-          profitFactor: profitFactor(row),
-          avgCostR: avgCostR(row),
-          directSLPct: directSLPct(row),
-          currentFit: currentFit(row),
-          confirmationProfile: upper(row.confirmationProfile),
-          thresholds: activationGateObject()
-        };
+        return PROOF_TIER_MICRO_MICRO_LIFETIME;
+      }
+
+      function signalType(row = {}) {
+        const direct = upper(row.signalType || row.currentMarketCandidate?.signalType || "");
+        if (direct) return direct;
+
+        const status = runtimeStatus(row);
+        const lcb = shrunkLCB95AvgR(row);
+
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return SIGNAL_TYPE_BLOCKED;
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return SIGNAL_TYPE_BLOCKED;
+        if (status === MICRO_MICRO_STATUS_REJECTED) return SIGNAL_TYPE_BLOCKED;
+        if (status === MICRO_MICRO_STATUS_PASSED && lcb > 0) return SIGNAL_TYPE_TRADE_READY;
+        if (status === MICRO_MICRO_STATUS_OBSERVING) return SIGNAL_TYPE_OBSERVE_ONLY;
+
+        return SIGNAL_TYPE_OBSERVE_ONLY;
+      }
+
+      function signalTypePill(row = {}) {
+        const type = signalType(row);
+        if (type === SIGNAL_TYPE_TRADE_READY) return '<span class="pill trade-ready">TRADE READY</span>';
+        if (type === SIGNAL_TYPE_WATCH_ONLY) return '<span class="pill watch">WATCH</span>';
+        if (type === SIGNAL_TYPE_OBSERVE_ONLY) return '<span class="pill observe">OBSERVE</span>';
+        if (type === SIGNAL_TYPE_BLOCKED) return '<span class="pill blocked">BLOCKED</span>';
+        return `<span class="pill raw">${escapeHtml(type || "UNKNOWN")}</span>`;
+      }
+
+      function maxAllowedRiskBand(row = {}) {
+        const direct = upper(row.maxAllowedRiskBand || row.currentMarketCandidate?.maxAllowedRiskBand || "");
+        if (direct) return direct;
+
+        const type = signalType(row);
+        if (type === SIGNAL_TYPE_TRADE_READY) return "HIGH";
+        if (type === SIGNAL_TYPE_WATCH_ONLY) return "LOW";
+        return "ZERO";
+      }
+
+      function riskFractionForEntry(row = {}) {
+        if (policyBlocked(row) || empiricalVeto(row)) return 0;
+        if (signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY || signalType(row) === SIGNAL_TYPE_BLOCKED) return 0;
+
+        return num(
+          row.riskFractionForEntry ??
+          row.riskFraction ??
+          row.currentMarketCandidate?.riskFractionForEntry ??
+          row.currentMarketCandidate?.riskFraction ??
+          row.riskDecision?.riskFractionForEntry ??
+          row.riskDecision?.riskFraction,
+          0
+        );
+      }
+
+      function whyBlocked(row = {}) {
+        if (policyBlocked(row)) {
+          if (!rowIsExactShortMicroMicro(row)) return "EXACT_MICRO_MICRO_ID_REQUIRED";
+          if (inferSide(row) === OPPOSITE_SIDE) return "NON_SHORT_POLICY_BLOCK";
+          if (upper(row.confirmationProfile) === "E_WEAK_CONTRA") return "E_WEAK_CONTRA_POLICY_BLOCK";
+          if (currentFit(row) === "MISFIT") return "CURRENTFIT_MISFIT_POLICY_BLOCK";
+          if (!validShortGeometry(row)) return "INVALID_SHORT_GEOMETRY_POLICY_BLOCK";
+          if (knownForbiddenFamily(row)) return "KNOWN_FORBIDDEN_FAMILY_POLICY_BLOCK";
+          return row.policyBlockedReason || "POLICY_BLOCKED";
+        }
+
+        if (empiricalVeto(row)) return empiricalVetoReason(row);
+        if (runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED) return row.microMicroRuntimeReason || row.currentMarketReason || row.reason || "REJECTED_NET_EDGE";
+        if (signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY) return row.currentMarketReason || `COMPLETED_BELOW_${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`;
+        return "";
+      }
+
+      function whySelected(row = {}) {
+        return row.currentMarketReason ||
+          row.reason ||
+          row.currentMarketCandidate?.reason ||
+          `${signalType(row)}_${proofTier(row)}_${row.marketResolution || "LIFETIME"}`;
+      }
+
+      function marketResolution(row = {}) {
+        return row.marketResolution || row.currentMarketCandidate?.marketResolution || "LIFETIME";
+      }
+
+      function proofSource(row = {}) {
+        return row.proofSource || row.currentMarketCandidate?.proofSource || "MICRO_MICRO_LIFETIME";
       }
 
       function netEdgeScore(row = {}) {
@@ -1450,9 +1695,11 @@
         const cost = avgCostR(row);
         const dsl = directSLPct(row);
         const clean = cleanMeasurementScore(row) === 1 ? 2 : -6;
+        const lcb = lcb95AvgR(row) ?? 0;
 
         return (
           avg * 120 +
+          lcb * 150 +
           total * 3.5 +
           wr * 22 +
           pfScore +
@@ -1462,6 +1709,44 @@
           cost * 38 -
           dsl * 85
         );
+      }
+
+      function currentMarketScore(row = {}) {
+        return num(
+          row.currentMarketScore ??
+          row.currentMarketCandidate?.currentMarketScore,
+          netEdgeScore(row)
+        );
+      }
+
+      function learningStatus(row = {}) {
+        const status = runtimeStatus(row);
+        if (status === MICRO_MICRO_STATUS_PASSED) return "MICRO_MICRO_PASSED";
+        if (status === MICRO_MICRO_STATUS_OBSERVING) return "MICRO_MICRO_OBSERVING";
+        if (status === MICRO_MICRO_STATUS_REJECTED) return "MICRO_MICRO_REJECTED";
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return "MICRO_MICRO_EMPIRICAL_VETO";
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return "MICRO_MICRO_POLICY_BLOCKED";
+        return "MICRO_MICRO_OBSERVING";
+      }
+
+      function tier(row = {}) {
+        const status = runtimeStatus(row);
+        if (status === MICRO_MICRO_STATUS_PASSED) return "PASSED";
+        if (status === MICRO_MICRO_STATUS_OBSERVING) return "OBS";
+        if (status === MICRO_MICRO_STATUS_REJECTED) return "REJECTED";
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return "EMPIRICAL_VETO";
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return "POLICY_BLOCKED";
+
+        const done = completed(row);
+        const obs = observationSample(row);
+        if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO";
+        if (done > 0) return "MICRO_MICRO_SOFT";
+        if (obs > 0) return "OBSERVATION";
+        return upper(row.selectedTier || row.rotationEligibilityTier || row.tier || "RAW");
+      }
+
+      function tooEarly(row = {}) {
+        return completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE;
       }
 
       function measurementPill(row = {}) {
@@ -1479,7 +1764,9 @@
       function tierPill(value) {
         const t = upper(value);
         if (t === "PASSED") return '<span class="pill passed">PASSED</span>';
+        if (t === "OBS") return '<span class="pill observation">OBS</span>';
         if (t === "REJECTED") return '<span class="pill rejected">REJECTED</span>';
+        if (t === "EMPIRICAL_VETO") return '<span class="pill veto">VETO</span>';
         if (t === "POLICY_BLOCKED") return '<span class="pill blocked">POLICY</span>';
         if (t === "MICRO_MICRO") return '<span class="pill mm">MM ACTIVE</span>';
         if (t === "MICRO_MICRO_SOFT") return '<span class="pill purple">MM EARLY</span>';
@@ -1489,8 +1776,19 @@
         return `<span class="pill">${escapeHtml(t || "NA")}</span>`;
       }
 
-      function statusPill(row = {}) {
-        return runtimeStatusPill(row);
+      function discordActivationEligible(row = {}) {
+        return runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED && signalType(row) === SIGNAL_TYPE_TRADE_READY;
+      }
+
+      function discordGatePill(row = {}) {
+        const status = runtimeStatus(row);
+
+        if (status === MICRO_MICRO_STATUS_PASSED && signalType(row) === SIGNAL_TYPE_TRADE_READY) return '<span class="pill active">GATE OK</span>';
+        if (status === MICRO_MICRO_STATUS_PASSED) return '<span class="pill watch">PASSED OBSERVE</span>';
+        if (status === MICRO_MICRO_STATUS_OBSERVING) return '<span class="pill observation">OBSERVING</span>';
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return `<span class="pill veto">${escapeHtml(empiricalVetoReason(row))}</span>`;
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return `<span class="pill blocked">${escapeHtml(whyBlocked(row))}</span>`;
+        return `<span class="pill danger">${escapeHtml(whyBlocked(row) || "REJECTED")}</span>`;
       }
 
       function adaptiveScore(row = {}) {
@@ -1507,16 +1805,57 @@
         );
       }
 
-      function discordActivationEligible(row = {}) {
-        return runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED;
-      }
+      function microMicroRuntimeGate(row = {}) {
+        const status = runtimeStatus(row);
+        const reasons = [];
 
-      function discordGatePill(row = {}) {
-        const gate = microMicroRuntimeGate(row);
-        if (gate.status === MICRO_MICRO_STATUS_PASSED) return '<span class="pill active">GATE OK</span>';
-        if (gate.status === MICRO_MICRO_STATUS_OBSERVING) return '<span class="pill observation">OBSERVING</span>';
-        if (gate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return `<span class="pill blocked">${escapeHtml(gate.reason)}</span>`;
-        return `<span class="pill danger">${escapeHtml(gate.reason || "REJECTED")}</span>`;
+        if (!rowIsExactShortMicroMicro(row)) reasons.push("EXACT_SHORT_MICRO_MICRO_ID_REQUIRED");
+        if (inferSide(row) === OPPOSITE_SIDE) reasons.push("NON_SHORT_POLICY_BLOCK");
+        if (upper(row.confirmationProfile) === "E_WEAK_CONTRA") reasons.push("E_WEAK_CONTRA_POLICY_BLOCK");
+        if (currentFit(row) === "MISFIT") reasons.push("CURRENTFIT_MISFIT_POLICY_BLOCK");
+        if (!validShortGeometry(row)) reasons.push("INVALID_SHORT_GEOMETRY_POLICY_BLOCK");
+        if (empiricalVeto(row)) reasons.push(empiricalVetoReason(row));
+        if (completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE) reasons.push(`COMPLETED_BELOW_${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`);
+        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && netAvgR(row) <= 0) reasons.push("AVG_R_NET_NOT_POSITIVE");
+        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && netTotalR(row) <= 0) reasons.push("TOTAL_R_NET_NOT_POSITIVE");
+        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && profitFactor(row) <= 1) reasons.push("PROFIT_FACTOR_NOT_ABOVE_1");
+        if (lcb95AvgR(row) !== null && completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && lcb95AvgR(row) <= 0) reasons.push("LCB95_AVG_R_NOT_POSITIVE");
+        if (avgCostR(row) > 0.35) reasons.push("AVG_COST_R_TOO_HIGH");
+        if (directSLPct(row) > 0.25) reasons.push("DIRECT_SL_PCT_TOO_HIGH");
+
+        return {
+          version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+          empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+          status,
+          eligible: status === MICRO_MICRO_STATUS_PASSED,
+          discordEligible: discordActivationEligible(row),
+          virtualLearningAllowed: status === MICRO_MICRO_STATUS_OBSERVING || status === MICRO_MICRO_STATUS_PASSED,
+          virtualEntryAllowed: status === MICRO_MICRO_STATUS_OBSERVING || status === MICRO_MICRO_STATUS_PASSED,
+          blocksNewVirtualEntry: status === MICRO_MICRO_STATUS_REJECTED || status === MICRO_MICRO_STATUS_EMPIRICAL_VETO || status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
+          blocksRiskEntry: status === MICRO_MICRO_STATUS_EMPIRICAL_VETO || status === MICRO_MICRO_STATUS_POLICY_BLOCKED || signalType(row) !== SIGNAL_TYPE_TRADE_READY,
+          reason: status === MICRO_MICRO_STATUS_PASSED ? "PASSED_NET_EDGE_GATE" : reasons[0] || status,
+          reasons,
+          completed: completed(row),
+          observed: observationSample(row),
+          avgR: netAvgR(row),
+          totalR: netTotalR(row),
+          lcb95AvgR: lcb95AvgR(row),
+          shrunkAvgR: shrunkAvgR(row),
+          shrunkLCB95AvgR: shrunkLCB95AvgR(row),
+          profitFactor: profitFactor(row),
+          avgCostR: avgCostR(row),
+          directSLPct: directSLPct(row),
+          currentFit: currentFit(row),
+          signalType: signalType(row),
+          proofTier: proofTier(row),
+          riskFractionForEntry: riskFractionForEntry(row),
+          confirmationProfile: upper(row.confirmationProfile),
+          empiricalVeto: empiricalVeto(row),
+          empiricalVetoReason: empiricalVetoReason(row),
+          policyBlocked: policyBlocked(row),
+          policyBlockedReason: policyBlocked(row) ? whyBlocked(row) : null,
+          thresholds: activationGateObject()
+        };
       }
 
       function normalizeMicroRow(row = {}) {
@@ -1525,6 +1864,8 @@
         if (!id || !parsed?.isMicroMicro) return null;
         if (inferSide({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id }) === OPPOSITE_SIDE) return null;
 
+        const mw = entryMarketWeather(row);
+        const currentMarket = currentMarketWeather();
         const status = runtimeStatus({
           ...row,
           id,
@@ -1535,17 +1876,7 @@
           confirmationProfile: row.confirmationProfile || parsed.confirmationProfile
         });
 
-        const gate = microMicroRuntimeGate({
-          ...row,
-          id,
-          key: id,
-          microFamilyId: id,
-          trueMicroFamilyId: id,
-          microMicroFamilyId: id,
-          confirmationProfile: row.confirmationProfile || parsed.confirmationProfile
-        });
-
-        return {
+        const normalized = {
           ...row,
           id,
           key: id,
@@ -1569,6 +1900,21 @@
           confirmationProfile: row.confirmationProfile || parsed.confirmationProfile,
           microMicroHash: row.microMicroHash || parsed.microMicroHash,
           microMicroContext: row.microMicroContext || parsed.context || "",
+
+          ...mw,
+          currentMarketWeatherKey: row.currentMarketWeatherKey || row.currentMarketCandidate?.currentMarketWeatherKey || currentMarket.currentMarketWeatherKey,
+          currentMarketWeatherRegime: row.currentMarketWeatherRegime || row.currentMarketCandidate?.currentMarketWeatherRegime || currentMarket.currentMarketWeatherRegime,
+          currentMarketWeatherTrendSide: row.currentMarketWeatherTrendSide || row.currentMarketCandidate?.currentMarketWeatherTrendSide || currentMarket.currentMarketWeatherTrendSide,
+
+          familyResolution: row.familyResolution || row.currentMarketCandidate?.familyResolution || "MICRO_MICRO",
+          marketResolution: row.marketResolution || row.currentMarketCandidate?.marketResolution || "LIFETIME",
+          proofSource: row.proofSource || row.currentMarketCandidate?.proofSource || "MICRO_MICRO_LIFETIME",
+          proofTier: proofTier(row),
+          signalType: signalType(row),
+          maxAllowedRiskBand: maxAllowedRiskBand(row),
+          shrunkAvgR: shrunkAvgR(row),
+          shrunkLCB95AvgR: shrunkLCB95AvgR(row),
+          riskFractionForEntry: riskFractionForEntry(row),
 
           side: DASHBOARD_SIDE,
           dashboardSide: DASHBOARD_SIDE,
@@ -1605,28 +1951,32 @@
           completed: completed(row),
           outcomeSample: completed(row),
           observationSample: observationSample(row),
-          learningStatus: learningStatus(row),
-          learningStatusOld: learningStatus(row),
+          learningStatus: learningStatus({ ...row, status }),
           status,
           microMicroStatus: status,
           microMicroRuntimeGateStatus: status,
-          microMicroRuntimeGate: row.microMicroRuntimeGate || gate,
           tooEarly: tooEarly(row),
           tier: tier({ ...row, status }),
 
           fairWinrate: fairWinrate(row),
           avgR: netAvgR(row),
           totalR: netTotalR(row),
+          lcb95AvgR: lcb95AvgR(row),
           profitFactor: profitFactor(row),
           avgCostR: avgCostR(row),
           directSLPct: directSLPct(row),
           adaptiveScore: adaptiveScore(row),
           netEdgeScore: netEdgeScore(row),
+          currentMarketScore: currentMarketScore(row),
           cleanMeasurement: cleanMeasurementScore(row) === 1,
 
-          discordActivationEligible: status === MICRO_MICRO_STATUS_PASSED,
-          activationEligible: status === MICRO_MICRO_STATUS_PASSED,
-          discordActivationGate: row.discordActivationGate || gate,
+          empiricalVeto: empiricalVeto(row),
+          empiricalVetoReason: empiricalVetoReason(row),
+          policyBlocked: policyBlocked(row),
+          policyBlockedReason: policyBlocked(row) ? whyBlocked(row) : null,
+
+          discordActivationEligible: discordActivationEligible(row),
+          activationEligible: discordActivationEligible(row),
 
           scannerFingerprintsMetadataOnly: true,
           scannerFingerprintsUsedAsLearningFamily: false,
@@ -1642,8 +1992,16 @@
           adaptiveUiVersion: row.adaptiveUiVersion || ADAPTIVE_UI_VERSION,
           microMicroVersion: MICRO_MICRO_VERSION,
           microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
-          microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION
+          microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+          marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+          marketWeatherSelectorVersion: MARKET_WEATHER_SELECTOR_VERSION,
+          empiricalVetoVersion: EMPIRICAL_VETO_VERSION
         };
+
+        normalized.microMicroRuntimeGate = row.microMicroRuntimeGate || microMicroRuntimeGate(normalized);
+        normalized.discordActivationGate = row.discordActivationGate || normalized.microMicroRuntimeGate;
+
+        return normalized;
       }
 
       function extractObjectArrays(data, keys = []) {
@@ -1673,7 +2031,17 @@
           "shortRows"
         ]);
 
+        const playbookRows = [
+          data.currentMarketPlaybook?.selected,
+          data.currentMarketPlaybook?.bestForCurrentMarket,
+          data.currentMarketPlaybook?.bestTradeReady,
+          data.currentMarketPlaybook?.bestWatch,
+          data.currentMarketPlaybook?.bestObserveOnly,
+          ...(Array.isArray(data.currentMarketPlaybook?.candidates) ? data.currentMarketPlaybook.candidates : [])
+        ].filter(Boolean);
+
         const nested = [
+          ...playbookRows,
           ...extractObjectArrays(data.result || {}, ["rows", "microMicroRows", "microMicroFamilies", "bestMicroMicroFamilies"]),
           ...extractObjectArrays(data.payload || {}, ["rows", "microMicroRows", "microMicroFamilies", "bestMicroMicroFamilies"]),
           ...extractObjectArrays(data.activeRotation || {}, ["microFamilies", "rows", "activeRows"]),
@@ -1688,8 +2056,10 @@
           if (!rowIsExactShortMicroMicro(row)) continue;
 
           const id = microId(row);
-          if (!id || byId.has(id)) continue;
-          byId.set(id, row);
+          if (!id) continue;
+
+          const existing = byId.get(id);
+          byId.set(id, existing ? { ...existing, ...row } : row);
         }
 
         return [...byId.values()];
@@ -1707,10 +2077,31 @@
         return String(a || "").localeCompare(String(b || ""));
       }
 
+      function signalRank(row = {}) {
+        const type = signalType(row);
+        if (type === SIGNAL_TYPE_TRADE_READY) return 0;
+        if (type === SIGNAL_TYPE_WATCH_ONLY) return 1;
+        if (type === SIGNAL_TYPE_OBSERVE_ONLY) return 2;
+        if (type === SIGNAL_TYPE_BLOCKED) return 3;
+        return 4;
+      }
+
+      function compareCurrentMarketFirst(a, b) {
+        return (
+          compareNumberAsc(signalRank(a), signalRank(b)) ||
+          compareNumberAsc(statusRank(a), statusRank(b)) ||
+          compareNumberDesc(shrunkLCB95AvgR(a), shrunkLCB95AvgR(b)) ||
+          compareNumberDesc(shrunkAvgR(a), shrunkAvgR(b)) ||
+          compareNumberDesc(currentMarketScore(a), currentMarketScore(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
       function compareBestDataFirst(a, b) {
         return (
           compareNumberAsc(statusRank(a), statusRank(b)) ||
           compareNumberDesc(netEdgeScore(a), netEdgeScore(b)) ||
+          compareNumberDesc(lcb95AvgR(a) ?? -999, lcb95AvgR(b) ?? -999) ||
           compareNumberDesc(netAvgR(a), netAvgR(b)) ||
           compareNumberDesc(profitFactor(a), profitFactor(b)) ||
           compareNumberDesc(netTotalR(a), netTotalR(b)) ||
@@ -1727,8 +2118,12 @@
       }
 
       function compareMicroRows(a, b, mode = state.microMode) {
-        if (mode === "passed") return compareBestDataFirst(a, b);
+        if (mode === "currentMarket") return compareCurrentMarketFirst(a, b);
         if (mode === "best") return compareBestDataFirst(a, b);
+        if (mode === "tradeReady") return compareNumberAsc(signalRank(a), signalRank(b)) || compareCurrentMarketFirst(a, b);
+        if (mode === "watch") return compareNumberDesc(signalType(a) === SIGNAL_TYPE_WATCH_ONLY ? 1 : 0, signalType(b) === SIGNAL_TYPE_WATCH_ONLY ? 1 : 0) || compareCurrentMarketFirst(a, b);
+        if (mode === "observe") return compareNumberDesc(signalType(a) === SIGNAL_TYPE_OBSERVE_ONLY ? 1 : 0, signalType(b) === SIGNAL_TYPE_OBSERVE_ONLY ? 1 : 0) || compareCurrentMarketFirst(a, b);
+        if (mode === "passed") return compareBestDataFirst(a, b);
         if (mode === "clean") return compareNumberDesc(cleanMeasurementScore(a), cleanMeasurementScore(b)) || compareBestDataFirst(a, b);
         if (mode === "currentFit") return compareNumberDesc(currentFitScore(a), currentFitScore(b)) || compareBestDataFirst(a, b);
         if (mode === "cost") return compareNumberAsc(avgCostR(a), avgCostR(b)) || compareBestDataFirst(a, b);
@@ -1747,9 +2142,12 @@
           .filter(Boolean)
           .filter(rowIsExactShortMicroMicro);
 
-        const filtered = mode === "passed"
-          ? normalized.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
-          : normalized;
+        let filtered = normalized;
+
+        if (mode === "passed") filtered = normalized.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED);
+        if (mode === "tradeReady") filtered = normalized.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY);
+        if (mode === "watch") filtered = normalized.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY);
+        if (mode === "observe") filtered = normalized.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY);
 
         return filtered
           .sort((a, b) => compareMicroRows(a, b, mode))
@@ -1852,6 +2250,7 @@
 
       function commonParams() {
         const params = new URLSearchParams();
+        const mw = currentMarketWeather();
 
         params.set("side", ONLY_SIDE);
         params.set("tradeSide", ONLY_SIDE);
@@ -1878,16 +2277,33 @@
         params.set("observationDedupeVersion", OBSERVATION_DEDUPE_VERSION);
         params.set("outcomeDedupeVersion", OUTCOME_DEDUPE_VERSION);
 
+        params.set("entryMarketWeatherKeyVersion", MARKET_WEATHER_KEY_VERSION);
+        params.set("currentMarketWeatherKey", mw.currentMarketWeatherKey);
+        params.set("currentMarketWeatherRegime", mw.currentMarketWeatherRegime);
+        params.set("currentMarketWeatherTrendSide", mw.currentMarketWeatherTrendSide);
+        params.set("marketWeatherSelectorVersion", MARKET_WEATHER_SELECTOR_VERSION);
+        params.set("marketWeatherFdrVersion", MARKET_WEATHER_FDR_VERSION);
+
+        params.set("empiricalVetoVersion", EMPIRICAL_VETO_VERSION);
+        params.set("empiricalVetoEnabled", "1");
+        params.set("empiricalVetoRule", "EXACT_MICRO_MICRO_LCB95_NEGATIVE");
+
         params.set("microMicroRuntimeGateVersion", MICRO_MICRO_RUNTIME_GATE_VERSION);
         params.set("microMicroBestSelectorVersion", MICRO_MICRO_BEST_SELECTOR_VERSION);
         params.set("bestDataFirst", "1");
         params.set("netEdgeFirst", "1");
+        params.set("currentMarketFirst", "1");
+
+        params.set("selectorMode", "OBSERVE");
+        params.set("sizingCapMode", "OBSERVE");
+        params.set("fdrMode", "OBSERVE");
+        params.set("discordTradeReadyMode", "VALIDATION_REQUIRED");
 
         return params;
       }
 
       function backendMicroMode() {
-        if (state.microMode === "best" || state.microMode === "passed") return "adaptive";
+        if (["currentMarket", "best", "passed", "tradeReady", "watch", "observe"].includes(state.microMode)) return "currentMarket";
         return state.microMode;
       }
 
@@ -1917,7 +2333,7 @@
         params.set("onlyMicroMicro", "1");
         params.set("activeRowsLimit", "180");
         params.set("availableLimit", "280");
-        params.set("mode", "adaptive");
+        params.set("mode", "currentMarket");
         params.set("uiMode", state.microMode);
         return `${endpoints.rotation}?${params.toString()}`;
       }
@@ -1927,6 +2343,7 @@
         params.set("includeUniverse", "1");
         params.set("includeBreadth", "1");
         params.set("includeCurrentFit", "1");
+        params.set("includeMarketWeather", "1");
         return `${endpoints.market}?${params.toString()}`;
       }
 
@@ -1947,6 +2364,7 @@
         params.set("includeRunMeta", "1");
         params.set("includeRiskPlan", "1");
         params.set("includeMicroMicro", "1");
+        params.set("includeMarketWeather", "1");
         params.set("compact", "1");
         return `${endpoints.trade}?${params.toString()}`;
       }
@@ -2062,7 +2480,13 @@
         return table(rows, [
           { label: "Rank", render: (row, index) => `<strong>${escapeHtml(row.rank ?? index + 1)}</strong>` },
           { label: "Runtime", render: (row) => runtimeStatusPill(row) },
+          { label: "Signal", render: (row) => signalTypePill(row) },
           { label: "Discord", render: (row) => `<span class="pill ${activeSet.has(microId(row)) ? "active" : ""}">${activeSet.has(microId(row)) ? "ACTIVE" : "OFF"}</span>` },
+          { label: "Weather", render: (row) => marketWeatherPill(row) },
+          { label: "ProofSource", render: (row) => `<span class="pill soft">${escapeHtml(proofSource(row))}</span>` },
+          { label: "ProofTier", render: (row) => `<span class="pill purple">${escapeHtml(proofTier(row))}</span>` },
+          { label: "MarketRes", render: (row) => `<span class="pill info">${escapeHtml(marketResolution(row))}</span>` },
+          { label: "Veto", render: (row) => empiricalVeto(row) ? `<span class="pill veto">${escapeHtml(empiricalVetoReason(row))}</span>` : '<span class="pill active">NO</span>' },
           { label: "Layer", render: (row) => microLayerPill(row) },
           { label: "Meetlat", render: (row) => measurementPill(row) },
           { label: "Gate", render: (row) => discordGatePill(row) },
@@ -2075,13 +2499,19 @@
           { label: "Completed", render: (row) => fmt(completed(row), 2) },
           { label: "Fair WR", render: (row) => fmtPct(fairWinrate(row)) },
           { label: "AvgR", render: (row) => fmt(netAvgR(row), 3) },
+          { label: "LCB95", render: (row) => lcb95AvgR(row) === null ? "-" : fmt(lcb95AvgR(row), 4) },
+          { label: "ShrunkAvgR", render: (row) => fmt(shrunkAvgR(row), 4) },
+          { label: "ShrunkLCB95", render: (row) => fmt(shrunkLCB95AvgR(row), 4) },
           { label: "TotalR", render: (row) => fmt(netTotalR(row), 3) },
           { label: "PF", render: (row) => fmt(profitFactor(row), 2) },
           { label: "AvgCostR", render: (row) => fmt(avgCostR(row), 3) },
           { label: "DirectSL", render: (row) => fmtPct(directSLPct(row)) },
           { label: "CurrentFit", render: (row) => currentFitPill(row) },
           { label: "NetEdge", render: (row) => `<strong>${escapeHtml(fmt(netEdgeScore(row), 2))}</strong>` },
-          { label: "Adaptive", render: (row) => fmt(adaptiveScore(row), 2) },
+          { label: "MktScore", render: (row) => fmt(currentMarketScore(row), 2) },
+          { label: "Risk", render: (row) => `<strong>${escapeHtml(fmt(riskFractionForEntry(row), 6))}</strong>` },
+          { label: "RiskBand", render: (row) => `<span class="pill raw">${escapeHtml(maxAllowedRiskBand(row))}</span>` },
+          { label: "Why selected/blocked", render: (row) => `<div class="reason-cell">${escapeHtml(whyBlocked(row) || whySelected(row))}</div>` },
           { label: "Actie", render: (row) => `
             <div class="toolbar" style="margin:0">
               <button type="button" class="small short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(row))}">#1</button>
@@ -2110,13 +2540,43 @@
           discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
           microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
           microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+          marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+          marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+          marketWeatherSelectorVersion: MARKET_WEATHER_SELECTOR_VERSION,
+          marketWeatherFdrVersion: MARKET_WEATHER_FDR_VERSION,
+          empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY"
+        };
+      }
+
+      function featureFlagsObject() {
+        return {
+          version: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+          capture: "LIVE",
+          aggregation: "LIVE",
+          selector: "OBSERVE",
+          sizingCap: "OBSERVE",
+          fdr: "OBSERVE",
+          discordTradeReady: "VALIDATION_REQUIRED",
+          captureEnabled: true,
+          aggregationEnabled: true,
+          selectorObserveOnly: true,
+          sizingCapObserveOnly: true,
+          fdrObserveOnly: true,
+          discordTradeReadyHardLiveEnabled: false
         };
       }
 
       function riskPolicyObject() {
         return {
           side: "SHORT",
+          riskSourceOfTruth: "riskFractionForEntry",
+          proofTierIsLabelOnly: true,
+          signalTypeIsActionLabelOnly: true,
+          maxAllowedRiskBandIsOptionalCap: true,
+          empiricalVetoRisk: 0,
+          policyBlockedRisk: 0,
+          observeOnlyRisk: 0,
           riskGeometryRule: "tp < entry < sl",
           tpHitRule: "candle.low <= tp",
           slHitRule: "candle.high >= sl",
@@ -2133,22 +2593,26 @@
           version: DISCORD_ACTIVATION_GATE_VERSION,
           runtimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
           bestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+          empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
           statusModel: {
-            OBSERVING: "completed < 35: leren toegestaan, geen Discord",
-            PASSED: "completed >= 35 + positieve netto edge: bovenaan, selecteerbaar",
-            REJECTED: "completed >= 35 + slechte netto edge: onderaan, geen Discord",
-            POLICY_BLOCKED: "E_WEAK_CONTRA of MISFIT: onderaan, geen Discord"
+            OBSERVING: "completed < 35: leren toegestaan, geen Discord trade-ready",
+            PASSED: "completed >= 35 + positieve netto edge + LCB95 positief",
+            REJECTED: "completed >= 35 + slechte netto edge, maar geen empirical veto",
+            EMPIRICAL_VETO: "completed >= 35 + exact micro-micro LCB95(avgR) < 0",
+            POLICY_BLOCKED: "systeemregel: E_WEAK_CONTRA, invalid side, invalid geometry, non-short, forbidden family"
           },
+          pipeline: [
+            "parse exact micro-micro",
+            "policy gate",
+            "raw exact micro-micro stats",
+            "empirical veto check",
+            "shrinkage / fallback / playbook diagnose"
+          ],
           rules: [
-            "status == PASSED",
-            "completed >= 35",
-            "avgR net > 0",
-            "totalR net > 0",
-            "profitFactor > 1",
-            "avgCostR <= 0.35",
-            "directSLPct <= 0.25",
-            "currentFit != MISFIT",
-            "confirmationProfile != E_WEAK_CONTRA"
+            "policyBlocked => riskFractionForEntry = 0",
+            "empiricalVeto => riskFractionForEntry = 0",
+            "OBSERVE_ONLY => riskFractionForEntry = 0",
+            "TRADE_READY => riskFractionForEntry from positionSizing.js"
           ]
         };
       }
@@ -2156,6 +2620,7 @@
       function compactOverviewApiOutput(data = {}, microData = {}, rotationData = {}, marketData = {}) {
         const microRows = microData?.rows || [];
         const activeIds = activeMicroMicroIds();
+        const playbook = microData.currentMarketPlaybook || data.currentMarketPlaybook || null;
 
         return {
           ok: data.ok !== false,
@@ -2165,14 +2630,21 @@
           redisKeyPrefix: SHORT_KEY_PREFIX,
           persistentLearningKey: PERSISTENT_LEARNING_KEY,
           versions: identityVersions(),
+          featureFlags: featureFlagsObject(),
+          currentMarketWeather: currentMarketWeather(),
+          currentMarketPlaybook: playbook,
           counts: {
             visibleMicroMicroRows: microRows.length,
+            tradeReadyRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length,
+            watchRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length,
+            observeRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length,
+            blockedRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length,
             passedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length,
             observingRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length,
             rejectedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length,
+            empiricalVetoRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
             policyBlockedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
             cleanRows: microRows.filter((row) => cleanMeasurementScore(row) === 1).length,
-            legacyRows: microRows.filter((row) => cleanMeasurementScore(row) !== 1).length,
             selectedDiscordMicroMicroIds: activeIds.length,
             openVirtualPositions: Number(data.openPositions || data.positionsCount || state.trade?.positions?.length || 0),
             scannerShortCandidates: Number(data.shortScannerCandidates || data.scannerCandidates || state.scanner?.candidates?.length || 0)
@@ -2181,13 +2653,22 @@
             ? {
                 id: microId(microRows[0]),
                 status: runtimeStatus(microRows[0]),
+                signalType: signalType(microRows[0]),
+                proofTier: proofTier(microRows[0]),
+                proofSource: proofSource(microRows[0]),
+                marketResolution: marketResolution(microRows[0]),
+                entryMarketWeatherKey: entryMarketWeather(microRows[0]).entryMarketWeatherKey,
                 netEdgeScore: netEdgeScore(microRows[0]),
                 completed: completed(microRows[0]),
                 avgR: netAvgR(microRows[0]),
-                totalR: netTotalR(microRows[0]),
-                profitFactor: profitFactor(microRows[0]),
-                directSLPct: directSLPct(microRows[0]),
-                avgCostR: avgCostR(microRows[0])
+                lcb95AvgR: lcb95AvgR(microRows[0]),
+                shrunkAvgR: shrunkAvgR(microRows[0]),
+                shrunkLCB95AvgR: shrunkLCB95AvgR(microRows[0]),
+                riskFractionForEntry: riskFractionForEntry(microRows[0]),
+                empiricalVeto: empiricalVeto(microRows[0]),
+                empiricalVetoReason: empiricalVetoReason(microRows[0]),
+                policyBlocked: policyBlocked(microRows[0]),
+                why: whyBlocked(microRows[0]) || whySelected(microRows[0])
               }
             : null,
           selectedDiscordMicroMicroIds: activeIds,
@@ -2200,24 +2681,8 @@
             regime: marketData.currentRegime || marketData.regime || marketData.market?.regime || "UNKNOWN",
             trendSide: marketData.currentTrendSide || marketData.trendSide || marketData.market?.trendSide || "UNKNOWN"
           },
-          rules: {
-            uiShowsOnlyMicroMicro: true,
-            uiAllowsOnlyMicroMicroSelection: true,
-            ranking: "PASSED first, then best net edge, samples only tie-breaker",
-            scannerFingerprintsUsedAsLearningFamily: false,
-            executionFingerprintsUsedAsLearningFamily: false,
-            executionFingerprintsCanDeriveMicroMicroContextHash: true,
-            learningIdentitySource: "ANALYZE_MICRO_MICRO_FAMILY",
-            selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
-            discordMatch: "candidate.microMicroFamilyId === selectedMicroMicroFamilyId && status === PASSED",
-            child75MatchTriggersDiscord: false,
-            parent15MatchTriggersDiscord: false,
-            currentFitBlocksLearning: false,
-            currentFitCanBlockDiscordOnly: true,
-            realOrdersDisabled: true
-          },
-          discordActivationGate: activationGateObject(),
           risk: riskPolicyObject(),
+          activationGate: activationGateObject(),
           warnings: [
             ...(data.warnings || []),
             ...(microData.warnings || []),
@@ -2250,85 +2715,110 @@
         const activeIds = activeMicroMicroIds();
         const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
         const legacyRows = rows.length - cleanRows;
-        const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
+        const tradeReadyRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length;
+        const watchRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length;
+        const observeRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length;
         const passedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length;
+        const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
         const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
+        const empiricalVetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
         const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
         const top = rows[0] || null;
+        const playbook = microData.currentMarketPlaybook || null;
 
         const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData);
         const compactJson = JSON.stringify(compact, null, 2);
 
         $("overview").innerHTML = `
           <div class="grid">
-            ${metricCard("Learning key", PERSISTENT_LEARNING_KEY)}
-            ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
+            ${metricCard("MarketWeather key", currentMarketWeather().currentMarketWeatherKey, MARKET_WEATHER_KEY_VERSION)}
+            ${metricCard("Feature line", "SAFE", "capture/aggregation live · selector/sizing/FDR observe")}
             ${metricCard("Visible MM rows", fmtInt(rows.length), "exact micro-micro only")}
             ${metricCard("Discord selected", fmtInt(activeIds.length), "max 2 exact MM IDs")}
-            ${metricCard("PASSED", fmtInt(passedRows), "selecteerbaar voor Discord")}
+            ${metricCard("TRADE_READY", fmtInt(tradeReadyRows), "observe hard-live nog uit")}
+            ${metricCard("WATCH", fmtInt(watchRows))}
+            ${metricCard("OBSERVE_ONLY", fmtInt(observeRows))}
+            ${metricCard("Risk source", "positionSizing.js", "riskFractionForEntry")}
+          </div>
+
+          <div class="grid">
+            ${metricCard("PASSED", fmtInt(passedRows), "runtime gate")}
+            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
+            ${metricCard("REJECTED", fmtInt(rejectedRows), "zwak maar geen veto")}
+            ${metricCard("EMPIRICAL VETO", fmtInt(empiricalVetoRows), "LCB95(avgR)<0")}
+            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "systeemregel")}
             ${metricCard("Clean rows", fmtInt(cleanRows), `${fmtInt(legacyRows)} legacy`)}
             ${metricCard("Parent/75 rows", "HIDDEN", "context/rollup only")}
             ${metricCard("Real orders", "OFF", "virtual/shadow only")}
           </div>
 
-          <div class="grid">
-            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
-            ${metricCard("REJECTED", fmtInt(rejectedRows), "slechte netto edge")}
-            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "E_WEAK_CONTRA/MISFIT")}
-            ${metricCard("Ranking", "BEST NET EDGE", "samples alleen tie-breaker")}
-            ${metricCard("Market regime", marketData.currentRegime || marketData.regime || marketData.market?.regime || "UNKNOWN")}
-            ${metricCard("Trend side", marketData.currentTrendSide || marketData.trendSide || marketData.market?.trendSide || "UNKNOWN")}
-            ${metricCard("CurrentFit", "SOFT", "blocks Discord only")}
-            ${metricCard("Top", top ? fmt(netEdgeScore(top), 2) : "-", top ? microId(top) : "geen top row")}
-          </div>
+          ${playbook ? `
+            <div class="card">
+              <h3>Best for current market</h3>
+              <div class="toolbar">
+                <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || currentMarketWeather().currentMarketWeatherKey)}</span>
+                <span class="pill best">${escapeHtml(playbook.answerType || "BEST_AVAILABLE")}</span>
+                <span class="pill observe">SELECTOR OBSERVE</span>
+                <span class="pill observe">SIZING CAP OBSERVE</span>
+                <span class="pill observe">FDR OBSERVE</span>
+              </div>
+              ${playbook.bestForCurrentMarket || playbook.selected ? `
+                <p><code>${escapeHtml((playbook.bestForCurrentMarket || playbook.selected)?.selectedFamilyId || microId(playbook.bestForCurrentMarket || playbook.selected) || "-")}</code></p>
+                <div class="grid">
+                  ${metricCard("SignalType", signalType(playbook.bestForCurrentMarket || playbook.selected))}
+                  ${metricCard("ProofSource", proofSource(playbook.bestForCurrentMarket || playbook.selected))}
+                  ${metricCard("ShrunkAvgR", fmt(shrunkAvgR(playbook.bestForCurrentMarket || playbook.selected), 4))}
+                  ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(playbook.bestForCurrentMarket || playbook.selected), 4))}
+                  ${metricCard("RiskFraction", fmt(riskFractionForEntry(playbook.bestForCurrentMarket || playbook.selected), 6))}
+                  ${metricCard("EmpiricalVeto", empiricalVeto(playbook.bestForCurrentMarket || playbook.selected) ? "YES" : "NO")}
+                  ${metricCard("PolicyBlocked", policyBlocked(playbook.bestForCurrentMarket || playbook.selected) ? "YES" : "NO")}
+                  ${metricCard("Why", whyBlocked(playbook.bestForCurrentMarket || playbook.selected) || whySelected(playbook.bestForCurrentMarket || playbook.selected))}
+                </div>
+              ` : `<div class="empty">Geen current-market kandidaat.</div>`}
+            </div>
+          ` : ""}
 
           ${top ? `
             <div class="card">
-              <h3>Beste micro-micro volgens netto edge</h3>
+              <h3>Beste zichtbare micro-micro</h3>
               <div class="toolbar">
-                <span class="pill best">BEST FIRST</span>
                 <span class="pill short">SHORT</span>
+                <span class="pill best">BEST FIRST</span>
+                ${signalTypePill(top)}
                 ${runtimeStatusPill(top)}
                 ${discordGatePill(top)}
                 ${measurementPill(top)}
                 ${currentFitPill(top)}
+                ${marketWeatherPill(top)}
               </div>
               <p><code>${escapeHtml(microId(top))}</code></p>
               <div class="grid">
                 ${metricCard("NetEdge", fmt(netEdgeScore(top), 2), "ranking-score")}
-                ${metricCard("Completed", fmt(completed(top), 0), "alleen tie-breaker")}
+                ${metricCard("Completed", fmt(completed(top), 0), "gate/tie-breaker")}
                 ${metricCard("AvgR", fmt(netAvgR(top), 3))}
-                ${metricCard("TotalR", fmt(netTotalR(top), 3))}
+                ${metricCard("LCB95", lcb95AvgR(top) === null ? "-" : fmt(lcb95AvgR(top), 4))}
+                ${metricCard("ShrunkAvgR", fmt(shrunkAvgR(top), 4))}
+                ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(top), 4))}
                 ${metricCard("PF", fmt(profitFactor(top), 2))}
-                ${metricCard("Fair WR", fmtPct(fairWinrate(top)))}
-                ${metricCard("AvgCostR", fmt(avgCostR(top), 3))}
-                ${metricCard("DirectSL", fmtPct(directSLPct(top)))}
+                ${metricCard("Risk", fmt(riskFractionForEntry(top), 6))}
               </div>
             </div>
           ` : ""}
 
           <div class="grid-3">
             <div class="card">
-              <h3>Rankingregels</h3>
-              <div class="toolbar">
-                <span class="pill passed">PASSED eerst</span>
-                <span class="pill best">net-edge score</span>
-                <span class="pill soft">samples tie-breaker</span>
-                <span class="pill blocked">policy onderaan</span>
-              </div>
-              <div class="metric-extra">
-                De frontend sorteert niet meer primair op meeste samples. Completed bepaalt alleen of een row OBSERVING/PASSED/REJECTED is en komt daarna pas als tie-breaker.
-              </div>
+              <h3>Feature flags</h3>
+              ${jsonBlock(featureFlagsObject())}
             </div>
 
             <div class="card">
-              <h3>Discord activation gate</h3>
+              <h3>Runtime / veto gate</h3>
               ${jsonBlock(activationGateObject())}
             </div>
 
             <div class="card">
-              <h3>Identity versions</h3>
-              ${jsonBlock(identityVersions())}
+              <h3>Risk policy</h3>
+              ${jsonBlock(riskPolicyObject())}
             </div>
           </div>
 
@@ -2336,7 +2826,7 @@
             <div class="toolbar">
               <button type="button" class="primary" data-copy-target="overviewApiOutput">Copy compact output</button>
               <button type="button" data-select-target="overviewApiOutput">Select output</button>
-              <button type="button" data-export-json="overview" data-filename="overview-short-mm.json">Export JSON</button>
+              <button type="button" data-export-json="overview" data-filename="overview-short-mm-marketweather.json">Export JSON</button>
             </div>
             <textarea id="overviewApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactJson)}</textarea>
           </div>
@@ -2356,11 +2846,26 @@
           ok: data.ok !== false,
           side: ONLY_SIDE,
           dashboardSide: DASHBOARD_SIDE,
-          namespace: SHORT_NAMESPACE,
-          file: "src/market/marketWeather.js",
           apiRoute: "/api/admin/market-weather",
           versions: identityVersions(),
-          market: {
+          featureFlags: featureFlagsObject(),
+          naming: {
+            allowed: [
+              "entryMarketWeatherKey",
+              "entryMarketWeatherKeyVersion",
+              "entryMarketWeatherRegime",
+              "entryMarketWeatherTrendSide",
+              "entryMarketWeatherCapturedAt",
+              "entryMarketWeatherRaw",
+              "entryMarketWeatherRawAvailableFields"
+            ],
+            forbidden: [
+              "entryMarketRegime",
+              "entryMarketKey"
+            ]
+          },
+          currentMarketWeather: currentMarketWeather(),
+          apiMarket: {
             regime: data.currentRegime || data.regime || data.market?.regime || data.marketWeather?.currentRegime || "UNKNOWN",
             trendSide: data.currentTrendSide || data.trendSide || data.market?.trendSide || data.marketWeather?.currentTrendSide || "UNKNOWN",
             bullishPct: data.bullishPct ?? data.market?.bullishPct ?? data.marketWeather?.bullishPct ?? null,
@@ -2368,20 +2873,35 @@
             squeezePct: data.squeezePct ?? data.market?.squeezePct ?? data.marketWeather?.squeezePct ?? null,
             confidence: data.confidence ?? data.market?.confidence ?? data.marketWeather?.confidence ?? null
           },
-          policy: {
-            currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
-            currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
-            currentFitBlocksLearning: false,
-            currentFitCanBlockDiscordOnly: true
-          },
           error: data.error || data.reason || null
         };
 
         $("market").innerHTML = `
           <div class="section-title">
             <div>
-              <h2>Market weather</h2>
-              <p>MarketWeather is context voor ranking/Discord, niet voor learning identity.</p>
+              <h2>MarketWeather</h2>
+              <p>V1 key is klein: <code>entryMarketWeatherRegime|entryMarketWeatherTrendSide</code>. Raw snapshot mag breder, maar alleen echte velden.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Current market override voor selector-observe</h3>
+            <div class="toolbar">
+              <select id="marketWeatherRegimeInput">
+                ${["", "SQUEEZE", "TREND", "CHOP"].map((value) => `<option value="${escapeAttr(value)}" ${value === state.currentMarketWeatherRegime ? "selected" : ""}>${escapeHtml(value || "AUTO/UNKNOWN regime")}</option>`).join("")}
+              </select>
+              <select id="marketWeatherTrendSideInput">
+                ${["", "BEARISH", "BULLISH", "NEUTRAL"].map((value) => `<option value="${escapeAttr(value)}" ${value === state.currentMarketWeatherTrendSide ? "selected" : ""}>${escapeHtml(value || "AUTO/UNKNOWN trendSide")}</option>`).join("")}
+              </select>
+              <input id="marketWeatherKeyInput" placeholder="Optioneel: SQUEEZE|BEARISH" value="${escapeAttr(state.currentMarketWeatherKey)}" />
+              <button type="button" class="primary" data-action="apply-market-weather">Apply</button>
+              <button type="button" data-action="clear-market-weather">Clear</button>
+            </div>
+            <div class="toolbar">
+              <span class="pill weather">${escapeHtml(currentMarketWeather().currentMarketWeatherKey)}</span>
+              <span class="pill observe">selector observe</span>
+              <span class="pill observe">sizing cap observe</span>
+              <span class="pill observe">FDR observe</span>
             </div>
           </div>
 
@@ -2395,14 +2915,14 @@
           <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
 
           <div class="grid">
-            ${metricCard("OK", data.ok !== false ? "YES" : "NO")}
-            ${metricCard("Regime", compact.market.regime)}
-            ${metricCard("Trend side", compact.market.trendSide)}
-            ${metricCard("Bullish", compact.market.bullishPct === null ? "-" : `${fmt(compact.market.bullishPct, 2)}%`)}
-            ${metricCard("Bearish", compact.market.bearishPct === null ? "-" : `${fmt(compact.market.bearishPct, 2)}%`)}
-            ${metricCard("Squeeze", compact.market.squeezePct === null ? "-" : `${fmt(compact.market.squeezePct, 2)}%`)}
-            ${metricCard("Confidence", compact.market.confidence === null ? "-" : fmt(compact.market.confidence, 3))}
-            ${metricCard("CurrentFit", "SOFT", "Discord can be strict")}
+            ${metricCard("Current key", currentMarketWeather().currentMarketWeatherKey)}
+            ${metricCard("Key version", MARKET_WEATHER_KEY_VERSION)}
+            ${metricCard("Regime", compact.apiMarket.regime)}
+            ${metricCard("Trend side", compact.apiMarket.trendSide)}
+            ${metricCard("Bullish", compact.apiMarket.bullishPct === null ? "-" : `${fmt(compact.apiMarket.bullishPct, 2)}%`)}
+            ${metricCard("Bearish", compact.apiMarket.bearishPct === null ? "-" : `${fmt(compact.apiMarket.bearishPct, 2)}%`)}
+            ${metricCard("Squeeze", compact.apiMarket.squeezePct === null ? "-" : `${fmt(compact.apiMarket.squeezePct, 2)}%`)}
+            ${metricCard("Capture", "LIVE")}
           </div>
 
           <div class="card">
@@ -2449,6 +2969,8 @@
           snapshotId: snapshot.snapshotId || data.snapshotId || null,
           createdAt: snapshot.createdAt || data.createdAt || null,
           ageText: ageText(snapshot.createdAt || data.createdAt),
+          currentMarketWeather: currentMarketWeather(),
+          featureFlags: featureFlagsObject(),
           counts: {
             rawCandidates: Array.isArray(snapshot.candidates || data.candidates || data.rows) ? (snapshot.candidates || data.candidates || data.rows).length : 0,
             shortCandidates: candidates.length,
@@ -2458,7 +2980,8 @@
             scannerWritesLearning: false,
             scannerSendsDiscord: false,
             scannerFingerprintRole: "METADATA_ONLY",
-            scannerFingerprintsUsedAsLearningFamily: false
+            scannerFingerprintsUsedAsLearningFamily: false,
+            marketWeatherRawCanBeCapturedAtEntry: true
           },
           warnings: data.warnings || data.runtimeWarnings || [],
           error: data.error || data.reason || null,
@@ -2481,16 +3004,17 @@
             ${metricCard("Snapshot", compact.snapshotId || "-")}
             ${metricCard("Age", compact.ageText)}
             ${metricCard("SHORT candidates", fmtInt(candidates.length))}
+            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
             ${metricCard("Scanner role", "METADATA")}
             ${metricCard("Learning", "NO")}
             ${metricCard("Discord", "NO")}
-            ${metricCard("Long", "DISABLED")}
           </div>
 
           ${table(candidates.slice(0, 60), [
             { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
             { label: "Contract", render: (row) => escapeHtml(row.contractSymbol || row.instId || `${baseSymbol(row)}USDT`) },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+            { label: "MarketWeather", render: (row) => marketWeatherPill(row) },
             { label: "Price", render: (row) => fmtPrice(row.price || row.currentPrice || row.markPrice) },
             { label: "Score", render: (row) => fmt(row.scannerScore ?? row.moveScore ?? row.sniperScore, 2) },
             { label: "1h", render: (row) => fmtRawPct(row.change1h || row.priceChange1h) },
@@ -2509,6 +3033,7 @@
 
       async function runScannerNow() {
         try {
+          const mw = currentMarketWeather();
           const data = await api(endpoints.runScanner, {
             method: "POST",
             timeoutMs: 30000,
@@ -2531,7 +3056,11 @@
               noExchangeOrders: true,
               persistentLearningKey: PERSISTENT_LEARNING_KEY,
               redisNamespace: SHORT_NAMESPACE,
-              redisKeyPrefix: SHORT_KEY_PREFIX
+              redisKeyPrefix: SHORT_KEY_PREFIX,
+              entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+              currentMarketWeatherKey: mw.currentMarketWeatherKey,
+              currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
+              currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide
             })
           });
 
@@ -2558,7 +3087,9 @@
           apiRoute: "/api/admin/trade",
           runRoute: "/api/trade/run",
           versions: identityVersions(),
+          featureFlags: featureFlagsObject(),
           risk: riskPolicyObject(),
+          currentMarketWeather: currentMarketWeather(),
           counts: {
             openVirtualShortPositions: positions.length,
             cleanPositions: positions.filter((row) => cleanMeasurementScore(row) === 1).length,
@@ -2587,12 +3118,12 @@
 
           <div class="grid">
             ${metricCard("Open virtual SHORT", fmtInt(positions.length))}
+            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
+            ${metricCard("Capture", "LIVE")}
+            ${metricCard("Risk source", "positionSizing.js")}
             ${metricCard("Clean", fmtInt(compact.counts.cleanPositions))}
             ${metricCard("Legacy", fmtInt(compact.counts.legacyPositions))}
             ${metricCard("Scanner sync", data.scannerAndTradeInSync ? "YES" : "NO")}
-            ${metricCard("Last snapshot", compact.sync.lastProcessedSnapshotId || "-")}
-            ${metricCard("Latest scanner", compact.sync.latestScannerSnapshotId || "-")}
-            ${metricCard("Active MM IDs", fmtInt(activeMicroMicroIds().length))}
             ${metricCard("Orders", "0", "exchange disabled")}
           </div>
 
@@ -2600,6 +3131,9 @@
             { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
             { label: "Source", render: () => '<span class="pill purple">VIRTUAL</span>' },
             { label: "Runtime", render: (row) => runtimeStatusPill(row) },
+            { label: "Signal", render: (row) => signalTypePill(row) },
+            { label: "Weather", render: (row) => marketWeatherPill(row) },
+            { label: "Veto", render: (row) => empiricalVeto(row) ? `<span class="pill veto">${escapeHtml(empiricalVetoReason(row))}</span>` : '<span class="pill active">NO</span>' },
             { label: "Layer", render: (row) => microLayerPill(row) },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
             { label: "Meetlat", render: (row) => measurementPill(row) },
@@ -2608,7 +3142,7 @@
             { label: "TP", render: (row) => fmtPrice(row.tp || row.takeProfit) },
             { label: "RR", render: (row) => fmt(row.rr, 2) },
             { label: "CurrentR", render: (row) => fmt(row.currentR ?? row.shortCurrentR, 3) },
-            { label: "CostR", render: (row) => fmt(row.costR || row.avgCostR, 3) },
+            { label: "Risk", render: (row) => fmt(riskFractionForEntry(row), 6) },
             { label: "CurrentFit", render: (row) => currentFitPill(row) },
             { label: "Micro-micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_MM")}</code>` },
             { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
@@ -2624,6 +3158,8 @@
 
       async function runTradeNow() {
         try {
+          const mw = currentMarketWeather();
+
           const data = await api(endpoints.runTrade, {
             method: "POST",
             timeoutMs: 30000,
@@ -2666,11 +3202,28 @@
               parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
               child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
               microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-
               selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+
+              entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+              currentMarketWeatherKey: mw.currentMarketWeatherKey,
+              currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
+              currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide,
+              marketWeatherCaptureMode: "LIVE",
+              marketWeatherAggregationMode: "LIVE",
+              marketWeatherSelectorMode: "OBSERVE",
+              marketWeatherSizingCapMode: "OBSERVE",
+              marketWeatherFdrMode: "OBSERVE",
+
+              empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+              empiricalVetoEnabled: true,
+              empiricalVetoReason: "EXACT_MICRO_MICRO_LCB95_NEGATIVE",
 
               microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
               microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+
+              proofTier: PROOF_TIER_OBSERVATION_ONLY,
+              signalType: SIGNAL_TYPE_OBSERVE_ONLY,
+              maxAllowedRiskBand: "ZERO",
 
               currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
               currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
@@ -2735,10 +3288,16 @@
         const rows = currentMicroRows();
         const top = rows[0] || null;
         const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
+        const tradeReadyRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length;
+        const watchRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length;
+        const observeRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length;
+        const blockedRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length;
         const passedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length;
         const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
         const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
+        const vetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
         const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
+        const playbook = state.micros?.currentMarketPlaybook || null;
 
         $("micros").innerHTML = `
           <div class="toolbar">
@@ -2746,63 +3305,91 @@
               ${microModes.map((mode) => `<option value="${escapeAttr(mode)}" ${mode === state.microMode ? "selected" : ""}>${escapeHtml(mode)}</option>`).join("")}
             </select>
 
-            <input id="microSearch" type="search" placeholder="Zoek exact MM ID, 75-child, parent, setup, regime..." value="${escapeAttr(state.microSearch)}" />
+            <input id="microSearch" type="search" placeholder="Zoek exact MM ID, MarketWeather, signal, proof, 75-child, parent..." value="${escapeAttr(state.microSearch)}" />
 
             <button type="button" class="success" data-action="copy-visible-ids">Copy visible MM IDs</button>
-            <button type="button" class="success" data-action="activate-visible-ids">Activate top 2 visible</button>
-            <button type="button" class="primary" data-action="activate-top-two">Activate top 2 best</button>
-            <button type="button" data-export-json="micros" data-filename="short-micro-micro-families.json">Export JSON</button>
+            <button type="button" class="success" data-action="activate-visible-ids">Activate top 2 visible TRADE_READY</button>
+            <button type="button" class="primary" data-action="activate-top-two">Activate top 2 TRADE_READY</button>
+            <button type="button" data-export-json="micros" data-filename="short-micro-micro-marketweather.json">Export JSON</button>
           </div>
 
           <div class="card">
-            <h3>Micro-micro ranking policy</h3>
+            <h3>Micro-micro current-market policy</h3>
             <div class="toolbar">
-              <span class="pill passed">PASSED bovenaan</span>
-              <span class="pill best">best net-edge first</span>
-              <span class="pill observation">OBSERVING daarna</span>
-              <span class="pill rejected">REJECTED onderaan</span>
-              <span class="pill blocked">POLICY_BLOCKED onderaan</span>
-              <span class="pill soft">samples alleen tie-breaker</span>
+              <span class="pill weather">${escapeHtml(currentMarketWeather().currentMarketWeatherKey)}</span>
+              <span class="pill trade-ready">TRADE_READY</span>
+              <span class="pill watch">WATCH</span>
+              <span class="pill observe">OBSERVE_ONLY</span>
+              <span class="pill veto">EMPIRICAL_VETO</span>
+              <span class="pill blocked">POLICY_BLOCKED</span>
+              <span class="pill soft">selector observe</span>
+              <span class="pill soft">FDR observe</span>
             </div>
             <div class="metric-extra">
-              Sorteert niet meer op meeste samples. Completed bepaalt gate-status; daarna wint netto edge.
+              Altijd een beste kandidaat tonen. Maar alleen <code>TRADE_READY</code> kan risk krijgen via <code>riskFractionForEntry</code>. Empirical veto en policy blocked krijgen risk 0.
             </div>
           </div>
 
           <div class="grid">
             ${metricCard("Micro-micro rows", fmtInt(rows.length), `API rawExtracted=${fmtInt(state.micros?.rawExtractedRows || rows.length)}`)}
-            ${metricCard("PASSED", fmtInt(passedRows), "kan naar Discord")}
-            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
-            ${metricCard("REJECTED", fmtInt(rejectedRows), "slechte netto edge")}
-            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "E_WEAK_CONTRA/MISFIT")}
-            ${metricCard("Clean rows", fmtInt(cleanRows))}
+            ${metricCard("TRADE_READY", fmtInt(tradeReadyRows))}
+            ${metricCard("WATCH", fmtInt(watchRows))}
+            ${metricCard("OBSERVE_ONLY", fmtInt(observeRows))}
+            ${metricCard("BLOCKED", fmtInt(blockedRows))}
+            ${metricCard("PASSED", fmtInt(passedRows))}
+            ${metricCard("EMPIRICAL VETO", fmtInt(vetoRows))}
             ${metricCard("Selected Discord", fmtInt(activeMicroMicroIds().length), "max 2")}
-            ${metricCard("Top candidate", top ? runtimeStatus(top) : "NONE", top ? microId(top) : "")}
           </div>
+
+          <div class="grid">
+            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
+            ${metricCard("REJECTED", fmtInt(rejectedRows), "geen veto")}
+            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "systeemregel")}
+            ${metricCard("Clean rows", fmtInt(cleanRows))}
+            ${metricCard("Current key", currentMarketWeather().currentMarketWeatherKey)}
+            ${metricCard("Selector", "OBSERVE")}
+            ${metricCard("Sizing cap", "OBSERVE")}
+            ${metricCard("FDR", "OBSERVE")}
+          </div>
+
+          ${playbook ? `
+            <div class="card">
+              <h3>Best for current market</h3>
+              <div class="toolbar">
+                <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || currentMarketWeather().currentMarketWeatherKey)}</span>
+                <span class="pill best">${escapeHtml(playbook.answerType || "BEST_AVAILABLE")}</span>
+                <span class="pill observe">hard-live off</span>
+              </div>
+              ${playbook.bestForCurrentMarket || playbook.selected ? microTable([playbook.bestForCurrentMarket || playbook.selected], "Geen playbook selectie.") : '<div class="empty">Geen playbook selectie.</div>'}
+            </div>
+          ` : ""}
 
           ${top ? `
             <div class="card">
               <h3>Beste zichtbare micro-micro</h3>
               <div class="toolbar">
                 <span class="pill short">SHORT</span>
-                <span class="pill best">BEST NET EDGE</span>
+                <span class="pill best">CURRENT MARKET FIRST</span>
+                ${signalTypePill(top)}
                 ${microLayerPill(top)}
                 ${measurementPill(top)}
                 ${runtimeStatusPill(top)}
                 ${discordGatePill(top)}
                 ${currentFitPill(top)}
+                ${marketWeatherPill(top)}
               </div>
               <p><code>${escapeHtml(microId(top))}</code></p>
               <div class="grid">
-                ${metricCard("NetEdge", fmt(netEdgeScore(top), 2), "primair voor ranking")}
-                ${metricCard("Completed", fmt(completed(top), 0), "tie-breaker, niet primair")}
+                ${metricCard("SignalType", signalType(top))}
+                ${metricCard("ProofSource", proofSource(top))}
+                ${metricCard("NetEdge", fmt(netEdgeScore(top), 2))}
+                ${metricCard("MarketScore", fmt(currentMarketScore(top), 2))}
                 ${metricCard("AvgR", fmt(netAvgR(top), 3))}
-                ${metricCard("TotalR", fmt(netTotalR(top), 3))}
-                ${metricCard("PF", fmt(profitFactor(top), 2))}
-                ${metricCard("Fair WR", fmtPct(fairWinrate(top)))}
-                ${metricCard("AvgCostR", fmt(avgCostR(top), 3))}
-                ${metricCard("DirectSL", fmtPct(directSLPct(top)))}
+                ${metricCard("LCB95", lcb95AvgR(top) === null ? "-" : fmt(lcb95AvgR(top), 4))}
+                ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(top), 4))}
+                ${metricCard("Risk", fmt(riskFractionForEntry(top), 6))}
               </div>
+              <p class="metric-extra">Why: <code>${escapeHtml(whyBlocked(top) || whySelected(top))}</code></p>
               <p class="metric-extra">75-child context: <code>${escapeHtml(base75MicroId(top))}</code></p>
               <p class="metric-extra">Parent 15 context: <code>${escapeHtml(parentMicroId(top))}</code></p>
               <div class="toolbar">
@@ -2821,6 +3408,7 @@
               ok: state.micros?.ok,
               uiMode: state.microMode,
               backendMode: backendMicroMode(),
+              currentMarketWeather: currentMarketWeather(),
               rowsRendered: rows.length,
               rawExtractedRows: state.micros?.rawExtractedRows || 0,
               bestMicroMicroCount: state.micros?.bestMicroMicroCount ?? null,
@@ -2833,11 +3421,21 @@
                 PASSED: passedRows,
                 OBSERVING: observingRows,
                 REJECTED: rejectedRows,
+                EMPIRICAL_VETO: vetoRows,
                 POLICY_BLOCKED: policyBlockedRows
               },
+              signalTypeCounts: {
+                TRADE_READY: tradeReadyRows,
+                WATCH_ONLY: watchRows,
+                OBSERVE_ONLY: observeRows,
+                BLOCKED: blockedRows
+              },
+              currentMarketPlaybook: state.micros?.currentMarketPlaybook || null,
               discordActivationSummary: state.micros?.discordActivationSummary || null,
               versions: identityVersions(),
+              featureFlags: featureFlagsObject(),
               activationGate: activationGateObject(),
+              riskPolicy: riskPolicyObject(),
               warnings: state.micros?.warnings || [],
               error: state.micros?.error || null,
               data: state.micros?.data || null
@@ -2919,13 +3517,14 @@
         if (!confirm(
           `Activeer Discord alerts voor ${microMicroIds.length} exacte SHORT micro-micro ID(s)?\n\n` +
           `${microMicroIds.join("\n")}\n\n` +
-          "Backend weigert automatisch IDs zonder PASSED netto edge gate."
+          "Backend weigert automatisch IDs zonder PASSED/TRade-ready gate. Empirical veto en policy-blocked blijven risk 0."
         )) {
           return;
         }
 
         const childIds = uniqueStrings(microMicroIds.map(child75FromAnyId)).filter(isChild75Id);
         const parentIds = uniqueStrings(microMicroIds.map(parentFromAnyId)).filter(isParent15Id);
+        const mw = currentMarketWeather();
 
         try {
           const data = await api(endpoints.rotation, {
@@ -2987,9 +3586,24 @@
               selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
               adminSelectionLayer: "MICRO_MICRO_ONLY",
 
+              entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+              currentMarketWeatherKey: mw.currentMarketWeatherKey,
+              currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
+              currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide,
+              marketWeatherSelectorVersion: MARKET_WEATHER_SELECTOR_VERSION,
+              selectorMode: "OBSERVE",
+              sizingCapMode: "OBSERVE",
+              fdrMode: "OBSERVE",
+
+              empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+              empiricalVetoBlocksRiskEntry: true,
+              empiricalVetoBlocksDiscordTradeReady: true,
+              empiricalVetoBlocksParentFallbackRescue: true,
+
               microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
               microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
               requireMicroMicroStatus: MICRO_MICRO_STATUS_PASSED,
+              requireSignalType: SIGNAL_TYPE_TRADE_READY,
 
               currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
               currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
@@ -3081,7 +3695,8 @@
             active: true,
             selectedTier: "MANUAL",
             measurementClean: true,
-            microMicroRuntimeGateStatus: MICRO_MICRO_STATUS_PASSED
+            microMicroRuntimeGateStatus: MICRO_MICRO_STATUS_PASSED,
+            signalType: SIGNAL_TYPE_TRADE_READY
           }))
         ]);
 
@@ -3091,16 +3706,18 @@
           ...(data.availableMicroMicroFamilies || [])
         ]);
 
-        const passedAvailable = availableRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED);
+        const tradeReadyAvailable = availableRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY);
 
         const compact = {
           ok: data.ok !== false,
           activeMicroMicroFamilyIds: activeIds,
           activeCount: activeIds.length,
           availableCount: availableRows.length,
-          passedAvailableCount: passedAvailable.length,
+          tradeReadyAvailableCount: tradeReadyAvailable.length,
+          currentMarketWeather: currentMarketWeather(),
           discordActivationSummary: data.discordActivationSummary || null,
           activationGate: activationGateObject(),
+          featureFlags: featureFlagsObject(),
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
           warnings: data.warnings || [],
           error: data.error || data.reason || null
@@ -3110,15 +3727,15 @@
           <div class="section-title">
             <div>
               <h2>Manual Discord selection</h2>
-              <p>Alleen exact geselecteerde SHORT micro-micro IDs met PASSED runtime-status kunnen Discord triggeren.</p>
+              <p>Alleen exact geselecteerde SHORT micro-micro IDs met geldige gate kunnen Discord triggeren. Empirical veto en policy-blocked blijven risk 0.</p>
             </div>
           </div>
 
           <div class="grid">
             ${metricCard("Active MM IDs", fmtInt(activeIds.length))}
             ${metricCard("Available MM", fmtInt(availableRows.length))}
-            ${metricCard("PASSED", fmtInt(passedAvailable.length), "net-edge gate")}
-            ${metricCard("Rotation ID", data.activeRotationId || data.active?.rotationId || data.activeRotation?.rotationId || "-")}
+            ${metricCard("TRADE_READY", fmtInt(tradeReadyAvailable.length), "observe/hard-live guarded")}
+            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
             ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT MM ONLY" : "OFF")}
             ${metricCard("75-child selection", "DISABLED")}
             ${metricCard("Auto rotation", "DISABLED")}
@@ -3128,17 +3745,17 @@
           <div class="card">
             <h3>Manual micro-micro IDs</h3>
             <p class="metric-extra">
-              Plak maximaal 2 exacte micro-micro IDs. Backend/runtime weigert alles zonder PASSED netto edge gate.
+              Plak maximaal 2 exacte micro-micro IDs. Backend/runtime weigert veto/policy/observe-only rows.
             </p>
 
             <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH">${escapeHtml(activeIds.join("\n"))}</textarea>
 
             <div class="toolbar">
               <button type="button" class="short-action" data-action="activate-manual">Save max 2 MM Discord IDs</button>
-              <button type="button" class="primary" data-action="activate-top-two">Select top 2 best</button>
+              <button type="button" class="primary" data-action="activate-top-two">Select top 2 TRADE_READY</button>
               <button type="button" data-action="clear-manual-input">Clear input</button>
               <button type="button" data-copy-value="${escapeAttr(JSON.stringify(activeIds, null, 2))}">Copy active IDs</button>
-              <button type="button" data-export-json="rotation" data-filename="manual-discord-selection-short-mm.json">Export JSON</button>
+              <button type="button" data-export-json="rotation" data-filename="manual-discord-selection-short-mm-marketweather.json">Export JSON</button>
             </div>
           </div>
 
@@ -3154,7 +3771,7 @@
           <div class="section-title">
             <div>
               <h2>Available MM rows</h2>
-              <p>PASSED rows staan bovenaan op netto edge. Samples zijn alleen tie-breaker.</p>
+              <p>Current-market TRADE_READY rows staan bovenaan. Samples zijn tie-breaker.</p>
             </div>
           </div>
 
@@ -3186,7 +3803,7 @@
             <button type="button" data-copy-target="discordJson">Copy JSON</button>
             <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
             <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
-            <button type="button" data-export-json="discord" data-filename="discord-logs-short-mm.json">Export JSON</button>
+            <button type="button" data-export-json="discord" data-filename="discord-logs-short-mm-marketweather.json">Export JSON</button>
           </div>
 
           <div class="grid">
@@ -3195,9 +3812,9 @@
             ${metricCard("Entry logs", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("ENTRY")).length))}
             ${metricCard("Exit logs", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("EXIT")).length))}
             ${metricCard("Match mode", "EXACT MM")}
-            ${metricCard("Runtime gate", "PASSED ONLY")}
-            ${metricCard("Parent match", "OFF")}
-            ${metricCard("CurrentFit", "STRICT")}
+            ${metricCard("Runtime gate", "TRADE_READY")}
+            ${metricCard("Empirical veto", "BLOCK")}
+            ${metricCard("Risk", "positionSizing.js")}
           </div>
 
           ${table(logs, [
@@ -3206,6 +3823,9 @@
             { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row.payload || row)) },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
             { label: "Runtime", render: (row) => runtimeStatusPill(row.payload || row) },
+            { label: "Signal", render: (row) => signalTypePill(row.payload || row) },
+            { label: "Weather", render: (row) => marketWeatherPill(row.payload || row) },
+            { label: "Veto", render: (row) => empiricalVeto(row.payload || row) ? '<span class="pill veto">YES</span>' : '<span class="pill active">NO</span>' },
             { label: "MM ID", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
             { label: "Selected", render: (row) => {
               const payload = row.payload || row;
@@ -3225,6 +3845,8 @@
       }
 
       function resetPayload(confirmText, extra = {}) {
+        const mw = currentMarketWeather();
+
         return {
           confirm: confirmText,
           confirmed: confirmText,
@@ -3241,6 +3863,11 @@
           microMicroVersion: MICRO_MICRO_VERSION,
           microMicroEnabled: true,
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+          entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+          currentMarketWeatherKey: mw.currentMarketWeatherKey,
+          currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
+          currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide,
+          empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
           microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
           microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
           persistentLearningKey: PERSISTENT_LEARNING_KEY,
@@ -3286,6 +3913,7 @@
             <h3>Actieve versies</h3>
             ${jsonBlock({
               versions: identityVersions(),
+              featureFlags: featureFlagsObject(),
               riskPolicy: riskPolicyObject(),
               activationGate: activationGateObject()
             })}
@@ -3394,33 +4022,44 @@
 
             <div class="toolbar">
               <span class="pill short">SHORT</span>
+              ${signalTypePill(row)}
               ${microLayerPill(row)}
               ${measurementPill(row)}
               ${runtimeStatusPill(row)}
               ${discordGatePill(row)}
               ${currentFitPill(row)}
+              ${marketWeatherPill(row)}
               <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(cleanId)}">Zet als #1</button>
               <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(cleanId)}">Zet als #2</button>
               <button type="button" data-copy="${escapeAttr(cleanId)}">Copy</button>
             </div>
 
             <div class="grid">
+              ${metricCard("SignalType", signalType(row))}
+              ${metricCard("ProofTier", proofTier(row))}
+              ${metricCard("ProofSource", proofSource(row))}
+              ${metricCard("MarketRes", marketResolution(row))}
               ${metricCard("NetEdge", fmt(netEdgeScore(row), 2))}
               ${metricCard("Seen", fmtInt(observationSample(row)))}
               ${metricCard("Completed", fmt(completed(row), 2))}
               ${metricCard("Fair WR", fmtPct(fairWinrate(row)))}
               ${metricCard("AvgR net", fmt(netAvgR(row), 3))}
-              ${metricCard("TotalR net", fmt(netTotalR(row), 3))}
-              ${metricCard("PF", fmt(profitFactor(row), 2))}
-              ${metricCard("AvgCostR", fmt(avgCostR(row), 3))}
-              ${metricCard("DirectSL", fmtPct(directSLPct(row)))}
-              ${metricCard("CurrentFit", currentFit(row))}
-              ${metricCard("Adaptive", fmt(adaptiveScore(row), 2))}
+              ${metricCard("LCB95", lcb95AvgR(row) === null ? "-" : fmt(lcb95AvgR(row), 4))}
+              ${metricCard("ShrunkAvgR", fmt(shrunkAvgR(row), 4))}
+              ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(row), 4))}
+              ${metricCard("Risk", fmt(riskFractionForEntry(row), 6))}
+              ${metricCard("EmpiricalVeto", empiricalVeto(row) ? "YES" : "NO")}
+              ${metricCard("PolicyBlocked", policyBlocked(row) ? "YES" : "NO")}
             </div>
 
             <div class="card">
               <h3>Runtime gate</h3>
               ${jsonBlock(microMicroRuntimeGate(row))}
+            </div>
+
+            <div class="card">
+              <h3>MarketWeather</h3>
+              ${jsonBlock(entryMarketWeather(row))}
             </div>
 
             <div class="card">
@@ -3450,13 +4089,13 @@
       function activateTopN(n) {
         const rows = currentMicroRows();
         const ids = rows
-          .filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
+          .filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY && runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
           .slice(0, Math.min(n, MAX_ACTIVE_DISCORD_MICRO_FAMILIES))
           .map(microId)
           .filter(Boolean);
 
         if (!ids.length) {
-          setMessage("Geen PASSED micro-micro rows gevonden. Runtime/net-edge gate blokkeert selectie.", "warn");
+          setMessage("Geen TRADE_READY micro-micro rows gevonden. Runtime/net-edge/veto gate blokkeert selectie.", "warn");
           return;
         }
 
@@ -3518,7 +4157,7 @@
 
         const liveLabel = $("liveLabel");
         if (liveLabel) {
-          liveLabel.textContent = `SHORT-only · best net-edge first · ${new Date().toLocaleTimeString()}`;
+          liveLabel.textContent = `SHORT-only · ${currentMarketWeather().currentMarketWeatherKey} · ${new Date().toLocaleTimeString()}`;
         }
 
         try {
@@ -3625,6 +4264,26 @@
             return;
           }
 
+          if (action === "apply-market-weather") {
+            state.currentMarketWeatherRegime = $("marketWeatherRegimeInput")?.value || "";
+            state.currentMarketWeatherTrendSide = $("marketWeatherTrendSideInput")?.value || "";
+            state.currentMarketWeatherKey = $("marketWeatherKeyInput")?.value || "";
+            state.micros = null;
+            setMessage(`MarketWeather toegepast: ${currentMarketWeather().currentMarketWeatherKey}`, "ok");
+            await refresh(state.activeTab);
+            return;
+          }
+
+          if (action === "clear-market-weather") {
+            state.currentMarketWeatherRegime = "";
+            state.currentMarketWeatherTrendSide = "";
+            state.currentMarketWeatherKey = "";
+            state.micros = null;
+            setMessage("MarketWeather override gewist.", "ok");
+            await refresh(state.activeTab);
+            return;
+          }
+
           if (action === "run-scanner") return runScannerNow();
           if (action === "run-trade") return runTradeNow();
           if (action === "activate-top-two") return activateTopN(2);
@@ -3636,13 +4295,13 @@
 
           if (action === "activate-visible-ids") {
             const ids = currentMicroRows()
-              .filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
+              .filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY && runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
               .map(microId)
               .filter(Boolean)
               .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
             if (!ids.length) {
-              setMessage("Geen visible PASSED micro-micro IDs. Runtime gate blokkeert selectie.", "warn");
+              setMessage("Geen visible TRADE_READY micro-micro IDs. Runtime/veto gate blokkeert selectie.", "warn");
               return;
             }
 
@@ -3683,8 +4342,8 @@
           <div class="grid">
             ${metricCard("Status", "BOOTED", "frontend script is geladen")}
             ${metricCard("Learning key", PERSISTENT_LEARNING_KEY)}
-            ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
-            ${metricCard("Ranking", "BEST NET EDGE", "samples niet primair")}
+            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
+            ${metricCard("Veto", "EMPIRICAL", "LCB95(avgR)<0")}
           </div>
 
           <div class="card">
