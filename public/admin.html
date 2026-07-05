@@ -333,6 +333,10 @@
     .pill.clean { background: #dcfce7; color: #166534; }
     .pill.legacy { background: #ffedd5; color: #9a3412; }
     .pill.mm { background: #ede9fe; color: #5b21b6; }
+    .pill.passed { background: #dcfce7; color: #166534; }
+    .pill.rejected { background: #fee2e2; color: #991b1b; }
+    .pill.blocked { background: #fecaca; color: #7f1d1d; }
+    .pill.best { background: #0f172a; color: white; }
 
     .score-bar {
       height: 8px;
@@ -363,7 +367,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1540px;
+      min-width: 1700px;
       background: white;
     }
 
@@ -528,7 +532,7 @@
         <div>
           <strong>SHORT Micro-Micro Learning Admin</strong>
           <div class="brand-subtitle">
-            Alleen exacte micro-micro IDs zijn selecteerbaar. Parent 15 en 75-child blijven context/rollup.
+            Beste micro-micro staat bovenaan op netto edge. Parent 15 en 75-child blijven context/rollup.
           </div>
         </div>
       </div>
@@ -536,7 +540,7 @@
       <div class="header-actions">
         <div class="live-pill">
           <span class="live-dot"></span>
-          <span id="liveLabel">SHORT-only · exact micro-micro · net-edge gate</span>
+          <span id="liveLabel">SHORT-only · exact micro-micro · best net-edge first</span>
         </div>
         <button id="refreshBtn" type="button">Refresh</button>
       </div>
@@ -584,6 +588,22 @@
       const MAX_ACTIVE_DISCORD_MICRO_FAMILIES = 2;
       const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
+      const MICRO_MICRO_RUNTIME_GATE_VERSION = "SHORT_MM_FRONTEND_BEST_NET_EDGE_RUNTIME_STATUS_V2";
+      const MICRO_MICRO_BEST_SELECTOR_VERSION = "SHORT_MM_FRONTEND_BEST_SELECTOR_NET_EDGE_FIRST_V2";
+
+      const MICRO_MICRO_STATUS_OBSERVING = "OBSERVING";
+      const MICRO_MICRO_STATUS_PASSED = "PASSED";
+      const MICRO_MICRO_STATUS_REJECTED = "REJECTED";
+      const MICRO_MICRO_STATUS_POLICY_BLOCKED = "POLICY_BLOCKED";
+
+      const MICRO_MICRO_STATUS_RANK = Object.freeze({
+        [MICRO_MICRO_STATUS_PASSED]: 0,
+        [MICRO_MICRO_STATUS_OBSERVING]: 1,
+        [MICRO_MICRO_STATUS_REJECTED]: 2,
+        [MICRO_MICRO_STATUS_POLICY_BLOCKED]: 3,
+        UNKNOWN: 4
+      });
+
       const PARENT_TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_15";
       const CHILD_TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_75";
       const TRUE_MICRO_SCHEMA = CHILD_TRUE_MICRO_SCHEMA;
@@ -628,7 +648,7 @@
       };
 
       const tabs = ["overview", "market", "scanner", "trade", "micros", "rotation", "discord", "reset"];
-      const microModes = ["adaptive", "clean", "winrate", "totalR", "avgR", "directSL", "observed", "cost", "currentFit"];
+      const microModes = ["best", "passed", "adaptive", "winrate", "totalR", "avgR", "directSL", "cost", "currentFit", "observed", "clean"];
 
       const state = {
         activeTab: "overview",
@@ -639,7 +659,7 @@
         micros: null,
         rotation: null,
         discord: null,
-        microMode: "adaptive",
+        microMode: "best",
         microSearch: "",
         apiTimeoutMs: 22000,
         microLimit: 260,
@@ -1250,6 +1270,11 @@
       }
 
       function tier(row = {}) {
+        const runtime = runtimeStatus(row);
+        if (runtime === MICRO_MICRO_STATUS_PASSED) return "PASSED";
+        if (runtime === MICRO_MICRO_STATUS_REJECTED) return "REJECTED";
+        if (runtime === MICRO_MICRO_STATUS_POLICY_BLOCKED) return "POLICY_BLOCKED";
+
         const done = completed(row);
         const obs = observationSample(row);
         if (done >= MIN_COMPLETED_MICRO_MICRO_ACTIVE) return "MICRO_MICRO";
@@ -1320,6 +1345,125 @@
         return fixOk && riskOk && costOk && obsOk && outOk ? 1 : 0;
       }
 
+      function normalizeRuntimeStatus(value = "") {
+        const raw = upper(value);
+        if (raw === MICRO_MICRO_STATUS_PASSED || raw === "GATE_OK" || raw === "APPROVED" || raw === "ELIGIBLE") return MICRO_MICRO_STATUS_PASSED;
+        if (raw === MICRO_MICRO_STATUS_OBSERVING || raw === "MICRO_MICRO_OBSERVING" || raw === "EARLY" || raw === "MICRO_MICRO_EARLY") return MICRO_MICRO_STATUS_OBSERVING;
+        if (raw === MICRO_MICRO_STATUS_REJECTED || raw === "FAILED" || raw === "BAD" || raw === "BLOCKED_BY_NET_EDGE") return MICRO_MICRO_STATUS_REJECTED;
+        if (raw === MICRO_MICRO_STATUS_POLICY_BLOCKED || raw === "POLICY_BLOCKED" || raw === "MISFIT" || raw === "E_WEAK_CONTRA") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+        return "";
+      }
+
+      function positiveNetEdge(row = {}) {
+        return (
+          completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE &&
+          netAvgR(row) > 0 &&
+          netTotalR(row) > 0 &&
+          profitFactor(row) > 1 &&
+          avgCostR(row) <= 0.35 &&
+          directSLPct(row) <= 0.25 &&
+          currentFit(row) !== "MISFIT" &&
+          upper(row.confirmationProfile) !== "E_WEAK_CONTRA"
+        );
+      }
+
+      function runtimeStatus(row = {}) {
+        const direct = normalizeRuntimeStatus(
+          row.microMicroRuntimeGateStatus ||
+          row.microMicroStatus ||
+          row.runtimeStatus ||
+          row.runtimeGateStatus ||
+          row.discordActivationGate?.status ||
+          row.microMicroRuntimeGate?.status ||
+          row.activationGate?.status ||
+          row.status
+        );
+
+        if (direct) return direct;
+
+        const confirmation = upper(row.confirmationProfile || parseShortTaxonomyId(microId(row))?.confirmationProfile || "");
+        if (confirmation === "E_WEAK_CONTRA") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+        if (currentFit(row) === "MISFIT") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+        if (completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE) return MICRO_MICRO_STATUS_OBSERVING;
+        if (positiveNetEdge(row)) return MICRO_MICRO_STATUS_PASSED;
+        return MICRO_MICRO_STATUS_REJECTED;
+      }
+
+      function statusRank(row = {}) {
+        const status = runtimeStatus(row);
+        return MICRO_MICRO_STATUS_RANK[status] ?? MICRO_MICRO_STATUS_RANK.UNKNOWN;
+      }
+
+      function runtimeStatusPill(row = {}) {
+        const status = runtimeStatus(row);
+        if (status === MICRO_MICRO_STATUS_PASSED) return '<span class="pill passed">PASSED</span>';
+        if (status === MICRO_MICRO_STATUS_OBSERVING) return `<span class="pill observation">OBSERVING · ${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`;
+        if (status === MICRO_MICRO_STATUS_REJECTED) return '<span class="pill rejected">REJECTED</span>';
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return '<span class="pill blocked">POLICY BLOCKED</span>';
+        return '<span class="pill raw">UNKNOWN</span>';
+      }
+
+      function microMicroRuntimeGate(row = {}) {
+        const status = runtimeStatus(row);
+        const reasons = [];
+
+        if (!rowIsExactShortMicroMicro(row)) reasons.push("EXACT_SHORT_MICRO_MICRO_ID_REQUIRED");
+        if (upper(row.confirmationProfile) === "E_WEAK_CONTRA") reasons.push("E_WEAK_CONTRA_POLICY_BLOCK");
+        if (currentFit(row) === "MISFIT") reasons.push("CURRENTFIT_MISFIT_POLICY_BLOCK");
+        if (completed(row) < MIN_COMPLETED_MICRO_MICRO_ACTIVE) reasons.push(`COMPLETED_BELOW_${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`);
+        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && netAvgR(row) <= 0) reasons.push("AVG_R_NET_NOT_POSITIVE");
+        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && netTotalR(row) <= 0) reasons.push("TOTAL_R_NET_NOT_POSITIVE");
+        if (completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE && profitFactor(row) <= 1) reasons.push("PROFIT_FACTOR_NOT_ABOVE_1");
+        if (avgCostR(row) > 0.35) reasons.push("AVG_COST_R_TOO_HIGH");
+        if (directSLPct(row) > 0.25) reasons.push("DIRECT_SL_PCT_TOO_HIGH");
+
+        return {
+          version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+          status,
+          eligible: status === MICRO_MICRO_STATUS_PASSED,
+          discordEligible: status === MICRO_MICRO_STATUS_PASSED,
+          virtualLearningAllowed: status === MICRO_MICRO_STATUS_OBSERVING || status === MICRO_MICRO_STATUS_PASSED,
+          virtualEntryAllowed: status === MICRO_MICRO_STATUS_OBSERVING || status === MICRO_MICRO_STATUS_PASSED,
+          blocksNewVirtualEntry: status === MICRO_MICRO_STATUS_REJECTED || status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
+          reason: status === MICRO_MICRO_STATUS_PASSED ? "PASSED_NET_EDGE_GATE" : reasons[0] || status,
+          reasons,
+          completed: completed(row),
+          observed: observationSample(row),
+          avgR: netAvgR(row),
+          totalR: netTotalR(row),
+          profitFactor: profitFactor(row),
+          avgCostR: avgCostR(row),
+          directSLPct: directSLPct(row),
+          currentFit: currentFit(row),
+          confirmationProfile: upper(row.confirmationProfile),
+          thresholds: activationGateObject()
+        };
+      }
+
+      function netEdgeScore(row = {}) {
+        const pf = Math.max(0, Math.min(20, profitFactor(row)));
+        const pfScore = pf > 1 ? Math.log1p(pf - 1) * 16 : -18;
+        const avg = netAvgR(row);
+        const total = netTotalR(row);
+        const wr = fairWinrate(row);
+        const fit = currentFitScore(row);
+        const cost = avgCostR(row);
+        const dsl = directSLPct(row);
+        const clean = cleanMeasurementScore(row) === 1 ? 2 : -6;
+
+        return (
+          avg * 120 +
+          total * 3.5 +
+          wr * 22 +
+          pfScore +
+          fit * 0.08 +
+          sampleReliability(row) * 4 +
+          clean -
+          cost * 38 -
+          dsl * 85
+        );
+      }
+
       function measurementPill(row = {}) {
         return cleanMeasurementScore(row) === 1
           ? '<span class="pill clean">CLEAN</span>'
@@ -1334,6 +1478,9 @@
 
       function tierPill(value) {
         const t = upper(value);
+        if (t === "PASSED") return '<span class="pill passed">PASSED</span>';
+        if (t === "REJECTED") return '<span class="pill rejected">REJECTED</span>';
+        if (t === "POLICY_BLOCKED") return '<span class="pill blocked">POLICY</span>';
         if (t === "MICRO_MICRO") return '<span class="pill mm">MM ACTIVE</span>';
         if (t === "MICRO_MICRO_SOFT") return '<span class="pill purple">MM EARLY</span>';
         if (t === "OBSERVATION") return '<span class="pill observation">OBS</span>';
@@ -1343,12 +1490,7 @@
       }
 
       function statusPill(row = {}) {
-        const status = learningStatus(row);
-        if (status === "MICRO_MICRO_ACTIVE") return '<span class="pill mm">MICRO_MICRO_ACTIVE</span>';
-        if (status === "MICRO_MICRO_EARLY") {
-          return `<span class="pill soft">MICRO_MICRO_EARLY · ${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`;
-        }
-        return '<span class="pill observation">MICRO_MICRO_OBSERVING</span>';
+        return runtimeStatusPill(row);
       }
 
       function adaptiveScore(row = {}) {
@@ -1366,26 +1508,15 @@
       }
 
       function discordActivationEligible(row = {}) {
-        return (
-          row.discordActivationEligible === true ||
-          row.activationEligible === true ||
-          (
-            completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE &&
-            netAvgR(row) > 0 &&
-            netTotalR(row) > 0 &&
-            profitFactor(row) > 1 &&
-            avgCostR(row) <= 0.35 &&
-            directSLPct(row) <= 0.25 &&
-            currentFit(row) !== "MISFIT" &&
-            upper(row.confirmationProfile) !== "E_WEAK_CONTRA"
-          )
-        );
+        return runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED;
       }
 
       function discordGatePill(row = {}) {
-        if (discordActivationEligible(row)) return '<span class="pill active">GATE OK</span>';
-        const reason = row.discordActivationBlockedReason || row.activationBlockedReason || row.discordActivationReason || "BLOCKED";
-        return `<span class="pill danger">${escapeHtml(reason)}</span>`;
+        const gate = microMicroRuntimeGate(row);
+        if (gate.status === MICRO_MICRO_STATUS_PASSED) return '<span class="pill active">GATE OK</span>';
+        if (gate.status === MICRO_MICRO_STATUS_OBSERVING) return '<span class="pill observation">OBSERVING</span>';
+        if (gate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return `<span class="pill blocked">${escapeHtml(gate.reason)}</span>`;
+        return `<span class="pill danger">${escapeHtml(gate.reason || "REJECTED")}</span>`;
       }
 
       function normalizeMicroRow(row = {}) {
@@ -1393,6 +1524,26 @@
         const parsed = parseShortTaxonomyId(id);
         if (!id || !parsed?.isMicroMicro) return null;
         if (inferSide({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id }) === OPPOSITE_SIDE) return null;
+
+        const status = runtimeStatus({
+          ...row,
+          id,
+          key: id,
+          microFamilyId: id,
+          trueMicroFamilyId: id,
+          microMicroFamilyId: id,
+          confirmationProfile: row.confirmationProfile || parsed.confirmationProfile
+        });
+
+        const gate = microMicroRuntimeGate({
+          ...row,
+          id,
+          key: id,
+          microFamilyId: id,
+          trueMicroFamilyId: id,
+          microMicroFamilyId: id,
+          confirmationProfile: row.confirmationProfile || parsed.confirmationProfile
+        });
 
         return {
           ...row,
@@ -1455,17 +1606,27 @@
           outcomeSample: completed(row),
           observationSample: observationSample(row),
           learningStatus: learningStatus(row),
-          status: learningStatus(row),
+          learningStatusOld: learningStatus(row),
+          status,
+          microMicroStatus: status,
+          microMicroRuntimeGateStatus: status,
+          microMicroRuntimeGate: row.microMicroRuntimeGate || gate,
           tooEarly: tooEarly(row),
-          tier: tier(row),
+          tier: tier({ ...row, status }),
 
           fairWinrate: fairWinrate(row),
           avgR: netAvgR(row),
           totalR: netTotalR(row),
+          profitFactor: profitFactor(row),
           avgCostR: avgCostR(row),
           directSLPct: directSLPct(row),
           adaptiveScore: adaptiveScore(row),
+          netEdgeScore: netEdgeScore(row),
           cleanMeasurement: cleanMeasurementScore(row) === 1,
+
+          discordActivationEligible: status === MICRO_MICRO_STATUS_PASSED,
+          activationEligible: status === MICRO_MICRO_STATUS_PASSED,
+          discordActivationGate: row.discordActivationGate || gate,
 
           scannerFingerprintsMetadataOnly: true,
           scannerFingerprintsUsedAsLearningFamily: false,
@@ -1479,7 +1640,9 @@
           observationDedupeVersion: row.observationDedupeVersion || OBSERVATION_DEDUPE_VERSION,
           outcomeDedupeVersion: row.outcomeDedupeVersion || OUTCOME_DEDUPE_VERSION,
           adaptiveUiVersion: row.adaptiveUiVersion || ADAPTIVE_UI_VERSION,
-          microMicroVersion: MICRO_MICRO_VERSION
+          microMicroVersion: MICRO_MICRO_VERSION,
+          microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+          microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION
         };
       }
 
@@ -1546,16 +1709,17 @@
 
       function compareBestDataFirst(a, b) {
         return (
-          compareNumberDesc(cleanMeasurementScore(a), cleanMeasurementScore(b)) ||
-          compareNumberDesc(completed(a) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 1 : 0, completed(b) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE ? 1 : 0) ||
-          compareNumberDesc(discordActivationEligible(a) ? 1 : 0, discordActivationEligible(b) ? 1 : 0) ||
-          compareNumberDesc(adaptiveScore(a), adaptiveScore(b)) ||
-          compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
-          compareNumberDesc(netTotalR(a), netTotalR(b)) ||
+          compareNumberAsc(statusRank(a), statusRank(b)) ||
+          compareNumberDesc(netEdgeScore(a), netEdgeScore(b)) ||
           compareNumberDesc(netAvgR(a), netAvgR(b)) ||
           compareNumberDesc(profitFactor(a), profitFactor(b)) ||
+          compareNumberDesc(netTotalR(a), netTotalR(b)) ||
+          compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
           compareNumberAsc(directSLPct(a), directSLPct(b)) ||
           compareNumberAsc(avgCostR(a), avgCostR(b)) ||
+          compareNumberDesc(currentFitScore(a), currentFitScore(b)) ||
+          compareNumberDesc(cleanMeasurementScore(a), cleanMeasurementScore(b)) ||
+          compareNumberDesc(sampleReliability(a), sampleReliability(b)) ||
           compareNumberDesc(completed(a), completed(b)) ||
           compareNumberDesc(observationSample(a), observationSample(b)) ||
           compareIdAsc(microId(a), microId(b))
@@ -1563,6 +1727,8 @@
       }
 
       function compareMicroRows(a, b, mode = state.microMode) {
+        if (mode === "passed") return compareBestDataFirst(a, b);
+        if (mode === "best") return compareBestDataFirst(a, b);
         if (mode === "clean") return compareNumberDesc(cleanMeasurementScore(a), cleanMeasurementScore(b)) || compareBestDataFirst(a, b);
         if (mode === "currentFit") return compareNumberDesc(currentFitScore(a), currentFitScore(b)) || compareBestDataFirst(a, b);
         if (mode === "cost") return compareNumberAsc(avgCostR(a), avgCostR(b)) || compareBestDataFirst(a, b);
@@ -1571,14 +1737,21 @@
         if (mode === "totalR") return compareNumberDesc(netTotalR(a), netTotalR(b)) || compareBestDataFirst(a, b);
         if (mode === "avgR") return compareNumberDesc(netAvgR(a), netAvgR(b)) || compareBestDataFirst(a, b);
         if (mode === "winrate") return compareNumberDesc(fairWinrate(a), fairWinrate(b)) || compareBestDataFirst(a, b);
+        if (mode === "adaptive") return compareNumberDesc(adaptiveScore(a), adaptiveScore(b)) || compareBestDataFirst(a, b);
         return compareBestDataFirst(a, b);
       }
 
       function rankMicroRows(rows = [], mode = state.microMode) {
-        return (Array.isArray(rows) ? rows : [])
+        const normalized = (Array.isArray(rows) ? rows : [])
           .map(normalizeMicroRow)
           .filter(Boolean)
-          .filter(rowIsExactShortMicroMicro)
+          .filter(rowIsExactShortMicroMicro);
+
+        const filtered = mode === "passed"
+          ? normalized.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
+          : normalized;
+
+        return filtered
           .sort((a, b) => compareMicroRows(a, b, mode))
           .map((row, index) => ({ ...row, rank: index + 1 }));
       }
@@ -1705,13 +1878,24 @@
         params.set("observationDedupeVersion", OBSERVATION_DEDUPE_VERSION);
         params.set("outcomeDedupeVersion", OUTCOME_DEDUPE_VERSION);
 
+        params.set("microMicroRuntimeGateVersion", MICRO_MICRO_RUNTIME_GATE_VERSION);
+        params.set("microMicroBestSelectorVersion", MICRO_MICRO_BEST_SELECTOR_VERSION);
+        params.set("bestDataFirst", "1");
+        params.set("netEdgeFirst", "1");
+
         return params;
+      }
+
+      function backendMicroMode() {
+        if (state.microMode === "best" || state.microMode === "passed") return "adaptive";
+        return state.microMode;
       }
 
       function microApiUrl() {
         const params = commonParams();
 
-        params.set("mode", state.microMode);
+        params.set("mode", backendMicroMode());
+        params.set("uiMode", state.microMode);
         params.set("limit", String(state.microLimit));
         params.set("bestLimit", String(state.bestLimit));
         params.set("includeActiveRotation", "1");
@@ -1733,6 +1917,8 @@
         params.set("onlyMicroMicro", "1");
         params.set("activeRowsLimit", "180");
         params.set("availableLimit", "280");
+        params.set("mode", "adaptive");
+        params.set("uiMode", state.microMode);
         return `${endpoints.rotation}?${params.toString()}`;
       }
 
@@ -1875,6 +2061,7 @@
 
         return table(rows, [
           { label: "Rank", render: (row, index) => `<strong>${escapeHtml(row.rank ?? index + 1)}</strong>` },
+          { label: "Runtime", render: (row) => runtimeStatusPill(row) },
           { label: "Discord", render: (row) => `<span class="pill ${activeSet.has(microId(row)) ? "active" : ""}">${activeSet.has(microId(row)) ? "ACTIVE" : "OFF"}</span>` },
           { label: "Layer", render: (row) => microLayerPill(row) },
           { label: "Meetlat", render: (row) => measurementPill(row) },
@@ -1884,7 +2071,6 @@
           { label: "Parent 15", render: (row) => `<span class="micro-id-cell"><code>${escapeHtml(parentMicroId(row) || "NO_PARENT")}</code></span>` },
           { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
           { label: "Tier", render: (row) => tierPill(tier(row)) },
-          { label: "Status", render: (row) => statusPill(row) },
           { label: "Seen", render: (row) => fmtInt(observationSample(row)) },
           { label: "Completed", render: (row) => fmt(completed(row), 2) },
           { label: "Fair WR", render: (row) => fmtPct(fairWinrate(row)) },
@@ -1894,7 +2080,8 @@
           { label: "AvgCostR", render: (row) => fmt(avgCostR(row), 3) },
           { label: "DirectSL", render: (row) => fmtPct(directSLPct(row)) },
           { label: "CurrentFit", render: (row) => currentFitPill(row) },
-          { label: "Adaptive", render: (row) => `<strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong>` },
+          { label: "NetEdge", render: (row) => `<strong>${escapeHtml(fmt(netEdgeScore(row), 2))}</strong>` },
+          { label: "Adaptive", render: (row) => fmt(adaptiveScore(row), 2) },
           { label: "Actie", render: (row) => `
             <div class="toolbar" style="margin:0">
               <button type="button" class="small short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(row))}">#1</button>
@@ -1921,6 +2108,8 @@
           outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
           adaptiveUiVersion: ADAPTIVE_UI_VERSION,
           discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+          microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+          microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY"
         };
       }
@@ -1942,7 +2131,16 @@
       function activationGateObject() {
         return {
           version: DISCORD_ACTIVATION_GATE_VERSION,
+          runtimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+          bestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+          statusModel: {
+            OBSERVING: "completed < 35: leren toegestaan, geen Discord",
+            PASSED: "completed >= 35 + positieve netto edge: bovenaan, selecteerbaar",
+            REJECTED: "completed >= 35 + slechte netto edge: onderaan, geen Discord",
+            POLICY_BLOCKED: "E_WEAK_CONTRA of MISFIT: onderaan, geen Discord"
+          },
           rules: [
+            "status == PASSED",
             "completed >= 35",
             "avgR net > 0",
             "totalR net > 0",
@@ -1969,18 +2167,29 @@
           versions: identityVersions(),
           counts: {
             visibleMicroMicroRows: microRows.length,
+            passedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length,
+            observingRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length,
+            rejectedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length,
+            policyBlockedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
             cleanRows: microRows.filter((row) => cleanMeasurementScore(row) === 1).length,
             legacyRows: microRows.filter((row) => cleanMeasurementScore(row) !== 1).length,
             selectedDiscordMicroMicroIds: activeIds.length,
             openVirtualPositions: Number(data.openPositions || data.positionsCount || state.trade?.positions?.length || 0),
             scannerShortCandidates: Number(data.shortScannerCandidates || data.scannerCandidates || state.scanner?.candidates?.length || 0)
           },
-          learningStatus: {
-            observing: microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_OBSERVING").length,
-            early: microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_EARLY").length,
-            active: microRows.filter((row) => learningStatus(row) === "MICRO_MICRO_ACTIVE").length,
-            threshold: MIN_COMPLETED_MICRO_MICRO_ACTIVE
-          },
+          bestVisibleMicroMicro: microRows[0]
+            ? {
+                id: microId(microRows[0]),
+                status: runtimeStatus(microRows[0]),
+                netEdgeScore: netEdgeScore(microRows[0]),
+                completed: completed(microRows[0]),
+                avgR: netAvgR(microRows[0]),
+                totalR: netTotalR(microRows[0]),
+                profitFactor: profitFactor(microRows[0]),
+                directSLPct: directSLPct(microRows[0]),
+                avgCostR: avgCostR(microRows[0])
+              }
+            : null,
           selectedDiscordMicroMicroIds: activeIds,
           rotation: {
             activeRotationId: rotationData.activeRotationId || rotationData.active?.rotationId || rotationData.activeRotation?.rotationId || null,
@@ -1994,12 +2203,13 @@
           rules: {
             uiShowsOnlyMicroMicro: true,
             uiAllowsOnlyMicroMicroSelection: true,
+            ranking: "PASSED first, then best net edge, samples only tie-breaker",
             scannerFingerprintsUsedAsLearningFamily: false,
             executionFingerprintsUsedAsLearningFamily: false,
             executionFingerprintsCanDeriveMicroMicroContextHash: true,
             learningIdentitySource: "ANALYZE_MICRO_MICRO_FAMILY",
             selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
-            discordMatch: "candidate.microMicroFamilyId === selectedMicroMicroFamilyId",
+            discordMatch: "candidate.microMicroFamilyId === selectedMicroMicroFamilyId && status === PASSED",
             child75MatchTriggersDiscord: false,
             parent15MatchTriggersDiscord: false,
             currentFitBlocksLearning: false,
@@ -2040,10 +2250,11 @@
         const activeIds = activeMicroMicroIds();
         const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
         const legacyRows = rows.length - cleanRows;
-        const observing = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_OBSERVING").length;
-        const early = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_EARLY").length;
-        const active = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_ACTIVE").length;
-        const eligible = rows.filter(discordActivationEligible).length;
+        const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
+        const passedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length;
+        const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
+        const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
+        const top = rows[0] || null;
 
         const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData);
         const compactJson = JSON.stringify(compact, null, 2);
@@ -2054,37 +2265,59 @@
             ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
             ${metricCard("Visible MM rows", fmtInt(rows.length), "exact micro-micro only")}
             ${metricCard("Discord selected", fmtInt(activeIds.length), "max 2 exact MM IDs")}
-            ${metricCard("Discord eligible", fmtInt(eligible), "net-edge gate")}
+            ${metricCard("PASSED", fmtInt(passedRows), "selecteerbaar voor Discord")}
             ${metricCard("Clean rows", fmtInt(cleanRows), `${fmtInt(legacyRows)} legacy`)}
             ${metricCard("Parent/75 rows", "HIDDEN", "context/rollup only")}
             ${metricCard("Real orders", "OFF", "virtual/shadow only")}
           </div>
 
           <div class="grid">
-            ${metricCard("MM OBSERVING", fmtInt(observing), "completed = 0")}
-            ${metricCard("MM EARLY", fmtInt(early), `completed 1-${MIN_COMPLETED_MICRO_MICRO_ACTIVE - 1}`)}
-            ${metricCard("MM ACTIVE", fmtInt(active), `completed ≥ ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
-            ${metricCard("Ranking", state.microMode, "adaptive/fair/netR/cost")}
+            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
+            ${metricCard("REJECTED", fmtInt(rejectedRows), "slechte netto edge")}
+            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "E_WEAK_CONTRA/MISFIT")}
+            ${metricCard("Ranking", "BEST NET EDGE", "samples alleen tie-breaker")}
             ${metricCard("Market regime", marketData.currentRegime || marketData.regime || marketData.market?.regime || "UNKNOWN")}
             ${metricCard("Trend side", marketData.currentTrendSide || marketData.trendSide || marketData.market?.trendSide || "UNKNOWN")}
             ${metricCard("CurrentFit", "SOFT", "blocks Discord only")}
-            ${metricCard("Activation gate", "HARD", "positive net edge required")}
+            ${metricCard("Top", top ? fmt(netEdgeScore(top), 2) : "-", top ? microId(top) : "geen top row")}
           </div>
+
+          ${top ? `
+            <div class="card">
+              <h3>Beste micro-micro volgens netto edge</h3>
+              <div class="toolbar">
+                <span class="pill best">BEST FIRST</span>
+                <span class="pill short">SHORT</span>
+                ${runtimeStatusPill(top)}
+                ${discordGatePill(top)}
+                ${measurementPill(top)}
+                ${currentFitPill(top)}
+              </div>
+              <p><code>${escapeHtml(microId(top))}</code></p>
+              <div class="grid">
+                ${metricCard("NetEdge", fmt(netEdgeScore(top), 2), "ranking-score")}
+                ${metricCard("Completed", fmt(completed(top), 0), "alleen tie-breaker")}
+                ${metricCard("AvgR", fmt(netAvgR(top), 3))}
+                ${metricCard("TotalR", fmt(netTotalR(top), 3))}
+                ${metricCard("PF", fmt(profitFactor(top), 2))}
+                ${metricCard("Fair WR", fmtPct(fairWinrate(top)))}
+                ${metricCard("AvgCostR", fmt(avgCostR(top), 3))}
+                ${metricCard("DirectSL", fmtPct(directSLPct(top)))}
+              </div>
+            </div>
+          ` : ""}
 
           <div class="grid-3">
             <div class="card">
-              <h3>Architectuurregels</h3>
+              <h3>Rankingregels</h3>
               <div class="toolbar">
-                <span class="pill mm">exact MM only</span>
-                <span class="pill dark">75-child context</span>
-                <span class="pill dark">parent 15 context</span>
-                <span class="pill danger">Discord exact match</span>
-                <span class="pill soft">CurrentFit soft for learning</span>
-                <span class="pill clean">netR after costs</span>
+                <span class="pill passed">PASSED eerst</span>
+                <span class="pill best">net-edge score</span>
+                <span class="pill soft">samples tie-breaker</span>
+                <span class="pill blocked">policy onderaan</span>
               </div>
               <div class="metric-extra">
-                Dashboard en manual selection accepteren alleen MICRO_SHORT_..._MM_HASH.
-                75-child/parent/scanner/XR IDs worden niet geselecteerd.
+                De frontend sorteert niet meer primair op meeste samples. Completed bepaalt alleen of een row OBSERVING/PASSED/REJECTED is en komt daarna pas als tie-breaker.
               </div>
             </div>
 
@@ -2366,6 +2599,7 @@
           ${table(positions, [
             { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
             { label: "Source", render: () => '<span class="pill purple">VIRTUAL</span>' },
+            { label: "Runtime", render: (row) => runtimeStatusPill(row) },
             { label: "Layer", render: (row) => microLayerPill(row) },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
             { label: "Meetlat", render: (row) => measurementPill(row) },
@@ -2435,6 +2669,9 @@
 
               selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
 
+              microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+              microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+
               currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
               currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
               currentFitSoftOnly: true,
@@ -2498,10 +2735,10 @@
         const rows = currentMicroRows();
         const top = rows[0] || null;
         const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
-        const eligibleRows = rows.filter(discordActivationEligible).length;
-        const activeRows = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_ACTIVE").length;
-        const earlyRows = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_EARLY").length;
-        const obsRows = rows.filter((row) => learningStatus(row) === "MICRO_MICRO_OBSERVING").length;
+        const passedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length;
+        const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
+        const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
+        const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
 
         $("micros").innerHTML = `
           <div class="toolbar">
@@ -2513,31 +2750,34 @@
 
             <button type="button" class="success" data-action="copy-visible-ids">Copy visible MM IDs</button>
             <button type="button" class="success" data-action="activate-visible-ids">Activate top 2 visible</button>
-            <button type="button" class="primary" data-action="activate-top-two">Activate top 2 adaptief</button>
+            <button type="button" class="primary" data-action="activate-top-two">Activate top 2 best</button>
             <button type="button" data-export-json="micros" data-filename="short-micro-micro-families.json">Export JSON</button>
           </div>
 
           <div class="card">
             <h3>Micro-micro ranking policy</h3>
             <div class="toolbar">
-              <span class="pill mm">exact micro-micro only</span>
-              <span class="pill dark">75-child hidden/context</span>
-              <span class="pill dark">parent 15 hidden/context</span>
-              <span class="pill clean">clean rows first</span>
-              <span class="pill danger">activation gate hard</span>
-              <span class="pill soft">currentFit blocks Discord only</span>
+              <span class="pill passed">PASSED bovenaan</span>
+              <span class="pill best">best net-edge first</span>
+              <span class="pill observation">OBSERVING daarna</span>
+              <span class="pill rejected">REJECTED onderaan</span>
+              <span class="pill blocked">POLICY_BLOCKED onderaan</span>
+              <span class="pill soft">samples alleen tie-breaker</span>
+            </div>
+            <div class="metric-extra">
+              Sorteert niet meer op meeste samples. Completed bepaalt gate-status; daarna wint netto edge.
             </div>
           </div>
 
           <div class="grid">
             ${metricCard("Micro-micro rows", fmtInt(rows.length), `API rawExtracted=${fmtInt(state.micros?.rawExtractedRows || rows.length)}`)}
-            ${metricCard("Discord eligible", fmtInt(eligibleRows), "net-edge gate")}
+            ${metricCard("PASSED", fmtInt(passedRows), "kan naar Discord")}
+            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
+            ${metricCard("REJECTED", fmtInt(rejectedRows), "slechte netto edge")}
+            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "E_WEAK_CONTRA/MISFIT")}
             ${metricCard("Clean rows", fmtInt(cleanRows))}
-            ${metricCard("MM OBS", fmtInt(obsRows), "completed = 0")}
-            ${metricCard("MM EARLY", fmtInt(earlyRows), `1-${MIN_COMPLETED_MICRO_MICRO_ACTIVE - 1}`)}
-            ${metricCard("MM ACTIVE", fmtInt(activeRows), `≥ ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
             ${metricCard("Selected Discord", fmtInt(activeMicroMicroIds().length), "max 2")}
-            ${metricCard("Top candidate", top ? "READY" : "NONE", top ? microId(top) : "")}
+            ${metricCard("Top candidate", top ? runtimeStatus(top) : "NONE", top ? microId(top) : "")}
           </div>
 
           ${top ? `
@@ -2545,14 +2785,24 @@
               <h3>Beste zichtbare micro-micro</h3>
               <div class="toolbar">
                 <span class="pill short">SHORT</span>
+                <span class="pill best">BEST NET EDGE</span>
                 ${microLayerPill(top)}
                 ${measurementPill(top)}
+                ${runtimeStatusPill(top)}
                 ${discordGatePill(top)}
-                ${tierPill(tier(top))}
-                ${statusPill(top)}
                 ${currentFitPill(top)}
               </div>
               <p><code>${escapeHtml(microId(top))}</code></p>
+              <div class="grid">
+                ${metricCard("NetEdge", fmt(netEdgeScore(top), 2), "primair voor ranking")}
+                ${metricCard("Completed", fmt(completed(top), 0), "tie-breaker, niet primair")}
+                ${metricCard("AvgR", fmt(netAvgR(top), 3))}
+                ${metricCard("TotalR", fmt(netTotalR(top), 3))}
+                ${metricCard("PF", fmt(profitFactor(top), 2))}
+                ${metricCard("Fair WR", fmtPct(fairWinrate(top)))}
+                ${metricCard("AvgCostR", fmt(avgCostR(top), 3))}
+                ${metricCard("DirectSL", fmtPct(directSLPct(top)))}
+              </div>
               <p class="metric-extra">75-child context: <code>${escapeHtml(base75MicroId(top))}</code></p>
               <p class="metric-extra">Parent 15 context: <code>${escapeHtml(parentMicroId(top))}</code></p>
               <div class="toolbar">
@@ -2569,6 +2819,8 @@
             <h3>Micro API status</h3>
             ${jsonBlock({
               ok: state.micros?.ok,
+              uiMode: state.microMode,
+              backendMode: backendMicroMode(),
               rowsRendered: rows.length,
               rawExtractedRows: state.micros?.rawExtractedRows || 0,
               bestMicroMicroCount: state.micros?.bestMicroMicroCount ?? null,
@@ -2577,6 +2829,12 @@
               child75ProxyMicroMicroRows: state.micros?.child75ProxyMicroMicroRows ?? 0,
               hiddenChild75Rows: state.micros?.child75RowsHidden ?? null,
               hiddenParent15Rows: state.micros?.parentRowsHidden ?? null,
+              runtimeStatusCounts: {
+                PASSED: passedRows,
+                OBSERVING: observingRows,
+                REJECTED: rejectedRows,
+                POLICY_BLOCKED: policyBlockedRows
+              },
               discordActivationSummary: state.micros?.discordActivationSummary || null,
               versions: identityVersions(),
               activationGate: activationGateObject(),
@@ -2661,7 +2919,7 @@
         if (!confirm(
           `Activeer Discord alerts voor ${microMicroIds.length} exacte SHORT micro-micro ID(s)?\n\n` +
           `${microMicroIds.join("\n")}\n\n` +
-          "Backend weigert automatisch IDs zonder netto edge gate."
+          "Backend weigert automatisch IDs zonder PASSED netto edge gate."
         )) {
           return;
         }
@@ -2728,6 +2986,10 @@
 
               selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
               adminSelectionLayer: "MICRO_MICRO_ONLY",
+
+              microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+              microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
+              requireMicroMicroStatus: MICRO_MICRO_STATUS_PASSED,
 
               currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
               currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
@@ -2818,7 +3080,8 @@
             parentTrueMicroFamilyId: parentFromAnyId(id),
             active: true,
             selectedTier: "MANUAL",
-            measurementClean: true
+            measurementClean: true,
+            microMicroRuntimeGateStatus: MICRO_MICRO_STATUS_PASSED
           }))
         ]);
 
@@ -2828,11 +3091,14 @@
           ...(data.availableMicroMicroFamilies || [])
         ]);
 
+        const passedAvailable = availableRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED);
+
         const compact = {
           ok: data.ok !== false,
           activeMicroMicroFamilyIds: activeIds,
           activeCount: activeIds.length,
           availableCount: availableRows.length,
+          passedAvailableCount: passedAvailable.length,
           discordActivationSummary: data.discordActivationSummary || null,
           activationGate: activationGateObject(),
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
@@ -2844,14 +3110,14 @@
           <div class="section-title">
             <div>
               <h2>Manual Discord selection</h2>
-              <p>Alleen exact geselecteerde SHORT micro-micro IDs kunnen Discord triggeren.</p>
+              <p>Alleen exact geselecteerde SHORT micro-micro IDs met PASSED runtime-status kunnen Discord triggeren.</p>
             </div>
           </div>
 
           <div class="grid">
             ${metricCard("Active MM IDs", fmtInt(activeIds.length))}
             ${metricCard("Available MM", fmtInt(availableRows.length))}
-            ${metricCard("Eligible", fmtInt(data.discordActivationSummary?.eligible || availableRows.filter(discordActivationEligible).length), "net-edge gate")}
+            ${metricCard("PASSED", fmtInt(passedAvailable.length), "net-edge gate")}
             ${metricCard("Rotation ID", data.activeRotationId || data.active?.rotationId || data.activeRotation?.rotationId || "-")}
             ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT MM ONLY" : "OFF")}
             ${metricCard("75-child selection", "DISABLED")}
@@ -2862,14 +3128,14 @@
           <div class="card">
             <h3>Manual micro-micro IDs</h3>
             <p class="metric-extra">
-              Plak maximaal 2 exacte micro-micro IDs. 75-child IDs worden geweigerd.
+              Plak maximaal 2 exacte micro-micro IDs. Backend/runtime weigert alles zonder PASSED netto edge gate.
             </p>
 
             <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH">${escapeHtml(activeIds.join("\n"))}</textarea>
 
             <div class="toolbar">
               <button type="button" class="short-action" data-action="activate-manual">Save max 2 MM Discord IDs</button>
-              <button type="button" class="primary" data-action="activate-top-two">Select top 2 adaptief</button>
+              <button type="button" class="primary" data-action="activate-top-two">Select top 2 best</button>
               <button type="button" data-action="clear-manual-input">Clear input</button>
               <button type="button" data-copy-value="${escapeAttr(JSON.stringify(activeIds, null, 2))}">Copy active IDs</button>
               <button type="button" data-export-json="rotation" data-filename="manual-discord-selection-short-mm.json">Export JSON</button>
@@ -2888,7 +3154,7 @@
           <div class="section-title">
             <div>
               <h2>Available MM rows</h2>
-              <p>Alleen rows die backend als exacte micro-micro teruggeeft.</p>
+              <p>PASSED rows staan bovenaan op netto edge. Samples zijn alleen tie-breaker.</p>
             </div>
           </div>
 
@@ -2929,7 +3195,7 @@
             ${metricCard("Entry logs", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("ENTRY")).length))}
             ${metricCard("Exit logs", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("EXIT")).length))}
             ${metricCard("Match mode", "EXACT MM")}
-            ${metricCard("75-child match", "OFF")}
+            ${metricCard("Runtime gate", "PASSED ONLY")}
             ${metricCard("Parent match", "OFF")}
             ${metricCard("CurrentFit", "STRICT")}
           </div>
@@ -2939,6 +3205,7 @@
             { label: "Type", render: (row) => escapeHtml(row.type || row.level || row.event || "-") },
             { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row.payload || row)) },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+            { label: "Runtime", render: (row) => runtimeStatusPill(row.payload || row) },
             { label: "MM ID", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
             { label: "Selected", render: (row) => {
               const payload = row.payload || row;
@@ -2974,6 +3241,8 @@
           microMicroVersion: MICRO_MICRO_VERSION,
           microMicroEnabled: true,
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
+          microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+          microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
           persistentLearningKey: PERSISTENT_LEARNING_KEY,
           redisNamespace: SHORT_NAMESPACE,
           redisKeyPrefix: SHORT_KEY_PREFIX,
@@ -3127,8 +3396,8 @@
               <span class="pill short">SHORT</span>
               ${microLayerPill(row)}
               ${measurementPill(row)}
+              ${runtimeStatusPill(row)}
               ${discordGatePill(row)}
-              ${statusPill(row)}
               ${currentFitPill(row)}
               <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(cleanId)}">Zet als #1</button>
               <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(cleanId)}">Zet als #2</button>
@@ -3136,6 +3405,7 @@
             </div>
 
             <div class="grid">
+              ${metricCard("NetEdge", fmt(netEdgeScore(row), 2))}
               ${metricCard("Seen", fmtInt(observationSample(row)))}
               ${metricCard("Completed", fmt(completed(row), 2))}
               ${metricCard("Fair WR", fmtPct(fairWinrate(row)))}
@@ -3146,6 +3416,11 @@
               ${metricCard("DirectSL", fmtPct(directSLPct(row)))}
               ${metricCard("CurrentFit", currentFit(row))}
               ${metricCard("Adaptive", fmt(adaptiveScore(row), 2))}
+            </div>
+
+            <div class="card">
+              <h3>Runtime gate</h3>
+              ${jsonBlock(microMicroRuntimeGate(row))}
             </div>
 
             <div class="card">
@@ -3175,13 +3450,13 @@
       function activateTopN(n) {
         const rows = currentMicroRows();
         const ids = rows
-          .filter(discordActivationEligible)
+          .filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
           .slice(0, Math.min(n, MAX_ACTIVE_DISCORD_MICRO_FAMILIES))
           .map(microId)
           .filter(Boolean);
 
         if (!ids.length) {
-          setMessage("Geen Discord-eligible micro-micro rows gevonden. Backend gate blokkeert selectie.", "warn");
+          setMessage("Geen PASSED micro-micro rows gevonden. Runtime/net-edge gate blokkeert selectie.", "warn");
           return;
         }
 
@@ -3243,7 +3518,7 @@
 
         const liveLabel = $("liveLabel");
         if (liveLabel) {
-          liveLabel.textContent = `SHORT-only · exact micro-micro · ${new Date().toLocaleTimeString()}`;
+          liveLabel.textContent = `SHORT-only · best net-edge first · ${new Date().toLocaleTimeString()}`;
         }
 
         try {
@@ -3361,13 +3636,13 @@
 
           if (action === "activate-visible-ids") {
             const ids = currentMicroRows()
-              .filter(discordActivationEligible)
+              .filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED)
               .map(microId)
               .filter(Boolean)
               .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
 
             if (!ids.length) {
-              setMessage("Geen visible Discord-eligible micro-micro IDs. Gate blokkeert selectie.", "warn");
+              setMessage("Geen visible PASSED micro-micro IDs. Runtime gate blokkeert selectie.", "warn");
               return;
             }
 
@@ -3409,7 +3684,7 @@
             ${metricCard("Status", "BOOTED", "frontend script is geladen")}
             ${metricCard("Learning key", PERSISTENT_LEARNING_KEY)}
             ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
-            ${metricCard("Selection", "EXACT MM", "micro-micro only")}
+            ${metricCard("Ranking", "BEST NET EDGE", "samples niet primair")}
           </div>
 
           <div class="card">
