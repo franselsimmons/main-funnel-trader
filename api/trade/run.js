@@ -1,23 +1,7 @@
 // ================= FILE: api/trade/run.js =================
-//
-// SHORT-only trade run endpoint.
-//
-// Doel:
-// - Vercel-safe route.
-// - Geen top-level imports van zware modules.
-// - Dynamische import van tradeSystem.
-// - Altijd JSON teruggeven bij errors.
-// - SHORT-only.
-// - Virtual/shadow only.
-// - Geen real orders.
-// - Scanner wordt NIET vanuit deze route overschreven.
-// - Rotation/manual Discord selection wordt NIET aangepast.
-// - Learning blijft persistent onder SHORT_LIVE.
-// - Micro-micro exact identity blijft actief.
-// - CurrentFit mag Discord blokkeren, maar nooit learning.
-// - E_WEAK_CONTRA strict gate blijft entry-block only, learning blijft doorlopen.
 
 export const config = {
+  maxDuration: 60,
   api: {
     bodyParser: {
       sizeLimit: '1mb'
@@ -66,18 +50,24 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
 
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
 const RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V11';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V13_MM_OUTCOME_RUNTIME_GATE';
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
 const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V3';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V3';
-const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V1';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V5_MM_IDENTITY_RUNTIME_GATE';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V4';
+const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V2';
 
-const TRADE_RUN_ROUTE_VERSION = 'SHORT_API_TRADE_RUN_CRASH_SAFE_MICRO_MICRO_V9';
+const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MICRO_MICRO_RUNTIME_GATE_OBSERVING_PASSED_REJECTED_POLICY_BLOCKED_V1';
+const DISCORD_ACTIVATION_GATE_VERSION = 'SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V2_TRADE_RUNTIME';
+const EXIT_ALERT_RUNTIME_GATE_VERSION = 'SHORT_EXIT_ALERT_RUNTIME_GATE_APPROVED_ONLY_V1';
+
+const TRADE_RUN_ROUTE_VERSION = 'SHORT_API_TRADE_RUN_CRASH_SAFE_MICRO_MICRO_RUNTIME_GATE_V10';
 
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
+const LAST_ERROR_KEY = `${SHORT_KEY_PREFIX}TRADE:RUN:LAST_ERROR`;
 
+const ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS = true;
 const MAX_DEBUG_ROWS = 50;
 
 let CORE = null;
@@ -157,7 +147,7 @@ function compactError(error) {
 }
 
 function compactStack(error) {
-  return error?.stack ? compactString(error.stack, 7000) : null;
+  return error?.stack ? compactString(error.stack, 9000) : null;
 }
 
 function cleanShortArray(values = [], max = 100) {
@@ -261,7 +251,9 @@ function buildShortKeys(KEYS = {}) {
           KEYS.trade?.shortLastProcessedSnapshot ||
           KEYS.trade?.lastProcessedSnapshot,
         'TRADE:LAST_PROCESSED_SNAPSHOT'
-      )
+      ),
+
+      lastError: LAST_ERROR_KEY
     },
 
     market: {
@@ -581,6 +573,51 @@ function getOpenPositionMonitorLimit(req, body = {}) {
   );
 }
 
+function runtimeGateFlags() {
+  return {
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateEmbeddedInExistingFiles: true,
+
+    microMicroRuntimeStates: ['OBSERVING', 'PASSED', 'REJECTED', 'POLICY_BLOCKED'],
+
+    microMicroObservingRule: `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`,
+    microMicroPassedRule:
+      `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE} && avgR > 0 && totalR > 0 && profitFactor > 1`,
+    microMicroRejectedRule:
+      `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE} && netEdgeNotPositive`,
+    microMicroPolicyBlockedRule: 'confirmationProfile == E_WEAK_CONTRA || currentFit == MISFIT',
+
+    observingCanVirtualLearn: true,
+    observingCanDiscord: false,
+
+    passedCanVirtualLearn: true,
+    passedCanDiscord: true,
+    passedSelectableForDiscord: true,
+
+    rejectedCanVirtualLearn: false,
+    rejectedCanDiscord: false,
+    rejectedSelectableForDiscord: false,
+
+    policyBlockedCanVirtualLearn: false,
+    policyBlockedCanDiscord: false,
+    policyBlockedSelectableForDiscord: false,
+
+    dashboardSortRule: 'PASSED_FIRST_THEN_OBSERVING_THEN_REJECTED_THEN_POLICY_BLOCKED',
+    tradeRuntimeTrustsActiveSelectionBlindly: false,
+    tradeRuntimeRequiresExactMicroMicro: true,
+    tradeRuntimeRequiresPassedNetEdgeGate: true,
+
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordActivationRequiresNetEdge: true,
+    discordActivationRequiresRuntimeGatePassed: true,
+    discordOnlyForExactMicroMicroMatch: true,
+
+    exitAlertRuntimeGateRequired: true,
+    exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
+    exitAlertRequiresRuntimeGateApproved: true
+  };
+}
+
 function baseFlags() {
   return {
     tradeRunRouteVersion: TRADE_RUN_ROUTE_VERSION,
@@ -628,7 +665,10 @@ function baseFlags() {
     avgCostRShown: true,
 
     statusRules: {
-      OBSERVING: 'completed == 0',
+      OBSERVING: `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`,
+      PASSED: `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE} && positive net-edge`,
+      REJECTED: `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE} && bad net-edge`,
+      POLICY_BLOCKED: 'E_WEAK_CONTRA || MISFIT',
       EARLY_OUTCOMES: `completed > 0 && completed < ${MIN_COMPLETED_ACTIVE_LEARNING}`,
       ACTIVE_LEARNING: `completed >= ${MIN_COMPLETED_ACTIVE_LEARNING}`,
       MICRO_MICRO_ACTIVE: `completed >= ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`
@@ -720,6 +760,8 @@ function baseFlags() {
     parentMacroMatchDoesNotTriggerDiscord: true,
     micro75MatchDoesNotTriggerDiscord: true,
 
+    ...runtimeGateFlags(),
+
     autoRotationActivationDisabled: true,
     activateFreezeCronDisabled: true,
     resetCronDisabled: true,
@@ -754,7 +796,10 @@ function baseFlags() {
 
     debugSafeDynamicImports: true,
     topLevelTradeSystemImportDisabled: true,
-    importErrorsReturnedAsJson: true
+    importErrorsReturnedAsJson: true,
+    caughtRuntimeErrorsReturnJson: true,
+    caughtRuntimeErrorsReturnHttp200: ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS,
+    lastErrorKey: LAST_ERROR_KEY
   };
 }
 
@@ -778,6 +823,8 @@ function setHeaders(res) {
   res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Micro-Micro-Family-Schema', MICRO_MICRO_SCHEMA);
   res.setHeader('X-Micro-Micro-Version', MICRO_MICRO_VERSION);
+  res.setHeader('X-Micro-Micro-Runtime-Gate-Version', MICRO_MICRO_RUNTIME_GATE_VERSION);
+  res.setHeader('X-Discord-Activation-Gate-Version', DISCORD_ACTIVATION_GATE_VERSION);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
   res.setHeader('X-Risk-Plan-Version', RISK_PLAN_VERSION);
   res.setHeader('X-Cost-Model-Version', COST_MODEL_VERSION);
@@ -789,6 +836,8 @@ function setHeaders(res) {
   res.setHeader('X-Redis-Namespace', SHORT_NAMESPACE);
   res.setHeader('X-Long-Root-Touched', 'false');
   res.setHeader('X-Debug-Safe-Dynamic-Imports', 'true');
+  res.setHeader('X-Last-Error-Key', LAST_ERROR_KEY);
+  res.setHeader('X-Caught-Runtime-Errors-Return-Http-200', String(ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS));
 }
 
 function methodNotAllowed(res) {
@@ -847,7 +896,7 @@ async function redisSetNxEx(redis, key, value, ttlSec) {
 
     if (result === 'OK' || result === true || result?.ok === true) return true;
   } catch {
-    // Fallback below.
+    // Fallback hieronder.
   }
 
   try {
@@ -1167,6 +1216,23 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
         positionSide: TARGET_TRADE_SIDE,
         direction: TARGET_TRADE_SIDE,
 
+        microMicroRuntimeState:
+          row.microMicroRuntimeState ||
+          row.runtimeGateState ||
+          row.runtimeGateStatus ||
+          row.discordRuntimeActivationGate?.state ||
+          null,
+
+        microMicroRuntimeGate:
+          row.microMicroRuntimeGate ||
+          row.runtimeGate ||
+          row.discordRuntimeActivationGate ||
+          row.discordActivationGate ||
+          null,
+
+        discordRuntimeGateBlocked:
+          Boolean(row.discordRuntimeGateBlocked || row.discordRuntimeActivationGate?.blocked),
+
         trueMicroFamilyId: row.trueMicroFamilyId || row.microFamilyId || null,
         childTrueMicroFamilyId: row.childTrueMicroFamilyId || row.base75ChildTrueMicroFamilyId || null,
         parentTrueMicroFamilyId: row.parentTrueMicroFamilyId || row.coarseMicroFamilyId || null,
@@ -1175,6 +1241,7 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
         trueMicroMicroFamilyId: row.trueMicroMicroFamilyId || row.microMicroFamilyId || row.exactMicroMicroFamilyId || null,
         exactMicroMicroFamilyId: row.exactMicroMicroFamilyId || row.microMicroFamilyId || row.trueMicroMicroFamilyId || null,
 
+        confirmationProfile: row.confirmationProfile || null,
         weakContraRejected: Boolean(row.weakContraRejected || row.blockVirtualEntry),
         weakContraRejectReason: row.weakContraRejectReason || row.weakContraEntryGate?.reason || null,
 
@@ -1189,7 +1256,14 @@ function compactRows(rows = [], limit = MAX_DEBUG_ROWS) {
         netR: row.netR ?? row.r ?? row.realizedR ?? null,
         costR: row.costR ?? null,
 
-        currentFit: row.currentFit || row.currentFitLabel || null,
+        completed: row.completed ?? row.outcomeSample ?? null,
+        avgR: row.avgR ?? row.avgNetR ?? null,
+        totalR: row.totalR ?? row.netTotalR ?? null,
+        profitFactor: row.profitFactor ?? row.pf ?? row.netProfitFactor ?? null,
+        avgCostR: row.avgCostR ?? null,
+        directSLPct: row.directSLPct ?? null,
+
+        currentFit: row.currentFit || row.currentFitLabel || row.entryCurrentFit || null,
         currentFitScore: row.currentFitScore ?? row.shortCurrentFit ?? row.bearCurrentFit ?? null,
 
         virtualOnly: true,
@@ -1307,9 +1381,14 @@ function compactRunPayload(payload, { debug = false } = {}) {
     snapshotCreatedAt: payload.snapshotCreatedAt || payload.createdAt || null,
     snapshotAgeSec: payload.snapshotAgeSec ?? null,
     forceProcessSnapshot: Boolean(payload.forceProcessSnapshot),
+    shouldMarkSnapshotProcessed: Boolean(payload.shouldMarkSnapshotProcessed),
 
     selectedSnapshotSource: payload.selectedSnapshotSource || null,
     selectedSnapshotReason: payload.selectedSnapshotReason || null,
+    selectedTargetCandidateCount: safeNumber(payload.selectedTargetCandidateCount, 0),
+    selectedShortCandidateCount: safeNumber(payload.selectedShortCandidateCount, 0),
+    selectedOppositeCandidateCount: safeNumber(payload.selectedOppositeCandidateCount, 0),
+    selectedLongCandidateCount: safeNumber(payload.selectedLongCandidateCount, 0),
 
     candidates: safeNumber(payload.candidates || payload.candidatesCount, 0),
     shortCandidateCount: safeNumber(payload.shortCandidateCount || payload.shortCandidatesCount, 0),
@@ -1354,10 +1433,24 @@ function compactRunPayload(payload, { debug = false } = {}) {
     discordAlertEligibleRows: safeNumber(payload.discordAlertEligibleRows, 0),
     discordAlertsQueued: safeNumber(payload.discordAlertsQueued, 0),
     discordAlertsSent: safeNumber(payload.discordAlertsSent, 0),
+    discordAlertsFailed: safeNumber(payload.discordAlertsFailed, 0),
     discordAlertsSkippedNoSelectedMicro: safeNumber(payload.discordAlertsSkippedNoSelectedMicro, 0),
     discordAlertsSkippedCurrentFit: safeNumber(payload.discordAlertsSkippedCurrentFit, 0),
+    discordAlertsSkippedRuntimeGate: safeNumber(payload.discordAlertsSkippedRuntimeGate, 0),
+    discordRuntimeGateBlockedRows: safeNumber(payload.discordRuntimeGateBlockedRows, 0),
+
     selectedMicroMatchRows: safeNumber(payload.selectedMicroMatchRows, 0),
     selectedMicroMicroMatchRows: safeNumber(payload.selectedMicroMicroMatchRows, 0),
+    selectedAlertMicroMicroMatches: safeNumber(payload.selectedAlertMicroMicroMatches, 0),
+
+    activeSelectionRuntimeFiltered: Boolean(payload.activeSelectionRuntimeFiltered),
+    activeSelectionRuntimeFilteredReason: payload.activeSelectionRuntimeFilteredReason || null,
+    rejectedSelectedMicroMicroFamilyIds: cleanMicroMicroArray(payload.rejectedSelectedMicroMicroFamilyIds || []),
+    rejectedSelectedMicroMicroRows: debug && Array.isArray(payload.rejectedSelectedMicroMicroRows)
+      ? payload.rejectedSelectedMicroMicroRows.slice(0, MAX_DEBUG_ROWS)
+      : [],
+    rejectedSelectedMicroMicroCount: safeNumber(payload.rejectedSelectedMicroMicroCount, 0),
+    activeRuntimeBlockedSelectionRows: safeNumber(payload.activeRuntimeBlockedSelectionRows, 0),
 
     openPositionCountBeforeEntries: payload.openPositionCountBeforeEntries ?? null,
     openPositionCountAfterEntries: payload.openPositionCountAfterEntries ?? null,
@@ -1406,6 +1499,11 @@ function compactRunPayload(payload, { debug = false } = {}) {
         []
     ),
 
+    configuredSelectedMicroMicroFamilyIds: cleanMicroMicroArray(payload.configuredSelectedMicroMicroFamilyIds || []),
+
+    activeMicroFamilies: safeNumber(payload.activeMicroFamilies, 0),
+    activeMicroMicroFamilies: safeNumber(payload.activeMicroMicroFamilies, 0),
+
     marketContext: compactMarketContext(payload.marketContext),
     currentMarketWeather: compactMarketWeather(payload.currentMarketWeather),
     currentMarketUniverse: null,
@@ -1422,7 +1520,15 @@ function compactRunPayload(payload, { debug = false } = {}) {
           weakContraEntryGateVersion:
             payload.qualityAudit.weakContraEntryGateVersion ||
             payload.weakContraEntryGateVersion ||
-            WEAK_CONTRA_ENTRY_GATE_VERSION
+            WEAK_CONTRA_ENTRY_GATE_VERSION,
+          microMicroRuntimeGateVersion:
+            payload.qualityAudit.microMicroRuntimeGateVersion ||
+            payload.microMicroRuntimeGateVersion ||
+            MICRO_MICRO_RUNTIME_GATE_VERSION,
+          discordActivationGateVersion:
+            payload.qualityAudit.discordActivationGateVersion ||
+            payload.discordActivationGateVersion ||
+            DISCORD_ACTIVATION_GATE_VERSION
         }
       : null,
 
@@ -1509,6 +1615,13 @@ function responseCountsFromPayload(payload = {}) {
 
     discordEligibleEntries: safeNumber(payload.discordAlertEligibleRows, 0),
     discordSkippedNotSelected: safeNumber(payload.discordAlertsSkippedNoSelectedMicro, 0),
+    discordSkippedCurrentFit: safeNumber(payload.discordAlertsSkippedCurrentFit, 0),
+    discordSkippedRuntimeGate: safeNumber(payload.discordAlertsSkippedRuntimeGate, 0),
+    discordRuntimeGateBlockedRows: safeNumber(payload.discordRuntimeGateBlockedRows, 0),
+
+    activeSelectionRuntimeFiltered: Boolean(payload.activeSelectionRuntimeFiltered),
+    activeRuntimeBlockedSelectionRows: safeNumber(payload.activeRuntimeBlockedSelectionRows, 0),
+    rejectedSelectedMicroMicroCount: safeNumber(payload.rejectedSelectedMicroMicroCount, 0),
 
     scannerSnapshotPreserved: true,
     microFamiliesAppendOnly: true
@@ -1821,6 +1934,31 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
 
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateEmbeddedInExistingFiles: true,
+    microMicroRuntimeGateRequired: true,
+    microMicroRuntimeGateStates: ['OBSERVING', 'PASSED', 'REJECTED', 'POLICY_BLOCKED'],
+    microMicroRuntimeGateRule:
+      'OBSERVING may learn virtual; PASSED can Discord; REJECTED/POLICY_BLOCKED no new virtual entry and no Discord',
+    observingCanVirtualLearn: true,
+    observingCanDiscord: false,
+    passedCanVirtualLearn: true,
+    passedCanDiscord: true,
+    rejectedCanVirtualLearn: false,
+    rejectedCanDiscord: false,
+    policyBlockedCanVirtualLearn: false,
+    policyBlockedCanDiscord: false,
+
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordActivationRequiresNetEdge: true,
+    discordRuntimeGateRequired: true,
+    discordRuntimeNeverTrustsActiveSelectionBlindly: true,
+    discordRequiresPassedMicroMicroRuntimeGate: true,
+
+    exitAlertRuntimeGateRequired: true,
+    exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
+    exitAlertRequiresRuntimeGateApproved: true,
+
     riskPlanVersion: RISK_PLAN_VERSION,
     costModelVersion: COST_MODEL_VERSION,
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
@@ -1909,6 +2047,7 @@ function buildRunOptions(req, body = {}, overrides = {}) {
       tradeLock: shortKeys.trade.lock,
       tradeRunMeta: shortKeys.trade.runMeta,
       tradeLastProcessedSnapshot: shortKeys.trade.lastProcessedSnapshot,
+      tradeLastError: shortKeys.trade.lastError,
       marketUniverseLatest: MARKET_UNIVERSE_KEY,
       shortMarketUniverseLatest: MARKET_UNIVERSE_KEY,
       marketWeatherLatest: MARKET_WEATHER_KEY,
@@ -1945,6 +2084,8 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     doesNotOverwriteOtherAdminPages: true,
 
     debugSafeDynamicImports: true,
+    importErrorsReturnedAsJson: true,
+    caughtRuntimeErrorsReturnHttp200: ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS,
 
     ...overrides
   };
@@ -2008,6 +2149,7 @@ async function persistShortRunMeta(redis, payload = {}, snapshotInfo = null) {
       prefix: SHORT_KEY_PREFIX,
       tradeRunMeta: shortKeys.trade.runMeta,
       tradeLastProcessedSnapshot: shortKeys.trade.lastProcessedSnapshot,
+      tradeLastError: shortKeys.trade.lastError,
       scannerLatest: shortKeys.scan.latest,
       tradeLock: shortKeys.trade.lock,
       marketUniverseLatest: MARKET_UNIVERSE_KEY,
@@ -2023,6 +2165,7 @@ async function persistShortRunMeta(redis, payload = {}, snapshotInfo = null) {
     persistedShortLastProcessedSnapshot: false,
     tradeRunMeta: shortKeys.trade.runMeta,
     tradeLastProcessedSnapshot: shortKeys.trade.lastProcessedSnapshot,
+    tradeLastError: shortKeys.trade.lastError,
     compactedForVercelRuntime: true,
     warnings: []
   };
@@ -2068,6 +2211,31 @@ async function persistShortRunMeta(redis, payload = {}, snapshotInfo = null) {
   return persistence;
 }
 
+function errorPayload(error, extra = {}) {
+  return {
+    ok: false,
+    reason: 'TRADE_SYSTEM_ERROR_LOCK_RELEASED',
+    error: compactError(error),
+    errorName: error?.name || 'Error',
+    errorCode: error?.code || null,
+    errorReason: error?.reason || null,
+    availableExports: error?.availableExports || null,
+    expectedExport: error?.expectedExport || null,
+    stack: compactStack(error),
+    cause: error?.cause
+      ? {
+          name: error.cause?.name || 'Error',
+          message: compactError(error.cause),
+          stack: compactStack(error.cause)
+        }
+      : null,
+    lock: error?.lock || null,
+    lockRelease: error?.lockRelease || null,
+    ...baseFlags(),
+    ...extra
+  };
+}
+
 async function writeFailureRunMeta(redis, error, extra = {}) {
   if (!CORE?.redis?.setJson || !redis) {
     return {
@@ -2080,25 +2248,32 @@ async function writeFailureRunMeta(redis, error, extra = {}) {
   const shortKeys = getKeys();
 
   const payload = {
-    ok: false,
-    reason: 'TRADE_SYSTEM_ERROR_LOCK_RELEASED',
-    error: compactError(error),
-    errorName: error?.name || 'Error',
-    errorCode: error?.code || null,
-    errorReason: error?.reason || null,
-    availableExports: error?.availableExports || null,
-    expectedExport: error?.expectedExport || null,
-    phase: extra.phase || null,
+    ...errorPayload(error, extra),
     compactedForVercelRuntime: true,
     persistedAt: now(),
-    persistedBy: 'api/trade/run.js',
-    ...baseFlags(),
-    ...extra
+    persistedBy: 'api/trade/run.js'
   };
 
-  await setJson(redis, shortKeys.trade.runMeta, payload).catch(() => null);
+  const compactRunMeta = {
+    ...payload,
+    stack: null,
+    cause: payload.cause
+      ? {
+          name: payload.cause.name,
+          message: payload.cause.message,
+          stack: null
+        }
+      : null
+  };
 
-  return payload;
+  await setJson(redis, shortKeys.trade.runMeta, compactRunMeta).catch(() => null);
+  await setJson(redis, shortKeys.trade.lastError, payload).catch(() => null);
+
+  return {
+    ...compactRunMeta,
+    lastErrorKey: shortKeys.trade.lastError,
+    fullErrorPersistedToLastErrorKey: true
+  };
 }
 
 function buildLockSkippedResponse({
@@ -2191,6 +2366,7 @@ function buildLockSkippedResponse({
       tradeLock: getKeys().trade.lock,
       tradeRunMeta: getKeys().trade.runMeta,
       tradeLastProcessedSnapshot: getKeys().trade.lastProcessedSnapshot,
+      tradeLastError: getKeys().trade.lastError,
       marketUniverseLatest: MARKET_UNIVERSE_KEY,
       marketWeatherLatest: MARKET_WEATHER_KEY
     },
@@ -2208,9 +2384,14 @@ function buildLockSkippedResponse({
   };
 }
 
-function errorStatus(error) {
-  if (Number.isFinite(Number(error?.statusCode))) return Number(error.statusCode);
-  return 500;
+function responseStatusForError(error) {
+  const statusCode = Number(error?.statusCode);
+
+  if (Number.isFinite(statusCode) && statusCode >= 400 && statusCode < 500) {
+    return statusCode;
+  }
+
+  return ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS ? 200 : 500;
 }
 
 function errorResponse({
@@ -2220,7 +2401,8 @@ function errorResponse({
   debug,
   lockKey = null,
   lockReleasedAfterError = false,
-  failureMeta = null
+  failureMeta = null,
+  httpStatus = 200
 }) {
   return {
     ok: false,
@@ -2244,6 +2426,14 @@ function errorResponse({
 
     ...baseFlags(),
 
+    httpStatus,
+    httpStatusPolicy: ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS
+      ? 'CAUGHT_RUNTIME_ERRORS_RETURN_HTTP_200_WITH_OK_FALSE_TO_KEEP_CRON_ALIVE'
+      : 'CAUGHT_RUNTIME_ERRORS_RETURN_HTTP_500',
+
+    lastErrorKey: LAST_ERROR_KEY,
+    fullErrorPersistedToLastErrorKey: Boolean(failureMeta?.fullErrorPersistedToLastErrorKey),
+
     lock: lockKey
       ? {
           key: lockKey,
@@ -2257,13 +2447,15 @@ function errorResponse({
     shortPersistence: failureMeta
       ? {
           persistedShortRunMeta: true,
+          lastErrorKey: failureMeta.lastErrorKey || LAST_ERROR_KEY,
           failureMeta: debug
             ? failureMeta
             : {
                 ok: failureMeta.ok,
                 reason: failureMeta.reason,
                 error: failureMeta.error,
-                phase: failureMeta.phase || phase
+                phase: failureMeta.phase || phase,
+                lastErrorKey: failureMeta.lastErrorKey || LAST_ERROR_KEY
               }
         }
       : null,
@@ -2330,12 +2522,24 @@ async function runTradeSystemSafe(req, body, debug) {
     microMicroFamilySchema: MICRO_MICRO_SCHEMA,
     trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
     microMicroVersion: MICRO_MICRO_VERSION,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateRequired: true,
     selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     microMicroSelectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+
     executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+
     weakContraEntryGateEnabled: true,
-    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordActivationRequiresNetEdge: true,
+    discordRuntimeGateRequired: true,
+    discordRuntimeNeverTrustsActiveSelectionBlindly: true,
+
+    exitAlertRuntimeGateRequired: true,
+    exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
   });
 
   return {
@@ -2570,6 +2774,21 @@ export default async function handler(req, res) {
       weakContraAllowedRows: safeNumber(payload.weakContraAllowedRows, 0),
       weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
 
+      microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+      discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+      discordRuntimeGateRequired: true,
+      discordRuntimeNeverTrustsActiveSelectionBlindly: true,
+
+      discordAlertsSkippedRuntimeGate: safeNumber(payload.discordAlertsSkippedRuntimeGate, 0),
+      discordRuntimeGateBlockedRows: safeNumber(payload.discordRuntimeGateBlockedRows, 0),
+
+      activeSelectionRuntimeFiltered: Boolean(payload.activeSelectionRuntimeFiltered),
+      activeSelectionRuntimeFilteredReason: payload.activeSelectionRuntimeFilteredReason || null,
+      rejectedSelectedMicroMicroFamilyIds: payload.rejectedSelectedMicroMicroFamilyIds || [],
+      rejectedSelectedMicroMicroCount: safeNumber(payload.rejectedSelectedMicroMicroCount, 0),
+      activeRuntimeBlockedSelectionRows: safeNumber(payload.activeRuntimeBlockedSelectionRows, 0),
+      configuredSelectedMicroMicroFamilyIds: payload.configuredSelectedMicroMicroFamilyIds || [],
+
       entryRowsList: debug && Array.isArray(payload.entryRowsList)
         ? payload.entryRowsList
         : [],
@@ -2652,6 +2871,7 @@ export default async function handler(req, res) {
         tradeLock: shortKeys.trade.lock,
         tradeRunMeta: shortKeys.trade.runMeta,
         tradeLastProcessedSnapshot: shortKeys.trade.lastProcessedSnapshot,
+        tradeLastError: shortKeys.trade.lastError,
         marketUniverseLatest: MARKET_UNIVERSE_KEY,
         marketWeatherLatest: MARKET_WEATHER_KEY
       },
@@ -2675,6 +2895,9 @@ export default async function handler(req, res) {
           : null,
         payload?.skippedByExistingSymbol > 0
           ? `SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION:${payload.skippedByExistingSymbol}`
+          : null,
+        payload?.activeSelectionRuntimeFiltered
+          ? `ACTIVE_SELECTION_RUNTIME_NET_EDGE_FILTERED:${payload.rejectedSelectedMicroMicroCount || 0}`
           : null,
         persistence?.warnings?.length
           ? `PERSISTENCE_WARNINGS:${persistence.warnings.length}`
@@ -2706,6 +2929,17 @@ export default async function handler(req, res) {
     let failureMeta = null;
 
     try {
+      console.error('[api/trade/run] caught error', {
+        phase,
+        name: error?.name || 'Error',
+        message: compactError(error),
+        stack: compactStack(error)
+      });
+    } catch {
+      // Logging mag route nooit opnieuw laten crashen.
+    }
+
+    try {
       if (durableRedis && lockKey) {
         await redisDel(durableRedis, lockKey);
         lockReleasedAfterError = true;
@@ -2726,14 +2960,17 @@ export default async function handler(req, res) {
       failureMeta = null;
     }
 
-    return res.status(errorStatus(error)).json(errorResponse({
+    const httpStatus = responseStatusForError(error);
+
+    return res.status(httpStatus).json(errorResponse({
       error,
       phase,
       startedAt,
       debug,
       lockKey,
       lockReleasedAfterError,
-      failureMeta
+      failureMeta,
+      httpStatus
     }));
   }
 }
