@@ -47,14 +47,36 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
 
 const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
 const RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V13_MM_OUTCOME_RUNTIME_GATE';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V14_MM_RUNTIME_STATUS_GATE';
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
 const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V5_MM_IDENTITY_RUNTIME_GATE';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V6_MM_RUNTIME_STATUS_GATE';
 const HARD_TIME_STOP_CLEANUP_VERSION = 'SHORT_POSITION_ENGINE_HARD_TIME_STOP_PRE_PRICE_EXIT_V1';
 
 const OUTCOME_IDENTITY_LOCK_VERSION = 'SHORT_OUTCOME_LEARNING_FAMILY_EQUALS_MICRO_MICRO_V1';
-const EXIT_ALERT_RUNTIME_GATE_VERSION = 'SHORT_EXIT_ALERT_RUNTIME_GATE_APPROVED_ONLY_V1';
+const EXIT_ALERT_RUNTIME_GATE_VERSION = 'SHORT_EXIT_ALERT_RUNTIME_GATE_APPROVED_ONLY_V2_MM_STATUS_PASSED';
+
+const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MM_RUNTIME_STATUS_GATE_V1_POSITION_ENGINE';
+const MICRO_MICRO_STATUS_OBSERVING = 'OBSERVING';
+const MICRO_MICRO_STATUS_PASSED = 'PASSED';
+const MICRO_MICRO_STATUS_REJECTED = 'REJECTED';
+const MICRO_MICRO_STATUS_POLICY_BLOCKED = 'POLICY_BLOCKED';
+
+const MICRO_MICRO_STATUS_RANK = Object.freeze({
+  [MICRO_MICRO_STATUS_PASSED]: 0,
+  [MICRO_MICRO_STATUS_OBSERVING]: 1,
+  [MICRO_MICRO_STATUS_REJECTED]: 2,
+  [MICRO_MICRO_STATUS_POLICY_BLOCKED]: 3
+});
+
+const MIN_MICRO_MICRO_COMPLETED_FOR_PASSED = 35;
+const MIN_MICRO_MICRO_AVG_R = 0;
+const MIN_MICRO_MICRO_TOTAL_R = 0;
+const MIN_MICRO_MICRO_PROFIT_FACTOR = 1;
+const MAX_MICRO_MICRO_AVG_COST_R = 0.35;
+const MAX_MICRO_MICRO_DIRECT_SL_PCT = 0.25;
+const BLOCK_E_WEAK_CONTRA_FOR_MICRO_MICRO_GATE = true;
+const BLOCK_MISFIT_FOR_MICRO_MICRO_GATE = true;
 
 const LAYER_PARENT_15 = 'PARENT_15';
 const LAYER_MICRO_75 = 'MICRO_75';
@@ -146,6 +168,15 @@ function now() {
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function hasValue(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function clamp(value, min, max) {
+  const x = Number(value);
+  return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : min;
 }
 
 function clampInt(value, fallback, min, max) {
@@ -1519,6 +1550,541 @@ function assertShortInput(row = {}, context = 'POSITION') {
   }
 }
 
+function microMicroRuntimeGateConfig() {
+  return {
+    version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    minCompleted: MIN_MICRO_MICRO_COMPLETED_FOR_PASSED,
+    minAvgR: MIN_MICRO_MICRO_AVG_R,
+    minTotalR: MIN_MICRO_MICRO_TOTAL_R,
+    minProfitFactor: MIN_MICRO_MICRO_PROFIT_FACTOR,
+    maxAvgCostR: MAX_MICRO_MICRO_AVG_COST_R,
+    maxDirectSLPct: MAX_MICRO_MICRO_DIRECT_SL_PCT,
+    blockEWeakContra: BLOCK_E_WEAK_CONTRA_FOR_MICRO_MICRO_GATE,
+    blockMisfit: BLOCK_MISFIT_FOR_MICRO_MICRO_GATE,
+    statuses: {
+      observing: 'completed < 35 => virtual learning allowed, Discord blocked',
+      passed: 'completed >= 35 && positive net-edge => virtual entry allowed, Discord allowed when selected',
+      rejected: 'completed >= 35 && bad net-edge => virtual entry blocked, Discord blocked',
+      policyBlocked: 'E_WEAK_CONTRA or MISFIT => virtual entry blocked, Discord blocked'
+    },
+    rule: 'exact_micro_micro && status=PASSED && completed>=35 && avgR>0 && totalR>0 && profitFactor>1 && avgCostR<=0.35 && directSLPct<=0.25 && currentFit!=MISFIT && confirmationProfile!=E_WEAK_CONTRA'
+  };
+}
+
+function normalizeMicroMicroStatus(value = '') {
+  const text = upper(value);
+
+  if (text === MICRO_MICRO_STATUS_OBSERVING) return MICRO_MICRO_STATUS_OBSERVING;
+  if (text === MICRO_MICRO_STATUS_PASSED) return MICRO_MICRO_STATUS_PASSED;
+  if (text === MICRO_MICRO_STATUS_REJECTED) return MICRO_MICRO_STATUS_REJECTED;
+  if (text === MICRO_MICRO_STATUS_POLICY_BLOCKED) return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+
+  if (text === 'PASS' || text === 'OK' || text === 'ALLOWED' || text === 'APPROVED') {
+    return MICRO_MICRO_STATUS_PASSED;
+  }
+
+  if (text === 'OBS' || text === 'EARLY' || text === 'LEARNING') {
+    return MICRO_MICRO_STATUS_OBSERVING;
+  }
+
+  if (text === 'BLOCKED' || text === 'POLICY') {
+    return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+  }
+
+  if (text === 'FAIL' || text === 'FAILED' || text === 'BAD') {
+    return MICRO_MICRO_STATUS_REJECTED;
+  }
+
+  return '';
+}
+
+function aggregateRuntimeRecentOutcomes(row = {}) {
+  const recent = Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [];
+
+  return recent.reduce((acc, outcome) => {
+    if (!outcome || typeof outcome !== 'object') return acc;
+
+    const source = upper(outcome.source || outcome.outcomeSource || 'VIRTUAL');
+
+    if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) return acc;
+
+    const r = safeNumber(
+      outcome.netR ??
+        outcome.exitR ??
+        outcome.realizedNetR ??
+        outcome.realizedR ??
+        outcome.r,
+      0
+    );
+
+    const costR = Math.max(0, safeNumber(outcome.costR ?? outcome.avgCostR, 0));
+
+    acc.completed += 1;
+    acc.totalR += r;
+    acc.totalCostR += costR;
+
+    if (r > 0) {
+      acc.wins += 1;
+      acc.grossWinR += r;
+    } else if (r < 0) {
+      acc.losses += 1;
+      acc.grossLossR += Math.abs(r);
+    } else {
+      acc.flats += 1;
+    }
+
+    if (
+      outcome.directSL ||
+      outcome.directToSL ||
+      outcome.directStopLoss ||
+      outcome.isDirectSL ||
+      upper(outcome.exitReason) === 'SL'
+    ) {
+      acc.directSLCount += 1;
+    }
+
+    return acc;
+  }, {
+    completed: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    totalR: 0,
+    totalCostR: 0,
+    grossWinR: 0,
+    grossLossR: 0,
+    directSLCount: 0
+  });
+}
+
+function runtimeStatsSourceRow(row = {}) {
+  const weekly = row.weeklyStats && typeof row.weeklyStats === 'object' ? row.weeklyStats : {};
+  const selected = row.selectedWeeklyStats && typeof row.selectedWeeklyStats === 'object' ? row.selectedWeeklyStats : {};
+  const gate = row.microMicroRuntimeGate && typeof row.microMicroRuntimeGate === 'object' ? row.microMicroRuntimeGate : {};
+  const discordGate = row.discordRuntimeActivationGate && typeof row.discordRuntimeActivationGate === 'object'
+    ? row.discordRuntimeActivationGate
+    : row.discordActivationGate && typeof row.discordActivationGate === 'object'
+      ? row.discordActivationGate
+      : {};
+
+  return {
+    ...row,
+    ...weekly,
+    ...selected,
+    ...discordGate,
+    ...gate,
+
+    microMicroRuntimeGateStatus:
+      row.microMicroRuntimeGateStatus ||
+      row.microMicroStatus ||
+      gate.status ||
+      discordGate.status ||
+      null,
+
+    microMicroFamilyId:
+      rowMicroMicroId(row) ||
+      rowMicroMicroId(selected) ||
+      rowMicroMicroId(weekly) ||
+      rowMicroMicroId(gate) ||
+      rowMicroMicroId(discordGate) ||
+      row.microMicroFamilyId ||
+      selected.microMicroFamilyId ||
+      weekly.microMicroFamilyId ||
+      gate.microMicroFamilyId ||
+      discordGate.microMicroFamilyId ||
+      null,
+
+    trueMicroMicroFamilyId:
+      row.trueMicroMicroFamilyId ||
+      selected.trueMicroMicroFamilyId ||
+      weekly.trueMicroMicroFamilyId ||
+      gate.trueMicroMicroFamilyId ||
+      discordGate.trueMicroMicroFamilyId ||
+      rowMicroMicroId(row) ||
+      null,
+
+    exactMicroMicroFamilyId:
+      row.exactMicroMicroFamilyId ||
+      selected.exactMicroMicroFamilyId ||
+      weekly.exactMicroMicroFamilyId ||
+      gate.exactMicroMicroFamilyId ||
+      discordGate.exactMicroMicroFamilyId ||
+      rowMicroMicroId(row) ||
+      null
+  };
+}
+
+function runtimeCompletedSample(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const recent = aggregateRuntimeRecentOutcomes(source);
+
+  const virtualCompleted = safeNumber(source.virtualCompleted, 0);
+  const shadowCompleted = safeNumber(source.shadowCompleted, 0);
+  const virtualShadowCompleted = virtualCompleted + shadowCompleted;
+
+  return Math.max(
+    0,
+    virtualShadowCompleted,
+    safeNumber(source.completed, 0),
+    safeNumber(source.outcomeSample, 0),
+    safeNumber(source.closed, 0),
+    recent.completed
+  );
+}
+
+function runtimeObservationSample(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+
+  return Math.max(
+    0,
+    safeNumber(source.observationSample, 0),
+    safeNumber(source.seen, 0),
+    safeNumber(source.observed, 0),
+    safeNumber(source.observations, 0),
+    runtimeCompletedSample(source)
+  );
+}
+
+function runtimeTotalR(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const completed = runtimeCompletedSample(source);
+  const recent = aggregateRuntimeRecentOutcomes(source);
+
+  if (completed <= 0) return 0;
+
+  const virtualShadowTotal = safeNumber(source.virtualTotalR, 0) + safeNumber(source.shadowTotalR, 0);
+  if (virtualShadowTotal !== 0) return virtualShadowTotal;
+
+  if (recent.completed > 0) return recent.totalR;
+
+  return safeNumber(
+    source.shortNetTotalR ??
+      source.netShortTotalR ??
+      source.netTotalR ??
+      source.totalNetR ??
+      source.totalR,
+    0
+  );
+}
+
+function runtimeAvgR(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const completed = runtimeCompletedSample(source);
+
+  if (completed <= 0) return 0;
+
+  if (hasValue(source.avgNetR)) return safeNumber(source.avgNetR, 0);
+  if (hasValue(source.netAvgR)) return safeNumber(source.netAvgR, 0);
+  if (hasValue(source.avgR)) return safeNumber(source.avgR, 0);
+
+  return runtimeTotalR(source) / completed;
+}
+
+function runtimeTotalCostR(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const completed = runtimeCompletedSample(source);
+  const recent = aggregateRuntimeRecentOutcomes(source);
+
+  if (completed <= 0) return 0;
+
+  const virtualShadowCost = Math.max(0, safeNumber(source.virtualTotalCostR, 0)) +
+    Math.max(0, safeNumber(source.shadowTotalCostR, 0));
+
+  if (virtualShadowCost > 0) return virtualShadowCost;
+
+  if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
+
+  if (hasValue(source.totalCostR)) return Math.max(0, safeNumber(source.totalCostR, 0));
+  if (hasValue(source.totalNetCostR)) return Math.max(0, safeNumber(source.totalNetCostR, 0));
+
+  for (const key of ['avgCostR', 'costR', 'netCostR', 'estimatedCostR']) {
+    if (hasValue(source[key]) && safeNumber(source[key], 0) > 0) {
+      return Math.max(0, safeNumber(source[key], 0)) * completed;
+    }
+  }
+
+  return 0;
+}
+
+function runtimeAvgCostR(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  return completed > 0 ? runtimeTotalCostR(row) / completed : 0;
+}
+
+function runtimeDirectSLCount(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const recent = aggregateRuntimeRecentOutcomes(source);
+
+  return Math.max(
+    0,
+    safeNumber(source.virtualDirectSLCount, 0) + safeNumber(source.shadowDirectSLCount, 0),
+    safeNumber(source.directSLCount, 0),
+    recent.directSLCount
+  );
+}
+
+function runtimeDirectSLPct(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+
+  if (hasValue(source.directSLPct)) {
+    const pctValue = safeNumber(source.directSLPct, 0);
+    return pctValue > 1 ? clamp(pctValue / 100, 0, 1) : clamp(pctValue, 0, 1);
+  }
+
+  const completed = runtimeCompletedSample(source);
+  return completed > 0 ? clamp(runtimeDirectSLCount(source) / completed, 0, 1) : 0;
+}
+
+function runtimeProfitFactor(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const recent = aggregateRuntimeRecentOutcomes(source);
+
+  const winR = Math.max(
+    safeNumber(source.virtualWinR, 0) + safeNumber(source.shadowWinR, 0),
+    safeNumber(source.virtualGrossWinR, 0) + safeNumber(source.shadowGrossWinR, 0),
+    safeNumber(source.netWinR, 0),
+    safeNumber(source.totalWinR, 0),
+    safeNumber(source.grossWinR, 0),
+    recent.grossWinR,
+    0
+  );
+
+  const lossR = Math.max(
+    Math.abs(safeNumber(source.virtualLossR, 0) + safeNumber(source.shadowLossR, 0)),
+    Math.abs(safeNumber(source.virtualGrossLossR, 0) + safeNumber(source.shadowGrossLossR, 0)),
+    Math.abs(safeNumber(source.netLossR, 0)),
+    Math.abs(safeNumber(source.totalLossR, 0)),
+    Math.abs(safeNumber(source.grossLossR, 0)),
+    recent.grossLossR,
+    0
+  );
+
+  if (winR > 0 || lossR > 0) {
+    if (lossR <= 0) return 99;
+    return winR / lossR;
+  }
+
+  const explicit = safeNumber(source.netProfitFactor ?? source.profitFactor ?? source.pf, NaN);
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
+
+  return 0;
+}
+
+function runtimeCurrentFitLabel(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const directLabel = upper(
+    source.currentFit ||
+      source.currentFitLabel ||
+      source.entryCurrentFit ||
+      source.microMicroCurrentFit ||
+      ''
+  );
+
+  if (directLabel) {
+    if (directLabel.includes('MISFIT')) return 'MISFIT';
+    if (directLabel.includes('MATCH')) return directLabel.includes('WEAK') ? 'WEAK_MATCH' : 'MATCH';
+    if (directLabel.includes('FIT')) return directLabel;
+    if (directLabel.includes('OK')) return 'OK';
+    if (directLabel.includes('NEUTRAL')) return 'NEUTRAL';
+  }
+
+  const score = safeNumber(source.currentFitScore ?? source.entryCurrentFitScore ?? source.fitScore, 0);
+
+  if (score <= -20) return 'MISFIT';
+  if (score >= 45) return 'MATCH';
+  if (score >= 18) return 'WEAK_MATCH';
+
+  return directLabel || 'UNKNOWN';
+}
+
+function microMicroRuntimeGate(row = {}) {
+  const source = runtimeStatsSourceRow(row);
+  const directStatus = normalizeMicroMicroStatus(
+    source.microMicroRuntimeGateStatus ||
+      source.microMicroStatus ||
+      source.status
+  );
+
+  const directGateTrusted = Boolean(
+    source.microMicroRuntimeGate ||
+      source.discordRuntimeActivationGate ||
+      source.discordActivationGate ||
+      source.discordRuntimeActivationGatePassed === true ||
+      source.discordActivationEligible === true ||
+      source.runtimeGateApproved === true ||
+      source.runtimeDiscordGateApproved === true ||
+      source.discordRuntimeGateApproved === true ||
+      source.exitAlertRuntimeGateApproved === true
+  );
+
+  const microMicroId = rowMicroMicroId(source);
+  const parsed = parseShortTaxonomyMicroId(microMicroId);
+
+  const completed = runtimeCompletedSample(source);
+  const observed = runtimeObservationSample(source);
+  const avg = runtimeAvgR(source);
+  const total = runtimeTotalR(source);
+  const pf = runtimeProfitFactor(source);
+  const cost = runtimeAvgCostR(source);
+  const dsl = runtimeDirectSLPct(source);
+  const fit = runtimeCurrentFitLabel(source);
+  const confirmationProfile = upper(
+    source.confirmationProfile ||
+      parsed.confirmationProfile ||
+      ''
+  );
+
+  const policyReasons = [];
+  const edgeReasons = [];
+
+  if (!microMicroId || !isExactShortMicroMicroId(microMicroId)) {
+    policyReasons.push('EXACT_MICRO_MICRO_ID_REQUIRED');
+  }
+
+  if (inferPositionTradeSide(source) === OPPOSITE_TRADE_SIDE) {
+    policyReasons.push('LONG_DISABLED_SHORT_ONLY_SYSTEM');
+  }
+
+  if (BLOCK_MISFIT_FOR_MICRO_MICRO_GATE && fit === 'MISFIT') {
+    policyReasons.push('CURRENTFIT_MISFIT_POLICY_BLOCK');
+  }
+
+  if (
+    BLOCK_E_WEAK_CONTRA_FOR_MICRO_MICRO_GATE &&
+    confirmationProfile === 'E_WEAK_CONTRA'
+  ) {
+    policyReasons.push('E_WEAK_CONTRA_POLICY_BLOCK');
+  }
+
+  if (!(avg > MIN_MICRO_MICRO_AVG_R)) {
+    edgeReasons.push('AVG_R_NET_NOT_POSITIVE');
+  }
+
+  if (!(total > MIN_MICRO_MICRO_TOTAL_R)) {
+    edgeReasons.push('TOTAL_R_NET_NOT_POSITIVE');
+  }
+
+  if (!(pf > MIN_MICRO_MICRO_PROFIT_FACTOR)) {
+    edgeReasons.push('PROFIT_FACTOR_NOT_ABOVE_1');
+  }
+
+  if (cost > MAX_MICRO_MICRO_AVG_COST_R) {
+    edgeReasons.push('AVG_COST_R_TOO_HIGH');
+  }
+
+  if (dsl > MAX_MICRO_MICRO_DIRECT_SL_PCT) {
+    edgeReasons.push('DIRECT_SL_PCT_TOO_HIGH');
+  }
+
+  let status = MICRO_MICRO_STATUS_OBSERVING;
+  let reasons = [];
+
+  if (directStatus && directGateTrusted) {
+    status = directStatus;
+    reasons = source.reasons || source.microMicroRuntimeGate?.reasons || [
+      directStatus === MICRO_MICRO_STATUS_PASSED
+        ? 'MICRO_MICRO_RUNTIME_GATE_PASSED_FROM_ENTRY'
+        : `MICRO_MICRO_RUNTIME_GATE_${directStatus}`
+    ];
+  } else if (policyReasons.length > 0) {
+    status = MICRO_MICRO_STATUS_POLICY_BLOCKED;
+    reasons = policyReasons;
+  } else if (completed < MIN_MICRO_MICRO_COMPLETED_FOR_PASSED) {
+    status = MICRO_MICRO_STATUS_OBSERVING;
+    reasons = [`COMPLETED_BELOW_${MIN_MICRO_MICRO_COMPLETED_FOR_PASSED}`];
+  } else if (edgeReasons.length > 0) {
+    status = MICRO_MICRO_STATUS_REJECTED;
+    reasons = edgeReasons;
+  } else {
+    status = MICRO_MICRO_STATUS_PASSED;
+    reasons = ['MICRO_MICRO_RUNTIME_GATE_PASSED'];
+  }
+
+  if (
+    status !== MICRO_MICRO_STATUS_PASSED &&
+    status !== MICRO_MICRO_STATUS_OBSERVING &&
+    status !== MICRO_MICRO_STATUS_REJECTED &&
+    status !== MICRO_MICRO_STATUS_POLICY_BLOCKED
+  ) {
+    status = MICRO_MICRO_STATUS_POLICY_BLOCKED;
+    reasons = ['UNKNOWN_MICRO_MICRO_RUNTIME_GATE_STATUS'];
+  }
+
+  const passed = status === MICRO_MICRO_STATUS_PASSED;
+  const observing = status === MICRO_MICRO_STATUS_OBSERVING;
+  const rejected = status === MICRO_MICRO_STATUS_REJECTED;
+  const policyBlocked = status === MICRO_MICRO_STATUS_POLICY_BLOCKED;
+
+  return {
+    version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    status,
+    passed,
+    observing,
+    rejected,
+    policyBlocked,
+
+    eligible: passed,
+    discordEligible: passed,
+    discordActivationEligible: passed,
+    discordRuntimeActivationGatePassed: passed,
+
+    virtualLearningAllowed: observing || passed,
+    virtualObservationAllowed: observing || passed,
+    virtualEntryAllowed: observing || passed,
+    blocksNewVirtualEntry: rejected || policyBlocked,
+
+    reason: passed ? 'MICRO_MICRO_RUNTIME_GATE_PASSED' : reasons[0],
+    reasons,
+    policyReasons,
+    edgeReasons,
+
+    id: microMicroId || null,
+    microMicroFamilyId: microMicroId || null,
+    learningFamilyId: microMicroId || null,
+
+    completed: round4(completed),
+    observed: round4(observed),
+    avgR: round4(avg),
+    totalR: round4(total),
+    profitFactor: round4(pf),
+    avgCostR: round4(cost),
+    directSLPct: round4(dsl),
+    currentFit: fit,
+    confirmationProfile,
+
+    statusRank: MICRO_MICRO_STATUS_RANK[status] ?? 99,
+    thresholds: microMicroRuntimeGateConfig(),
+    directStatusUsed: Boolean(directStatus && directGateTrusted)
+  };
+}
+
+function compareBestMicroMicroRows(a = {}, b = {}) {
+  const gateA = a?.microMicroRuntimeGate || microMicroRuntimeGate(a);
+  const gateB = b?.microMicroRuntimeGate || microMicroRuntimeGate(b);
+
+  const statusRankA = MICRO_MICRO_STATUS_RANK[gateA.status] ?? 99;
+  const statusRankB = MICRO_MICRO_STATUS_RANK[gateB.status] ?? 99;
+
+  if (statusRankA !== statusRankB) return statusRankA - statusRankB;
+
+  const avgDiff = safeNumber(gateB.avgR, 0) - safeNumber(gateA.avgR, 0);
+  if (avgDiff !== 0) return avgDiff;
+
+  const totalDiff = safeNumber(gateB.totalR, 0) - safeNumber(gateA.totalR, 0);
+  if (totalDiff !== 0) return totalDiff;
+
+  const pfDiff = safeNumber(gateB.profitFactor, 0) - safeNumber(gateA.profitFactor, 0);
+  if (pfDiff !== 0) return pfDiff;
+
+  const completedDiff = safeNumber(gateB.completed, 0) - safeNumber(gateA.completed, 0);
+  if (completedDiff !== 0) return completedDiff;
+
+  const observedDiff = safeNumber(gateB.observed, 0) - safeNumber(gateA.observed, 0);
+  if (observedDiff !== 0) return observedDiff;
+
+  return String(gateA.microMicroFamilyId || '').localeCompare(String(gateB.microMicroFamilyId || ''));
+}
+
 function identityFlags() {
   return {
     virtualLearning: true,
@@ -1548,6 +2114,10 @@ function identityFlags() {
     exactMicroMicroOnly: true,
     fixedTaxonomyPreferred: true,
 
+    microMicroRuntimeGateEnabled: true,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateConfig: microMicroRuntimeGateConfig(),
+
     outcomeLearningFamilyEqualsMicroMicro: true,
     outcomeIdentityLockVersion: OUTCOME_IDENTITY_LOCK_VERSION,
 
@@ -1564,6 +2134,7 @@ function identityFlags() {
     exitAlertRuntimeGateRequired: true,
     exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
     exitAlertRequiresRuntimeGateApproved: true,
+    exitAlertRequiresMicroMicroStatusPassed: true,
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     scoringRSource: 'netR',
@@ -1677,6 +2248,8 @@ function forceShortPositionFields(row = {}) {
 }
 
 function buildVirtualFlags(row = {}) {
+  const runtimeStatusGate = microMicroRuntimeGate(row);
+
   return {
     source: POSITION_SOURCE,
     outcomeSource: OUTCOME_SOURCE,
@@ -1700,12 +2273,24 @@ function buildVirtualFlags(row = {}) {
     selectedMicroFamilyAlert: Boolean(row.selectedMicroFamilyAlert),
     selectedForDiscord: Boolean(row.selectedForDiscord || row.discordAlertEligible || row.selectedMicroFamilyAlert),
 
-    runtimeGateApproved: Boolean(row.runtimeGateApproved),
-    runtimeDiscordGateApproved: Boolean(row.runtimeDiscordGateApproved),
-    discordRuntimeGateApproved: Boolean(row.discordRuntimeGateApproved),
-    exitAlertRuntimeGateApproved: Boolean(row.exitAlertRuntimeGateApproved),
+    microMicroRuntimeGate: row.microMicroRuntimeGate || runtimeStatusGate,
+    microMicroRuntimeGateStatus: row.microMicroRuntimeGateStatus || row.microMicroStatus || runtimeStatusGate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: row.microMicroStatus || runtimeStatusGate.status,
+    microMicroObserving: runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING,
+    microMicroPassed: runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED,
+    microMicroRejected: runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED,
+    microMicroPolicyBlocked: runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
+    virtualLearningAllowedByMicroMicroGate: runtimeStatusGate.virtualLearningAllowed,
+    virtualEntryAllowedByMicroMicroGate: runtimeStatusGate.virtualEntryAllowed,
+
+    runtimeGateApproved: Boolean(row.runtimeGateApproved || runtimeStatusGate.passed),
+    runtimeDiscordGateApproved: Boolean(row.runtimeDiscordGateApproved || runtimeStatusGate.passed),
+    discordRuntimeGateApproved: Boolean(row.discordRuntimeGateApproved || runtimeStatusGate.passed),
+    exitAlertRuntimeGateApproved: Boolean(row.exitAlertRuntimeGateApproved || runtimeStatusGate.passed),
     exitAlertRuntimeGateRequired: true,
     exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
+    exitAlertRequiresMicroMicroStatusPassed: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -1748,6 +2333,8 @@ function compactMarketWeather(value = null) {
 function compactWeeklyStats(value = null) {
   if (!value || typeof value !== 'object') return null;
 
+  const gate = microMicroRuntimeGate(value);
+
   return {
     id: value.id || value.microMicroFamilyId || value.microFamilyId || value.trueMicroFamilyId || null,
     microFamilyId: value.microFamilyId || value.trueMicroFamilyId || null,
@@ -1765,13 +2352,28 @@ function compactWeeklyStats(value = null) {
     avgCostR: value.avgCostR ?? null,
     directSLPct: value.directSLPct ?? null,
     balancedScore: value.balancedScore ?? value.dashboardBalancedScore ?? null,
+    microMicroRuntimeGate: gate,
+    microMicroRuntimeGateStatus: gate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: gate.status,
     compactedForRedis: true
   };
 }
 
 function compactOpenPositionRow(row = {}) {
+  const runtimeStatusGate = microMicroRuntimeGate(row);
+
   const compacted = {
     ...row,
+
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: runtimeStatusGate.status,
+    microMicroObserving: runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING,
+    microMicroPassed: runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED,
+    microMicroRejected: runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED,
+    microMicroPolicyBlocked: runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
 
     currentMarketWeather: compactMarketWeather(row.currentMarketWeather),
     entryMarketWeather: compactMarketWeather(row.entryMarketWeather),
@@ -3054,11 +3656,26 @@ export async function saveOpenPosition(position) {
 
   const normalized = forceShortPositionFields(position);
   const identity = normalizeMicroIdentity(normalized);
+  const runtimeStatusGate = microMicroRuntimeGate({
+    ...normalized,
+    ...identity
+  });
 
   const row = compactOpenPositionRow(forceShortPositionFields({
     ...normalized,
     ...identity,
-    ...buildVirtualFlags(normalized),
+    ...buildVirtualFlags({
+      ...normalized,
+      ...identity,
+      microMicroRuntimeGate: runtimeStatusGate,
+      microMicroRuntimeGateStatus: runtimeStatusGate.status,
+      microMicroStatus: runtimeStatusGate.status
+    }),
+
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: runtimeStatusGate.status,
 
     symbol: normalized.symbol || keySymbol,
     baseSymbol: normalized.baseSymbol || keySymbol,
@@ -3208,11 +3825,30 @@ export function buildOpenPositionFromEntry(entry) {
   const keySymbol = storageSymbol(normalizedEntry);
   const openedAt = now();
   const identity = normalizeMicroIdentity(normalizedEntry);
+  const runtimeStatusGate = microMicroRuntimeGate({
+    ...normalizedEntry,
+    ...identity
+  });
 
   const position = forceShortPositionFields({
     ...normalizedEntry,
     ...identity,
-    ...buildVirtualFlags(normalizedEntry),
+    ...buildVirtualFlags({
+      ...normalizedEntry,
+      ...identity,
+      microMicroRuntimeGate: runtimeStatusGate,
+      microMicroRuntimeGateStatus: runtimeStatusGate.status,
+      microMicroStatus: runtimeStatusGate.status
+    }),
+
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: runtimeStatusGate.status,
+    microMicroObserving: runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING,
+    microMicroPassed: runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED,
+    microMicroRejected: runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED,
+    microMicroPolicyBlocked: runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
 
     tradeId: normalizedEntry.tradeId || randomId('trade_short'),
 
@@ -3301,17 +3937,36 @@ export function buildOpenPositionFromEntry(entry) {
       null,
     entryWeatherFitMatchedFamily: normalizedEntry.entryWeatherFitMatchedFamily ?? null,
 
-    runtimeGateApproved: Boolean(normalizedEntry.runtimeGateApproved),
-    runtimeDiscordGateApproved: Boolean(normalizedEntry.runtimeDiscordGateApproved),
-    discordRuntimeGateApproved: Boolean(normalizedEntry.discordRuntimeGateApproved),
-    exitAlertRuntimeGateApproved: Boolean(normalizedEntry.exitAlertRuntimeGateApproved),
-    runtimeGateStatus: normalizedEntry.runtimeGateStatus || null,
-    runtimeGateReason: normalizedEntry.runtimeGateReason || null,
-    runtimeGateResult: normalizedEntry.runtimeGateResult || null,
-    runtimeGate: normalizedEntry.runtimeGate || null,
-    discordRuntimeGate: normalizedEntry.discordRuntimeGate || null,
+    runtimeGateApproved: Boolean(
+      normalizedEntry.runtimeGateApproved ||
+        normalizedEntry.discordRuntimeActivationGatePassed ||
+        runtimeStatusGate.passed
+    ),
+    runtimeDiscordGateApproved: Boolean(
+      normalizedEntry.runtimeDiscordGateApproved ||
+        normalizedEntry.discordRuntimeActivationGatePassed ||
+        runtimeStatusGate.passed
+    ),
+    discordRuntimeGateApproved: Boolean(
+      normalizedEntry.discordRuntimeGateApproved ||
+        normalizedEntry.discordRuntimeActivationGatePassed ||
+        runtimeStatusGate.passed
+    ),
+    exitAlertRuntimeGateApproved: Boolean(
+      normalizedEntry.exitAlertRuntimeGateApproved ||
+        normalizedEntry.discordRuntimeActivationGatePassed ||
+        runtimeStatusGate.passed
+    ),
+    runtimeGateStatus: runtimeStatusGate.status,
+    runtimeGateReason: runtimeStatusGate.reason,
+    runtimeGateResult: runtimeStatusGate,
+    runtimeGate: normalizedEntry.runtimeGate || runtimeStatusGate,
+    discordRuntimeGate: normalizedEntry.discordRuntimeGate || normalizedEntry.discordRuntimeActivationGate || runtimeStatusGate,
+    discordRuntimeActivationGate: normalizedEntry.discordRuntimeActivationGate || runtimeStatusGate,
+    discordActivationGate: normalizedEntry.discordActivationGate || runtimeStatusGate,
     exitAlertRuntimeGateRequired: true,
     exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
+    exitAlertRequiresMicroMicroStatusPassed: true,
 
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
@@ -3405,6 +4060,7 @@ function gateValueApproved(value) {
       'EXIT_ALERT_RUNTIME_GATE_APPROVED',
       'PASS',
       'PASSED',
+      MICRO_MICRO_STATUS_PASSED,
       'ALLOW',
       'ALLOWED',
       'OK',
@@ -3414,6 +4070,12 @@ function gateValueApproved(value) {
   }
 
   if (typeof value === 'object') {
+    const status = normalizeMicroMicroStatus(value.status || value.microMicroRuntimeGateStatus || value.microMicroStatus);
+
+    if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED || status === MICRO_MICRO_STATUS_REJECTED || status === MICRO_MICRO_STATUS_OBSERVING) {
+      return false;
+    }
+
     return (
       value.approved === true ||
       value.gateApproved === true ||
@@ -3427,6 +4089,7 @@ function gateValueApproved(value) {
       value.allow === true ||
       value.canAlert === true ||
       value.canSend === true ||
+      status === MICRO_MICRO_STATUS_PASSED ||
       gateValueApproved(value.status) ||
       gateValueApproved(value.decision) ||
       gateValueApproved(value.result)
@@ -3437,11 +4100,65 @@ function gateValueApproved(value) {
 }
 
 function exitAlertRuntimeGateStatus(position = {}, outcome = {}, options = {}) {
+  const runtimeStatusGate = microMicroRuntimeGate({
+    ...position,
+    ...outcome,
+    microMicroRuntimeGate:
+      outcome.microMicroRuntimeGate ||
+      position.microMicroRuntimeGate ||
+      outcome.discordRuntimeActivationGate ||
+      position.discordRuntimeActivationGate ||
+      outcome.discordActivationGate ||
+      position.discordActivationGate ||
+      null,
+    microMicroRuntimeGateStatus:
+      outcome.microMicroRuntimeGateStatus ||
+      position.microMicroRuntimeGateStatus ||
+      outcome.microMicroStatus ||
+      position.microMicroStatus ||
+      null
+  });
+
+  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) {
+    return {
+      approved: false,
+      required: true,
+      version: EXIT_ALERT_RUNTIME_GATE_VERSION,
+      microMicroRuntimeGate: runtimeStatusGate,
+      microMicroRuntimeGateStatus: runtimeStatusGate.status,
+      reason: runtimeStatusGate.reason || 'EXIT_ALERT_BLOCKED_POLICY_BLOCKED_MICRO_MICRO'
+    };
+  }
+
+  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED) {
+    return {
+      approved: false,
+      required: true,
+      version: EXIT_ALERT_RUNTIME_GATE_VERSION,
+      microMicroRuntimeGate: runtimeStatusGate,
+      microMicroRuntimeGateStatus: runtimeStatusGate.status,
+      reason: runtimeStatusGate.reason || 'EXIT_ALERT_BLOCKED_REJECTED_MICRO_MICRO'
+    };
+  }
+
+  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING) {
+    return {
+      approved: false,
+      required: true,
+      version: EXIT_ALERT_RUNTIME_GATE_VERSION,
+      microMicroRuntimeGate: runtimeStatusGate,
+      microMicroRuntimeGateStatus: runtimeStatusGate.status,
+      reason: 'EXIT_ALERT_BLOCKED_OBSERVING_MICRO_MICRO'
+    };
+  }
+
   const values = [
     options.exitAlertRuntimeGateApproved,
     options.runtimeGateApproved,
     options.discordRuntimeGateApproved,
     options.runtimeDiscordGateApproved,
+    options.microMicroRuntimeGate,
+    options.microMicroRuntimeGateStatus,
 
     position.exitAlertRuntimeGateApproved,
     position.runtimeGateApproved,
@@ -3458,6 +4175,11 @@ function exitAlertRuntimeGateStatus(position = {}, outcome = {}, options = {}) {
     position.runtimeGate,
     position.discordRuntimeGate,
     position.exitAlertRuntimeGate,
+    position.discordRuntimeActivationGate,
+    position.discordActivationGate,
+    position.microMicroRuntimeGate,
+    position.microMicroRuntimeGateStatus,
+    position.microMicroStatus,
 
     outcome.exitAlertRuntimeGateApproved,
     outcome.runtimeGateApproved,
@@ -3473,17 +4195,24 @@ function exitAlertRuntimeGateStatus(position = {}, outcome = {}, options = {}) {
     outcome.runtimeGateResult,
     outcome.runtimeGate,
     outcome.discordRuntimeGate,
-    outcome.exitAlertRuntimeGate
+    outcome.exitAlertRuntimeGate,
+    outcome.discordRuntimeActivationGate,
+    outcome.discordActivationGate,
+    outcome.microMicroRuntimeGate,
+    outcome.microMicroRuntimeGateStatus,
+    outcome.microMicroStatus
   ];
 
-  const approved = values.some(gateValueApproved);
+  const approved = runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED || values.some(gateValueApproved);
 
   return {
     approved,
     required: true,
     version: EXIT_ALERT_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status,
     reason: approved
-      ? 'EXIT_ALERT_RUNTIME_GATE_APPROVED'
+      ? 'EXIT_ALERT_RUNTIME_GATE_APPROVED_MICRO_MICRO_PASSED'
       : 'EXIT_ALERT_RUNTIME_GATE_NOT_APPROVED'
   };
 }
@@ -3503,7 +4232,16 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     exitReason
   });
 
-  const runtimeGate = exitAlertRuntimeGateStatus(position, outcome);
+  const runtimeStatusGate = microMicroRuntimeGate({
+    ...position,
+    ...outcome
+  });
+
+  const runtimeGate = exitAlertRuntimeGateStatus(position, {
+    ...outcome,
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status
+  });
 
   const outcomeIdentity = [
     TARGET_TRADE_SIDE,
@@ -3641,6 +4379,15 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     trueMicroOnly: true,
     exactTrueMicroOnly: true,
 
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: runtimeStatusGate.status,
+    microMicroObserving: runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING,
+    microMicroPassed: runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED,
+    microMicroRejected: runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED,
+    microMicroPolicyBlocked: runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
+
     runtimeGateApproved: runtimeGate.approved,
     runtimeDiscordGateApproved: runtimeGate.approved,
     discordRuntimeGateApproved: runtimeGate.approved,
@@ -3648,6 +4395,7 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     exitAlertRuntimeGateRequired: true,
     exitAlertRuntimeGateReason: runtimeGate.reason,
     exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
+    exitAlertRequiresMicroMicroStatusPassed: true,
 
     currentPrice: safeNumber(position.currentPrice ?? position.lastPrice ?? outcome.exitPrice, 0),
     lastPrice: safeNumber(position.lastPrice ?? position.currentPrice ?? outcome.exitPrice, 0),
@@ -3740,6 +4488,8 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
       skipped: true,
       reason: runtimeGate.reason,
       runtimeGateApproved: false,
+      microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+      microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
       exitAlertRuntimeGateRequired: true,
       exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
     };
@@ -3751,6 +4501,8 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
       skipped: true,
       reason: 'POSITION_NOT_SELECTED_FOR_DISCORD_EXIT_ALERT',
       runtimeGateApproved: true,
+      microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+      microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
       exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
     };
   }
@@ -3761,6 +4513,8 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
       skipped: true,
       reason: 'EXIT_ALERT_REQUIRES_EXACT_MICRO_MICRO_FAMILY',
       runtimeGateApproved: true,
+      microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+      microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
       exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
     };
   }
@@ -3774,18 +4528,28 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
       skipped: true,
       reason: 'EXIT_ALERT_REQUIRES_OUTCOME_LEARNING_ID_EQUALS_MICRO_MICRO_ID',
       runtimeGateApproved: true,
+      microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+      microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
       exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
     };
   }
 
   return withTimeout(
-    sendExitAlert(outcome).then((result) => {
+    sendExitAlert({
+      ...outcome,
+      microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || outcome.microMicroRuntimeGate || null,
+      microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || outcome.microMicroRuntimeGateStatus || null,
+      exitAlertRuntimeGateApproved: true,
+      exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
+    }).then((result) => {
       if (result?.skipped) {
         return {
           sent: false,
           skipped: true,
           reason: result.reason || 'DISCORD_EXIT_ALERT_SKIPPED_BY_DISCORD_FILTER',
           runtimeGateApproved: true,
+          microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+          microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
           exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
           result
         };
@@ -3797,6 +4561,8 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
           skipped: false,
           reason: 'DISCORD_EXIT_ALERT_SENT',
           runtimeGateApproved: true,
+          microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+          microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
           exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
           result
         };
@@ -3808,6 +4574,8 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
         failed: true,
         reason: result?.error || result?.reason || 'DISCORD_EXIT_ALERT_FAILED',
         runtimeGateApproved: true,
+        microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+        microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
         exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION,
         result
       };
@@ -3821,6 +4589,8 @@ async function maybeSendExitAlert(position, outcome, options = {}) {
       timeout: true,
       reason: 'DISCORD_EXIT_ALERT_TIMEOUT',
       runtimeGateApproved: true,
+      microMicroRuntimeGate: runtimeGate.microMicroRuntimeGate || null,
+      microMicroRuntimeGateStatus: runtimeGate.microMicroRuntimeGateStatus || null,
       exitAlertRuntimeGateVersion: EXIT_ALERT_RUNTIME_GATE_VERSION
     }
   );
@@ -3860,6 +4630,10 @@ async function persistOutcomeNonBlocking(outcome, options = {}) {
       parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
       microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
 
+      microMicroRuntimeGateEnabled: true,
+      microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+      microMicroRuntimeGateStatus: outcome.microMicroRuntimeGateStatus || outcome.microMicroStatus || null,
+
       outcomeLearningFamilyEqualsMicroMicro: true,
       outcomeIdentityLockVersion: OUTCOME_IDENTITY_LOCK_VERSION,
       hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
@@ -3887,6 +4661,8 @@ async function closePosition({
     exitReason: exit.reason
   });
 
+  const runtimeStatusGate = microMicroRuntimeGate(position);
+
   const closedPosition = forceShortPositionFields({
     ...position,
     status: 'CLOSED',
@@ -3905,7 +4681,12 @@ async function closePosition({
     outcomeSource: OUTCOME_SOURCE,
     source: POSITION_SOURCE,
     directToSL: directSL,
-    directSL
+    directSL,
+
+    microMicroRuntimeGate: runtimeStatusGate,
+    microMicroRuntimeGateStatus: runtimeStatusGate.status,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroStatus: runtimeStatusGate.status
   });
 
   const baseOutcome = buildOutcomeFromPosition({
@@ -3934,7 +4715,11 @@ async function closePosition({
       source: OUTCOME_SOURCE,
       outcomeSource: OUTCOME_SOURCE,
       directToSL: directSL,
-      directSL
+      directSL,
+      microMicroRuntimeGate: runtimeStatusGate,
+      microMicroRuntimeGateStatus: runtimeStatusGate.status,
+      microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+      microMicroStatus: runtimeStatusGate.status
     },
     position: closedPosition,
     exitPrice
