@@ -1,17 +1,4 @@
 // ================= FILE: src/trade/positionSizing.js =================
-//
-// SHORT-only virtual position sizing.
-// Risk contribution = fraction of equity lost if a virtual SHORT position hits initial SL.
-// Required SHORT risk geometry: tp < entry < sl.
-// No real orders. No LONG sizing.
-//
-// Belangrijk:
-// - Sizing volgt de SL-afstand.
-// - Brede structurele SL => lagere notional.
-// - Geen vaste 10x die de SL-afstand negeert.
-// - Liquidation buffer wordt bewaakt via leverage cap.
-// - Parent 15 en child 75 zijn context/rollup.
-// - Alleen exact micro-micro is selecteerbaar.
 
 import { CONFIG } from '../config.js';
 import {
@@ -43,6 +30,35 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
 
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
+
+const POSITION_SIZING_VERSION = 'SHORT_POSITION_SIZING_RISK_SOURCE_OF_TRUTH_V2_ENTRY_MARKET_WEATHER';
+const POSITION_SIZING_INPUT_VERSION = 'SHORT_POSITION_SIZING_INPUT_PROOFTIER_SIGNALTYPE_V1';
+const SHORT_MARKET_WEATHER_KEY_VERSION = 'SHORT_MARKET_WEATHER_KEY_V1';
+const MARKET_WEATHER_FEATURE_FLAGS_VERSION = 'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V1_OBSERVE';
+const EMPIRICAL_VETO_VERSION = 'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V1';
+
+const SIGNAL_TYPE_TRADE_READY = 'TRADE_READY';
+const SIGNAL_TYPE_WATCH_ONLY = 'WATCH_ONLY';
+const SIGNAL_TYPE_OBSERVE_ONLY = 'OBSERVE_ONLY';
+const SIGNAL_TYPE_BLOCKED = 'BLOCKED';
+
+const PROOF_TIER_MICRO_MICRO_MARKET = 'MICRO_MICRO_MARKET_PROOF';
+const PROOF_TIER_MICRO_MICRO_LIFETIME = 'MICRO_MICRO_LIFETIME_PROOF';
+const PROOF_TIER_CHILD_75_MARKET = 'CHILD_75_MARKET_PROOF';
+const PROOF_TIER_CHILD_75_LIFETIME = 'CHILD_75_LIFETIME_PROOF';
+const PROOF_TIER_PARENT_15_MARKET = 'PARENT_15_MARKET_PROOF';
+const PROOF_TIER_PARENT_15_LIFETIME = 'PARENT_15_LIFETIME_PROOF';
+const PROOF_TIER_OBSERVATION_ONLY = 'OBSERVATION_ONLY';
+const PROOF_TIER_EMPIRICAL_VETO = 'EMPIRICAL_VETO';
+const PROOF_TIER_POLICY_BLOCKED = 'POLICY_BLOCKED';
+
+const MAX_ALLOWED_RISK_BAND_HIGH = 'HIGH';
+const MAX_ALLOWED_RISK_BAND_MEDIUM = 'MEDIUM';
+const MAX_ALLOWED_RISK_BAND_LOW = 'LOW';
+const MAX_ALLOWED_RISK_BAND_ZERO = 'ZERO';
+
+const STATUS_EMPIRICAL_VETO = 'EMPIRICAL_VETO';
+const STATUS_POLICY_BLOCKED = 'POLICY_BLOCKED';
 
 const SETUP_ORDER = Object.freeze([
   'BREAKOUT',
@@ -185,6 +201,16 @@ function sizingConfig() {
     )
   );
 
+  const maxMult = Math.max(
+    0,
+    safeNumber(
+      CONFIG.short?.sizing?.maxMult ??
+        CONFIG.sizing?.shortMaxMult ??
+        CONFIG.sizing?.maxMult,
+      1.15
+    )
+  );
+
   return {
     enabled:
       CONFIG.short?.sizing?.enabled ??
@@ -204,15 +230,7 @@ function sizingConfig() {
       )
     ),
 
-    maxMult: Math.max(
-      0,
-      safeNumber(
-        CONFIG.short?.sizing?.maxMult ??
-          CONFIG.sizing?.shortMaxMult ??
-          CONFIG.sizing?.maxMult,
-        1.15
-      )
-    ),
+    maxMult,
 
     maxTotalRiskPct: Math.max(
       0,
@@ -341,12 +359,120 @@ function sizingConfig() {
           CONFIG.sizing?.liquidationBufferRiskMult,
         1.25
       )
-    )
+    ),
+
+    riskBandCapsEnabled:
+      CONFIG.short?.sizing?.riskBandCapsEnabled ??
+      CONFIG.sizing?.shortRiskBandCapsEnabled ??
+      CONFIG.sizing?.riskBandCapsEnabled ??
+      true,
+
+    highRiskBandCapPct: Math.max(
+      0,
+      safeNumber(
+        CONFIG.short?.sizing?.highRiskBandCapPct ??
+          CONFIG.sizing?.shortHighRiskBandCapPct ??
+          CONFIG.sizing?.highRiskBandCapPct,
+        baseRiskPct * maxMult
+      )
+    ),
+
+    mediumRiskBandCapPct: Math.max(
+      0,
+      safeNumber(
+        CONFIG.short?.sizing?.mediumRiskBandCapPct ??
+          CONFIG.sizing?.shortMediumRiskBandCapPct ??
+          CONFIG.sizing?.mediumRiskBandCapPct,
+        baseRiskPct * 0.75
+      )
+    ),
+
+    lowRiskBandCapPct: Math.max(
+      0,
+      safeNumber(
+        CONFIG.short?.sizing?.lowRiskBandCapPct ??
+          CONFIG.sizing?.shortLowRiskBandCapPct ??
+          CONFIG.sizing?.lowRiskBandCapPct,
+        baseRiskPct * 0.25
+      )
+    ),
+
+    watchOnlyRiskFraction:
+      CONFIG.short?.sizing?.watchOnlyRiskFraction ??
+      CONFIG.sizing?.shortWatchOnlyRiskFraction ??
+      CONFIG.sizing?.watchOnlyRiskFraction ??
+      0,
+
+    observeOnlyRiskFraction:
+      CONFIG.short?.sizing?.observeOnlyRiskFraction ??
+      CONFIG.sizing?.shortObserveOnlyRiskFraction ??
+      CONFIG.sizing?.observeOnlyRiskFraction ??
+      0,
+
+    requirePositiveShrunkLcbForTradeReady:
+      CONFIG.short?.sizing?.requirePositiveShrunkLcbForTradeReady ??
+      CONFIG.sizing?.shortRequirePositiveShrunkLcbForTradeReady ??
+      CONFIG.sizing?.requirePositiveShrunkLcbForTradeReady ??
+      true,
+
+    sizingCapMode:
+      CONFIG.short?.sizing?.marketWeatherSizingCapMode ??
+      CONFIG.sizing?.shortMarketWeatherSizingCapMode ??
+      CONFIG.sizing?.marketWeatherSizingCapMode ??
+      'OBSERVE',
+
+    discordTradeReadyHardLiveEnabled:
+      CONFIG.short?.sizing?.discordTradeReadyHardLiveEnabled ??
+      CONFIG.sizing?.shortDiscordTradeReadyHardLiveEnabled ??
+      CONFIG.sizing?.discordTradeReadyHardLiveEnabled ??
+      false
+  };
+}
+
+function marketWeatherFeatureFlags() {
+  return {
+    version: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+
+    capture: 'LIVE',
+    aggregation: 'LIVE',
+    selector: 'OBSERVE',
+    sizingCap: 'OBSERVE',
+    fdr: 'OBSERVE',
+    discordTradeReady: 'VALIDATION_REQUIRED',
+
+    entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    entryMarketWeatherKeyDimensionsV1: [
+      'entryMarketWeatherRegime',
+      'entryMarketWeatherTrendSide'
+    ],
+
+    entryMarketWeatherImmutable: true,
+    entryMarketWeatherNeverRecomputedAtExit: true,
+
+    riskSourceOfTruth: 'riskFractionForEntry',
+    proofTierIsLabelOnly: true,
+    signalTypeIsActionLabelOnly: true,
+    maxAllowedRiskBandIsOptionalCap: true,
+
+    positionSizingVersion: POSITION_SIZING_VERSION,
+    positionSizingInputVersion: POSITION_SIZING_INPUT_VERSION,
+
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    empiricalVetoUsesLcb95NotRawAvgR: true,
+    empiricalVetoBlocksRiskEntry: true,
+    empiricalVetoBlocksDiscordTradeReady: true,
+    empiricalVetoBlocksParentFallbackRescue: true,
+
+    alwaysReturnAnswer: true,
+    alwaysReturnAnswerDoesNotMeanAlwaysTrade: true
   };
 }
 
 function baseModeFlags() {
   return {
+    positionSizingVersion: POSITION_SIZING_VERSION,
+    positionSizingInputVersion: POSITION_SIZING_INPUT_VERSION,
+
     targetTradeSide: TARGET_TRADE_SIDE,
     targetScannerSide: TARGET_SCANNER_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -432,7 +558,6 @@ function baseModeFlags() {
 
     parentLearningEnabled: true,
     childLearningEnabled: true,
-    microMicroLearningEnabled: true,
 
     selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
     fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED_THEN_MICRO_75_UNTIL_MM_MIN_COMPLETED',
@@ -463,6 +588,26 @@ function baseModeFlags() {
     leverageIsDerivedFromStopRisk: true,
     fixedLeverageDisabled: true,
     liquidationSafetyEnabled: true,
+
+    riskSourceOfTruth: 'riskFractionForEntry',
+    proofTierIsLabelOnly: true,
+    signalTypeIsActionLabelOnly: true,
+    maxAllowedRiskBandIsOptionalCap: true,
+
+    entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    entryMarketWeatherKeyDimensionsV1: [
+      'entryMarketWeatherRegime',
+      'entryMarketWeatherTrendSide'
+    ],
+    entryMarketWeatherImmutable: true,
+    entryMarketWeatherNeverRecomputedAtExit: true,
+    marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
+
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    empiricalVetoUsesLcb95: true,
+    empiricalVetoUsesRawAvgR: false,
+    empiricalVetoBlocksRiskEntry: true,
+    empiricalVetoBlocksParentFallbackRescue: true,
 
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
@@ -1159,9 +1304,9 @@ function taxonomyIdentity(row = {}) {
       ? parsed.microMicroFamilyId
       : parsed.childTrueMicroFamilyId || parsed.trueMicroFamilyId,
 
-    microMicroFamilyId: parsed.microMicroFamilyId || null,
-    trueMicroMicroFamilyId: parsed.trueMicroMicroFamilyId || null,
-    exactMicroMicroFamilyId: parsed.exactMicroMicroFamilyId || null,
+    microMicroFamilyId: parsed.microMicroFamilyId,
+    trueMicroMicroFamilyId: parsed.trueMicroMicroFamilyId,
+    exactMicroMicroFamilyId: parsed.exactMicroMicroFamilyId,
 
     setupType: parsed.setup,
     regimeBucket: parsed.regime,
@@ -1338,10 +1483,188 @@ function buildStatsSideProbe({
   };
 }
 
+function normalizeSignalType(value, row = {}) {
+  const text = normalizeToken(value);
+
+  if (
+    text === SIGNAL_TYPE_TRADE_READY ||
+    text === 'TRADE' ||
+    text === 'READY' ||
+    text === 'TRADE_READY_SIGNAL'
+  ) {
+    return SIGNAL_TYPE_TRADE_READY;
+  }
+
+  if (
+    text === SIGNAL_TYPE_WATCH_ONLY ||
+    text === 'WATCH' ||
+    text === 'WATCHLIST' ||
+    text === 'SMALL_RISK' ||
+    text === 'SMALL_RISK_ONLY'
+  ) {
+    return SIGNAL_TYPE_WATCH_ONLY;
+  }
+
+  if (
+    text === SIGNAL_TYPE_OBSERVE_ONLY ||
+    text === 'OBSERVE' ||
+    text === 'OBSERVATION' ||
+    text === 'LEARN_ONLY' ||
+    text === 'LEARNING_ONLY'
+  ) {
+    return SIGNAL_TYPE_OBSERVE_ONLY;
+  }
+
+  if (
+    text === SIGNAL_TYPE_BLOCKED ||
+    text === 'REJECTED' ||
+    text === STATUS_EMPIRICAL_VETO ||
+    text === STATUS_POLICY_BLOCKED ||
+    text === 'POLICY_BLOCKED'
+  ) {
+    return SIGNAL_TYPE_BLOCKED;
+  }
+
+  if (row.policyBlocked === true || row.empiricalVeto === true) {
+    return SIGNAL_TYPE_BLOCKED;
+  }
+
+  if (
+    row.tradingEligible === true ||
+    row.eligible === true ||
+    row.eligibleGatePassed === true
+  ) {
+    return SIGNAL_TYPE_TRADE_READY;
+  }
+
+  return '';
+}
+
+function normalizeProofTier(value, row = {}) {
+  const text = normalizeToken(value);
+
+  if (text === PROOF_TIER_POLICY_BLOCKED || row.policyBlocked === true) return PROOF_TIER_POLICY_BLOCKED;
+  if (text === PROOF_TIER_EMPIRICAL_VETO || row.empiricalVeto === true) return PROOF_TIER_EMPIRICAL_VETO;
+
+  if (text === PROOF_TIER_MICRO_MICRO_MARKET) return PROOF_TIER_MICRO_MICRO_MARKET;
+  if (text === PROOF_TIER_MICRO_MICRO_LIFETIME) return PROOF_TIER_MICRO_MICRO_LIFETIME;
+  if (text === PROOF_TIER_CHILD_75_MARKET) return PROOF_TIER_CHILD_75_MARKET;
+  if (text === PROOF_TIER_CHILD_75_LIFETIME) return PROOF_TIER_CHILD_75_LIFETIME;
+  if (text === PROOF_TIER_PARENT_15_MARKET) return PROOF_TIER_PARENT_15_MARKET;
+  if (text === PROOF_TIER_PARENT_15_LIFETIME) return PROOF_TIER_PARENT_15_LIFETIME;
+  if (text === PROOF_TIER_OBSERVATION_ONLY) return PROOF_TIER_OBSERVATION_ONLY;
+
+  return text || '';
+}
+
+function normalizeRiskBand(value, signalType = '') {
+  const text = normalizeToken(value);
+
+  if (text === MAX_ALLOWED_RISK_BAND_HIGH) return MAX_ALLOWED_RISK_BAND_HIGH;
+  if (text === MAX_ALLOWED_RISK_BAND_MEDIUM) return MAX_ALLOWED_RISK_BAND_MEDIUM;
+  if (text === MAX_ALLOWED_RISK_BAND_LOW) return MAX_ALLOWED_RISK_BAND_LOW;
+  if (text === MAX_ALLOWED_RISK_BAND_ZERO || text === 'NONE' || text === 'NO_RISK') return MAX_ALLOWED_RISK_BAND_ZERO;
+
+  if (signalType === SIGNAL_TYPE_TRADE_READY) return MAX_ALLOWED_RISK_BAND_HIGH;
+  if (signalType === SIGNAL_TYPE_WATCH_ONLY) return MAX_ALLOWED_RISK_BAND_LOW;
+
+  return MAX_ALLOWED_RISK_BAND_ZERO;
+}
+
+function policyBlocked(row = {}) {
+  const status = normalizeToken(row.microMicroRuntimeStatus || row.status || row.runtimeStatus);
+  const proofTier = normalizeProofTier(row.proofTier, row);
+  const reason = normalizeToken(row.policyBlockedReason || row.whyBlocked || row.reason);
+
+  return (
+    row.policyBlocked === true ||
+    row.policyBlock === true ||
+    row.policyBlockedGate?.blocked === true ||
+    proofTier === PROOF_TIER_POLICY_BLOCKED ||
+    status === STATUS_POLICY_BLOCKED ||
+    status === 'POLICY_BLOCKED' ||
+    reason.includes('E_WEAK_CONTRA') ||
+    reason.includes('INVALID_SHORT_GEOMETRY') ||
+    reason.includes('INVALID_SIDE') ||
+    reason.includes('NON_SHORT') ||
+    reason.includes('KNOWN_FORBIDDEN_FAMILY') ||
+    upper(row.confirmationProfile) === 'E_WEAK_CONTRA'
+  );
+}
+
+function empiricalVeto(row = {}) {
+  const status = normalizeToken(row.microMicroRuntimeStatus || row.status || row.runtimeStatus);
+  const proofTier = normalizeProofTier(row.proofTier, row);
+  const reason = normalizeToken(row.empiricalVetoReason || row.whyBlocked || row.reason);
+
+  return (
+    row.empiricalVeto === true ||
+    row.empiricalVetoGate?.triggered === true ||
+    proofTier === PROOF_TIER_EMPIRICAL_VETO ||
+    status === STATUS_EMPIRICAL_VETO ||
+    reason.includes('EXACT_MICRO_MICRO_LCB95_NEGATIVE')
+  );
+}
+
+function hasShrunkLcbInput(row = {}) {
+  return (
+    row.shrunkLCB95AvgR !== undefined ||
+    row.shrunkLcb95AvgR !== undefined ||
+    row.shrunkAvgRLCB95 !== undefined ||
+    row.currentMarketShrunkLCB95AvgR !== undefined
+  );
+}
+
+function shrunkLcb95AvgR(row = {}) {
+  return firstFinite(
+    row.shrunkLCB95AvgR,
+    row.shrunkLcb95AvgR,
+    row.shrunkAvgRLCB95,
+    row.currentMarketShrunkLCB95AvgR
+  );
+}
+
+function hasSizingDecisionFields(row = {}) {
+  return (
+    row.proofTier !== undefined ||
+    row.signalType !== undefined ||
+    row.maxAllowedRiskBand !== undefined ||
+    row.shrunkLCB95AvgR !== undefined ||
+    row.shrunkLcb95AvgR !== undefined ||
+    row.shrunkAvgRLCB95 !== undefined ||
+    row.empiricalVeto !== undefined ||
+    row.policyBlocked !== undefined ||
+    row.policyBlockedGate !== undefined ||
+    row.empiricalVetoGate !== undefined ||
+    row.microMicroRuntimeStatus !== undefined ||
+    row.tradingEligible !== undefined ||
+    row.eligible !== undefined ||
+    row.eligibleGatePassed !== undefined
+  );
+}
+
+function riskBandCapPct(band, cfg = sizingConfig()) {
+  const normalized = normalizeRiskBand(band);
+
+  if (!cfg.riskBandCapsEnabled) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (normalized === MAX_ALLOWED_RISK_BAND_ZERO) return 0;
+  if (normalized === MAX_ALLOWED_RISK_BAND_LOW) return cfg.lowRiskBandCapPct;
+  if (normalized === MAX_ALLOWED_RISK_BAND_MEDIUM) return cfg.mediumRiskBandCapPct;
+  if (normalized === MAX_ALLOWED_RISK_BAND_HIGH) return cfg.highRiskBandCapPct;
+
+  return Number.POSITIVE_INFINITY;
+}
+
 function shortModeFlags(extra = {}) {
   const taxonomy = taxonomyIdentity(extra);
   const completed = completedCount(extra);
   const status = learningStatus(extra);
+  const signalType = normalizeSignalType(extra.signalType, extra) || SIGNAL_TYPE_OBSERVE_ONLY;
+  const proofTier = normalizeProofTier(extra.proofTier, extra) || PROOF_TIER_OBSERVATION_ONLY;
+  const maxAllowedRiskBand = normalizeRiskBand(extra.maxAllowedRiskBand, signalType);
 
   return {
     ...baseModeFlags(),
@@ -1376,7 +1699,22 @@ function shortModeFlags(extra = {}) {
 
     activeLearningUsable: completed >= MIN_COMPLETED_ACTIVE_LEARNING,
     microMicroActiveLearningUsable: completed >= MIN_COMPLETED_MICRO_MICRO_ACTIVE,
-    tooEarly: completed < MIN_COMPLETED_ACTIVE_LEARNING
+    tooEarly: completed < MIN_COMPLETED_ACTIVE_LEARNING,
+
+    proofTier,
+    signalType,
+    maxAllowedRiskBand,
+    shrunkLCB95AvgR: Number.isFinite(shrunkLcb95AvgR(extra)) ? round6(shrunkLcb95AvgR(extra)) : null,
+
+    empiricalVeto: empiricalVeto(extra),
+    empiricalVetoReason: empiricalVeto(extra)
+      ? (extra.empiricalVetoReason || 'EXACT_MICRO_MICRO_LCB95_NEGATIVE')
+      : null,
+
+    policyBlocked: policyBlocked(extra),
+    policyBlockedReason: policyBlocked(extra)
+      ? (extra.policyBlockedReason || extra.policyBlockedGate?.reason || 'POLICY_BLOCKED')
+      : null
   };
 }
 
@@ -1404,6 +1742,7 @@ function statsGate(row = {}, cfg = sizingConfig()) {
   const lcb95AvgR = firstFinite(
     row.lcb95AvgR,
     row.avgRLcb95,
+    row.avgRLCB95,
     row.avgRLowerConfidenceBound,
     row.lowerConfidenceBoundAvgR
   );
@@ -1412,6 +1751,7 @@ function statsGate(row = {}, cfg = sizingConfig()) {
     firstValue(
       row.directSLRate,
       row.directSlRate,
+      row.directSLPct,
       row.slRate,
       row.stopLossRate
     ),
@@ -1498,12 +1838,21 @@ function sizingConfidence(row = {}, cfg = sizingConfig()) {
   const lcb95AvgR = firstFinite(
     row.lcb95AvgR,
     row.avgRLcb95,
+    row.avgRLCB95,
     row.avgRLowerConfidenceBound,
     row.lowerConfidenceBoundAvgR
   );
 
+  const shrunkLcb = shrunkLcb95AvgR(row);
+
   const avgCostR = Math.max(0, safeNumber(row.avgCostR ?? row.costR, 0));
-  const directSlRate = normalizeRatioOrPct(row.directSLRate ?? row.directSlRate ?? row.slRate, 0);
+  const directSlRate = normalizeRatioOrPct(
+    row.directSLRate ??
+      row.directSlRate ??
+      row.directSLPct ??
+      row.slRate,
+    0
+  );
 
   const sampleConf = clamp(completed / cfg.priorTrades, 0, 1);
   const qualityConf = clamp(balanced / 100, 0, 1);
@@ -1517,6 +1866,10 @@ function sizingConfidence(row = {}, cfg = sizingConfig()) {
   const lcbConf = Number.isFinite(lcb95AvgR)
     ? clamp((lcb95AvgR + 0.10) / 0.45, 0, 1)
     : 0.35;
+
+  const shrunkLcbConf = Number.isFinite(shrunkLcb)
+    ? clamp((shrunkLcb + 0.10) / 0.45, 0, 1)
+    : lcbConf;
 
   const costPenalty = clamp(avgCostR / Math.max(cfg.maxAvgCostR, 0.01), 0, 1);
   const directSlPenalty = directSlRate > 0
@@ -1534,12 +1887,13 @@ function sizingConfidence(row = {}, cfg = sizingConfig()) {
           : 0;
 
   const rawConfidence =
-    sampleConf * 0.24 +
-    qualityConf * 0.18 +
-    winrateConf * 0.14 +
-    avgRConf * 0.15 +
-    totalRConf * 0.12 +
-    lcbConf * 0.17 -
+    sampleConf * 0.20 +
+    qualityConf * 0.15 +
+    winrateConf * 0.12 +
+    avgRConf * 0.13 +
+    totalRConf * 0.10 +
+    lcbConf * 0.12 +
+    shrunkLcbConf * 0.18 -
     costPenalty * 0.16 -
     directSlPenalty * 0.08 +
     currentFitBoost;
@@ -1547,13 +1901,46 @@ function sizingConfidence(row = {}, cfg = sizingConfig()) {
   return clamp(rawConfidence, 0, 1);
 }
 
-export function riskFractionForEntry({
+function baseStatsRiskFraction(row = {}, cfg = sizingConfig()) {
+  if (!cfg.enabled) {
+    return round6(cfg.baseRiskPct);
+  }
+
+  const gate = statsGate(row, cfg);
+
+  if (!gate.ok) {
+    return 0;
+  }
+
+  const confidence = sizingConfidence(row, cfg);
+  const maxMult = Math.max(cfg.minMult, cfg.maxMult);
+
+  const mult = clamp(
+    cfg.minMult + (maxMult - cfg.minMult) * confidence,
+    cfg.minMult,
+    maxMult
+  );
+
+  return round6(cfg.baseRiskPct * mult);
+}
+
+export function riskDecisionForEntry({
   weeklyStats,
   side = null,
   tradeSide = null
 } = {}) {
   const cfg = sizingConfig();
+
   const stats = weeklyStats || {};
+  const row = {
+    ...stats,
+    side: side ?? stats.side,
+    tradeSide: tradeSide ?? stats.tradeSide,
+    positionSide: tradeSide ?? stats.positionSide,
+    direction: tradeSide ?? stats.direction,
+    shortOnly: true,
+    longDisabled: true
+  };
 
   const explicitSideProvided =
     side !== null ||
@@ -1565,44 +1952,198 @@ export function riskFractionForEntry({
 
   const statsSide = inferTradeSide(
     buildStatsSideProbe({
-      weeklyStats: stats,
+      weeklyStats: row,
       side,
       tradeSide
     })
   );
 
-  if (explicitSideProvided && statsSide !== TARGET_TRADE_SIDE) {
-    return 0;
-  }
-
-  if (exactSelectableRequiredButMissing(stats)) {
-    return 0;
-  }
-
-  if (!validShortRiskGeometry(stats)) {
-    return 0;
-  }
-
-  if (!cfg.enabled) {
-    return round6(cfg.baseRiskPct);
-  }
-
-  const gate = statsGate(stats, cfg);
-
-  if (!gate.ok) {
-    return 0;
-  }
-
-  const confidence = sizingConfidence(stats, cfg);
-  const maxMult = Math.max(cfg.minMult, cfg.maxMult);
-
-  const mult = clamp(
-    cfg.minMult + (maxMult - cfg.minMult) * confidence,
-    cfg.minMult,
-    maxMult
+  const signalType = normalizeSignalType(row.signalType, row) || (
+    hasSizingDecisionFields(row)
+      ? SIGNAL_TYPE_OBSERVE_ONLY
+      : ''
   );
 
-  return round6(cfg.baseRiskPct * mult);
+  const proofTier = normalizeProofTier(row.proofTier, row) || (
+    hasSizingDecisionFields(row)
+      ? PROOF_TIER_OBSERVATION_ONLY
+      : ''
+  );
+
+  const maxAllowedRiskBand = normalizeRiskBand(row.maxAllowedRiskBand, signalType);
+  const bandCap = riskBandCapPct(maxAllowedRiskBand, cfg);
+  const shrunkLcb = shrunkLcb95AvgR(row);
+  const hasShrunk = hasShrunkLcbInput(row);
+
+  const mode = shortModeFlags({
+    ...row,
+    signalType,
+    proofTier,
+    maxAllowedRiskBand
+  });
+
+  const zero = (reason, extra = {}) => ({
+    ok: false,
+    reason,
+    riskFraction: 0,
+    riskFractionForEntry: 0,
+    riskFractionForEntrySource: reason,
+    requestedSignalType: signalType || null,
+    proofTier: proofTier || null,
+    signalType: signalType || SIGNAL_TYPE_OBSERVE_ONLY,
+    maxAllowedRiskBand,
+    maxAllowedRiskBandCapPct: Number.isFinite(bandCap) ? round6(bandCap) : null,
+    shrunkLCB95AvgR: Number.isFinite(shrunkLcb) ? round6(shrunkLcb) : null,
+    empiricalVeto: empiricalVeto(row),
+    policyBlocked: policyBlocked(row),
+    sizingCapMode: cfg.sizingCapMode,
+    discordTradeReadyHardLiveEnabled: Boolean(cfg.discordTradeReadyHardLiveEnabled),
+    ...extra,
+    ...mode
+  });
+
+  if (policyBlocked(row)) {
+    return zero('POLICY_BLOCKED_RISK_ZERO', {
+      policyBlockedReason: row.policyBlockedReason || row.policyBlockedGate?.reason || 'POLICY_BLOCKED'
+    });
+  }
+
+  if (empiricalVeto(row)) {
+    return zero('EMPIRICAL_VETO_RISK_ZERO', {
+      empiricalVetoReason: row.empiricalVetoReason || 'EXACT_MICRO_MICRO_LCB95_NEGATIVE',
+      empiricalVetoVersion: EMPIRICAL_VETO_VERSION
+    });
+  }
+
+  if (explicitSideProvided && statsSide !== TARGET_TRADE_SIDE) {
+    return zero('SHORT_ONLY_SYSTEM_REJECTED_NON_SHORT_RISK', {
+      inferredTradeSide: statsSide
+    });
+  }
+
+  if (exactSelectableRequiredButMissing(row)) {
+    return zero('EXACT_MICRO_MICRO_FAMILY_ID_REQUIRED');
+  }
+
+  if (!validShortRiskGeometry(row)) {
+    return zero('SHORT_RISK_GEOMETRY_INVALID_TP_LT_ENTRY_LT_SL_REQUIRED');
+  }
+
+  if (proofTier === PROOF_TIER_POLICY_BLOCKED) {
+    return zero('POLICY_BLOCKED_PROOF_TIER_RISK_ZERO');
+  }
+
+  if (proofTier === PROOF_TIER_EMPIRICAL_VETO) {
+    return zero('EMPIRICAL_VETO_PROOF_TIER_RISK_ZERO');
+  }
+
+  if (signalType === SIGNAL_TYPE_BLOCKED) {
+    return zero('SIGNAL_TYPE_BLOCKED_RISK_ZERO');
+  }
+
+  if (signalType === SIGNAL_TYPE_OBSERVE_ONLY) {
+    return zero('SIGNAL_TYPE_OBSERVE_ONLY_RISK_ZERO');
+  }
+
+  if (signalType === SIGNAL_TYPE_WATCH_ONLY) {
+    const watchRisk = Math.max(0, safeNumber(cfg.watchOnlyRiskFraction, 0));
+    const cappedWatchRisk = Math.min(watchRisk, bandCap);
+
+    if (cappedWatchRisk <= 0) {
+      return zero('SIGNAL_TYPE_WATCH_ONLY_RISK_ZERO', {
+        shadowOnlyRiskAllowed: true,
+        watchOnlyRiskFractionConfigured: round6(watchRisk)
+      });
+    }
+
+    return {
+      ok: true,
+      reason: 'SIGNAL_TYPE_WATCH_ONLY_TINY_SHADOW_RISK',
+      riskFraction: round6(cappedWatchRisk),
+      riskFractionForEntry: round6(cappedWatchRisk),
+      riskFractionForEntrySource: 'WATCH_ONLY_CONFIGURED_TINY_SHADOW_RISK',
+      shadowOnlyRisk: true,
+      realRiskAllowed: false,
+      proofTier,
+      signalType,
+      maxAllowedRiskBand,
+      maxAllowedRiskBandCapPct: Number.isFinite(bandCap) ? round6(bandCap) : null,
+      shrunkLCB95AvgR: Number.isFinite(shrunkLcb) ? round6(shrunkLcb) : null,
+      sizingCapMode: cfg.sizingCapMode,
+      discordTradeReadyHardLiveEnabled: Boolean(cfg.discordTradeReadyHardLiveEnabled),
+      ...mode
+    };
+  }
+
+  if (signalType && signalType !== SIGNAL_TYPE_TRADE_READY) {
+    return zero('UNKNOWN_SIGNAL_TYPE_RISK_ZERO');
+  }
+
+  if (
+    cfg.requirePositiveShrunkLcbForTradeReady &&
+    hasShrunk &&
+    (!Number.isFinite(shrunkLcb) || shrunkLcb <= 0)
+  ) {
+    return zero('SHRUNK_LCB95_AVG_R_NOT_POSITIVE_RISK_ZERO', {
+      shrunkLCB95AvgR: Number.isFinite(shrunkLcb) ? round6(shrunkLcb) : null
+    });
+  }
+
+  if (
+    proofTier === PROOF_TIER_OBSERVATION_ONLY &&
+    hasSizingDecisionFields(row)
+  ) {
+    return zero('PROOF_TIER_OBSERVATION_ONLY_RISK_ZERO');
+  }
+
+  const rawRisk = baseStatsRiskFraction(row, cfg);
+  const cappedRisk = Math.min(rawRisk, bandCap);
+
+  if (cappedRisk <= 0) {
+    return zero('RISK_BAND_CAP_ZERO');
+  }
+
+  return {
+    ok: true,
+    reason: signalType === SIGNAL_TYPE_TRADE_READY
+      ? 'TRADE_READY_RISK_FRACTION_FOR_ENTRY_OK'
+      : 'LEGACY_STATS_RISK_FRACTION_FOR_ENTRY_OK',
+
+    riskFraction: round6(cappedRisk),
+    riskFractionForEntry: round6(cappedRisk),
+    riskFractionForEntrySource: 'riskFractionForEntry',
+
+    rawRiskFractionBeforeBandCap: round6(rawRisk),
+    bandCapApplied: cappedRisk < rawRisk,
+    maxAllowedRiskBand,
+    maxAllowedRiskBandCapPct: Number.isFinite(bandCap) ? round6(bandCap) : null,
+
+    proofTier: proofTier || null,
+    signalType: signalType || null,
+    shrunkLCB95AvgR: Number.isFinite(shrunkLcb) ? round6(shrunkLcb) : null,
+
+    empiricalVeto: false,
+    policyBlocked: false,
+
+    sizingCapMode: cfg.sizingCapMode,
+    discordTradeReadyHardLiveEnabled: Boolean(cfg.discordTradeReadyHardLiveEnabled),
+
+    ...mode
+  };
+}
+
+export function riskFractionForEntry({
+  weeklyStats,
+  side = null,
+  tradeSide = null
+} = {}) {
+  const decision = riskDecisionForEntry({
+    weeklyStats,
+    side,
+    tradeSide
+  });
+
+  return round6(decision.riskFractionForEntry ?? decision.riskFraction ?? 0);
 }
 
 function liquidationRequiredDistancePct(stopRisk, cfg) {
@@ -1689,6 +2230,8 @@ export function positionSizeForStopRisk({
       effectiveLeverage: 0,
       maxSafeLeverage: 0,
       liquidationSafetyOk: false,
+      positionSizingVersion: POSITION_SIZING_VERSION,
+      riskSourceOfTruth: 'riskFractionForEntry',
       ...baseModeFlags()
     };
   }
@@ -1747,6 +2290,8 @@ export function positionSizeForStopRisk({
       positionSide: TARGET_TRADE_SIDE,
       direction: TARGET_TRADE_SIDE,
 
+      positionSizingVersion: POSITION_SIZING_VERSION,
+      riskSourceOfTruth: 'riskFractionForEntry',
       ...baseModeFlags()
     };
   }
@@ -1798,6 +2343,8 @@ export function positionSizeForStopRisk({
 
     equity: round6(accountEquity),
     riskFraction: round6(risk),
+    riskFractionForEntry: round6(risk),
+    riskSourceOfTruth: 'riskFractionForEntry',
     requestedRiskFraction: round6(risk),
     riskUsd: round6(riskUsd),
 
@@ -1852,6 +2399,7 @@ export function positionSizeForStopRisk({
     leverageIsDerivedFromStopRisk: true,
     fixedLeverageDisabled: true,
 
+    positionSizingVersion: POSITION_SIZING_VERSION,
     ...baseModeFlags()
   };
 }
@@ -1868,6 +2416,8 @@ export function summarizeOpenRisk(openPositions = []) {
   let exactMicroMicroPositions = 0;
   let invalidIdentityPositions = 0;
   let invalidRiskGeometryPositions = 0;
+  let empiricalVetoPositions = 0;
+  let policyBlockedPositions = 0;
 
   const trueMicroFamilyIds = new Set();
   const parentTrueMicroFamilyIds = new Set();
@@ -1906,6 +2456,14 @@ export function summarizeOpenRisk(openPositions = []) {
       invalidRiskGeometryPositions += 1;
     }
 
+    if (empiricalVeto(position)) {
+      empiricalVetoPositions += 1;
+    }
+
+    if (policyBlocked(position)) {
+      policyBlockedPositions += 1;
+    }
+
     if (btcRelationFromRow(position) === 'BTC_AGAINST') {
       counterBtcRisk += risk;
     }
@@ -1929,6 +2487,8 @@ export function summarizeOpenRisk(openPositions = []) {
 
     invalidIdentityPositions,
     invalidRiskGeometryPositions,
+    empiricalVetoPositions,
+    policyBlockedPositions,
 
     trueMicroFamilyIds: [...trueMicroFamilyIds],
     childTrueMicroFamilyIds: [...trueMicroFamilyIds],
@@ -1943,6 +2503,8 @@ export function summarizeOpenRisk(openPositions = []) {
     executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
 
+    positionSizingVersion: POSITION_SIZING_VERSION,
+    riskSourceOfTruth: 'riskFractionForEntry',
     ...baseModeFlags()
   };
 }
@@ -2042,6 +2604,12 @@ export function checkRiskCaps({
   const relation = normalizeBtcRelation(btcRelation ?? btcRelationFromRow(requestRow));
   const identity = taxonomyIdentity(requestRow);
 
+  const decision = riskDecisionForEntry({
+    weeklyStats: requestRow,
+    side,
+    tradeSide
+  });
+
   if (requestedTradeSide !== TARGET_TRADE_SIDE) {
     return {
       ok: false,
@@ -2049,8 +2617,10 @@ export function checkRiskCaps({
       side,
       tradeSide: requestedTradeSide,
       riskFraction: 0,
+      riskFractionForEntry: 0,
       want,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2063,8 +2633,10 @@ export function checkRiskCaps({
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       riskFraction: 0,
+      riskFractionForEntry: 0,
       want,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2077,11 +2649,51 @@ export function checkRiskCaps({
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       riskFraction: 0,
+      riskFractionForEntry: 0,
       want,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
+  }
+
+  if (hasSizingDecisionFields(requestRow)) {
+    const allowedRisk = safeNumber(decision.riskFractionForEntry ?? decision.riskFraction, 0);
+
+    if (allowedRisk <= 0) {
+      return {
+        ok: false,
+        reason: decision.reason || 'RISK_SOURCE_OF_TRUTH_ZERO',
+        side: TARGET_DASHBOARD_SIDE,
+        tradeSide: TARGET_TRADE_SIDE,
+        riskFraction: 0,
+        riskFractionForEntry: 0,
+        want,
+        allowedRisk,
+        riskState: open,
+        riskDecision: decision,
+
+        ...shortModeFlags(requestRow)
+      };
+    }
+
+    if (want > allowedRisk + 0.0000001) {
+      return {
+        ok: false,
+        reason: 'REQUESTED_RISK_EXCEEDS_RISK_SOURCE_OF_TRUTH',
+        side: TARGET_DASHBOARD_SIDE,
+        tradeSide: TARGET_TRADE_SIDE,
+        riskFraction: 0,
+        riskFractionForEntry: allowedRisk,
+        want,
+        allowedRisk,
+        riskState: open,
+        riskDecision: decision,
+
+        ...shortModeFlags(requestRow)
+      };
+    }
   }
 
   if (want <= 0) {
@@ -2091,8 +2703,10 @@ export function checkRiskCaps({
       side: TARGET_DASHBOARD_SIDE,
       tradeSide: TARGET_TRADE_SIDE,
       riskFraction: 0,
+      riskFractionForEntry: 0,
       want,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2103,6 +2717,7 @@ export function checkRiskCaps({
       ok: true,
       reason: 'SIZING_DISABLED',
       riskFraction: want,
+      riskFractionForEntry: want,
       openRiskBefore: open.total,
       openRiskAfter: round6(open.total + want),
       sideRiskAfter: round6(open.shortRisk + want),
@@ -2110,6 +2725,7 @@ export function checkRiskCaps({
         ? round6(open.counterBtcRisk + want)
         : open.counterBtcRisk,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2123,6 +2739,7 @@ export function checkRiskCaps({
       want,
       cap: cfg.maxTotalRiskPct,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2137,6 +2754,7 @@ export function checkRiskCaps({
       want,
       cap: cfg.maxSameSideRiskPct,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2153,6 +2771,7 @@ export function checkRiskCaps({
       want,
       cap: cfg.maxCounterBtcRiskPct,
       riskState: open,
+      riskDecision: decision,
 
       ...shortModeFlags(requestRow)
     };
@@ -2169,6 +2788,7 @@ export function checkRiskCaps({
       : 'RISK_CAPS_OK_SHORT_NO_ID',
 
     riskFraction: want,
+    riskFractionForEntry: want,
     openRiskBefore: open.total,
     openRiskAfter: round6(open.total + want),
     sideRiskAfter: round6(open.shortRisk + want),
@@ -2187,6 +2807,10 @@ export function checkRiskCaps({
     fixedLeverageDisabled: true,
 
     riskState: open,
+    riskDecision: decision,
+
+    positionSizingVersion: POSITION_SIZING_VERSION,
+    riskSourceOfTruth: 'riskFractionForEntry',
 
     ...shortModeFlags(requestRow)
   };
