@@ -341,6 +341,19 @@ function buildEntryMarketWeatherKey({ regime, trendSide } = {}) {
   return `${r}|${t}`;
 }
 
+function isUnknownEntryMarketWeather(weather = {}) {
+  const key = upper(weather.entryMarketWeatherKey || '');
+  const regime = upper(weather.entryMarketWeatherRegime || '');
+  const trendSide = upper(weather.entryMarketWeatherTrendSide || '');
+
+  return (
+    !key ||
+    key === 'UNKNOWN|UNKNOWN' ||
+    regime === 'UNKNOWN' ||
+    trendSide === 'UNKNOWN'
+  );
+}
+
 function compactEntryMarketWeatherRaw(value = null) {
   if (!value || typeof value !== 'object') return null;
 
@@ -426,10 +439,8 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
   ));
 
   const explicitKey = String(row.entryMarketWeatherKey || '').trim().toUpperCase();
-  const key = explicitKey || buildEntryMarketWeatherKey({
-    regime,
-    trendSide
-  });
+  const builtKey = buildEntryMarketWeatherKey({ regime, trendSide });
+  const key = explicitKey || builtKey;
 
   const capturedAt = n(
     row.entryMarketWeatherCapturedAt ||
@@ -1265,19 +1276,21 @@ function empiricalVetoGate(row = {}) {
 }
 
 function applyRuntimeGates(row = {}) {
-  const id = rowIdentityId(row);
+  const withWeather = attachEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now());
+  const id = rowIdentityId(withWeather);
   const parsed = parseShortTaxonomyMicroId(id);
-  const completed = n(row.completed ?? row.outcomeSample ?? row.closed, 0);
-  const avgR = n(row.avgR ?? row.netAvgR, 0);
-  const totalR = n(row.totalR ?? row.netTotalR, 0);
-  const pf = n(row.profitFactor ?? row.pf, 0);
-  const avgCostR = n(row.avgCostR, 0);
-  const directSLPct = n(row.directSLPct, 0);
-  const lcb = avgRLCB95(row);
+  const completed = n(withWeather.completed ?? withWeather.outcomeSample ?? withWeather.closed, 0);
+  const avgR = n(withWeather.avgR ?? withWeather.netAvgR, 0);
+  const totalR = n(withWeather.totalR ?? withWeather.netTotalR, 0);
+  const pf = n(withWeather.profitFactor ?? withWeather.pf, 0);
+  const avgCostR = n(withWeather.avgCostR, 0);
+  const directSLPct = n(withWeather.directSLPct, 0);
+  const lcb = avgRLCB95(withWeather);
+  const unknownWeather = isUnknownEntryMarketWeather(withWeather);
 
   if (!parsed.isMicroMicro) {
     return flags({
-      ...row,
+      ...withWeather,
       avgRLCB95: round6(lcb),
       lcb95AvgR: round6(lcb),
       microMicroRuntimeStatus: MICRO_MICRO_STATUS_CONTEXT_ONLY,
@@ -1300,9 +1313,9 @@ function applyRuntimeGates(row = {}) {
     });
   }
 
-  const policyGate = policyBlockedGate(row);
+  const policyGate = policyBlockedGate(withWeather);
   const vetoGate = empiricalVetoGate({
-    ...row,
+    ...withWeather,
     avgRLCB95: lcb,
     lcb95AvgR: lcb
   });
@@ -1327,6 +1340,10 @@ function applyRuntimeGates(row = {}) {
   } else if (vetoGate.triggered) {
     status = MICRO_MICRO_STATUS_EMPIRICAL_VETO;
     reason = vetoGate.empiricalVetoReason;
+    reasons = [reason];
+  } else if (unknownWeather) {
+    status = MICRO_MICRO_STATUS_OBSERVING;
+    reason = 'MARKET_WEATHER_UNKNOWN';
     reasons = [reason];
   } else if (completed < MIN_COMPLETED_MICRO_MICRO_ACTIVE) {
     status = MICRO_MICRO_STATUS_OBSERVING;
@@ -1353,7 +1370,7 @@ function applyRuntimeGates(row = {}) {
       : SIGNAL_TYPE_BLOCKED;
 
   return flags({
-    ...row,
+    ...withWeather,
 
     avgRLCB95: round6(lcb),
     lcb95AvgR: round6(lcb),
@@ -1367,6 +1384,9 @@ function applyRuntimeGates(row = {}) {
     policyBlockedReason: policyGate.reason,
     policyBlockedGate: policyGate,
 
+    marketWeatherUnknown: unknownWeather,
+    marketWeatherUnknownReason: unknownWeather ? 'MARKET_WEATHER_UNKNOWN' : null,
+
     microMicroRuntimeStatus: status,
     microMicroRuntimeGateStatus: status,
     microMicroStatus: status,
@@ -1377,8 +1397,8 @@ function applyRuntimeGates(row = {}) {
     microMicroPolicyBlocked: policyBlocked,
 
     signalType,
-    proofTier: row.proofTier || (passed ? 'EXACT_MICRO_MICRO_LCB95_PROOF' : observing ? 'OBSERVING' : 'BLOCKED'),
-    riskFractionForEntry: passed ? n(row.riskFractionForEntry, 0) : 0,
+    proofTier: withWeather.proofTier || (passed ? 'EXACT_MICRO_MICRO_LCB95_PROOF' : observing ? 'OBSERVING' : 'BLOCKED'),
+    riskFractionForEntry: passed ? n(withWeather.riskFractionForEntry, 0) : 0,
 
     microMicroRuntimeGate: {
       version: MICRO_MICRO_RUNTIME_GATE_VERSION,
@@ -1388,6 +1408,7 @@ function applyRuntimeGates(row = {}) {
       rejected,
       empiricalVeto,
       policyBlocked,
+      marketWeatherUnknown: unknownWeather,
       reason,
       reasons,
       edgeReasons,
@@ -1403,7 +1424,7 @@ function applyRuntimeGates(row = {}) {
       virtualEntryAllowed: passed || observing,
 
       blocksNewVirtualEntry: empiricalVeto || policyBlocked || rejected,
-      blocksLiveRiskEntry: empiricalVeto || policyBlocked || rejected,
+      blocksLiveRiskEntry: empiricalVeto || policyBlocked || rejected || unknownWeather,
       blocksDiscordTradeReady: !passed,
 
       id,
@@ -1779,8 +1800,6 @@ function classifyTaxonomy(row = {}, classified = {}) {
 }
 
 function buildExecutionParts(row = {}, classified = {}, taxonomy = {}) {
-  const weather = resolveEntryMarketWeather(row, row.createdAt || row.openedAt || now());
-
   return [
     `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
     `TRUE_MICRO=${taxonomy.childId}`,
@@ -1788,10 +1807,6 @@ function buildExecutionParts(row = {}, classified = {}, taxonomy = {}) {
     `SETUP=${taxonomy.setup}`,
     `REGIME_BUCKET=${taxonomy.regime}`,
     `CONFIRMATION_PROFILE=${taxonomy.confirmation}`,
-    `ENTRY_MARKET_WEATHER_KEY=${weather.entryMarketWeatherKey}`,
-    `ENTRY_MARKET_WEATHER_KEY_VERSION=${weather.entryMarketWeatherKeyVersion}`,
-    `ENTRY_MARKET_WEATHER_REGIME=${weather.entryMarketWeatherRegime}`,
-    `ENTRY_MARKET_WEATHER_TREND_SIDE=${weather.entryMarketWeatherTrendSide}`,
     `RSI=${norm(row.rsiZone || row.rsiCoarse || classified.rsiZone || classified.rsiCoarse || 'NA')}`,
     `FLOW=${norm(row.flowCoarse || row.flow || classified.flowCoarse || classified.flow || 'NA')}`,
     `OB_REL=${norm(row.obRelation || classified.obRelation || 'NA')}`,
@@ -1811,6 +1826,7 @@ function buildExecutionParts(row = {}, classified = {}, taxonomy = {}) {
     `RISK_PLAN=${row.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`,
     'SYMBOL_EXCLUDED=true',
     'COIN_EXCLUDED=true',
+    'MARKET_WEATHER_EXCLUDED_FROM_FAMILY_ID=true',
     'EXECUTION_FINGERPRINT_ROLE=MICRO_MICRO_HASH_SOURCE',
     'EXECUTION_FINGERPRINT_USED_AS_LEARNING_FAMILY=false'
   ];
@@ -1858,10 +1874,7 @@ function buildMicroMicroFromChildAndRow(child, row = {}) {
     childId: child
   };
 
-  const parts = Array.isArray(row.executionFingerprintParts) && row.executionFingerprintParts.length
-    ? row.executionFingerprintParts
-    : buildExecutionParts(row, {}, taxonomy);
-
+  const parts = buildExecutionParts(row, {}, taxonomy);
   const hash = hashText(parts.join('|'), MICRO_MICRO_HASH_LEN);
 
   return `${child}_${MICRO_MICRO_SUFFIX}_${hash}`;
@@ -2069,7 +2082,12 @@ function enrichWithMicroFamily(row = {}) {
     `MICRO_MICRO=${microMicroId}`,
     `MICRO_MICRO_HASH=${executionHash}`,
     `LAYER=${LAYER_MICRO_MICRO}`,
-    `WEAK_CONTRA_POLICY_BLOCK=${weakContraEntryGate.policyBlocked ? 'YES' : 'NO'}`
+    `WEAK_CONTRA_POLICY_BLOCK=${weakContraEntryGate.policyBlocked ? 'YES' : 'NO'}`,
+    `ENTRY_MARKET_WEATHER_KEY=${withWeather.entryMarketWeatherKey}`,
+    `ENTRY_MARKET_WEATHER_KEY_VERSION=${withWeather.entryMarketWeatherKeyVersion}`,
+    `ENTRY_MARKET_WEATHER_REGIME=${withWeather.entryMarketWeatherRegime}`,
+    `ENTRY_MARKET_WEATHER_TREND_SIDE=${withWeather.entryMarketWeatherTrendSide}`,
+    'ENTRY_MARKET_WEATHER_CONTEXT_ONLY=true'
   ];
 
   return flags({
@@ -3646,6 +3664,7 @@ export async function getWeeklyTradingCandidates(
       selectionRequiresCurrentFitMatch: requireCurrentFitMatch,
       empiricalVetoBlocksSelection: true,
       policyBlockedBlocksSelection: true,
+      unknownMarketWeatherBlocksTradeReady: true,
       discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
       selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
       parent15MatchTriggersDiscord: false,
