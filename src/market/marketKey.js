@@ -1,21 +1,5 @@
 // ================= FILE: src/market/marketKey.js =================
 
-/**
- * SHORT MarketWeather key utilities.
- *
- * Purpose:
- * - Build a stable market-weather context key for virtual entries.
- * - Keep weather OUT of micro-family IDs.
- * - Lock entry weather at entry time and preserve it through close/analyze.
- * - Confirm weather changes with anti-flip logic.
- * - Treat playbook refresh as max-age based, not fixed-clock based.
- *
- * Hard rules:
- * - entryMarketWeatherKey is context, not identity.
- * - UNKNOWN|UNKNOWN can be learned from, but must never become TRADE_READY.
- * - Confirmed weather change should force playbook refresh for the new key.
- */
-
 export const MARKET_WEATHER_KEY_VERSION = 'SHORT_MARKET_WEATHER_KEY_V1';
 export const MARKET_WEATHER_CONFIRMATION_VERSION = 'SHORT_MARKET_WEATHER_CONFIRMATION_3_OF_5_V1';
 export const MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION = 'SHORT_PLAYBOOK_REFRESH_ON_CONFIRMED_WEATHER_CHANGE_V1';
@@ -28,6 +12,10 @@ export const DEFAULT_WEATHER_CONFIRMATION_REQUIRED = 3;
 export const DEFAULT_WEATHER_CONFIRMATION_WINDOW_SAMPLES = 5;
 export const DEFAULT_CONFIRMED_MARKET_WEATHER_MIN_HOLD_MIN = 90;
 export const DEFAULT_PLAYBOOK_MAX_AGE_MIN = 240;
+
+// Backward-compatible named exports expected by tradeSystem.js / weeklyCandidates.js.
+export const PLAYBOOK_MAX_AGE_MIN = DEFAULT_PLAYBOOK_MAX_AGE_MIN;
+export const PLAYBOOK_MAX_AGE_MS = PLAYBOOK_MAX_AGE_MIN * 60 * 1000;
 
 const REGIME_SQUEEZE = 'SQUEEZE';
 const REGIME_CHOP = 'CHOP';
@@ -122,7 +110,12 @@ function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') return value;
   }
+
   return undefined;
+}
+
+function hasUsableValue(value) {
+  return value !== undefined && value !== null && value !== '';
 }
 
 function msFromMinutes(minutes) {
@@ -133,7 +126,9 @@ function msFromMinutes(minutes) {
 function minutesBetween(fromMs, toMs = nowMs()) {
   const a = safeNumber(fromMs, null);
   const b = safeNumber(toMs, null);
+
   if (a === null || b === null) return null;
+
   return Math.max(0, (b - a) / 60000);
 }
 
@@ -145,18 +140,26 @@ function normalizeTimestampMs(value, fallback = null) {
     return Math.round(value);
   }
 
-  const parsed = Date.parse(String(value));
-  if (Number.isFinite(parsed)) return parsed;
+  const parsedNumber = Number(value);
+  if (Number.isFinite(parsedNumber)) {
+    if (parsedNumber > 0 && parsedNumber < 9999999999) return Math.round(parsedNumber * 1000);
+    return Math.round(parsedNumber);
+  }
+
+  const parsedDate = Date.parse(String(value));
+  if (Number.isFinite(parsedDate)) return parsedDate;
 
   return fallback;
 }
 
 function compactObject(obj = {}) {
   const out = {};
+
   for (const [key, value] of Object.entries(obj || {})) {
     if (value === undefined || value === null || value === '') continue;
     out[key] = value;
   }
+
   return out;
 }
 
@@ -412,21 +415,34 @@ export function buildEntryMarketWeatherSnapshot(input = {}, capturedAt = nowMs()
 }
 
 export function attachEntryMarketWeatherSnapshot(target = {}, input = {}, capturedAt = nowMs()) {
+  const hasExistingEntryKey = hasUsableValue(target.entryMarketWeatherKey);
   const existing = parseMarketWeatherKey(target.entryMarketWeatherKey);
 
-  if (existing.key && target.entryMarketWeatherSnapshotLocked) {
+  if (hasExistingEntryKey && target.entryMarketWeatherSnapshotLocked) {
     return {
       ...target,
       entryMarketWeatherKeyVersion: target.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
       entryMarketWeatherKey: existing.key,
       entryMarketWeatherRegime: existing.regime,
       entryMarketWeatherTrendSide: existing.trendSide,
+      entryMarketWeatherCapturedAt: normalizeTimestampMs(
+        target.entryMarketWeatherCapturedAt,
+        normalizeTimestampMs(capturedAt, nowMs())
+      ),
+      entryMarketWeatherRaw: target.entryMarketWeatherRaw || {},
+      entryMarketWeatherRawAvailableFields: target.entryMarketWeatherRawAvailableFields || [],
+      entryMarketWeatherResolutionKeys: target.entryMarketWeatherResolutionKeys || {
+        lifetime: 'LIFETIME',
+        regime: existing.regime,
+        regimeTrend: existing.key,
+        fullV1: existing.key
+      },
       entryMarketWeatherSnapshotLocked: true,
       entryMarketWeatherIsUnknown: existing.key === UNKNOWN_MARKET_WEATHER_KEY
     };
   }
 
-  if (existing.valid || existing.key === UNKNOWN_MARKET_WEATHER_KEY) {
+  if (hasExistingEntryKey && (existing.valid || existing.key === UNKNOWN_MARKET_WEATHER_KEY)) {
     return {
       ...target,
       entryMarketWeatherKeyVersion: target.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
@@ -454,9 +470,10 @@ export function attachEntryMarketWeatherSnapshot(target = {}, input = {}, captur
 }
 
 export function preserveEntryMarketWeatherSnapshot(position = {}, fallbackInput = {}) {
+  const hasExistingEntryKey = hasUsableValue(position.entryMarketWeatherKey);
   const existing = parseMarketWeatherKey(position.entryMarketWeatherKey);
 
-  if (existing.key) {
+  if (hasExistingEntryKey && (existing.valid || existing.key === UNKNOWN_MARKET_WEATHER_KEY)) {
     return {
       entryMarketWeatherKeyVersion: position.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
       entryMarketWeatherKey: existing.key,
@@ -531,7 +548,7 @@ export function confirmedMarketWeatherFromInput(input = {}) {
 
   const parsedExplicit = parseMarketWeatherKey(explicitKey);
 
-  if (parsedExplicit.valid || parsedExplicit.key === UNKNOWN_MARKET_WEATHER_KEY) {
+  if (hasUsableValue(explicitKey) && (parsedExplicit.valid || parsedExplicit.key === UNKNOWN_MARKET_WEATHER_KEY)) {
     return {
       confirmedMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
       confirmedMarketWeatherKey: parsedExplicit.key,
@@ -626,7 +643,7 @@ export function normalizeMarketWeatherSamples(samples = []) {
 
       const parsed = parseMarketWeatherKey(explicitKey);
 
-      if (parsed.valid || parsed.key === UNKNOWN_MARKET_WEATHER_KEY) {
+      if (hasUsableValue(explicitKey) && (parsed.valid || parsed.key === UNKNOWN_MARKET_WEATHER_KEY)) {
         return {
           marketWeatherKeyVersion: sample.marketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
           marketWeatherKey: parsed.key,
@@ -724,6 +741,7 @@ export function confirmMarketWeatherKey(samples = [], options = {}) {
       : UNKNOWN_MARKET_WEATHER_KEY;
 
   const confirmedParsed = parseMarketWeatherKey(confirmedKey);
+
   const changed =
     confirmed &&
     previousKnown &&
@@ -827,7 +845,7 @@ export function isFreshConfirmedMarketWeather(confirmedWeather = {}, options = {
 export function isPlaybookFreshForConfirmedWeather(playbook = {}, confirmedWeather = {}, options = {}) {
   const maxAgeMin = Math.max(
     1,
-    safeNumber(options.maxAgeMin, DEFAULT_PLAYBOOK_MAX_AGE_MIN)
+    safeNumber(options.maxAgeMin, PLAYBOOK_MAX_AGE_MIN)
   );
 
   const asOfMs = normalizeTimestampMs(options.asOf, nowMs());
@@ -973,7 +991,8 @@ export function marketWeatherFeatureFlags() {
     fdr: 'observe',
     discordTradeReady: 'validated_only',
 
-    playbookMaxAgeMin: DEFAULT_PLAYBOOK_MAX_AGE_MIN,
+    playbookMaxAgeMin: PLAYBOOK_MAX_AGE_MIN,
+    playbookMaxAgeMs: PLAYBOOK_MAX_AGE_MS,
     forcePlaybookRefreshOnConfirmedWeatherChange: true,
     weatherConfirmationRequired: DEFAULT_WEATHER_CONFIRMATION_REQUIRED,
     weatherConfirmationWindowSamples: DEFAULT_WEATHER_CONFIRMATION_WINDOW_SAMPLES,
@@ -994,6 +1013,8 @@ export default {
   DEFAULT_WEATHER_CONFIRMATION_WINDOW_SAMPLES,
   DEFAULT_CONFIRMED_MARKET_WEATHER_MIN_HOLD_MIN,
   DEFAULT_PLAYBOOK_MAX_AGE_MIN,
+  PLAYBOOK_MAX_AGE_MIN,
+  PLAYBOOK_MAX_AGE_MS,
 
   normalizeMarketWeatherRegime,
   normalizeMarketWeatherTrendSide,
