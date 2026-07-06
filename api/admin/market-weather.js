@@ -231,6 +231,41 @@ function parseMarketWeatherKey(key = '') {
   };
 }
 
+function isKnownMarketWeatherKey(value) {
+  if (!hasValue(value)) return false;
+  const parsed = parseMarketWeatherKey(value);
+  return parsed.known === true && parsed.key !== 'UNKNOWN|UNKNOWN';
+}
+
+function firstKnownMarketWeatherKey(...values) {
+  for (const value of values) {
+    if (!hasValue(value)) continue;
+
+    const parsed = parseMarketWeatherKey(value);
+
+    if (parsed.known && parsed.key !== 'UNKNOWN|UNKNOWN') {
+      return parsed.key;
+    }
+  }
+
+  return null;
+}
+
+function buildKnownMarketWeatherKeyFromParts(regime, trendSide) {
+  const key = buildEntryMarketWeatherKeyFallback({
+    currentMarketWeatherRegime: regime,
+    currentMarketWeatherTrendSide: trendSide
+  });
+
+  const parsed = parseMarketWeatherKey(key);
+  return parsed.known ? parsed.key : null;
+}
+
+function normalizeMarketWeatherKeyFromParts(regime, trendSide) {
+  const parsed = parseMarketWeatherKey(`${regime || 'UNKNOWN'}|${trendSide || 'UNKNOWN'}`);
+  return parsed.key;
+}
+
 function makeFallbackWeather(reason = 'NO_MARKET_WEATHER') {
   const key = 'UNKNOWN|UNKNOWN';
 
@@ -507,45 +542,59 @@ function normalizeWeatherForAdmin(weatherInput = {}, helpers = {}) {
 
   const normalizeRegime = helpers.normalizeMarketWeatherRegime || normalizeMarketWeatherRegimeFallback;
   const normalizeTrendSide = helpers.normalizeMarketWeatherTrendSide || normalizeMarketWeatherTrendSideFallback;
-  const buildKey = helpers.buildEntryMarketWeatherKey || buildEntryMarketWeatherKeyFallback;
 
-  const directKey = firstValue(
-    weather.confirmedMarketWeatherKey,
+  const directKnownKey = firstKnownMarketWeatherKey(
     weather.currentMarketWeatherKey,
+    weather.marketWeatherKey,
     weather.entryMarketWeatherKey,
-    weather.marketWeatherKey
+    weather.confirmedMarketWeatherKey
   );
 
-  const currentMarketWeatherKey = buildKey({
-    currentMarketWeatherKey: directKey,
-    currentMarketWeatherRegime: firstValue(
-      weather.currentMarketWeatherRegime,
-      weather.confirmedMarketWeatherRegime,
-      weather.marketWeatherRegime,
-      weather.currentRegime,
-      weather.regime,
-      weather.marketRegime,
-      weather.breadthRegime
-    ),
-    currentMarketWeatherTrendSide: firstValue(
-      weather.currentMarketWeatherTrendSide,
-      weather.confirmedMarketWeatherTrendSide,
-      weather.marketWeatherTrendSide,
-      weather.currentTrendSide,
-      weather.trendSide,
-      weather.marketTrendSide,
-      weather.marketSide,
-      weather.side,
-      weather.direction
-    )
-  });
+  const rawRegime = firstValue(
+    weather.currentMarketWeatherRegime,
+    weather.marketWeatherRegime,
+    weather.currentRegime,
+    weather.regime,
+    weather.marketRegime,
+    weather.breadthRegime,
+    weather.confirmedMarketWeatherRegime
+  );
 
-  const parsedKey = parseMarketWeatherKey(currentMarketWeatherKey);
+  const rawTrendSide = firstValue(
+    weather.currentMarketWeatherTrendSide,
+    weather.marketWeatherTrendSide,
+    weather.currentTrendSide,
+    weather.trendSide,
+    weather.marketTrendSide,
+    weather.marketSide,
+    weather.side,
+    weather.direction,
+    weather.confirmedMarketWeatherTrendSide
+  );
 
-  const currentMarketWeatherRegime = normalizeRegime(parsedKey.regime);
-  const currentMarketWeatherTrendSide = normalizeTrendSide(parsedKey.trendSide);
-  const normalizedKey = `${currentMarketWeatherRegime}|${currentMarketWeatherTrendSide}`;
-  const known = currentMarketWeatherRegime !== 'UNKNOWN' && currentMarketWeatherTrendSide !== 'UNKNOWN';
+  let currentMarketWeatherRegime;
+  let currentMarketWeatherTrendSide;
+  let normalizedKey;
+
+  if (directKnownKey) {
+    const parsedDirect = parseMarketWeatherKey(directKnownKey);
+    currentMarketWeatherRegime = normalizeRegime(parsedDirect.regime);
+    currentMarketWeatherTrendSide = normalizeTrendSide(parsedDirect.trendSide);
+    normalizedKey = `${currentMarketWeatherRegime}|${currentMarketWeatherTrendSide}`;
+  } else {
+    currentMarketWeatherRegime = normalizeRegime(rawRegime);
+    currentMarketWeatherTrendSide = normalizeTrendSide(rawTrendSide);
+    normalizedKey = `${currentMarketWeatherRegime}|${currentMarketWeatherTrendSide}`;
+  }
+
+  const parsedKey = parseMarketWeatherKey(normalizedKey);
+  normalizedKey = parsedKey.key;
+  currentMarketWeatherRegime = parsedKey.regime;
+  currentMarketWeatherTrendSide = parsedKey.trendSide;
+
+  const known =
+    currentMarketWeatherRegime !== 'UNKNOWN' &&
+    currentMarketWeatherTrendSide !== 'UNKNOWN';
 
   const confidence = clamp(
     weather.currentMarketFitConfidence ??
@@ -630,19 +679,32 @@ function normalizeWeatherForAdmin(weatherInput = {}, helpers = {}) {
   const nowMs = Date.now();
   const marketWeatherAgeMin = ageMin(firstFinite(weather.updatedAt, weather.savedAt, weather.generatedAt, createdAt), nowMs);
 
-  const confirmedMarketWeather = helpers.confirmMarketWeatherKey
-    ? helpers.confirmMarketWeatherKey({
-        samples: weather.samples || weather.recentSamples || weather.confirmationSamples || [],
-        currentMarketWeatherKey: normalizedKey,
-        previousConfirmedMarketWeatherKey: weather.previousConfirmedMarketWeatherKey || weather.confirmedMarketWeatherKey,
-        requiredConfirmations: WEATHER_CONFIRMATION_REQUIRED,
-        windowSamples: WEATHER_CONFIRMATION_WINDOW_SAMPLES
+  const confirmationSamples = Array.isArray(weather.samples)
+    ? weather.samples
+    : Array.isArray(weather.recentSamples)
+      ? weather.recentSamples
+      : Array.isArray(weather.confirmationSamples)
+        ? weather.confirmationSamples
+        : [];
+
+  const confirmedMarketWeather = helpers.confirmMarketWeatherKey && confirmationSamples.length
+    ? helpers.confirmMarketWeatherKey(confirmationSamples, {
+        previousConfirmedMarketWeatherKey: firstKnownMarketWeatherKey(
+          weather.previousConfirmedMarketWeatherKey,
+          weather.confirmedMarketWeatherKey
+        ),
+        required: WEATHER_CONFIRMATION_REQUIRED,
+        windowSamples: WEATHER_CONFIRMATION_WINDOW_SAMPLES,
+        asOf: nowMs
       })
     : null;
 
-  const confirmedMarketWeatherKey = confirmedMarketWeather?.confirmedMarketWeatherKey ||
-    weather.confirmedMarketWeatherKey ||
-    normalizedKey;
+  const confirmedMarketWeatherKey =
+    firstKnownMarketWeatherKey(
+      confirmedMarketWeather?.confirmedMarketWeatherKey,
+      weather.confirmedMarketWeatherKey,
+      known ? normalizedKey : null
+    ) || 'UNKNOWN|UNKNOWN';
 
   const confirmedParsed = parseMarketWeatherKey(confirmedMarketWeatherKey);
 
@@ -756,9 +818,9 @@ function normalizeWeatherForAdmin(weatherInput = {}, helpers = {}) {
       confirmedMarketWeatherRegime: confirmedParsed.regime,
       confirmedMarketWeatherTrendSide: confirmedParsed.trendSide,
       confirmedMarketWeatherKnown: confirmedParsed.known,
-      changed: Boolean(confirmedMarketWeather?.changed),
+      changed: Boolean(confirmedMarketWeather?.changed || confirmedMarketWeather?.confirmedMarketWeatherChanged),
       reason: confirmedMarketWeather?.reason || null,
-      samples: weather.samples || weather.recentSamples || weather.confirmationSamples || []
+      samples: confirmationSamples
     },
 
     currentFitSoftOnly: true,
@@ -1065,7 +1127,7 @@ async function readBody(req) {
 function applyRequestOverride(weather = {}, req = {}, body = {}) {
   const query = req?.query || {};
 
-  const overrideKey = firstValue(
+  const overrideKey = firstKnownMarketWeatherKey(
     body.currentMarketWeatherKey,
     body.confirmedMarketWeatherKey,
     query.currentMarketWeatherKey,
@@ -1086,18 +1148,35 @@ function applyRequestOverride(weather = {}, req = {}, body = {}) {
     query.confirmedMarketWeatherTrendSide
   );
 
-  if (!overrideKey && !overrideRegime && !overrideTrendSide) return weather;
+  const overrideKeyFromParts =
+    overrideRegime && overrideTrendSide
+      ? buildKnownMarketWeatherKeyFromParts(overrideRegime, overrideTrendSide)
+      : null;
+
+  const finalOverrideKey = overrideKey || overrideKeyFromParts;
+
+  // UNKNOWN|UNKNOWN uit admin.html mag backend MarketWeather nooit overschrijven.
+  if (!finalOverrideKey) return weather;
+
+  const parsed = parseMarketWeatherKey(finalOverrideKey);
 
   return {
     ...weather,
-    currentMarketWeatherKey: overrideKey || weather.currentMarketWeatherKey,
-    confirmedMarketWeatherKey: overrideKey || weather.confirmedMarketWeatherKey,
-    currentMarketWeatherRegime: overrideRegime || weather.currentMarketWeatherRegime,
-    confirmedMarketWeatherRegime: overrideRegime || weather.confirmedMarketWeatherRegime,
-    currentMarketWeatherTrendSide: overrideTrendSide || weather.currentMarketWeatherTrendSide,
-    confirmedMarketWeatherTrendSide: overrideTrendSide || weather.confirmedMarketWeatherTrendSide,
+
+    currentMarketWeatherKey: parsed.key,
+    confirmedMarketWeatherKey: parsed.key,
+    marketWeatherKey: parsed.key,
+
+    currentMarketWeatherRegime: parsed.regime,
+    confirmedMarketWeatherRegime: parsed.regime,
+    marketWeatherRegime: parsed.regime,
+
+    currentMarketWeatherTrendSide: parsed.trendSide,
+    confirmedMarketWeatherTrendSide: parsed.trendSide,
+    marketWeatherTrendSide: parsed.trendSide,
+
     overrideApplied: true,
-    overrideSource: 'api/admin/market-weather request'
+    overrideSource: 'api/admin/market-weather request known override only'
   };
 }
 
@@ -1219,7 +1298,8 @@ export default async function handler(req, res) {
       source,
       refreshed: refresh,
       saved: save,
-      requestOverrideApplied: Boolean(withOverride?.overrideApplied)
+      requestOverrideApplied: Boolean(withOverride?.overrideApplied),
+      unknownRequestOverrideBlocked: !Boolean(withOverride?.overrideApplied)
     }, keyHelpers));
   } catch (error) {
     return sendJson(res, 200, buildResponse(makeFallbackWeather('ADMIN_ROUTE_FAILED'), {
