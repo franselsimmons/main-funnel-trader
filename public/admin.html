@@ -357,7 +357,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 2700px;
+      min-width: 1300px;
       background: white;
     }
 
@@ -435,6 +435,11 @@
       padding: 14px;
       white-space: pre;
       user-select: all;
+    }
+
+    .audit-output-textarea {
+      min-height: 620px;
+      font-size: 12px;
     }
 
     .micro-id-cell {
@@ -517,6 +522,7 @@
       .tab { flex: 1 1 auto; padding: 9px 10px; }
       input[type="search"] { min-width: 100%; }
       .api-output-textarea { min-height: 420px; font-size: 11px; }
+      .audit-output-textarea { min-height: 600px; font-size: 11px; }
     }
   </style>
 </head>
@@ -529,7 +535,7 @@
         <div>
           <strong>SHORT Micro-Micro MarketWeather Admin</strong>
           <div class="brand-subtitle">
-            Exact micro-micro learning · MarketWeather capture live · selector/sizing/FDR observe · empirical veto apart van policy-blocked.
+            Exact micro-micro learning · MarketWeather capture live · selector/sizing/FDR observe · compact API-audit voor controle.
           </div>
         </div>
       </div>
@@ -686,6 +692,7 @@
         micros: null,
         rotation: null,
         discord: null,
+        apiAudit: null,
         microMode: "currentMarket",
         microSearch: "",
         apiTimeoutMs: 22000,
@@ -2396,6 +2403,23 @@
         return `${endpoints.trade}?${params.toString()}`;
       }
 
+      function discordApiUrl(limit = 80) {
+        const params = commonParams();
+        params.set("limit", String(limit));
+        params.set("compact", "1");
+        return `${endpoints.discord}?${params.toString()}`;
+      }
+
+      function overviewApiUrl() {
+        const params = commonParams();
+        params.set("compact", "1");
+        params.set("includeCounts", "1");
+        params.set("includeMarketWeather", "1");
+        params.set("includeMicroMicro", "1");
+        params.set("includeCurrentMarketPlaybook", "1");
+        return `${endpoints.overview}?${params.toString()}`;
+      }
+
       function activeMicroMicroIds() {
         return uniqueStrings([
           state.rotation?.activeMicroMicroFamilyIds || [],
@@ -2514,33 +2538,23 @@
           { label: "Fresh", render: (row) => `<span class="pill ${playbookFresh(row) ? "active" : "warn"}">${playbookFresh(row) ? "FRESH" : "STALE/MISSING"}</span>` },
           { label: "ProofSource", render: (row) => `<span class="pill soft">${escapeHtml(proofSource(row))}</span>` },
           { label: "ProofTier", render: (row) => `<span class="pill purple">${escapeHtml(proofTier(row))}</span>` },
-          { label: "MarketRes", render: (row) => `<span class="pill info">${escapeHtml(marketResolution(row))}</span>` },
           { label: "Veto", render: (row) => empiricalVeto(row) ? `<span class="pill veto">${escapeHtml(empiricalVetoReason(row))}</span>` : '<span class="pill active">NO</span>' },
           { label: "Policy", render: (row) => policyBlocked(row) ? `<span class="pill blocked">${escapeHtml(whyBlocked(row))}</span>` : '<span class="pill active">OK</span>' },
-          { label: "Layer", render: (row) => microLayerPill(row) },
-          { label: "Meetlat", render: (row) => measurementPill(row) },
-          { label: "Gate", render: (row) => discordGatePill(row) },
           { label: "Micro-micro ID", render: (row) => `<span class="micro-id-cell"><button type="button" class="small" data-open-micro="${escapeAttr(microId(row))}"><code>${escapeHtml(microId(row) || "NO_MM")}</code></button></span>` },
           { label: "75-child context", render: (row) => `<span class="micro-id-cell"><code>${escapeHtml(base75MicroId(row) || "NO_75")}</code></span>` },
           { label: "Parent 15", render: (row) => `<span class="micro-id-cell"><code>${escapeHtml(parentMicroId(row) || "NO_PARENT")}</code></span>` },
-          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
           { label: "Seen", render: (row) => fmtInt(observationSample(row)) },
           { label: "Completed", render: (row) => fmt(completed(row), 2) },
           { label: "Fair WR", render: (row) => fmtPct(fairWinrate(row)) },
           { label: "AvgR", render: (row) => fmt(netAvgR(row), 3) },
           { label: "LCB95", render: (row) => lcb95AvgR(row) === null ? "-" : fmt(lcb95AvgR(row), 4) },
-          { label: "ShrunkAvgR", render: (row) => fmt(shrunkAvgR(row), 4) },
           { label: "ShrunkLCB95", render: (row) => fmt(shrunkLCB95AvgR(row), 4) },
           { label: "TotalR", render: (row) => fmt(netTotalR(row), 3) },
           { label: "PF", render: (row) => fmt(profitFactor(row), 2) },
           { label: "AvgCostR", render: (row) => fmt(avgCostR(row), 3) },
           { label: "DirectSL", render: (row) => fmtPct(directSLPct(row)) },
-          { label: "CurrentFit", render: (row) => currentFitPill(row) },
-          { label: "NetEdge", render: (row) => `<strong>${escapeHtml(fmt(netEdgeScore(row), 2))}</strong>` },
-          { label: "MktScore", render: (row) => fmt(currentMarketScore(row), 2) },
           { label: "Risk", render: (row) => `<strong>${escapeHtml(fmt(riskFractionForEntry(row), 6))}</strong>` },
-          { label: "RiskBand", render: (row) => `<span class="pill raw">${escapeHtml(maxAllowedRiskBand(row))}</span>` },
-          { label: "Why selected/blocked", render: (row) => `<div class="reason-cell">${escapeHtml(whyBlocked(row) || whySelected(row))}</div>` },
+          { label: "Why", render: (row) => `<div class="reason-cell">${escapeHtml(whyBlocked(row) || whySelected(row))}</div>` },
           { label: "Actie", render: (row) => {
             const canActivate = discordActivationEligible(row);
             return `
@@ -2660,7 +2674,7 @@
         };
       }
 
-      function compactOverviewApiOutput(data = {}, microData = {}, rotationData = {}, marketData = {}) {
+      function compactOverviewApiOutput(data = {}, microData = {}, rotationData = {}, marketData = {}, tradeData = {}, scannerData = {}) {
         const microRows = microData?.rows || [];
         const activeIds = activeMicroMicroIds();
         const playbook = microData.currentMarketPlaybook || data.currentMarketPlaybook || rotationData.currentMarketPlaybook || null;
@@ -2689,8 +2703,8 @@
             policyBlockedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
             cleanRows: microRows.filter((row) => cleanMeasurementScore(row) === 1).length,
             selectedDiscordMicroMicroIds: activeIds.length,
-            openVirtualPositions: Number(data.openPositions || data.positionsCount || state.trade?.positions?.length || 0),
-            scannerShortCandidates: Number(data.shortScannerCandidates || data.scannerCandidates || state.scanner?.candidates?.length || 0)
+            openVirtualPositions: asArray(tradeData.positions || tradeData.openPositions || tradeData.virtualPositions).length,
+            scannerShortCandidates: asArray(scannerData.snapshot?.candidates || scannerData.candidates || scannerData.rows).filter((row) => inferSide(row) !== OPPOSITE_SIDE).length
           },
           bestVisibleMicroMicro: microRows[0]
             ? {
@@ -2733,23 +2747,548 @@
           warnings: [
             ...(data.warnings || []),
             ...(microData.warnings || []),
-            ...(rotationData.warnings || [])
+            ...(rotationData.warnings || []),
+            ...(marketData.warnings || []),
+            ...(tradeData.warnings || []),
+            ...(scannerData.warnings || [])
           ],
-          error: data.error || microData.error || rotationData.error || null
+          error: data.error || microData.error || rotationData.error || marketData.error || tradeData.error || scannerData.error || null
         };
+      }
+
+      function compactClean(value, depth = 0) {
+        if (depth > 8) return "[MAX_DEPTH]";
+        if (value === undefined || value === null || value === "") return undefined;
+
+        if (typeof value !== "object") return value;
+
+        if (Array.isArray(value)) {
+          const arr = value
+            .map((item) => compactClean(item, depth + 1))
+            .filter((item) => item !== undefined);
+          return arr.length ? arr : undefined;
+        }
+
+        const out = {};
+        for (const [key, item] of Object.entries(value)) {
+          const clean = compactClean(item, depth + 1);
+          if (clean === undefined) continue;
+          if (typeof clean === "object" && !Array.isArray(clean) && Object.keys(clean).length === 0) continue;
+          out[key] = clean;
+        }
+
+        return Object.keys(out).length ? out : undefined;
+      }
+
+      function pick(obj = {}, keys = []) {
+        const out = {};
+        for (const key of keys) {
+          if (obj?.[key] !== undefined && obj?.[key] !== null && obj?.[key] !== "") {
+            out[key] = obj[key];
+          }
+        }
+        return compactClean(out) || {};
+      }
+
+      function baseSymbol(row = {}) {
+        const raw = row.symbol || row.baseSymbol || row.coin || row.contractSymbol || row.instId || "";
+        let symbol = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+        for (const suffix of ["USDTUMCBL", "USDCUMCBL", "USDTPERP", "USDCPERP", "USDT", "USDC", "BUSD", "PERP", "SWAP", "USD"]) {
+          if (symbol.endsWith(suffix) && symbol.length > suffix.length) {
+            symbol = symbol.slice(0, -suffix.length);
+            break;
+          }
+        }
+
+        return symbol || "COIN";
+      }
+
+      function shortRows(rows = []) {
+        return (Array.isArray(rows) ? rows : []).filter((row) => inferSide(row) !== OPPOSITE_SIDE);
+      }
+
+      function compactAuditMicroRow(row = {}) {
+        const normalized = normalizeMicroRow(row) || row;
+        return compactClean({
+          id: microId(normalized) || normalized.microMicroFamilyId || normalized.trueMicroMicroFamilyId || normalized.exactMicroMicroFamilyId || null,
+          child75: base75MicroId(normalized) || null,
+          parent15: parentMicroId(normalized) || null,
+          side: inferSide(normalized),
+          status: (() => { try { return runtimeStatus(normalized); } catch { return normalized.status || null; } })(),
+          signalType: (() => { try { return signalType(normalized); } catch { return normalized.signalType || null; } })(),
+          proofTier: (() => { try { return proofTier(normalized); } catch { return normalized.proofTier || null; } })(),
+          proofSource: (() => { try { return proofSource(normalized); } catch { return normalized.proofSource || null; } })(),
+          marketResolution: (() => { try { return marketResolution(normalized); } catch { return normalized.marketResolution || null; } })(),
+          entryMarketWeatherKey: (() => { try { return entryMarketWeather(normalized).entryMarketWeatherKey; } catch { return normalized.entryMarketWeatherKey || null; } })(),
+          currentMarketWeatherKey: normalized.currentMarketWeatherKey || null,
+          confirmedMarketWeatherKey: normalized.confirmedMarketWeatherKey || null,
+          weatherMatched: (() => { try { return currentWeatherMatched(normalized); } catch { return null; } })(),
+          playbookFresh: (() => { try { return playbookFresh(normalized); } catch { return null; } })(),
+          completed: (() => { try { return completed(normalized); } catch { return normalized.completed || null; } })(),
+          observed: (() => { try { return observationSample(normalized); } catch { return normalized.seen || normalized.observed || null; } })(),
+          fairWinrate: (() => { try { return fairWinrate(normalized); } catch { return normalized.fairWinrate || null; } })(),
+          avgR: (() => { try { return netAvgR(normalized); } catch { return normalized.avgR || null; } })(),
+          lcb95AvgR: (() => { try { return lcb95AvgR(normalized); } catch { return normalized.lcb95AvgR || null; } })(),
+          shrunkLCB95AvgR: (() => { try { return shrunkLCB95AvgR(normalized); } catch { return normalized.shrunkLCB95AvgR || null; } })(),
+          totalR: (() => { try { return netTotalR(normalized); } catch { return normalized.totalR || null; } })(),
+          profitFactor: (() => { try { return profitFactor(normalized); } catch { return normalized.profitFactor || normalized.pf || null; } })(),
+          avgCostR: (() => { try { return avgCostR(normalized); } catch { return normalized.avgCostR || null; } })(),
+          directSLPct: (() => { try { return directSLPct(normalized); } catch { return normalized.directSLPct || null; } })(),
+          riskFractionForEntry: (() => { try { return riskFractionForEntry(normalized); } catch { return normalized.riskFractionForEntry || null; } })(),
+          policyBlocked: (() => { try { return policyBlocked(normalized); } catch { return normalized.policyBlocked || false; } })(),
+          empiricalVeto: (() => { try { return empiricalVeto(normalized); } catch { return normalized.empiricalVeto || false; } })(),
+          currentFit: (() => { try { return currentFit(normalized); } catch { return normalized.currentFit || null; } })(),
+          reason: (() => { try { return whyBlocked(normalized) || whySelected(normalized); } catch { return normalized.reason || null; } })()
+        }) || {};
+      }
+
+      function compactAuditPosition(row = {}) {
+        return compactClean({
+          symbol: baseSymbol(row),
+          side: inferSide(row),
+          source: row.source || row.positionSource || "VIRTUAL",
+          status: row.status || null,
+          microMicroFamilyId: microId(row) || row.microMicroFamilyId || row.trueMicroMicroFamilyId || row.exactMicroMicroFamilyId || null,
+          entryMarketWeatherKey: row.entryMarketWeatherKey || null,
+          currentMarketWeatherKey: row.currentMarketWeatherKey || null,
+          confirmedMarketWeatherKey: row.confirmedMarketWeatherKey || null,
+          signalType: row.signalType || null,
+          microMicroStatus: row.microMicroStatus || row.microMicroRuntimeGateStatus || null,
+          entry: row.entry ?? row.entryPrice ?? null,
+          sl: row.sl ?? row.stopLoss ?? row.initialSl ?? null,
+          tp: row.tp ?? row.takeProfit ?? null,
+          currentPrice: row.currentPrice ?? row.lastPrice ?? null,
+          currentR: row.currentR ?? row.shortCurrentR ?? null,
+          riskFractionForEntry: row.riskFractionForEntry ?? null,
+          policyBlocked: row.policyBlocked === true,
+          empiricalVeto: row.empiricalVeto === true,
+          openedAt: row.openedAt || row.createdAt || null,
+          updatedAt: row.updatedAt || null
+        }) || {};
+      }
+
+      function compactAuditCandidate(row = {}) {
+        return compactClean({
+          symbol: baseSymbol(row),
+          side: inferSide(row),
+          entryMarketWeatherKey: entryMarketWeather(row).entryMarketWeatherKey,
+          price: row.price || row.currentPrice || row.markPrice || null,
+          scannerScore: row.scannerScore ?? row.moveScore ?? row.sniperScore ?? row.score ?? null,
+          change1h: row.change1h || row.priceChange1h || null,
+          change24h: row.change24h || row.priceChange24h || null,
+          regime: row.regime || row.currentRegime || null,
+          reason: row.scannerReason || row.reason || null
+        }) || {};
+      }
+
+      function compactAuditLog(row = {}) {
+        const payload = row.payload || row;
+        return compactClean({
+          ts: row.ts || row.createdAt || payload.ts || payload.createdAt || null,
+          type: row.type || row.event || row.level || null,
+          symbol: baseSymbol(payload),
+          side: inferSide(payload),
+          microMicroFamilyId: microId(payload) || payload.microMicroFamilyId || null,
+          signalType: payload.signalType || null,
+          status: payload.microMicroStatus || payload.microMicroRuntimeGateStatus || null,
+          entryMarketWeatherKey: payload.entryMarketWeatherKey || null,
+          selected: payload.selectedMicroMicroFamilyAlert || payload.discordAlertEligible || payload.selectedForDiscord || row.selectedOnly || false,
+          message: row.message || row.content || row.result || row.reason || null
+        }) || {};
+      }
+
+      function compactEndpointImportant(name, data = {}) {
+        const lower = String(name || "").toLowerCase();
+
+        if (lower.includes("overview")) {
+          return compactClean({
+            ok: data.ok !== false,
+            currentMarketWeather: data.currentMarketWeather || currentMarketWeather(),
+            counts: pick(data.counts || data.summary || data, [
+              "openPositions",
+              "closedPositions",
+              "positionsCount",
+              "scannerCandidates",
+              "shortScannerCandidates",
+              "microFamilies",
+              "microMicroFamilies",
+              "tradeReadyRows",
+              "watchRows",
+              "observeOnlyRows",
+              "blockedRows",
+              "passedRows",
+              "observingRows",
+              "rejectedRows",
+              "empiricalVetoRows",
+              "policyBlockedRows",
+              "unknownWeatherRows",
+              "weatherMatchedRows",
+              "playbookFreshRows"
+            ]),
+            currentMarketPlaybook: pick(data.currentMarketPlaybook || {}, [
+              "status",
+              "fresh",
+              "weatherKey",
+              "currentMarketWeatherKey",
+              "ageMin",
+              "rows",
+              "tradeReady",
+              "watch",
+              "observeOnly",
+              "blocked",
+              "answerType"
+            ]),
+            warnings: asArray(data.warnings).slice(0, 8),
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        if (lower.includes("marketweather")) {
+          return compactClean({
+            ok: data.ok !== false,
+            currentMarketWeatherKey:
+              data.currentMarketWeatherKey ||
+              data.currentMarketWeather?.currentMarketWeatherKey ||
+              data.marketWeather?.currentMarketWeatherKey ||
+              currentMarketWeather().currentMarketWeatherKey,
+            confirmedMarketWeatherKey:
+              data.confirmedMarketWeatherKey ||
+              data.currentMarketWeather?.confirmedMarketWeatherKey ||
+              data.marketWeather?.confirmedMarketWeatherKey ||
+              currentMarketWeather().confirmedMarketWeatherKey,
+            currentMarketWeatherRegime:
+              data.currentMarketWeatherRegime ||
+              data.currentMarketWeather?.currentMarketWeatherRegime ||
+              data.regime ||
+              data.market?.regime ||
+              null,
+            currentMarketWeatherTrendSide:
+              data.currentMarketWeatherTrendSide ||
+              data.currentMarketWeather?.currentMarketWeatherTrendSide ||
+              data.trendSide ||
+              data.market?.trendSide ||
+              null,
+            confirmedMarketWeatherKnown:
+              data.confirmedMarketWeatherKnown ??
+              data.currentMarketWeatherKnown ??
+              null,
+            confirmedMarketWeatherFresh:
+              data.confirmedMarketWeatherFresh ??
+              data.currentMarketWeatherFresh ??
+              null,
+            playbookFresh: data.playbookFresh ?? data.currentMarketPlaybook?.fresh ?? null,
+            playbookStatus: data.playbookStatus || data.currentMarketPlaybook?.status || null,
+            playbookMissingReason: data.playbookMissingReason || null,
+            unknownWeatherPolicy: data.unknownWeatherPolicy || {
+              signalType: SIGNAL_TYPE_OBSERVE_ONLY,
+              riskFractionForEntry: 0,
+              reason: "MARKET_WEATHER_UNKNOWN"
+            },
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        if (lower.includes("scanner")) {
+          const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
+          const rows = snapshot.candidates || data.candidates || data.rows || [];
+
+          return compactClean({
+            ok: data.ok !== false,
+            snapshotId: snapshot.snapshotId || data.snapshotId || null,
+            createdAt: snapshot.createdAt || data.createdAt || null,
+            ageText: ageText(snapshot.createdAt || data.createdAt),
+            counts: {
+              rawCandidates: Array.isArray(rows) ? rows.length : 0,
+              shortCandidates: shortRows(rows).length,
+              ignoredLong: data.ignoredLongCandidates || data.rawLongCandidatesIgnored || 0
+            },
+            policy: {
+              scannerWritesLearning: false,
+              scannerSendsDiscord: false,
+              scannerFingerprintRole: "METADATA_ONLY",
+              scannerFingerprintsUsedAsLearningFamily: false
+            },
+            topShortCandidates: shortRows(rows).slice(0, 12).map(compactAuditCandidate),
+            warnings: asArray(data.warnings || data.runtimeWarnings).slice(0, 8),
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        if (lower.includes("tradesystem")) {
+          const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
+          const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
+
+          return compactClean({
+            ok: data.ok !== false,
+            counts: {
+              openVirtualShortPositions: positions.length,
+              cleanPositions: positions.filter((row) => cleanMeasurementScore(row) === 1).length,
+              legacyPositions: positions.filter((row) => cleanMeasurementScore(row) !== 1).length
+            },
+            sync: {
+              scannerAndTradeInSync: Boolean(data.scannerAndTradeInSync),
+              lastProcessedSnapshotId: data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || null,
+              latestScannerSnapshotId: data.latestScannerSnapshotId || null
+            },
+            runMeta: pick(runMeta, [
+              "phase",
+              "status",
+              "reason",
+              "entries",
+              "waits",
+              "virtualExits",
+              "processed",
+              "skipped",
+              "startedAt",
+              "finishedAt",
+              "durationMs"
+            ]),
+            openPositions: positions.slice(0, 12).map(compactAuditPosition),
+            warnings: asArray(data.warnings || data.runtimeWarnings).slice(0, 8),
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        if (lower.includes("micro")) {
+          const rows = rankMicroRows(extractMicroRowsFromPayload(data), "currentMarket");
+          return compactClean({
+            ok: data.ok !== false,
+            counts: {
+              exactMicroMicroRows: rows.length,
+              tradeReady: rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length,
+              watch: rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length,
+              observeOnly: rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length,
+              blocked: rows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length,
+              passed: rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length,
+              observing: rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length,
+              rejected: rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length,
+              empiricalVeto: rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
+              policyBlocked: rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length
+            },
+            currentMarketPlaybook: pick(data.currentMarketPlaybook || {}, [
+              "status",
+              "fresh",
+              "answerType",
+              "currentMarketWeatherKey",
+              "bestTradeReady",
+              "bestWatch",
+              "bestObserveOnly"
+            ]),
+            topTradeReady: rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).slice(0, 8).map(compactAuditMicroRow),
+            topWatch: rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).slice(0, 5).map(compactAuditMicroRow),
+            topObserveOnly: rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).slice(0, 5).map(compactAuditMicroRow),
+            topBlockedOrVeto: rows
+              .filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED || runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO || runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED)
+              .slice(0, 8)
+              .map(compactAuditMicroRow),
+            warnings: asArray(data.warnings).slice(0, 8),
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        if (lower.includes("rotation")) {
+          const activeIds = extractActiveIdsFromPayload(data);
+          const availableRows = rankMicroRows([
+            ...(data.availableRows || []),
+            ...(data.availableMicroMicroRows || []),
+            ...(data.availableMicroMicroFamilies || [])
+          ], "currentMarket");
+
+          return compactClean({
+            ok: data.ok !== false,
+            activeMicroMicroFamilyIds: activeIds,
+            activeCount: activeIds.length,
+            availableCount: availableRows.length,
+            tradeReadyAvailableCount: availableRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length,
+            discordActivationSummary: data.discordActivationSummary || null,
+            topAvailableTradeReady: availableRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).slice(0, 8).map(compactAuditMicroRow),
+            warnings: asArray(data.warnings).slice(0, 8),
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        if (lower.includes("discord")) {
+          const logs = asArray(data.logs || data.items || data.data);
+          return compactClean({
+            ok: data.ok !== false,
+            count: logs.length,
+            lastLogAt: logs[0]?.ts || logs[0]?.createdAt || null,
+            entryLogs: logs.filter((row) => upper(row.type || row.event).includes("ENTRY")).length,
+            exitLogs: logs.filter((row) => upper(row.type || row.event).includes("EXIT")).length,
+            recentLogs: logs.slice(0, 20).map(compactAuditLog),
+            warnings: asArray(data.warnings).slice(0, 8),
+            error: data.error || data.reason || null
+          }) || {};
+        }
+
+        return compactClean({
+          ok: data.ok !== false,
+          error: data.error || data.reason || null
+        }) || {};
+      }
+
+      function apiAuditDefinitions() {
+        return [
+          { name: "Overview", url: overviewApiUrl() },
+          { name: "MarketWeather", url: marketApiUrl() },
+          { name: "Scanner", url: scannerApiUrl() },
+          { name: "TradeSystem", url: tradeApiUrl() },
+          { name: "Micro-Micro", url: microApiUrl() },
+          { name: "Manual Discord Selection", url: rotationApiUrl() },
+          { name: "Discord Logs", url: discordApiUrl(40) }
+        ];
+      }
+
+      async function fetchAuditEndpoint(definition) {
+        const startedAt = Date.now();
+        const timeout = timeoutSignal(26000);
+
+        try {
+          const response = await fetch(noCacheUrl(definition.url), {
+            method: "GET",
+            cache: "no-store",
+            headers: { accept: "application/json" },
+            signal: timeout.signal
+          });
+
+          const rawText = await response.text();
+          let body = {};
+          let parseError = "";
+
+          try {
+            body = rawText ? JSON.parse(rawText) : {};
+          } catch (error) {
+            body = { raw: rawText.slice(0, 2000) };
+            parseError = error?.message || String(error);
+          }
+
+          return {
+            name: definition.name,
+            url: definition.url,
+            ok: response.ok,
+            status: response.status,
+            elapsedMs: Date.now() - startedAt,
+            parseError,
+            important: compactEndpointImportant(definition.name, body),
+            body
+          };
+        } catch (error) {
+          return {
+            name: definition.name,
+            url: definition.url,
+            ok: false,
+            status: 0,
+            elapsedMs: Date.now() - startedAt,
+            error: error?.name === "AbortError" ? "REQUEST_ABORTED_TIMEOUT" : error?.message || String(error),
+            important: {
+              error: error?.name === "AbortError" ? "REQUEST_ABORTED_TIMEOUT" : error?.message || String(error)
+            },
+            body: null
+          };
+        } finally {
+          timeout.clear();
+        }
+      }
+
+      function buildAuditMessage(results = []) {
+        const endpointsStatus = {};
+        const importantByApi = {};
+
+        for (const result of results) {
+          endpointsStatus[result.name] = compactClean({
+            ok: result.ok,
+            status: result.status,
+            elapsedMs: result.elapsedMs,
+            error: result.error || result.important?.error || null,
+            parseError: result.parseError || null,
+            url: result.url
+          }) || {};
+
+          importantByApi[result.name] = result.important;
+        }
+
+        const audit = compactClean({
+          title: "SHORT_ADMIN_COMPACT_API_AUDIT",
+          generatedAt: new Date().toISOString(),
+          side: ONLY_SIDE,
+          dashboardSide: DASHBOARD_SIDE,
+          namespace: SHORT_NAMESPACE,
+          redisKeyPrefix: SHORT_KEY_PREFIX,
+          persistentLearningKey: PERSISTENT_LEARNING_KEY,
+          currentMarketWeather: currentMarketWeather(),
+          versions: identityVersions(),
+          featureFlags: featureFlagsObject(),
+          riskPolicy: riskPolicyObject(),
+          activationGate: activationGateObject(),
+          endpointStatus: endpointsStatus,
+          importantByApi,
+          auditNote: "Dit is bewust compact: alleen belangrijke API-stukken, geen volledige ruwe payloads."
+        }) || {};
+
+        return [
+          "SHORT ADMIN API AUDIT — PLAK DIT VOLLEDIG IN CHATGPT",
+          "Controleer of MarketWeather, micro-micro learning, policy/veto, risk en Discord selection correct staan.",
+          "",
+          JSON.stringify(audit, null, 2)
+        ].join("\n");
+      }
+
+      async function runCompactApiAudit() {
+        const output = $("allApisAuditOutput");
+        if (output) {
+          output.value = "API audit wordt opgehaald...\nDit kan 10-30 seconden duren.";
+        }
+
+        setMessage("Compact API-audit wordt opgehaald...", "warn");
+
+        const definitions = apiAuditDefinitions();
+        const results = await Promise.all(definitions.map(fetchAuditEndpoint));
+        const message = buildAuditMessage(results);
+
+        state.apiAudit = {
+          generatedAt: Date.now(),
+          results,
+          message
+        };
+
+        if (output) output.value = message;
+
+        const failed = results.filter((row) => !row.ok);
+        setMessage(
+          failed.length
+            ? `API audit klaar met ${failed.length} fout(en). Kopieer alsnog de output.`
+            : "API audit klaar. Kopieer de output en stuur die naar mij.",
+          failed.length ? "warn" : "ok"
+        );
+
+        return state.apiAudit;
+      }
+
+      async function runCompactApiAuditAndCopy() {
+        const audit = await runCompactApiAudit();
+        await copyText(audit?.message || "", "Compact API-audit gekopieerd.");
+      }
+
+      function safeJson(data) {
+        return JSON.stringify(data ?? null, null, 2);
       }
 
       async function renderOverview() {
         showLoading("overview");
 
-        const [overview, microData, rotationData, marketData] = await Promise.all([
-          safeApi(endpoints.overview, { ok: false }),
+        const [overview, microData, rotationData, marketData, tradeData, scannerData] = await Promise.all([
+          safeApi(overviewApiUrl(), { ok: false }),
           ensureMicrosLoaded(),
           safeApi(rotationApiUrl(), { ok: false, activeMicroMicroFamilyIds: [] }),
-          safeApi(marketApiUrl(), { ok: false })
+          safeApi(marketApiUrl(), { ok: false }),
+          safeApi(tradeApiUrl(), { ok: false, positions: [], openPositions: [] }),
+          safeApi(scannerApiUrl(), { ok: false, rows: [], candidates: [] })
         ]);
 
         state.overview = overview;
+        state.trade = tradeData;
+        state.scanner = scannerData;
         state.rotation = {
           ...(state.rotation || {}),
           ...rotationData,
@@ -2772,10 +3311,10 @@
         const empiricalVetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
         const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
         const top = rows[0] || null;
-        const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || null;
+        const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
 
-        const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData);
-        const compactJson = JSON.stringify(compact, null, 2);
+        const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData, tradeData, scannerData);
+        const compactJson = safeJson(compact);
 
         $("overview").innerHTML = `
           <div class="grid">
@@ -2853,6 +3392,21 @@
             </div>
           ` : ""}
 
+          <div class="card">
+            <h3>Alle belangrijke API-stukken in één kopieerbaar bericht</h3>
+            <p class="metric-extra">
+              Klik op “Maak compact API audit”. De UI haalt Overview, MarketWeather, Scanner, TradeSystem, Micro-Micro, Rotation en Discord Logs op.
+              De output bevat alleen kernvelden: status, counts, weather, playbook, top micro-micro rows, posities, selected IDs, veto/policy/risk.
+            </p>
+            <div class="toolbar">
+              <button type="button" class="primary" data-action="run-api-audit">Maak compact API audit</button>
+              <button type="button" class="success" data-action="run-api-audit-copy">Maak + Copy audit</button>
+              <button type="button" data-copy-target="allApisAuditOutput">Copy audit output</button>
+              <button type="button" data-select-target="allApisAuditOutput">Select audit output</button>
+            </div>
+            <textarea id="allApisAuditOutput" class="api-output-textarea audit-output-textarea" readonly>${escapeHtml(state.apiAudit?.message || "Klik op “Maak compact API audit”. Daarna kun je alles in één keer kopiëren en naar mij sturen.")}</textarea>
+          </div>
+
           <div class="grid-3">
             <div class="card">
               <h3>Feature flags</h3>
@@ -2871,9 +3425,10 @@
           </div>
 
           <div class="card">
+            <h3>Compact overview only</h3>
             <div class="toolbar">
-              <button type="button" class="primary" data-copy-target="overviewApiOutput">Copy compact output</button>
-              <button type="button" data-select-target="overviewApiOutput">Select output</button>
+              <button type="button" class="primary" data-copy-target="overviewApiOutput">Copy compact overview</button>
+              <button type="button" data-select-target="overviewApiOutput">Select overview</button>
               <button type="button" data-export-json="overview" data-filename="overview-short-mm-marketweather.json">Export JSON</button>
             </div>
             <textarea id="overviewApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactJson)}</textarea>
@@ -2890,44 +3445,7 @@
         const data = await safeApi(url, { ok: false });
         state.market = data;
 
-        const compact = {
-          ok: data.ok !== false,
-          side: ONLY_SIDE,
-          dashboardSide: DASHBOARD_SIDE,
-          apiRoute: "/api/admin/market-weather",
-          versions: identityVersions(),
-          featureFlags: featureFlagsObject(),
-          naming: {
-            allowed: [
-              "entryMarketWeatherKey",
-              "entryMarketWeatherKeyVersion",
-              "entryMarketWeatherRegime",
-              "entryMarketWeatherTrendSide",
-              "entryMarketWeatherCapturedAt",
-              "entryMarketWeatherRaw",
-              "entryMarketWeatherRawAvailableFields"
-            ],
-            forbidden: [
-              "entryMarketRegime",
-              "entryMarketKey"
-            ]
-          },
-          currentMarketWeather: currentMarketWeather(),
-          apiMarket: {
-            regime: data.currentRegime || data.regime || data.market?.regime || data.marketWeather?.currentRegime || "UNKNOWN",
-            trendSide: data.currentTrendSide || data.trendSide || data.market?.trendSide || data.marketWeather?.currentTrendSide || "UNKNOWN",
-            bullishPct: data.bullishPct ?? data.market?.bullishPct ?? data.marketWeather?.bullishPct ?? null,
-            bearishPct: data.bearishPct ?? data.market?.bearishPct ?? data.marketWeather?.bearishPct ?? null,
-            squeezePct: data.squeezePct ?? data.market?.squeezePct ?? data.marketWeather?.squeezePct ?? null,
-            confidence: data.confidence ?? data.market?.confidence ?? data.marketWeather?.confidence ?? null
-          },
-          unknownWeatherRule: {
-            signalType: SIGNAL_TYPE_OBSERVE_ONLY,
-            riskFractionForEntry: 0,
-            reason: "MARKET_WEATHER_UNKNOWN"
-          },
-          error: data.error || data.reason || null
-        };
+        const compact = compactEndpointImportant("MarketWeather", data);
 
         $("market").innerHTML = `
           <div class="section-title">
@@ -2971,38 +3489,20 @@
           <div class="grid">
             ${metricCard("Current key", currentMarketWeather().currentMarketWeatherKey)}
             ${metricCard("Key version", MARKET_WEATHER_KEY_VERSION)}
-            ${metricCard("Regime", compact.apiMarket.regime)}
-            ${metricCard("Trend side", compact.apiMarket.trendSide)}
-            ${metricCard("Bullish", compact.apiMarket.bullishPct === null ? "-" : `${fmt(compact.apiMarket.bullishPct, 2)}%`)}
-            ${metricCard("Bearish", compact.apiMarket.bearishPct === null ? "-" : `${fmt(compact.apiMarket.bearishPct, 2)}%`)}
-            ${metricCard("Squeeze", compact.apiMarket.squeezePct === null ? "-" : `${fmt(compact.apiMarket.squeezePct, 2)}%`)}
+            ${metricCard("Regime", compact.currentMarketWeatherRegime || "-")}
+            ${metricCard("Trend side", compact.currentMarketWeatherTrendSide || "-")}
+            ${metricCard("Known", compact.confirmedMarketWeatherKnown === false ? "NO" : "YES")}
+            ${metricCard("Fresh", compact.confirmedMarketWeatherFresh === false ? "NO" : "YES")}
+            ${metricCard("Playbook", compact.playbookStatus || "-")}
             ${metricCard("Capture", "LIVE")}
           </div>
 
           <div class="card">
-            <textarea id="marketJson" class="api-output-textarea" readonly>${escapeHtml(JSON.stringify(compact, null, 2))}</textarea>
+            <textarea id="marketJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
           </div>
         `;
 
-        $("market").dataset.exportPayload = JSON.stringify(compact, null, 2);
-      }
-
-      function baseSymbol(row = {}) {
-        const raw = row.symbol || row.baseSymbol || row.coin || row.contractSymbol || row.instId || "";
-        let symbol = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-        for (const suffix of ["USDTUMCBL", "USDCUMCBL", "USDTPERP", "USDCPERP", "USDT", "USDC", "BUSD", "PERP", "SWAP", "USD"]) {
-          if (symbol.endsWith(suffix) && symbol.length > suffix.length) {
-            symbol = symbol.slice(0, -suffix.length);
-            break;
-          }
-        }
-
-        return symbol || "COIN";
-      }
-
-      function shortRows(rows = []) {
-        return (Array.isArray(rows) ? rows : []).filter((row) => inferSide(row) !== OPPOSITE_SIDE);
+        $("market").dataset.exportPayload = safeJson(compact);
       }
 
       async function renderScanner() {
@@ -3012,35 +3512,8 @@
         const data = await safeApi(url, { ok: false, rows: [], candidates: [] }, { timeoutMs: 22000 });
         state.scanner = data;
 
-        const snapshot = data.snapshot || data.latest || data.latestSnapshot || {};
-        const candidates = shortRows(snapshot.candidates || data.candidates || data.rows || []);
-
-        const compact = {
-          ok: data.ok !== false,
-          side: ONLY_SIDE,
-          apiRoute: "/api/admin/scanner",
-          runRoute: "/api/scanner/run",
-          snapshotId: snapshot.snapshotId || data.snapshotId || null,
-          createdAt: snapshot.createdAt || data.createdAt || null,
-          ageText: ageText(snapshot.createdAt || data.createdAt),
-          currentMarketWeather: currentMarketWeather(),
-          featureFlags: featureFlagsObject(),
-          counts: {
-            rawCandidates: Array.isArray(snapshot.candidates || data.candidates || data.rows) ? (snapshot.candidates || data.candidates || data.rows).length : 0,
-            shortCandidates: candidates.length,
-            ignoredLong: data.ignoredLongCandidates || data.rawLongCandidatesIgnored || 0
-          },
-          policy: {
-            scannerWritesLearning: false,
-            scannerSendsDiscord: false,
-            scannerFingerprintRole: "METADATA_ONLY",
-            scannerFingerprintsUsedAsLearningFamily: false,
-            marketWeatherRawCanBeCapturedAtEntry: true
-          },
-          warnings: data.warnings || data.runtimeWarnings || [],
-          error: data.error || data.reason || null,
-          topCandidates: candidates.slice(0, 20)
-        };
+        const compact = compactEndpointImportant("Scanner", data);
+        const candidates = compact.topShortCandidates || [];
 
         $("scanner").innerHTML = `
           <div class="toolbar">
@@ -3054,35 +3527,34 @@
           <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
 
           <div class="grid">
-            ${metricCard("OK", data.ok !== false ? "YES" : "NO")}
+            ${metricCard("OK", compact.ok !== false ? "YES" : "NO")}
             ${metricCard("Snapshot", compact.snapshotId || "-")}
-            ${metricCard("Age", compact.ageText)}
-            ${metricCard("SHORT candidates", fmtInt(candidates.length))}
+            ${metricCard("Age", compact.ageText || "-")}
+            ${metricCard("SHORT candidates", fmtInt(compact.counts?.shortCandidates || 0))}
             ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
             ${metricCard("Scanner role", "METADATA")}
             ${metricCard("Learning", "NO")}
             ${metricCard("Discord", "NO")}
           </div>
 
-          ${table(candidates.slice(0, 60), [
-            { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
-            { label: "Contract", render: (row) => escapeHtml(row.contractSymbol || row.instId || `${baseSymbol(row)}USDT`) },
+          ${table(candidates, [
+            { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
-            { label: "MarketWeather", render: (row) => marketWeatherPill(row) },
-            { label: "Price", render: (row) => fmtPrice(row.price || row.currentPrice || row.markPrice) },
-            { label: "Score", render: (row) => fmt(row.scannerScore ?? row.moveScore ?? row.sniperScore, 2) },
-            { label: "1h", render: (row) => fmtRawPct(row.change1h || row.priceChange1h) },
-            { label: "24h", render: (row) => fmtRawPct(row.change24h || row.priceChange24h) },
-            { label: "Regime", render: (row) => escapeHtml(row.regime || row.currentRegime || "-") },
-            { label: "Reason", render: (row) => escapeHtml(row.scannerReason || row.reason || "-") }
+            { label: "MarketWeather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
+            { label: "Price", render: (row) => fmtPrice(row.price) },
+            { label: "Score", render: (row) => fmt(row.scannerScore, 2) },
+            { label: "1h", render: (row) => escapeHtml(row.change1h ?? "-") },
+            { label: "24h", render: (row) => escapeHtml(row.change24h ?? "-") },
+            { label: "Regime", render: (row) => escapeHtml(row.regime || "-") },
+            { label: "Reason", render: (row) => escapeHtml(row.reason || "-") }
           ], "Geen SHORT scanner candidates.")}
 
           <div class="card">
-            <textarea id="scannerJson" class="api-output-textarea" readonly>${escapeHtml(JSON.stringify(compact, null, 2))}</textarea>
+            <textarea id="scannerJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
           </div>
         `;
 
-        $("scanner").dataset.exportPayload = JSON.stringify(compact, null, 2);
+        $("scanner").dataset.exportPayload = safeJson(compact);
       }
 
       async function runScannerNow() {
@@ -3134,32 +3606,8 @@
         const data = await safeApi(url, { ok: false, positions: [], openPositions: [] }, { timeoutMs: 22000 });
         state.trade = data;
 
-        const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
-        const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
-
-        const compact = {
-          ok: data.ok !== false,
-          side: ONLY_SIDE,
-          apiRoute: "/api/admin/trade",
-          runRoute: "/api/trade/run",
-          versions: identityVersions(),
-          featureFlags: featureFlagsObject(),
-          risk: riskPolicyObject(),
-          currentMarketWeather: currentMarketWeather(),
-          counts: {
-            openVirtualShortPositions: positions.length,
-            cleanPositions: positions.filter((row) => cleanMeasurementScore(row) === 1).length,
-            legacyPositions: positions.filter((row) => cleanMeasurementScore(row) !== 1).length,
-            activeMicroMicroIds: activeMicroMicroIds().length
-          },
-          sync: {
-            scannerAndTradeInSync: Boolean(data.scannerAndTradeInSync),
-            lastProcessedSnapshotId: data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || null,
-            latestScannerSnapshotId: data.latestScannerSnapshotId || null
-          },
-          runMeta,
-          topPositions: positions.slice(0, 30)
-        };
+        const compact = compactEndpointImportant("TradeSystem", data);
+        const positions = compact.openPositions || [];
 
         $("trade").innerHTML = `
           <div class="toolbar">
@@ -3173,45 +3621,37 @@
           <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
 
           <div class="grid">
-            ${metricCard("Open virtual SHORT", fmtInt(positions.length))}
+            ${metricCard("Open virtual SHORT", fmtInt(compact.counts?.openVirtualShortPositions || 0))}
             ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
             ${metricCard("Capture", "LIVE")}
             ${metricCard("Risk source", "positionSizing.js")}
-            ${metricCard("Clean", fmtInt(compact.counts.cleanPositions))}
-            ${metricCard("Legacy", fmtInt(compact.counts.legacyPositions))}
-            ${metricCard("Scanner sync", data.scannerAndTradeInSync ? "YES" : "NO")}
+            ${metricCard("Clean", fmtInt(compact.counts?.cleanPositions || 0))}
+            ${metricCard("Legacy", fmtInt(compact.counts?.legacyPositions || 0))}
+            ${metricCard("Scanner sync", compact.sync?.scannerAndTradeInSync ? "YES" : "NO")}
             ${metricCard("Orders", "0", "exchange disabled")}
           </div>
 
           ${table(positions, [
-            { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
-            { label: "Source", render: () => '<span class="pill purple">VIRTUAL</span>' },
-            { label: "Runtime", render: (row) => runtimeStatusPill(row) },
-            { label: "Signal", render: (row) => signalTypePill(row) },
-            { label: "Weather", render: (row) => marketWeatherPill(row) },
-            { label: "Matched", render: (row) => `<span class="pill ${currentWeatherMatched(row) ? "active" : "raw"}">${currentWeatherMatched(row) ? "YES" : "NO"}</span>` },
-            { label: "Fresh", render: (row) => `<span class="pill ${playbookFresh(row) ? "active" : "warn"}">${playbookFresh(row) ? "YES" : "NO"}</span>` },
-            { label: "Veto", render: (row) => empiricalVeto(row) ? `<span class="pill veto">${escapeHtml(empiricalVetoReason(row))}</span>` : '<span class="pill active">NO</span>' },
-            { label: "Layer", render: (row) => microLayerPill(row) },
+            { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
+            { label: "Source", render: (row) => `<span class="pill purple">${escapeHtml(row.source || "VIRTUAL")}</span>` },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
-            { label: "Meetlat", render: (row) => measurementPill(row) },
-            { label: "Entry", render: (row) => fmtPrice(row.entry || row.entryPrice) },
-            { label: "SL", render: (row) => fmtPrice(row.sl || row.stopLoss || row.initialSl) },
-            { label: "TP", render: (row) => fmtPrice(row.tp || row.takeProfit) },
-            { label: "RR", render: (row) => fmt(row.rr, 2) },
-            { label: "CurrentR", render: (row) => fmt(row.currentR ?? row.shortCurrentR, 3) },
-            { label: "Risk", render: (row) => fmt(riskFractionForEntry(row), 6) },
-            { label: "CurrentFit", render: (row) => currentFitPill(row) },
-            { label: "Micro-micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_MM")}</code>` },
-            { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
+            { label: "Signal", render: (row) => `<span class="pill raw">${escapeHtml(row.signalType || "-")}</span>` },
+            { label: "Weather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
+            { label: "MM ID", render: (row) => `<code>${escapeHtml(row.microMicroFamilyId || "-")}</code>` },
+            { label: "Entry", render: (row) => fmtPrice(row.entry) },
+            { label: "SL", render: (row) => fmtPrice(row.sl) },
+            { label: "TP", render: (row) => fmtPrice(row.tp) },
+            { label: "CurrentR", render: (row) => fmt(row.currentR, 3) },
+            { label: "Risk", render: (row) => fmt(row.riskFractionForEntry, 6) },
+            { label: "Opened", render: (row) => fmtTs(row.openedAt) }
           ], "Geen open virtual SHORT posities.")}
 
           <div class="card">
-            <textarea id="tradeJson" class="api-output-textarea" readonly>${escapeHtml(JSON.stringify(compact, null, 2))}</textarea>
+            <textarea id="tradeJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
           </div>
         `;
 
-        $("trade").dataset.exportPayload = JSON.stringify(compact, null, 2);
+        $("trade").dataset.exportPayload = safeJson(compact);
       }
 
       async function runTradeNow() {
@@ -3337,8 +3777,8 @@
         }
 
         const rows = currentMicroRows();
+        const compact = compactEndpointImportant("Micro-Micro", state.micros || {});
         const top = rows[0] || null;
-        const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
         const tradeReadyRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length;
         const watchRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length;
         const observeRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length;
@@ -3348,7 +3788,6 @@
         const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
         const vetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
         const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
-        const playbook = state.micros?.currentMarketPlaybook || null;
 
         $("micros").innerHTML = `
           <div class="toolbar">
@@ -3361,6 +3800,7 @@
             <button type="button" class="success" data-action="copy-visible-ids">Copy visible MM IDs</button>
             <button type="button" class="success" data-action="activate-visible-ids">Activate visible TRADE_READY</button>
             <button type="button" class="primary" data-action="activate-top-two">Activate top 2 TRADE_READY</button>
+            <button type="button" data-copy-target="microsJson">Copy compact JSON</button>
             <button type="button" data-export-json="micros" data-filename="short-micro-micro-marketweather.json">Export JSON</button>
           </div>
 
@@ -3375,9 +3815,6 @@
               <span class="pill veto">EMPIRICAL_VETO</span>
               <span class="pill blocked">POLICY_BLOCKED</span>
               <span class="pill soft">selector observe</span>
-            </div>
-            <div class="metric-extra">
-              Standaard currentMarket toont bruikbare rows eerst. Diagnose-modus toont ook rejected/policy/veto expliciet.
             </div>
           </div>
 
@@ -3396,24 +3833,12 @@
             ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
             ${metricCard("REJECTED", fmtInt(rejectedRows), "geen veto")}
             ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "systeemregel")}
-            ${metricCard("Clean rows", fmtInt(cleanRows))}
             ${metricCard("Current key", currentMarketWeather().currentMarketWeatherKey)}
             ${metricCard("Selector", "OBSERVE")}
             ${metricCard("Sizing cap", "OBSERVE")}
             ${metricCard("FDR", "OBSERVE")}
+            ${metricCard("Real orders", "OFF")}
           </div>
-
-          ${playbook ? `
-            <div class="card">
-              <h3>Best for current market</h3>
-              <div class="toolbar">
-                <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || currentMarketWeather().currentMarketWeatherKey)}</span>
-                <span class="pill best">${escapeHtml(playbook.answerType || "BEST_AVAILABLE")}</span>
-                <span class="pill observe">hard-live off</span>
-              </div>
-              ${playbook.bestForCurrentMarket || playbook.selected ? microTable([playbook.bestForCurrentMarket || playbook.selected], "Geen playbook selectie.") : '<div class="empty">Geen playbook selectie.</div>'}
-            </div>
-          ` : ""}
 
           ${top ? `
             <div class="card">
@@ -3442,8 +3867,6 @@
                 ${metricCard("Risk", fmt(riskFractionForEntry(top), 6))}
                 ${metricCard("Why", whyBlocked(top) || whySelected(top))}
               </div>
-              <p class="metric-extra">75-child context: <code>${escapeHtml(base75MicroId(top))}</code></p>
-              <p class="metric-extra">Parent 15 context: <code>${escapeHtml(parentMicroId(top))}</code></p>
               <div class="toolbar">
                 <button type="button" class="short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(top))}" ${discordActivationEligible(top) ? "" : "disabled"}>Zet als #1</button>
                 <button type="button" class="short-action" data-activate-slot="2" data-activate-id="${escapeAttr(microId(top))}" ${discordActivationEligible(top) ? "" : "disabled"}>Zet als #2</button>
@@ -3455,41 +3878,12 @@
           ${microTable(rows.slice(0, state.bestLimit))}
 
           <div class="card">
-            <h3>Micro API status</h3>
-            ${jsonBlock({
-              ok: state.micros?.ok,
-              uiMode: state.microMode,
-              backendMode: backendMicroMode(),
-              currentMarketWeather: currentMarketWeather(),
-              rowsRendered: rows.length,
-              rawExtractedRows: state.micros?.rawExtractedRows || 0,
-              runtimeStatusCounts: {
-                PASSED: passedRows,
-                OBSERVING: observingRows,
-                REJECTED: rejectedRows,
-                EMPIRICAL_VETO: vetoRows,
-                POLICY_BLOCKED: policyBlockedRows
-              },
-              signalTypeCounts: {
-                TRADE_READY: tradeReadyRows,
-                WATCH_ONLY: watchRows,
-                OBSERVE_ONLY: observeRows,
-                BLOCKED: blockedRows
-              },
-              currentMarketPlaybook: state.micros?.currentMarketPlaybook || null,
-              discordActivationSummary: state.micros?.discordActivationSummary || null,
-              versions: identityVersions(),
-              featureFlags: featureFlagsObject(),
-              activationGate: activationGateObject(),
-              riskPolicy: riskPolicyObject(),
-              warnings: state.micros?.warnings || [],
-              error: state.micros?.error || null,
-              data: state.micros?.data || null
-            })}
+            <h3>Micro API compact output</h3>
+            <textarea id="microsJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
           </div>
         `;
 
-        $("micros").dataset.exportPayload = JSON.stringify(state.micros || {}, null, 2);
+        $("micros").dataset.exportPayload = safeJson(compact);
 
         $("microMode")?.addEventListener("change", (event) => {
           state.microMode = event.target.value;
@@ -3753,21 +4147,7 @@
         ], "currentMarket");
 
         const tradeReadyAvailable = availableRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY);
-
-        const compact = {
-          ok: data.ok !== false,
-          activeMicroMicroFamilyIds: activeIds,
-          activeCount: activeIds.length,
-          availableCount: availableRows.length,
-          tradeReadyAvailableCount: tradeReadyAvailable.length,
-          currentMarketWeather: currentMarketWeather(),
-          discordActivationSummary: data.discordActivationSummary || null,
-          activationGate: activationGateObject(),
-          featureFlags: featureFlagsObject(),
-          selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
-          warnings: data.warnings || [],
-          error: data.error || data.reason || null
-        };
+        const compact = compactEndpointImportant("Manual Discord Selection", data);
 
         $("rotation").innerHTML = `
           <div class="section-title">
@@ -3801,6 +4181,7 @@
               <button type="button" class="primary" data-action="activate-top-two">Select top 2 TRADE_READY</button>
               <button type="button" data-action="clear-manual-input">Clear input</button>
               <button type="button" data-copy-value="${escapeAttr(JSON.stringify(activeIds, null, 2))}">Copy active IDs</button>
+              <button type="button" data-copy-target="rotationJson">Copy compact JSON</button>
               <button type="button" data-export-json="rotation" data-filename="manual-discord-selection-short-mm-marketweather.json">Export JSON</button>
             </div>
           </div>
@@ -3824,25 +4205,23 @@
           ${microTable(availableRows.slice(0, 160), "Geen available micro-micro rows.")}
 
           <div class="card">
-            <h3>Rotation output</h3>
-            <textarea id="rotationJson" class="api-output-textarea" readonly>${escapeHtml(JSON.stringify(compact, null, 2))}</textarea>
+            <h3>Rotation compact output</h3>
+            <textarea id="rotationJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
           </div>
         `;
 
-        $("rotation").dataset.exportPayload = JSON.stringify(data || {}, null, 2);
+        $("rotation").dataset.exportPayload = safeJson(compact);
       }
 
       async function renderDiscord() {
         showLoading("discord");
 
-        const params = commonParams();
-        params.set("limit", "80");
-
-        const url = `${endpoints.discord}?${params.toString()}`;
+        const url = discordApiUrl(80);
         const data = await safeApi(url, { ok: false, logs: [] }, { timeoutMs: 18000 });
         state.discord = data;
 
-        const logs = asArray(data.logs || data.items || data.data);
+        const compact = compactEndpointImportant("Discord Logs", data);
+        const logs = compact.recentLogs || [];
 
         $("discord").innerHTML = `
           <div class="toolbar">
@@ -3853,10 +4232,10 @@
           </div>
 
           <div class="grid">
-            ${metricCard("Logs", fmtInt(logs.length))}
-            ${metricCard("Last log", fmtTs(logs[0]?.ts || logs[0]?.createdAt))}
-            ${metricCard("Entry logs", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("ENTRY")).length))}
-            ${metricCard("Exit logs", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("EXIT")).length))}
+            ${metricCard("Logs", fmtInt(compact.count || 0))}
+            ${metricCard("Last log", fmtTs(compact.lastLogAt))}
+            ${metricCard("Entry logs", fmtInt(compact.entryLogs || 0))}
+            ${metricCard("Exit logs", fmtInt(compact.exitLogs || 0))}
             ${metricCard("Match mode", "EXACT MM")}
             ${metricCard("Runtime gate", "TRADE_READY")}
             ${metricCard("Empirical veto", "BLOCK")}
@@ -3864,30 +4243,23 @@
           </div>
 
           ${table(logs, [
-            { label: "TS", render: (row) => fmtTs(row.ts || row.createdAt) },
-            { label: "Type", render: (row) => escapeHtml(row.type || row.level || row.event || "-") },
-            { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row.payload || row)) },
+            { label: "TS", render: (row) => fmtTs(row.ts) },
+            { label: "Type", render: (row) => escapeHtml(row.type || "-") },
+            { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
             { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
-            { label: "Runtime", render: (row) => runtimeStatusPill(row.payload || row) },
-            { label: "Signal", render: (row) => signalTypePill(row.payload || row) },
-            { label: "Weather", render: (row) => marketWeatherPill(row.payload || row) },
-            { label: "Veto", render: (row) => empiricalVeto(row.payload || row) ? '<span class="pill veto">YES</span>' : '<span class="pill active">NO</span>' },
-            { label: "MM ID", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
-            { label: "Selected", render: (row) => {
-              const payload = row.payload || row;
-              const selected = payload.selectedMicroMicroFamilyAlert || payload.discordAlertEligible || payload.selectedForDiscord || row.selectedOnly;
-              return `<span class="pill ${selected ? "active" : ""}">${selected ? "YES" : "NO"}</span>`;
-            }},
-            { label: "CurrentFit", render: (row) => currentFitPill(row.payload || row) },
-            { label: "Message", render: (row) => escapeHtml(row.message || row.content || row.result || row.reason || "") }
+            { label: "Signal", render: (row) => escapeHtml(row.signalType || "-") },
+            { label: "Weather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
+            { label: "MM ID", render: (row) => `<code>${escapeHtml(row.microMicroFamilyId || "-")}</code>` },
+            { label: "Selected", render: (row) => `<span class="pill ${row.selected ? "active" : ""}">${row.selected ? "YES" : "NO"}</span>` },
+            { label: "Message", render: (row) => escapeHtml(row.message || "") }
           ], "Geen Discord logs.")}
 
           <div class="card">
-            <textarea id="discordJson" class="api-output-textarea" readonly>${escapeHtml(JSON.stringify(data, null, 2))}</textarea>
+            <textarea id="discordJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
           </div>
         `;
 
-        $("discord").dataset.exportPayload = JSON.stringify(data || {}, null, 2);
+        $("discord").dataset.exportPayload = safeJson(compact);
       }
 
       function resetPayload(confirmText, extra = {}) {
@@ -4316,6 +4688,16 @@
           if (target.dataset.activateSlot) {
             const ids = buildManualSelectionForSlot(Number(target.dataset.activateSlot || 1), target.dataset.activateId || "");
             await activateSelectedMicroFamilies(ids);
+            return;
+          }
+
+          if (action === "run-api-audit") {
+            await runCompactApiAudit();
+            return;
+          }
+
+          if (action === "run-api-audit-copy") {
+            await runCompactApiAuditAndCopy();
             return;
           }
 
