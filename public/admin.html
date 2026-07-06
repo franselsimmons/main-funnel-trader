@@ -1,3 +1,4 @@
+<!-- ================= FILE: public/admin.html ================= -->
 <!doctype html>
 <html lang="nl">
 <head>
@@ -357,7 +358,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 1300px;
+      min-width: 1320px;
       background: white;
     }
 
@@ -455,7 +456,7 @@
     }
 
     .reason-cell {
-      max-width: 500px;
+      max-width: 520px;
       white-space: normal;
       word-break: break-word;
       line-height: 1.4;
@@ -535,7 +536,7 @@
         <div>
           <strong>SHORT Micro-Micro MarketWeather Admin</strong>
           <div class="brand-subtitle">
-            Exact micro-micro learning · MarketWeather capture live · selector/sizing/FDR observe · compact API-audit voor controle.
+            Exact micro-micro learning · MarketWeather live capture · selector/sizing/FDR observe · UNKNOWN override geblokkeerd.
           </div>
         </div>
       </div>
@@ -600,8 +601,8 @@
 
       const EMPIRICAL_VETO_VERSION = "SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V1";
 
-      const MICRO_MICRO_RUNTIME_GATE_VERSION = "SHORT_MM_RUNTIME_GATE_OBSERVING_PASSED_REJECTED_EMPIRICAL_VETO_POLICY_BLOCKED_V4_FRONTEND";
-      const MICRO_MICRO_BEST_SELECTOR_VERSION = "SHORT_MM_BEST_SELECTOR_CURRENT_MARKET_WEATHER_NET_EDGE_V4_FRONTEND";
+      const MICRO_MICRO_RUNTIME_GATE_VERSION = "SHORT_MM_RUNTIME_GATE_OBSERVING_PASSED_REJECTED_EMPIRICAL_VETO_POLICY_BLOCKED_V5_FRONTEND_UNKNOWN_OVERRIDE_SAFE";
+      const MICRO_MICRO_BEST_SELECTOR_VERSION = "SHORT_MM_BEST_SELECTOR_CURRENT_MARKET_WEATHER_NET_EDGE_V5_FRONTEND";
 
       const MICRO_MICRO_STATUS_OBSERVING = "OBSERVING";
       const MICRO_MICRO_STATUS_PASSED = "PASSED";
@@ -635,8 +636,8 @@
       const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1";
       const OBSERVATION_DEDUPE_VERSION = "SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2";
       const OUTCOME_DEDUPE_VERSION = "SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V6_WEATHER_AWARE";
-      const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_FRONTEND_V2";
-      const DISCORD_ACTIVATION_GATE_VERSION = "SHORT_MM_DISCORD_ACTIVATION_GATE_EMPIRICAL_VETO_RISK_ZERO_V5_FRONTEND";
+      const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_FRONTEND_V3_UNKNOWN_SAFE";
+      const DISCORD_ACTIVATION_GATE_VERSION = "SHORT_MM_DISCORD_ACTIVATION_GATE_EMPIRICAL_VETO_RISK_ZERO_V6_FRONTEND";
 
       const MICRO_SHORT_PREFIX = "MICRO_SHORT_";
       const MM_SHORT_PREFIX = "MM_SHORT_";
@@ -700,7 +701,8 @@
         bestLimit: 220,
         currentMarketWeatherRegime: "",
         currentMarketWeatherTrendSide: "",
-        currentMarketWeatherKey: ""
+        currentMarketWeatherKey: "",
+        lastKnownMarketWeather: null
       };
 
       const $ = (id) => document.getElementById(id);
@@ -738,11 +740,20 @@
         return Number.isFinite(n) ? n : fallback;
       }
 
+      function firstValue(...values) {
+        for (const value of values) {
+          if (value !== undefined && value !== null && value !== "") return value;
+        }
+
+        return null;
+      }
+
       function firstFinite(...values) {
         for (const value of values) {
           const n = Number(value);
           if (Number.isFinite(n)) return n;
         }
+
         return null;
       }
 
@@ -776,12 +787,6 @@
         return `${(n * 100).toFixed(1)}%`;
       }
 
-      function fmtRawPct(value) {
-        const n = Number(value);
-        if (!Number.isFinite(n)) return "-";
-        return `${n.toFixed(2)}%`;
-      }
-
       function fmtPrice(value) {
         const n = Number(value);
         if (!Number.isFinite(n)) return "-";
@@ -807,10 +812,13 @@
       function ageText(ts) {
         const n = Number(ts);
         if (!Number.isFinite(n) || n <= 0) return "-";
+
         const seconds = Math.max(0, Math.floor((Date.now() - n) / 1000));
+
         if (seconds < 60) return `${seconds}s geleden`;
         if (seconds < 3600) return `${Math.floor(seconds / 60)}m geleden`;
         if (seconds < 86400) return `${Math.floor(seconds / 3600)}u geleden`;
+
         return `${Math.floor(seconds / 86400)}d geleden`;
       }
 
@@ -839,6 +847,7 @@
       function showLoading(tabId, label = "Laden...") {
         const el = $(tabId);
         if (!el) return;
+
         el.innerHTML = `
           <div class="card">
             <h3>${escapeHtml(label)}</h3>
@@ -850,11 +859,13 @@
       function flattenValues(values = []) {
         const stack = Array.isArray(values) ? [...values] : [values];
         const out = [];
+
         while (stack.length) {
           const value = stack.shift();
           if (Array.isArray(value)) stack.unshift(...value);
           else out.push(value);
         }
+
         return out;
       }
 
@@ -864,6 +875,7 @@
 
         for (const value of flattenValues(values)) {
           const parts = typeof value === "string" ? value.split(/[\s,;\n\r]+/g) : [value];
+
           for (const part of parts) {
             const clean = String(part || "").trim().toUpperCase();
             if (!clean || seen.has(clean)) continue;
@@ -886,6 +898,7 @@
         if (!text) return "";
 
         let hash = 2166136261;
+
         for (let i = 0; i < text.length; i += 1) {
           hash ^= text.charCodeAt(i);
           hash = Math.imul(hash, 16777619);
@@ -893,6 +906,7 @@
 
         const hex = (hash >>> 0).toString(16).toUpperCase().padStart(8, "0");
         const tail = String(text.length).toString(16).toUpperCase().padStart(2, "0");
+
         return `${hex}${tail}`.slice(0, MICRO_MICRO_HASH_LEN);
       }
 
@@ -903,6 +917,7 @@
 
       function isScannerFingerprintId(id = "") {
         const value = upper(id);
+
         return (
           value.startsWith("MICRO_SHORT_SCANNER__") ||
           value.includes("MICRO_SHORT_SCANNER__") ||
@@ -947,6 +962,7 @@
 
         for (const setup of SETUPS) {
           const setupPrefix = `${setup}_`;
+
           if (!cleanBody.startsWith(setupPrefix)) continue;
 
           const afterSetup = cleanBody.slice(setupPrefix.length);
@@ -957,6 +973,7 @@
             }
 
             const regimePrefix = `${regime}_`;
+
             if (!afterSetup.startsWith(regimePrefix)) continue;
 
             const afterRegime = afterSetup.slice(regimePrefix.length);
@@ -967,6 +984,7 @@
               }
 
               const profilePrefix = `${profile}_`;
+
               if (afterRegime.startsWith(profilePrefix)) {
                 return {
                   ok: true,
@@ -1002,7 +1020,9 @@
           explicitMicroMicro = true;
         } else if (value.startsWith(MICRO_SHORT_PREFIX)) {
           body = value.slice(MICRO_SHORT_PREFIX.length);
+
           const markerIndex = body.lastIndexOf(MICRO_MICRO_MARKER);
+
           if (markerIndex > -1) {
             explicitMicroMicro = true;
             canonicalMicroMicroSyntax = true;
@@ -1014,8 +1034,8 @@
         }
 
         const parsed = parseBodySetupRegimeConfirmation(body);
-        if (!parsed.ok) return null;
 
+        if (!parsed.ok) return null;
         if (explicitMicroMicro && !context && parsed.rest) context = parsed.rest;
 
         const parentTrueMicroFamilyId = `MICRO_SHORT_${parsed.setup}_${parsed.regime}`;
@@ -1095,8 +1115,10 @@
 
       function normalizeSide(value) {
         const raw = upper(value);
+
         if (["SHORT", "BEAR", "BEARISH", "SELL", "DOWN", "DOWNSIDE"].includes(raw)) return ONLY_SIDE;
         if (["LONG", "BULL", "BULLISH", "BUY", "UP", "UPSIDE"].includes(raw)) return OPPOSITE_SIDE;
+
         return "UNKNOWN";
       }
 
@@ -1106,9 +1128,9 @@
           if (direct !== "UNKNOWN") return direct;
 
           const raw = upper(input);
+
           if (raw.includes("MICRO_LONG_") || raw.includes("MM_LONG_")) return OPPOSITE_SIDE;
           if (parseShortTaxonomyId(input)?.valid || raw.includes("MICRO_SHORT_") || raw.includes("MM_SHORT_")) return ONLY_SIDE;
-
           if (raw.includes("LONG") || raw.includes("BULL") || raw.includes("BUY")) return OPPOSITE_SIDE;
           if (raw.includes("SHORT") || raw.includes("BEAR") || raw.includes("SELL")) return ONLY_SIDE;
 
@@ -1154,6 +1176,7 @@
         ].filter(Boolean).join(" | ");
 
         const text = upper(haystack);
+
         if (text.includes("MICRO_LONG_") || text.includes("MM_LONG_")) return OPPOSITE_SIDE;
         if (text.includes("MICRO_SHORT_") || text.includes("MM_SHORT_")) return ONLY_SIDE;
 
@@ -1193,6 +1216,7 @@
 
       function base75MicroId(row = {}) {
         const id = microId(row);
+
         return upper(
           row.base75ChildTrueMicroFamilyId ||
           row.childTrueMicroFamilyId ||
@@ -1205,6 +1229,7 @@
 
       function parentMicroId(row = {}) {
         const id = microId(row);
+
         return upper(
           row.parentTrueMicroFamilyId ||
           row.parentMicroFamilyId ||
@@ -1220,7 +1245,12 @@
 
       function rowIsExactShortMicroMicro(row = {}) {
         const id = microId(row);
-        return Boolean(id && isMicroMicroId(id) && inferSide({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id }) !== OPPOSITE_SIDE);
+
+        return Boolean(
+          id &&
+          isMicroMicroId(id) &&
+          inferSide({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id }) !== OPPOSITE_SIDE
+        );
       }
 
       function completed(row = {}) {
@@ -1242,15 +1272,19 @@
 
       function netTotalR(row = {}) {
         const total = row.totalR ?? row.netTotalR ?? row.totalNetR ?? row.shortNetTotalR ?? row.netShortTotalR;
+
         if (Number.isFinite(Number(total))) return Number(total);
+
         return num(row.avgR ?? row.avgNetR ?? row.netAvgR, 0) * completed(row);
       }
 
       function netAvgR(row = {}) {
         const done = completed(row);
+
         if (Number.isFinite(Number(row.avgR))) return Number(row.avgR);
         if (Number.isFinite(Number(row.avgNetR))) return Number(row.avgNetR);
         if (Number.isFinite(Number(row.netAvgR))) return Number(row.netAvgR);
+
         return done > 0 ? netTotalR(row) / done : 0;
       }
 
@@ -1270,6 +1304,7 @@
         if (direct !== null) return direct;
 
         const done = completed(row);
+
         if (done <= 1) return null;
 
         return netAvgR(row) - 1.96 * (1 / Math.sqrt(done));
@@ -1282,6 +1317,7 @@
           row.marketShrunkAvgR,
           row.currentMarketCandidate?.shrunkAvgR
         );
+
         return direct ?? netAvgR(row);
       }
 
@@ -1303,16 +1339,21 @@
       function avgCostR(row = {}) {
         if (Number.isFinite(Number(row.avgCostR))) return Math.max(0, Number(row.avgCostR));
         if (Number.isFinite(Number(row.costR))) return Math.max(0, Number(row.costR));
+
         const done = completed(row);
         const total = num(row.totalCostR ?? row.virtualTotalCostR, 0) + num(row.shadowTotalCostR, 0);
+
         return done > 0 ? Math.max(0, total / done) : 0;
       }
 
       function directSLPct(row = {}) {
         const raw = row.directSLPct ?? row.directToSLPct;
+
         if (Number.isFinite(Number(raw))) return Math.max(0, normalizePctFraction(raw, 0));
+
         const done = completed(row);
         const count = num(row.directSLCount, 0) + num(row.virtualDirectSLCount, 0) + num(row.shadowDirectSLCount, 0);
+
         return done > 0 ? clamp(count / done, 0, 1) : 0;
       }
 
@@ -1320,6 +1361,7 @@
         if (Number.isFinite(Number(row.netProfitFactor))) return Number(row.netProfitFactor);
         if (Number.isFinite(Number(row.profitFactor))) return Number(row.profitFactor);
         if (Number.isFinite(Number(row.pf))) return Number(row.pf);
+
         return 0;
       }
 
@@ -1338,8 +1380,11 @@
 
       function sampleReliability(row = {}) {
         const direct = Number(row.sampleReliability);
+
         if (Number.isFinite(direct)) return direct;
+
         const done = completed(row);
+
         return done > 0 ? clamp(Math.sqrt(Math.min(done, 50) / 50), 0, 1) : 0;
       }
 
@@ -1356,30 +1401,36 @@
           row.currentMarketFitScore,
           row.fitScore
         );
+
         return direct === null ? 0 : direct;
       }
 
       function currentFit(row = {}) {
         const raw = upper(row.currentFitLabel || row.currentFit || row.fitLabel || row.marketFit || "");
+
         if (["FIT", "MATCH", "GOOD", "ALIGNED", "STRONG_MATCH"].includes(raw)) return "FIT";
         if (["OK", "WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH"].includes(raw)) return "OK";
         if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(raw)) return "MISFIT";
         if (["NEUTRAL", "MIXED"].includes(raw)) return "NEUTRAL";
 
         const score = currentFitScore(row);
+
         if (score >= 45) return "FIT";
         if (score >= 20) return "OK";
         if (score <= -20) return "MISFIT";
+
         return score === 0 ? "UNKNOWN" : "NEUTRAL";
       }
 
       function currentFitPill(row = {}) {
         const fit = currentFit(row);
         const score = currentFitScore(row);
+
         if (fit === "FIT") return `<span class="pill fit">FIT ${escapeHtml(fmt(score, 0))}</span>`;
         if (fit === "OK") return `<span class="pill soft">OK ${escapeHtml(fmt(score, 0))}</span>`;
         if (fit === "MISFIT") return `<span class="pill misfit">MISFIT SOFT ${escapeHtml(fmt(score, 0))}</span>`;
         if (fit === "NEUTRAL") return `<span class="pill neutral">NEUTRAL ${escapeHtml(fmt(score, 0))}</span>`;
+
         return '<span class="pill raw">UNKNOWN</span>';
       }
 
@@ -1425,17 +1476,21 @@
 
       function normalizeMarketWeatherRegime(value = "") {
         const raw = upper(value);
+
         if (raw.includes("SQUEEZE") || raw.includes("COMPRESS") || raw.includes("COIL") || raw.includes("LOW_VOL")) return "SQUEEZE";
         if (raw.includes("CHOP") || raw.includes("RANGE") || raw.includes("SIDEWAYS") || raw.includes("MIXED")) return "CHOP";
         if (raw.includes("TREND") || raw.includes("FLOW") || raw.includes("MOMENTUM") || raw.includes("DIRECTION")) return "TREND";
+
         return raw || "UNKNOWN";
       }
 
       function normalizeMarketWeatherTrendSide(value = "") {
         const raw = upper(value);
+
         if (raw.includes("BEAR") || raw.includes("SHORT") || raw.includes("SELL") || raw.includes("DOWN") || raw.includes("RISK_OFF")) return "BEARISH";
         if (raw.includes("BULL") || raw.includes("LONG") || raw.includes("BUY") || raw.includes("UP") || raw.includes("RISK_ON")) return "BULLISH";
         if (raw.includes("NEUTRAL") || raw.includes("MIXED") || raw.includes("FLAT")) return "NEUTRAL";
+
         return raw || "UNKNOWN";
       }
 
@@ -1445,6 +1500,7 @@
 
       function parseWeatherKey(key = "") {
         const raw = upper(key);
+
         if (!raw.includes("|")) {
           return {
             key: "UNKNOWN|UNKNOWN",
@@ -1455,7 +1511,6 @@
         }
 
         const [regimeRaw, trendRaw] = raw.split("|");
-
         const regime = normalizeMarketWeatherRegime(regimeRaw);
         const trendSide = normalizeMarketWeatherTrendSide(trendRaw);
         const normalizedKey = `${regime}|${trendSide}`;
@@ -1468,37 +1523,218 @@
         };
       }
 
-      function currentMarketWeather() {
-        const explicitKey = upper(state.currentMarketWeatherKey);
+      function hasManualMarketWeatherOverride() {
+        return Boolean(
+          String(state.currentMarketWeatherKey || "").trim() ||
+          String(state.currentMarketWeatherRegime || "").trim() ||
+          String(state.currentMarketWeatherTrendSide || "").trim()
+        );
+      }
 
-        if (explicitKey && explicitKey.includes("|")) {
-          const parsed = parseWeatherKey(explicitKey);
-          return {
-            confirmedMarketWeatherKey: parsed.key,
-            currentMarketWeatherKey: parsed.key,
-            currentMarketWeatherRegime: parsed.regime,
-            currentMarketWeatherTrendSide: parsed.trendSide,
-            currentMarketWeatherKnown: parsed.known
+      function knownWeatherFromPayload(data = {}) {
+        const source = data.currentMarketWeather || data.marketWeather || data.weather || data.latest || data.snapshot || data || {};
+
+        const directKey = firstValue(
+          source.confirmedMarketWeatherKey,
+          source.currentMarketWeatherKey,
+          source.entryMarketWeatherKey,
+          source.marketWeatherKey,
+          data.confirmedMarketWeatherKey,
+          data.currentMarketWeatherKey,
+          data.entryMarketWeatherKey,
+          data.marketWeatherKey
+        );
+
+        if (directKey) {
+          const parsed = parseWeatherKey(directKey);
+
+          if (parsed.known) {
+            return {
+              confirmedMarketWeatherKey: parsed.key,
+              currentMarketWeatherKey: parsed.key,
+              currentMarketWeatherRegime: parsed.regime,
+              currentMarketWeatherTrendSide: parsed.trendSide,
+              currentMarketWeatherKnown: true
+            };
+          }
+        }
+
+        const regime = normalizeMarketWeatherRegime(firstValue(
+          source.currentMarketWeatherRegime,
+          source.confirmedMarketWeatherRegime,
+          source.entryMarketWeatherRegime,
+          source.marketWeatherRegime,
+          source.currentRegime,
+          source.regime,
+          source.marketRegime,
+          data.currentMarketWeatherRegime,
+          data.confirmedMarketWeatherRegime,
+          data.entryMarketWeatherRegime,
+          data.marketWeatherRegime,
+          data.currentRegime,
+          data.regime
+        ));
+
+        const trendSide = normalizeMarketWeatherTrendSide(firstValue(
+          source.currentMarketWeatherTrendSide,
+          source.confirmedMarketWeatherTrendSide,
+          source.entryMarketWeatherTrendSide,
+          source.marketWeatherTrendSide,
+          source.currentTrendSide,
+          source.trendSide,
+          source.marketTrendSide,
+          source.marketSide,
+          source.side,
+          source.direction,
+          data.currentMarketWeatherTrendSide,
+          data.confirmedMarketWeatherTrendSide,
+          data.entryMarketWeatherTrendSide,
+          data.marketWeatherTrendSide,
+          data.currentTrendSide,
+          data.trendSide,
+          data.marketSide
+        ));
+
+        const parsed = parseWeatherKey(buildMarketWeatherKey(regime, trendSide));
+
+        return {
+          confirmedMarketWeatherKey: parsed.known ? parsed.key : "UNKNOWN|UNKNOWN",
+          currentMarketWeatherKey: parsed.key,
+          currentMarketWeatherRegime: parsed.regime,
+          currentMarketWeatherTrendSide: parsed.trendSide,
+          currentMarketWeatherKnown: parsed.known
+        };
+      }
+
+      function rememberMarketWeatherFromPayload(data = {}) {
+        const mw = knownWeatherFromPayload(data);
+
+        if (mw.currentMarketWeatherKnown) {
+          state.lastKnownMarketWeather = {
+            ...mw,
+            rememberedAt: Date.now()
           };
         }
 
-        const regime = normalizeMarketWeatherRegime(state.currentMarketWeatherRegime);
-        const trendSide = normalizeMarketWeatherTrendSide(state.currentMarketWeatherTrendSide);
-        const key = buildMarketWeatherKey(regime, trendSide);
+        return mw;
+      }
+
+      function currentMarketWeather() {
+        if (hasManualMarketWeatherOverride()) {
+          const explicitKey = upper(state.currentMarketWeatherKey);
+
+          if (explicitKey && explicitKey.includes("|")) {
+            const parsed = parseWeatherKey(explicitKey);
+
+            return {
+              confirmedMarketWeatherKey: parsed.known ? parsed.key : "UNKNOWN|UNKNOWN",
+              currentMarketWeatherKey: parsed.key,
+              currentMarketWeatherRegime: parsed.regime,
+              currentMarketWeatherTrendSide: parsed.trendSide,
+              currentMarketWeatherKnown: parsed.known,
+              source: "manual"
+            };
+          }
+
+          const regime = normalizeMarketWeatherRegime(state.currentMarketWeatherRegime);
+          const trendSide = normalizeMarketWeatherTrendSide(state.currentMarketWeatherTrendSide);
+          const parsed = parseWeatherKey(buildMarketWeatherKey(regime, trendSide));
+
+          return {
+            confirmedMarketWeatherKey: parsed.known ? parsed.key : "UNKNOWN|UNKNOWN",
+            currentMarketWeatherKey: parsed.key,
+            currentMarketWeatherRegime: parsed.regime,
+            currentMarketWeatherTrendSide: parsed.trendSide,
+            currentMarketWeatherKnown: parsed.known,
+            source: "manual"
+          };
+        }
+
+        if (state.lastKnownMarketWeather?.currentMarketWeatherKnown) {
+          return {
+            ...state.lastKnownMarketWeather,
+            source: "backend-remembered"
+          };
+        }
+
+        const fromMarket = knownWeatherFromPayload(state.market || {});
+
+        if (fromMarket.currentMarketWeatherKnown) {
+          return {
+            ...fromMarket,
+            source: "market-api"
+          };
+        }
+
+        const fromOverview = knownWeatherFromPayload(state.overview || {});
+
+        if (fromOverview.currentMarketWeatherKnown) {
+          return {
+            ...fromOverview,
+            source: "overview-api"
+          };
+        }
 
         return {
-          confirmedMarketWeatherKey: key,
-          currentMarketWeatherKey: key,
-          currentMarketWeatherRegime: regime,
-          currentMarketWeatherTrendSide: trendSide,
-          currentMarketWeatherKnown: regime !== "UNKNOWN" && trendSide !== "UNKNOWN"
+          confirmedMarketWeatherKey: "UNKNOWN|UNKNOWN",
+          currentMarketWeatherKey: "UNKNOWN|UNKNOWN",
+          currentMarketWeatherRegime: "UNKNOWN",
+          currentMarketWeatherTrendSide: "UNKNOWN",
+          currentMarketWeatherKnown: false,
+          source: "unknown"
+        };
+      }
+
+      function currentWeatherKnown() {
+        return currentMarketWeather().currentMarketWeatherKnown === true;
+      }
+
+      function appendKnownWeatherParams(params, { force = false } = {}) {
+        const mw = currentMarketWeather();
+
+        params.set("entryMarketWeatherKeyVersion", MARKET_WEATHER_KEY_VERSION);
+
+        if (!mw.currentMarketWeatherKnown && !force) return params;
+
+        if (!mw.currentMarketWeatherKnown) return params;
+
+        params.set("currentMarketWeatherKey", mw.currentMarketWeatherKey);
+        params.set("confirmedMarketWeatherKey", mw.confirmedMarketWeatherKey);
+        params.set("currentMarketWeatherRegime", mw.currentMarketWeatherRegime);
+        params.set("currentMarketWeatherTrendSide", mw.currentMarketWeatherTrendSide);
+
+        return params;
+      }
+
+      function marketWeatherPostPayload() {
+        const mw = currentMarketWeather();
+
+        if (!mw.currentMarketWeatherKnown) {
+          return {
+            entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+            marketWeatherAutoResolve: true,
+            marketWeatherUnknownOverrideBlocked: true
+          };
+        }
+
+        return {
+          entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+          currentMarketWeatherKey: mw.currentMarketWeatherKey,
+          confirmedMarketWeatherKey: mw.confirmedMarketWeatherKey,
+          currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
+          currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide
         };
       }
 
       function entryMarketWeather(row = {}) {
-        const directKey = upper(row.entryMarketWeatherKey || row.currentMarketWeatherKey || row.marketWeatherKey || row.currentMarketCandidate?.currentMarketWeatherKey || "");
-        const directRegime = normalizeMarketWeatherRegime(row.entryMarketWeatherRegime || row.currentMarketWeatherRegime || row.marketWeatherRegime || row.currentMarketCandidate?.currentMarketWeatherRegime || "");
-        const directTrend = normalizeMarketWeatherTrendSide(row.entryMarketWeatherTrendSide || row.currentMarketWeatherTrendSide || row.marketWeatherTrendSide || row.currentMarketCandidate?.currentMarketWeatherTrendSide || "");
+        const directKey = upper(
+          row.entryMarketWeatherKey ||
+          row.currentMarketCandidate?.entryMarketWeatherKey ||
+          row.currentMarketWeatherKey ||
+          row.currentMarketCandidate?.currentMarketWeatherKey ||
+          row.marketWeatherKey ||
+          ""
+        );
 
         if (directKey && directKey.includes("|")) {
           const parsed = parseWeatherKey(directKey);
@@ -1515,8 +1751,23 @@
           };
         }
 
-        const key = buildMarketWeatherKey(directRegime, directTrend);
-        const parsed = parseWeatherKey(key);
+        const regime = normalizeMarketWeatherRegime(firstValue(
+          row.entryMarketWeatherRegime,
+          row.currentMarketCandidate?.entryMarketWeatherRegime,
+          row.currentMarketWeatherRegime,
+          row.currentMarketCandidate?.currentMarketWeatherRegime,
+          row.marketWeatherRegime
+        ));
+
+        const trendSide = normalizeMarketWeatherTrendSide(firstValue(
+          row.entryMarketWeatherTrendSide,
+          row.currentMarketCandidate?.entryMarketWeatherTrendSide,
+          row.currentMarketWeatherTrendSide,
+          row.currentMarketCandidate?.currentMarketWeatherTrendSide,
+          row.marketWeatherTrendSide
+        ));
+
+        const parsed = parseWeatherKey(buildMarketWeatherKey(regime, trendSide));
 
         return {
           entryMarketWeatherKey: parsed.key,
@@ -1536,13 +1787,10 @@
         return `<span class="pill ${cls}">${escapeHtml(mw.entryMarketWeatherKey || "UNKNOWN|UNKNOWN")}</span>`;
       }
 
-      function currentWeatherKnown() {
-        return currentMarketWeather().currentMarketWeatherKnown;
-      }
-
       function currentWeatherMatched(row = {}) {
         const mw = entryMarketWeather(row);
         const current = currentMarketWeather();
+
         return current.currentMarketWeatherKnown && mw.entryMarketWeatherKey === current.currentMarketWeatherKey;
       }
 
@@ -1550,22 +1798,26 @@
         if (row.playbookFresh === true || row.currentMarketCandidate?.playbookFresh === true) return true;
         if (row.playbookFresh === false || row.currentMarketCandidate?.playbookFresh === false) return false;
 
-        const ts = row.playbookUpdatedAt ||
+        const ts =
+          row.playbookUpdatedAt ||
           row.currentMarketPlaybookUpdatedAt ||
           row.currentMarketCandidate?.playbookUpdatedAt ||
           row.updatedAt;
 
         if (!ts) return currentWeatherMatched(row) && marketResolution(row) === "REGIME_TREND";
+
         return ageMin(ts) <= PLAYBOOK_MAX_AGE_MIN;
       }
 
       function normalizeRuntimeStatus(value = "") {
         const raw = upper(value);
+
         if (raw === MICRO_MICRO_STATUS_PASSED || raw === "GATE_OK" || raw === "APPROVED" || raw === "ELIGIBLE") return MICRO_MICRO_STATUS_PASSED;
         if (raw === MICRO_MICRO_STATUS_OBSERVING || raw === "MICRO_MICRO_OBSERVING" || raw === "EARLY" || raw === "MICRO_MICRO_EARLY") return MICRO_MICRO_STATUS_OBSERVING;
         if (raw === MICRO_MICRO_STATUS_REJECTED || raw === "FAILED" || raw === "BAD" || raw === "BLOCKED_BY_NET_EDGE") return MICRO_MICRO_STATUS_REJECTED;
         if (raw === MICRO_MICRO_STATUS_EMPIRICAL_VETO || raw === "MICRO_MICRO_EMPIRICAL_VETO" || raw === "EXACT_MICRO_MICRO_LCB95_NEGATIVE") return MICRO_MICRO_STATUS_EMPIRICAL_VETO;
         if (raw === MICRO_MICRO_STATUS_POLICY_BLOCKED || raw === "POLICY_BLOCKED") return MICRO_MICRO_STATUS_POLICY_BLOCKED;
+
         return "";
       }
 
@@ -1616,14 +1868,17 @@
 
         const lcb = lcb95AvgR(row);
 
-        return rowIsExactShortMicroMicro(row) &&
+        return (
+          rowIsExactShortMicroMicro(row) &&
           completed(row) >= MIN_COMPLETED_MICRO_MICRO_ACTIVE &&
           lcb !== null &&
-          lcb < 0;
+          lcb < 0
+        );
       }
 
       function empiricalVetoReason(row = {}) {
         if (!empiricalVeto(row)) return "";
+
         return row.empiricalVetoReason ||
           row.microMicroRuntimeGate?.empiricalVetoReason ||
           row.microMicroRuntimeGate?.reason ||
@@ -1674,34 +1929,41 @@
         return MICRO_MICRO_STATUS_REJECTED;
       }
 
-      function proofTier(row = {}) {
-        const direct = upper(row.proofTier || row.currentMarketCandidate?.proofTier || "");
-        if (direct) return direct;
-
-        const status = runtimeStatus(row);
-        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return PROOF_TIER_POLICY_BLOCKED;
-        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return PROOF_TIER_EMPIRICAL_VETO;
-        if (status !== MICRO_MICRO_STATUS_PASSED) return PROOF_TIER_OBSERVATION_ONLY;
-
-        const resolution = marketResolution(row);
-        if (resolution === "REGIME_TREND" || resolution === "REGIME") return PROOF_TIER_MICRO_MICRO_MARKET;
-
-        return PROOF_TIER_MICRO_MICRO_LIFETIME;
-      }
-
       function marketResolution(row = {}) {
         const direct = upper(row.marketResolution || row.currentMarketCandidate?.marketResolution || "");
+
         if (direct) return direct;
         if (currentWeatherMatched(row)) return "REGIME_TREND";
+
         return "LIFETIME";
       }
 
       function proofSource(row = {}) {
         const direct = row.proofSource || row.currentMarketCandidate?.proofSource;
+
         if (direct) return direct;
         if (marketResolution(row) === "REGIME_TREND") return "MICRO_MICRO_REGIME_TREND";
         if (marketResolution(row) === "REGIME") return "MICRO_MICRO_REGIME";
+
         return "MICRO_MICRO_LIFETIME";
+      }
+
+      function proofTier(row = {}) {
+        const direct = upper(row.proofTier || row.currentMarketCandidate?.proofTier || "");
+
+        if (direct) return direct;
+
+        const status = runtimeStatus(row);
+
+        if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return PROOF_TIER_POLICY_BLOCKED;
+        if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return PROOF_TIER_EMPIRICAL_VETO;
+        if (status !== MICRO_MICRO_STATUS_PASSED) return PROOF_TIER_OBSERVATION_ONLY;
+
+        const resolution = marketResolution(row);
+
+        if (resolution === "REGIME_TREND" || resolution === "REGIME") return PROOF_TIER_MICRO_MICRO_MARKET;
+
+        return PROOF_TIER_MICRO_MICRO_LIFETIME;
       }
 
       function backendRiskFraction(row = {}) {
@@ -1724,9 +1986,7 @@
         if (empiricalVeto(row)) return SIGNAL_TYPE_BLOCKED;
         if (status === MICRO_MICRO_STATUS_REJECTED) return SIGNAL_TYPE_BLOCKED;
         if (status === MICRO_MICRO_STATUS_OBSERVING) return SIGNAL_TYPE_OBSERVE_ONLY;
-
         if (shrunkLCB95AvgR(row) <= 0) return SIGNAL_TYPE_OBSERVE_ONLY;
-
         if (!currentWeatherMatched(row)) return SIGNAL_TYPE_WATCH_ONLY;
         if (!playbookFresh(row)) return SIGNAL_TYPE_WATCH_ONLY;
 
@@ -1765,13 +2025,16 @@
         if (derivedBeforeRisk !== SIGNAL_TYPE_TRADE_READY) return derivedBeforeRisk;
 
         const risk = riskFractionForEntry(row);
+
         return risk > 0 ? SIGNAL_TYPE_TRADE_READY : SIGNAL_TYPE_OBSERVE_ONLY;
       }
 
       function maxAllowedRiskBand(row = {}) {
         const direct = upper(row.maxAllowedRiskBand || row.currentMarketCandidate?.maxAllowedRiskBand || "");
+
         if (direct && signalType(row) === SIGNAL_TYPE_TRADE_READY) return direct;
         if (signalType(row) === SIGNAL_TYPE_TRADE_READY) return "HIGH";
+
         return "ZERO";
       }
 
@@ -1779,9 +2042,10 @@
         if (policyBlocked(row)) {
           if (!rowIsExactShortMicroMicro(row)) return "EXACT_MICRO_MICRO_ID_REQUIRED";
           if (inferSide(row) === OPPOSITE_SIDE) return "NON_SHORT_POLICY_BLOCK";
-          if (upper(row.confirmationProfile) === "E_WEAK_CONTRA") return "E_WEAK_CONTRA_POLICY_BLOCK";
+          if (upper(row.confirmationProfile || parseShortTaxonomyId(microId(row))?.confirmationProfile || "") === "E_WEAK_CONTRA") return "E_WEAK_CONTRA_POLICY_BLOCK";
           if (!validShortGeometry(row)) return "INVALID_SHORT_GEOMETRY_POLICY_BLOCK";
           if (knownForbiddenFamily(row)) return "KNOWN_FORBIDDEN_FAMILY_POLICY_BLOCK";
+
           return row.policyBlockedReason || row.microMicroRuntimeGate?.policyBlockedReason || "POLICY_BLOCKED";
         }
 
@@ -1831,6 +2095,7 @@
 
       function currentMarketScore(row = {}) {
         const direct = firstFinite(row.currentMarketScore, row.currentMarketCandidate?.currentMarketScore);
+
         if (direct !== null) return direct;
 
         const weatherBoost = currentWeatherMatched(row) ? 1000 : 0;
@@ -1908,25 +2173,30 @@
         if (mode === "totalR") return compareNumberDesc(netTotalR(a), netTotalR(b)) || compareBestDataFirst(a, b);
         if (mode === "avgR") return compareNumberDesc(netAvgR(a), netAvgR(b)) || compareBestDataFirst(a, b);
         if (mode === "winrate") return compareNumberDesc(fairWinrate(a), fairWinrate(b)) || compareBestDataFirst(a, b);
+
         return compareBestDataFirst(a, b);
       }
 
       function signalTypePill(row = {}) {
         const type = signalType(row);
+
         if (type === SIGNAL_TYPE_TRADE_READY) return '<span class="pill trade-ready">TRADE READY</span>';
         if (type === SIGNAL_TYPE_WATCH_ONLY) return '<span class="pill watch">WATCH</span>';
         if (type === SIGNAL_TYPE_OBSERVE_ONLY) return '<span class="pill observe">OBSERVE</span>';
         if (type === SIGNAL_TYPE_BLOCKED) return '<span class="pill blocked">BLOCKED</span>';
+
         return `<span class="pill raw">${escapeHtml(type || "UNKNOWN")}</span>`;
       }
 
       function runtimeStatusPill(row = {}) {
         const status = runtimeStatus(row);
+
         if (status === MICRO_MICRO_STATUS_PASSED) return '<span class="pill passed">PASSED</span>';
         if (status === MICRO_MICRO_STATUS_OBSERVING) return `<span class="pill observation">OBSERVING · ${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_MICRO_MICRO_ACTIVE}</span>`;
         if (status === MICRO_MICRO_STATUS_REJECTED) return '<span class="pill rejected">REJECTED</span>';
         if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return '<span class="pill veto">EMPIRICAL VETO</span>';
         if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return '<span class="pill blocked">POLICY BLOCKED</span>';
+
         return '<span class="pill raw">UNKNOWN</span>';
       }
 
@@ -1943,13 +2213,15 @@
       }
 
       function discordActivationEligible(row = {}) {
-        return signalType(row) === SIGNAL_TYPE_TRADE_READY &&
+        return (
+          signalType(row) === SIGNAL_TYPE_TRADE_READY &&
           runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED &&
           riskFractionForEntry(row) > 0 &&
           !policyBlocked(row) &&
           !empiricalVeto(row) &&
           currentWeatherMatched(row) &&
-          playbookFresh(row);
+          playbookFresh(row)
+        );
       }
 
       function discordGatePill(row = {}) {
@@ -1959,12 +2231,14 @@
         if (runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING) return '<span class="pill observation">OBSERVING</span>';
         if (runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return `<span class="pill veto">${escapeHtml(empiricalVetoReason(row))}</span>`;
         if (runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED) return `<span class="pill blocked">${escapeHtml(whyBlocked(row))}</span>`;
+
         return `<span class="pill danger">${escapeHtml(whyBlocked(row) || "REJECTED")}</span>`;
       }
 
       function normalizeMicroRow(row = {}) {
         const id = microId(row);
         const parsed = parseShortTaxonomyId(id);
+
         if (!id || !parsed?.isMicroMicro) return null;
         if (inferSide({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id }) === OPPOSITE_SIDE) return null;
 
@@ -2091,11 +2365,14 @@
 
       function extractObjectArrays(data, keys = []) {
         const rows = [];
+
         for (const key of keys) {
           const value = data?.[key];
+
           if (Array.isArray(value)) rows.push(...value);
           else if (value && typeof value === "object") rows.push(...Object.values(value));
         }
+
         return rows;
       }
 
@@ -2139,10 +2416,12 @@
 
         for (const sourceRow of [...preferred, ...nested]) {
           const row = normalizeMicroRow(sourceRow);
+
           if (!row) continue;
           if (!rowIsExactShortMicroMicro(row)) continue;
 
           const id = microId(row);
+
           if (!id) continue;
 
           const existing = byId.get(id);
@@ -2160,21 +2439,15 @@
 
         let filtered = normalized;
 
-        if (mode === "currentMarket") {
-          filtered = normalized.filter((row) => {
-            return signalType(row) !== SIGNAL_TYPE_BLOCKED ||
-              runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO ||
-              runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED;
-          });
-        }
-
         if (mode === "tradeReady") filtered = normalized.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY);
         if (mode === "watch") filtered = normalized.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY);
         if (mode === "observe") filtered = normalized.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY);
         if (mode === "passed") filtered = normalized.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED);
-        if (mode !== "diagnose" && mode !== "currentMarket") {
+
+        if (mode !== "diagnose" && mode !== "currentMarket" && mode !== "observe") {
           filtered = filtered.filter((row) => {
             const status = runtimeStatus(row);
+
             return status !== MICRO_MICRO_STATUS_REJECTED &&
               status !== MICRO_MICRO_STATUS_POLICY_BLOCKED &&
               status !== MICRO_MICRO_STATUS_EMPIRICAL_VETO;
@@ -2189,6 +2462,7 @@
       function timeoutSignal(timeoutMs = state.apiTimeoutMs) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
+
         return {
           signal: controller.signal,
           clear: () => clearTimeout(timer)
@@ -2244,6 +2518,7 @@
           }
 
           if (error instanceof ApiError) throw error;
+
           throw new ApiError(error?.message || String(error), { status: 0, url });
         } finally {
           timeout.clear();
@@ -2277,12 +2552,12 @@
         if (status === 504 || raw.includes("504")) return "Backend timeout op deze admin-route.";
         if (status === 500) return "Backend error op deze admin-route. Check Vercel logs.";
         if (status === 404) return "Endpoint niet gevonden.";
+
         return raw || "Onbekende API fout.";
       }
 
-      function commonParams() {
+      function commonParams({ includeWeather = true } = {}) {
         const params = new URLSearchParams();
-        const mw = currentMarketWeather();
 
         params.set("side", ONLY_SIDE);
         params.set("tradeSide", ONLY_SIDE);
@@ -2310,10 +2585,6 @@
         params.set("outcomeDedupeVersion", OUTCOME_DEDUPE_VERSION);
 
         params.set("entryMarketWeatherKeyVersion", MARKET_WEATHER_KEY_VERSION);
-        params.set("currentMarketWeatherKey", mw.currentMarketWeatherKey);
-        params.set("confirmedMarketWeatherKey", mw.confirmedMarketWeatherKey);
-        params.set("currentMarketWeatherRegime", mw.currentMarketWeatherRegime);
-        params.set("currentMarketWeatherTrendSide", mw.currentMarketWeatherTrendSide);
         params.set("marketWeatherSelectorVersion", MARKET_WEATHER_SELECTOR_VERSION);
         params.set("marketWeatherFdrVersion", MARKET_WEATHER_FDR_VERSION);
         params.set("playbookMaxAgeMin", String(PLAYBOOK_MAX_AGE_MIN));
@@ -2333,16 +2604,29 @@
         params.set("fdrMode", "OBSERVE");
         params.set("discordTradeReadyMode", "VALIDATION_REQUIRED");
 
+        if (includeWeather) appendKnownWeatherParams(params);
+
         return params;
       }
 
       function backendMicroMode() {
         if (["currentMarket", "best", "passed", "tradeReady", "watch", "observe", "diagnose"].includes(state.microMode)) return "currentMarket";
+
         return state.microMode;
       }
 
+      function marketApiUrl() {
+        const params = commonParams({ includeWeather: hasManualMarketWeatherOverride() });
+        params.set("includeUniverse", "1");
+        params.set("includeBreadth", "1");
+        params.set("includeCurrentFit", "1");
+        params.set("includeMarketWeather", "1");
+
+        return `${endpoints.market}?${params.toString()}`;
+      }
+
       function microApiUrl() {
-        const params = commonParams();
+        const params = commonParams({ includeWeather: true });
 
         params.set("mode", backendMicroMode());
         params.set("uiMode", state.microMode);
@@ -2361,7 +2645,8 @@
       }
 
       function rotationApiUrl() {
-        const params = commonParams();
+        const params = commonParams({ includeWeather: true });
+
         params.set("includeAvailable", "1");
         params.set("includeMicroMicro", "1");
         params.set("onlyMicroMicro", "1");
@@ -2369,30 +2654,25 @@
         params.set("availableLimit", "280");
         params.set("mode", "currentMarket");
         params.set("uiMode", state.microMode);
+
         return `${endpoints.rotation}?${params.toString()}`;
       }
 
-      function marketApiUrl() {
-        const params = commonParams();
-        params.set("includeUniverse", "1");
-        params.set("includeBreadth", "1");
-        params.set("includeCurrentFit", "1");
-        params.set("includeMarketWeather", "1");
-        return `${endpoints.market}?${params.toString()}`;
-      }
-
       function scannerApiUrl() {
-        const params = commonParams();
+        const params = commonParams({ includeWeather: true });
+
         params.set("scannerSide", DASHBOARD_SIDE);
         params.set("includeSnapshot", "1");
         params.set("includeCandidates", "1");
         params.set("includeLatest", "1");
         params.set("compact", "1");
+
         return `${endpoints.scanner}?${params.toString()}`;
       }
 
       function tradeApiUrl() {
-        const params = commonParams();
+        const params = commonParams({ includeWeather: true });
+
         params.set("includeOpenPositions", "1");
         params.set("includePositions", "1");
         params.set("includeRunMeta", "1");
@@ -2400,23 +2680,28 @@
         params.set("includeMicroMicro", "1");
         params.set("includeMarketWeather", "1");
         params.set("compact", "1");
+
         return `${endpoints.trade}?${params.toString()}`;
       }
 
       function discordApiUrl(limit = 80) {
-        const params = commonParams();
+        const params = commonParams({ includeWeather: true });
+
         params.set("limit", String(limit));
         params.set("compact", "1");
+
         return `${endpoints.discord}?${params.toString()}`;
       }
 
       function overviewApiUrl() {
-        const params = commonParams();
+        const params = commonParams({ includeWeather: true });
+
         params.set("compact", "1");
         params.set("includeCounts", "1");
         params.set("includeMarketWeather", "1");
         params.set("includeMicroMicro", "1");
         params.set("includeCurrentMarketPlaybook", "1");
+
         return `${endpoints.overview}?${params.toString()}`;
       }
 
@@ -2461,7 +2746,19 @@
           .slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
       }
 
+      async function ensureMarketLoaded() {
+        if (currentWeatherKnown()) return state.market;
+
+        const data = await safeApi(marketApiUrl(), { ok: false });
+        state.market = data;
+        rememberMarketWeatherFromPayload(data);
+
+        return data;
+      }
+
       async function fetchMicros() {
+        await ensureMarketLoaded();
+
         const data = await api(microApiUrl(), { timeoutMs: 22000 });
         const rows = rankMicroRows(extractMicroRowsFromPayload(data), state.microMode);
         const activeIds = extractActiveIdsFromPayload(data);
@@ -2557,6 +2854,7 @@
           { label: "Why", render: (row) => `<div class="reason-cell">${escapeHtml(whyBlocked(row) || whySelected(row))}</div>` },
           { label: "Actie", render: (row) => {
             const canActivate = discordActivationEligible(row);
+
             return `
               <div class="toolbar" style="margin:0">
                 <button type="button" class="small short-action" data-activate-slot="1" data-activate-id="${escapeAttr(microId(row))}" ${canActivate ? "" : "disabled"}>#1</button>
@@ -2610,7 +2908,8 @@
           sizingCapObserveOnly: true,
           fdrObserveOnly: true,
           discordTradeReadyHardLiveEnabled: false,
-          currentFitMisfitIsPolicyBlock: false
+          currentFitMisfitIsPolicyBlock: false,
+          unknownWeatherOverrideBlocked: true
         };
       }
 
@@ -2669,111 +2968,33 @@
             "WATCH_ONLY => riskFractionForEntry = 0",
             "OBSERVE_ONLY => riskFractionForEntry = 0",
             "TRADE_READY requires riskFractionForEntry > 0",
-            "CURRENTFIT_MISFIT is soft, not policy-block"
+            "CURRENTFIT_MISFIT is soft, not policy-block",
+            "frontend does not send UNKNOWN|UNKNOWN override"
           ]
-        };
-      }
-
-      function compactOverviewApiOutput(data = {}, microData = {}, rotationData = {}, marketData = {}, tradeData = {}, scannerData = {}) {
-        const microRows = microData?.rows || [];
-        const activeIds = activeMicroMicroIds();
-        const playbook = microData.currentMarketPlaybook || data.currentMarketPlaybook || rotationData.currentMarketPlaybook || null;
-
-        return {
-          ok: data.ok !== false,
-          side: ONLY_SIDE,
-          dashboardSide: DASHBOARD_SIDE,
-          namespace: SHORT_NAMESPACE,
-          redisKeyPrefix: SHORT_KEY_PREFIX,
-          persistentLearningKey: PERSISTENT_LEARNING_KEY,
-          versions: identityVersions(),
-          featureFlags: featureFlagsObject(),
-          currentMarketWeather: currentMarketWeather(),
-          currentMarketPlaybook: playbook,
-          counts: {
-            visibleMicroMicroRows: microRows.length,
-            tradeReadyRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length,
-            watchRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length,
-            observeRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length,
-            blockedRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length,
-            passedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length,
-            observingRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length,
-            rejectedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length,
-            empiricalVetoRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
-            policyBlockedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
-            cleanRows: microRows.filter((row) => cleanMeasurementScore(row) === 1).length,
-            selectedDiscordMicroMicroIds: activeIds.length,
-            openVirtualPositions: asArray(tradeData.positions || tradeData.openPositions || tradeData.virtualPositions).length,
-            scannerShortCandidates: asArray(scannerData.snapshot?.candidates || scannerData.candidates || scannerData.rows).filter((row) => inferSide(row) !== OPPOSITE_SIDE).length
-          },
-          bestVisibleMicroMicro: microRows[0]
-            ? {
-                id: microId(microRows[0]),
-                status: runtimeStatus(microRows[0]),
-                signalType: signalType(microRows[0]),
-                proofTier: proofTier(microRows[0]),
-                proofSource: proofSource(microRows[0]),
-                marketResolution: marketResolution(microRows[0]),
-                entryMarketWeatherKey: entryMarketWeather(microRows[0]).entryMarketWeatherKey,
-                weatherMatched: currentWeatherMatched(microRows[0]),
-                playbookFresh: playbookFresh(microRows[0]),
-                netEdgeScore: netEdgeScore(microRows[0]),
-                completed: completed(microRows[0]),
-                avgR: netAvgR(microRows[0]),
-                lcb95AvgR: lcb95AvgR(microRows[0]),
-                shrunkAvgR: shrunkAvgR(microRows[0]),
-                shrunkLCB95AvgR: shrunkLCB95AvgR(microRows[0]),
-                riskFractionForEntry: riskFractionForEntry(microRows[0]),
-                empiricalVeto: empiricalVeto(microRows[0]),
-                empiricalVetoReason: empiricalVetoReason(microRows[0]),
-                policyBlocked: policyBlocked(microRows[0]),
-                currentFit: currentFit(microRows[0]),
-                currentFitMisfitIsPolicyBlock: false,
-                why: whyBlocked(microRows[0]) || whySelected(microRows[0])
-              }
-            : null,
-          selectedDiscordMicroMicroIds: activeIds,
-          rotation: {
-            activeRotationId: rotationData.activeRotationId || rotationData.active?.rotationId || rotationData.activeRotation?.rotationId || null,
-            noSelectionMeansNoDiscord: activeIds.length === 0,
-            activeMicroMicroCount: activeIds.length
-          },
-          market: {
-            regime: marketData.currentRegime || marketData.regime || marketData.market?.regime || "UNKNOWN",
-            trendSide: marketData.currentTrendSide || marketData.trendSide || marketData.market?.trendSide || "UNKNOWN"
-          },
-          risk: riskPolicyObject(),
-          activationGate: activationGateObject(),
-          warnings: [
-            ...(data.warnings || []),
-            ...(microData.warnings || []),
-            ...(rotationData.warnings || []),
-            ...(marketData.warnings || []),
-            ...(tradeData.warnings || []),
-            ...(scannerData.warnings || [])
-          ],
-          error: data.error || microData.error || rotationData.error || marketData.error || tradeData.error || scannerData.error || null
         };
       }
 
       function compactClean(value, depth = 0) {
         if (depth > 8) return "[MAX_DEPTH]";
         if (value === undefined || value === null || value === "") return undefined;
-
         if (typeof value !== "object") return value;
 
         if (Array.isArray(value)) {
           const arr = value
             .map((item) => compactClean(item, depth + 1))
             .filter((item) => item !== undefined);
+
           return arr.length ? arr : undefined;
         }
 
         const out = {};
+
         for (const [key, item] of Object.entries(value)) {
           const clean = compactClean(item, depth + 1);
+
           if (clean === undefined) continue;
           if (typeof clean === "object" && !Array.isArray(clean) && Object.keys(clean).length === 0) continue;
+
           out[key] = clean;
         }
 
@@ -2782,11 +3003,13 @@
 
       function pick(obj = {}, keys = []) {
         const out = {};
+
         for (const key of keys) {
           if (obj?.[key] !== undefined && obj?.[key] !== null && obj?.[key] !== "") {
             out[key] = obj[key];
           }
         }
+
         return compactClean(out) || {};
       }
 
@@ -2810,6 +3033,7 @@
 
       function compactAuditMicroRow(row = {}) {
         const normalized = normalizeMicroRow(row) || row;
+
         return compactClean({
           id: microId(normalized) || normalized.microMicroFamilyId || normalized.trueMicroMicroFamilyId || normalized.exactMicroMicroFamilyId || null,
           child75: base75MicroId(normalized) || null,
@@ -2884,6 +3108,7 @@
 
       function compactAuditLog(row = {}) {
         const payload = row.payload || row;
+
         return compactClean({
           ts: row.ts || row.createdAt || payload.ts || payload.createdAt || null,
           type: row.type || row.event || row.level || null,
@@ -2904,7 +3129,7 @@
         if (lower.includes("overview")) {
           return compactClean({
             ok: data.ok !== false,
-            currentMarketWeather: data.currentMarketWeather || currentMarketWeather(),
+            currentMarketWeather: knownWeatherFromPayload(data),
             counts: pick(data.counts || data.summary || data, [
               "openPositions",
               "closedPositions",
@@ -2945,41 +3170,21 @@
         }
 
         if (lower.includes("marketweather")) {
+          const mw = knownWeatherFromPayload(data);
+
           return compactClean({
             ok: data.ok !== false,
-            currentMarketWeatherKey:
-              data.currentMarketWeatherKey ||
-              data.currentMarketWeather?.currentMarketWeatherKey ||
-              data.marketWeather?.currentMarketWeatherKey ||
-              currentMarketWeather().currentMarketWeatherKey,
-            confirmedMarketWeatherKey:
-              data.confirmedMarketWeatherKey ||
-              data.currentMarketWeather?.confirmedMarketWeatherKey ||
-              data.marketWeather?.confirmedMarketWeatherKey ||
-              currentMarketWeather().confirmedMarketWeatherKey,
-            currentMarketWeatherRegime:
-              data.currentMarketWeatherRegime ||
-              data.currentMarketWeather?.currentMarketWeatherRegime ||
-              data.regime ||
-              data.market?.regime ||
-              null,
-            currentMarketWeatherTrendSide:
-              data.currentMarketWeatherTrendSide ||
-              data.currentMarketWeather?.currentMarketWeatherTrendSide ||
-              data.trendSide ||
-              data.market?.trendSide ||
-              null,
-            confirmedMarketWeatherKnown:
-              data.confirmedMarketWeatherKnown ??
-              data.currentMarketWeatherKnown ??
-              null,
-            confirmedMarketWeatherFresh:
-              data.confirmedMarketWeatherFresh ??
-              data.currentMarketWeatherFresh ??
-              null,
+            currentMarketWeatherKey: data.currentMarketWeatherKey || data.marketWeather?.currentMarketWeatherKey || mw.currentMarketWeatherKey,
+            confirmedMarketWeatherKey: data.confirmedMarketWeatherKey || data.marketWeather?.confirmedMarketWeatherKey || mw.confirmedMarketWeatherKey,
+            currentMarketWeatherRegime: data.currentMarketWeatherRegime || data.marketWeather?.currentMarketWeatherRegime || mw.currentMarketWeatherRegime,
+            currentMarketWeatherTrendSide: data.currentMarketWeatherTrendSide || data.marketWeather?.currentMarketWeatherTrendSide || mw.currentMarketWeatherTrendSide,
+            confirmedMarketWeatherKnown: data.confirmedMarketWeatherKnown ?? data.currentMarketWeatherKnown ?? mw.currentMarketWeatherKnown,
+            confirmedMarketWeatherFresh: data.confirmedMarketWeatherFresh ?? data.currentMarketWeatherFresh ?? null,
             playbookFresh: data.playbookFresh ?? data.currentMarketPlaybook?.fresh ?? null,
             playbookStatus: data.playbookStatus || data.currentMarketPlaybook?.status || null,
             playbookMissingReason: data.playbookMissingReason || null,
+            requestOverrideApplied: data.requestOverrideApplied ?? null,
+            unknownRequestOverrideBlocked: data.unknownRequestOverrideBlocked ?? null,
             unknownWeatherPolicy: data.unknownWeatherPolicy || {
               signalType: SIGNAL_TYPE_OBSERVE_ONLY,
               riskFractionForEntry: 0,
@@ -3052,6 +3257,7 @@
 
         if (lower.includes("micro")) {
           const rows = rankMicroRows(extractMicroRowsFromPayload(data), "currentMarket");
+
           return compactClean({
             ok: data.ok !== false,
             counts: {
@@ -3110,6 +3316,7 @@
 
         if (lower.includes("discord")) {
           const logs = asArray(data.logs || data.items || data.data);
+
           return compactClean({
             ok: data.ok !== false,
             count: logs.length,
@@ -3162,6 +3369,8 @@
             body = { raw: rawText.slice(0, 2000) };
             parseError = error?.message || String(error);
           }
+
+          if (definition.name === "MarketWeather") rememberMarketWeatherFromPayload(body);
 
           return {
             name: definition.name,
@@ -3223,12 +3432,12 @@
           activationGate: activationGateObject(),
           endpointStatus: endpointsStatus,
           importantByApi,
-          auditNote: "Dit is bewust compact: alleen belangrijke API-stukken, geen volledige ruwe payloads."
+          auditNote: "Compact: alleen belangrijke API-stukken. UNKNOWN|UNKNOWN wordt niet als override meegestuurd."
         }) || {};
 
         return [
           "SHORT ADMIN API AUDIT — PLAK DIT VOLLEDIG IN CHATGPT",
-          "Controleer of MarketWeather, micro-micro learning, policy/veto, risk en Discord selection correct staan.",
+          "Controleer MarketWeather, micro-micro learning, policy/veto, risk en Discord selection.",
           "",
           JSON.stringify(audit, null, 2)
         ].join("\n");
@@ -3236,6 +3445,7 @@
 
       async function runCompactApiAudit() {
         const output = $("allApisAuditOutput");
+
         if (output) {
           output.value = "API audit wordt opgehaald...\nDit kan 10-30 seconden duren.";
         }
@@ -3255,6 +3465,7 @@
         if (output) output.value = message;
 
         const failed = results.filter((row) => !row.ok);
+
         setMessage(
           failed.length
             ? `API audit klaar met ${failed.length} fout(en). Kopieer alsnog de output.`
@@ -3274,14 +3485,71 @@
         return JSON.stringify(data ?? null, null, 2);
       }
 
+      function compactOverviewApiOutput(data = {}, microData = {}, rotationData = {}, marketData = {}, tradeData = {}, scannerData = {}) {
+        const microRows = microData?.rows || [];
+        const activeIds = activeMicroMicroIds();
+        const playbook = microData.currentMarketPlaybook || data.currentMarketPlaybook || rotationData.currentMarketPlaybook || null;
+
+        return compactClean({
+          ok: data.ok !== false,
+          side: ONLY_SIDE,
+          dashboardSide: DASHBOARD_SIDE,
+          namespace: SHORT_NAMESPACE,
+          redisKeyPrefix: SHORT_KEY_PREFIX,
+          persistentLearningKey: PERSISTENT_LEARNING_KEY,
+          versions: identityVersions(),
+          featureFlags: featureFlagsObject(),
+          currentMarketWeather: currentMarketWeather(),
+          currentMarketPlaybook: playbook,
+          counts: {
+            visibleMicroMicroRows: microRows.length,
+            tradeReadyRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length,
+            watchRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length,
+            observeRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length,
+            blockedRows: microRows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length,
+            passedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length,
+            observingRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length,
+            rejectedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length,
+            empiricalVetoRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
+            policyBlockedRows: microRows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
+            cleanRows: microRows.filter((row) => cleanMeasurementScore(row) === 1).length,
+            selectedDiscordMicroMicroIds: activeIds.length,
+            openVirtualPositions: asArray(tradeData.positions || tradeData.openPositions || tradeData.virtualPositions).length,
+            scannerShortCandidates: asArray(scannerData.snapshot?.candidates || scannerData.candidates || scannerData.rows).filter((row) => inferSide(row) !== OPPOSITE_SIDE).length
+          },
+          bestVisibleMicroMicro: microRows[0] ? compactAuditMicroRow(microRows[0]) : null,
+          selectedDiscordMicroMicroIds: activeIds,
+          rotation: {
+            activeRotationId: rotationData.activeRotationId || rotationData.active?.rotationId || rotationData.activeRotation?.rotationId || null,
+            noSelectionMeansNoDiscord: activeIds.length === 0,
+            activeMicroMicroCount: activeIds.length
+          },
+          market: compactEndpointImportant("MarketWeather", marketData),
+          risk: riskPolicyObject(),
+          activationGate: activationGateObject(),
+          warnings: [
+            ...(data.warnings || []),
+            ...(microData.warnings || []),
+            ...(rotationData.warnings || []),
+            ...(marketData.warnings || []),
+            ...(tradeData.warnings || []),
+            ...(scannerData.warnings || [])
+          ],
+          error: data.error || microData.error || rotationData.error || marketData.error || tradeData.error || scannerData.error || null
+        }) || {};
+      }
+
       async function renderOverview() {
         showLoading("overview");
 
-        const [overview, microData, rotationData, marketData, tradeData, scannerData] = await Promise.all([
+        const marketData = await safeApi(marketApiUrl(), { ok: false });
+        state.market = marketData;
+        rememberMarketWeatherFromPayload(marketData);
+
+        const [overview, microData, rotationData, tradeData, scannerData] = await Promise.all([
           safeApi(overviewApiUrl(), { ok: false }),
           ensureMicrosLoaded(),
           safeApi(rotationApiUrl(), { ok: false, activeMicroMicroFamilyIds: [] }),
-          safeApi(marketApiUrl(), { ok: false }),
           safeApi(tradeApiUrl(), { ok: false, positions: [], openPositions: [] }),
           safeApi(scannerApiUrl(), { ok: false, rows: [], candidates: [] })
         ]);
@@ -3295,7 +3563,8 @@
           activeMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData),
           selectedMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData)
         };
-        state.market = marketData;
+
+        rememberMarketWeatherFromPayload(overview);
 
         const rows = microData?.rows || [];
         const activeIds = activeMicroMicroIds();
@@ -3312,15 +3581,16 @@
         const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
         const top = rows[0] || null;
         const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
+        const mw = currentMarketWeather();
 
         const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData, tradeData, scannerData);
         const compactJson = safeJson(compact);
 
         $("overview").innerHTML = `
           <div class="grid">
-            ${metricCard("MarketWeather key", currentMarketWeather().currentMarketWeatherKey, MARKET_WEATHER_KEY_VERSION)}
+            ${metricCard("MarketWeather key", mw.currentMarketWeatherKey, `${MARKET_WEATHER_KEY_VERSION} · ${mw.source || "unknown"}`)}
             ${metricCard("Weather known", currentWeatherKnown() ? "YES" : "NO", currentWeatherKnown() ? "selector kan matchen" : "UNKNOWN => OBSERVE_ONLY")}
-            ${metricCard("Feature line", "SAFE", "capture/aggregation live · selector/sizing/FDR observe")}
+            ${metricCard("Unknown override", "BLOCKED", "frontend stuurt geen UNKNOWN override")}
             ${metricCard("Visible MM rows", fmtInt(rows.length), "exact micro-micro only")}
             ${metricCard("Discord selected", fmtInt(activeIds.length), "max 2 exact MM IDs")}
             ${metricCard("TRADE_READY", fmtInt(tradeReadyRows), "risk > 0 vereist")}
@@ -3343,7 +3613,7 @@
             <div class="card">
               <h3>Best for current market</h3>
               <div class="toolbar">
-                <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || currentMarketWeather().currentMarketWeatherKey)}</span>
+                <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || mw.currentMarketWeatherKey)}</span>
                 <span class="pill best">${escapeHtml(playbook.answerType || "BEST_AVAILABLE")}</span>
                 <span class="pill observe">SELECTOR OBSERVE</span>
                 <span class="pill observe">SIZING CAP OBSERVE</span>
@@ -3351,16 +3621,6 @@
               </div>
               ${playbook.bestForCurrentMarket || playbook.selected ? `
                 <p><code>${escapeHtml((playbook.bestForCurrentMarket || playbook.selected)?.selectedFamilyId || microId(playbook.bestForCurrentMarket || playbook.selected) || "-")}</code></p>
-                <div class="grid">
-                  ${metricCard("SignalType", signalType(playbook.bestForCurrentMarket || playbook.selected))}
-                  ${metricCard("ProofSource", proofSource(playbook.bestForCurrentMarket || playbook.selected))}
-                  ${metricCard("WeatherMatched", currentWeatherMatched(playbook.bestForCurrentMarket || playbook.selected) ? "YES" : "NO")}
-                  ${metricCard("PlaybookFresh", playbookFresh(playbook.bestForCurrentMarket || playbook.selected) ? "YES" : "NO")}
-                  ${metricCard("ShrunkAvgR", fmt(shrunkAvgR(playbook.bestForCurrentMarket || playbook.selected), 4))}
-                  ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(playbook.bestForCurrentMarket || playbook.selected), 4))}
-                  ${metricCard("RiskFraction", fmt(riskFractionForEntry(playbook.bestForCurrentMarket || playbook.selected), 6))}
-                  ${metricCard("Why", whyBlocked(playbook.bestForCurrentMarket || playbook.selected) || whySelected(playbook.bestForCurrentMarket || playbook.selected))}
-                </div>
               ` : `<div class="empty">Geen current-market kandidaat.</div>`}
             </div>
           ` : ""}
@@ -3395,8 +3655,8 @@
           <div class="card">
             <h3>Alle belangrijke API-stukken in één kopieerbaar bericht</h3>
             <p class="metric-extra">
-              Klik op “Maak compact API audit”. De UI haalt Overview, MarketWeather, Scanner, TradeSystem, Micro-Micro, Rotation en Discord Logs op.
-              De output bevat alleen kernvelden: status, counts, weather, playbook, top micro-micro rows, posities, selected IDs, veto/policy/risk.
+              De audit haalt Overview, MarketWeather, Scanner, TradeSystem, Micro-Micro, Rotation en Discord Logs op.
+              UNKNOWN|UNKNOWN wordt niet als query-override meegestuurd.
             </p>
             <div class="toolbar">
               <button type="button" class="primary" data-action="run-api-audit">Maak compact API audit</button>
@@ -3404,7 +3664,7 @@
               <button type="button" data-copy-target="allApisAuditOutput">Copy audit output</button>
               <button type="button" data-select-target="allApisAuditOutput">Select audit output</button>
             </div>
-            <textarea id="allApisAuditOutput" class="api-output-textarea audit-output-textarea" readonly>${escapeHtml(state.apiAudit?.message || "Klik op “Maak compact API audit”. Daarna kun je alles in één keer kopiëren en naar mij sturen.")}</textarea>
+            <textarea id="allApisAuditOutput" class="api-output-textarea audit-output-textarea" readonly>${escapeHtml(state.apiAudit?.message || "Klik op “Maak compact API audit”. Daarna kun je alles in één keer kopiëren en sturen.")}</textarea>
           </div>
 
           <div class="grid-3">
@@ -3444,14 +3704,16 @@
         const url = marketApiUrl();
         const data = await safeApi(url, { ok: false });
         state.market = data;
+        rememberMarketWeatherFromPayload(data);
 
         const compact = compactEndpointImportant("MarketWeather", data);
+        const mw = currentMarketWeather();
 
         $("market").innerHTML = `
           <div class="section-title">
             <div>
               <h2>MarketWeather</h2>
-              <p>V1 key is klein: <code>entryMarketWeatherRegime|entryMarketWeatherTrendSide</code>. Raw snapshot mag breder, maar family ID blijft schoon.</p>
+              <p>V1 key is klein: <code>entryMarketWeatherRegime|entryMarketWeatherTrendSide</code>. Family ID blijft schoon.</p>
             </div>
           </div>
 
@@ -3469,8 +3731,9 @@
               <button type="button" data-action="clear-market-weather">Clear</button>
             </div>
             <div class="toolbar">
-              <span class="pill weather">${escapeHtml(currentMarketWeather().currentMarketWeatherKey)}</span>
+              <span class="pill weather">${escapeHtml(mw.currentMarketWeatherKey)}</span>
               <span class="pill ${currentWeatherKnown() ? "active" : "warn"}">${currentWeatherKnown() ? "KNOWN" : "UNKNOWN => OBSERVE_ONLY"}</span>
+              <span class="pill ${hasManualMarketWeatherOverride() ? "warn" : "active"}">${hasManualMarketWeatherOverride() ? "MANUAL OVERRIDE" : "AUTO BACKEND"}</span>
               <span class="pill observe">selector observe</span>
               <span class="pill observe">sizing cap observe</span>
               <span class="pill observe">FDR observe</span>
@@ -3487,14 +3750,14 @@
           <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
 
           <div class="grid">
-            ${metricCard("Current key", currentMarketWeather().currentMarketWeatherKey)}
+            ${metricCard("Current key", mw.currentMarketWeatherKey)}
             ${metricCard("Key version", MARKET_WEATHER_KEY_VERSION)}
-            ${metricCard("Regime", compact.currentMarketWeatherRegime || "-")}
-            ${metricCard("Trend side", compact.currentMarketWeatherTrendSide || "-")}
-            ${metricCard("Known", compact.confirmedMarketWeatherKnown === false ? "NO" : "YES")}
-            ${metricCard("Fresh", compact.confirmedMarketWeatherFresh === false ? "NO" : "YES")}
+            ${metricCard("Regime", mw.currentMarketWeatherRegime || "-")}
+            ${metricCard("Trend side", mw.currentMarketWeatherTrendSide || "-")}
+            ${metricCard("Known", mw.currentMarketWeatherKnown ? "YES" : "NO")}
+            ${metricCard("Source", mw.source || "-")}
             ${metricCard("Playbook", compact.playbookStatus || "-")}
-            ${metricCard("Capture", "LIVE")}
+            ${metricCard("Unknown override", "BLOCKED")}
           </div>
 
           <div class="card">
@@ -3507,6 +3770,7 @@
 
       async function renderScanner() {
         showLoading("scanner");
+        await ensureMarketLoaded();
 
         const url = scannerApiUrl();
         const data = await safeApi(url, { ok: false, rows: [], candidates: [] }, { timeoutMs: 22000 });
@@ -3559,7 +3823,7 @@
 
       async function runScannerNow() {
         try {
-          const mw = currentMarketWeather();
+          await ensureMarketLoaded();
 
           const data = await api(endpoints.runScanner, {
             method: "POST",
@@ -3584,11 +3848,7 @@
               persistentLearningKey: PERSISTENT_LEARNING_KEY,
               redisNamespace: SHORT_NAMESPACE,
               redisKeyPrefix: SHORT_KEY_PREFIX,
-              entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
-              currentMarketWeatherKey: mw.currentMarketWeatherKey,
-              confirmedMarketWeatherKey: mw.confirmedMarketWeatherKey,
-              currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
-              currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide
+              ...marketWeatherPostPayload()
             })
           });
 
@@ -3601,6 +3861,7 @@
 
       async function renderTrade() {
         showLoading("trade");
+        await ensureMarketLoaded();
 
         const url = tradeApiUrl();
         const data = await safeApi(url, { ok: false, positions: [], openPositions: [] }, { timeoutMs: 22000 });
@@ -3656,7 +3917,7 @@
 
       async function runTradeNow() {
         try {
-          const mw = currentMarketWeather();
+          await ensureMarketLoaded();
 
           const data = await api(endpoints.runTrade, {
             method: "POST",
@@ -3702,11 +3963,8 @@
               microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
               selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
 
-              entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
-              currentMarketWeatherKey: mw.currentMarketWeatherKey,
-              confirmedMarketWeatherKey: mw.confirmedMarketWeatherKey,
-              currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
-              currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide,
+              ...marketWeatherPostPayload(),
+
               marketWeatherCaptureMode: "LIVE",
               marketWeatherAggregationMode: "LIVE",
               marketWeatherSelectorMode: "OBSERVE",
@@ -3755,6 +4013,7 @@
           });
 
           const counts = data.counts || {};
+
           setMessage(
             `TradeSystem klaar.\nEntries=${counts.entries || data.entryRows || 0}, waits=${counts.waits || data.waitRows || 0}, virtualExits=${counts.virtualExits || data.virtualExitRows || 0}.`,
             "ok"
@@ -3905,7 +4164,9 @@
 
       function currentManualSelectionSlots() {
         const active = activeMicroMicroIds().slice(0, MAX_ACTIVE_DISCORD_MICRO_FAMILIES);
+
         while (active.length < MAX_ACTIVE_DISCORD_MICRO_FAMILIES) active.push("");
+
         return active;
       }
 
@@ -3925,6 +4186,8 @@
       }
 
       async function activateSelectedMicroFamilies(ids = []) {
+        await ensureMarketLoaded();
+
         const requestedIds = uniqueStrings(ids);
         const microMicroIds = requestedIds
           .map(normalizeMicroMicroId)
@@ -3961,7 +4224,6 @@
 
         const childIds = uniqueStrings(microMicroIds.map(child75FromAnyId)).filter(isChild75Id);
         const parentIds = uniqueStrings(microMicroIds.map(parentFromAnyId)).filter(isParent15Id);
-        const mw = currentMarketWeather();
 
         try {
           const data = await api(endpoints.rotation, {
@@ -3987,7 +4249,6 @@
 
               childTrueMicroFamilyIds: childIds,
               base75ChildTrueMicroFamilyIds: childIds,
-
               macroFamilyIds: [],
               activeMacroFamilyIds: [],
               parentTrueMicroFamilyIds: parentIds,
@@ -4023,11 +4284,8 @@
               selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
               adminSelectionLayer: "MICRO_MICRO_ONLY",
 
-              entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
-              currentMarketWeatherKey: mw.currentMarketWeatherKey,
-              confirmedMarketWeatherKey: mw.confirmedMarketWeatherKey,
-              currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
-              currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide,
+              ...marketWeatherPostPayload(),
+
               marketWeatherSelectorVersion: MARKET_WEATHER_SELECTOR_VERSION,
               selectorMode: "OBSERVE",
               sizingCapMode: "OBSERVE",
@@ -4114,11 +4372,13 @@
 
       async function renderRotation() {
         showLoading("rotation");
+        await ensureMarketLoaded();
 
         const url = rotationApiUrl();
         const data = await safeApi(url, { ok: false, active: {}, activeRows: [], availableRows: [] }, { timeoutMs: 22000 });
 
         const activeIds = extractActiveIdsFromPayload(data);
+
         state.rotation = {
           ...data,
           activeMicroMicroFamilyIds: activeIds,
@@ -4215,9 +4475,11 @@
 
       async function renderDiscord() {
         showLoading("discord");
+        await ensureMarketLoaded();
 
         const url = discordApiUrl(80);
         const data = await safeApi(url, { ok: false, logs: [] }, { timeoutMs: 18000 });
+
         state.discord = data;
 
         const compact = compactEndpointImportant("Discord Logs", data);
@@ -4263,8 +4525,6 @@
       }
 
       function resetPayload(confirmText, extra = {}) {
-        const mw = currentMarketWeather();
-
         return {
           confirm: confirmText,
           confirmed: confirmText,
@@ -4281,11 +4541,7 @@
           microMicroVersion: MICRO_MICRO_VERSION,
           microMicroEnabled: true,
           selectionGranularity: "EXACT_MICRO_MICRO_ONLY",
-          entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
-          currentMarketWeatherKey: mw.currentMarketWeatherKey,
-          confirmedMarketWeatherKey: mw.confirmedMarketWeatherKey,
-          currentMarketWeatherRegime: mw.currentMarketWeatherRegime,
-          currentMarketWeatherTrendSide: mw.currentMarketWeatherTrendSide,
+          ...marketWeatherPostPayload(),
           empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
           microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
           microMicroBestSelectorVersion: MICRO_MICRO_BEST_SELECTOR_VERSION,
@@ -4347,6 +4603,7 @@
 
       async function postResetLearning() {
         const confirmValue = prompt("Typ RESET_LEARNING_SHORT om SHORT learning te wissen.");
+
         if (confirmValue !== "RESET_LEARNING_SHORT") return;
 
         try {
@@ -4365,6 +4622,7 @@
 
       async function postResetRotation() {
         const confirmValue = prompt("Typ RESET_ROTATION_SHORT om manual Discord selection te wissen.");
+
         if (confirmValue !== "RESET_ROTATION_SHORT") return;
 
         try {
@@ -4411,9 +4669,11 @@
 
       async function openMicro(id) {
         const cleanId = normalizeMicroMicroId(id);
+
         if (!cleanId) return;
 
         const drawer = $("drawer");
+
         drawer.classList.remove("hidden");
         drawer.innerHTML = `
           <div class="drawer-head">
@@ -4426,7 +4686,9 @@
         `;
 
         try {
-          const params = commonParams();
+          await ensureMarketLoaded();
+
+          const params = commonParams({ includeWeather: true });
           const data = await api(`${endpoints.microDetail}/${encodeURIComponent(cleanId)}?${params.toString()}`, { timeoutMs: 18000 });
           const row = normalizeMicroRow(data.row || data.microFamily || data) || normalizeMicroRow({ microMicroFamilyId: cleanId });
 
@@ -4554,15 +4816,19 @@
         const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
+
         link.href = url;
         link.download = filename;
         link.click();
+
         URL.revokeObjectURL(url);
       }
 
       function getPanelExportPayload(name) {
         const panel = $(name);
+
         if (!panel?.dataset?.exportPayload) return {};
+
         try {
           return JSON.parse(panel.dataset.exportPayload);
         } catch {
@@ -4572,9 +4838,11 @@
 
       function renderSoftError(tab, error) {
         const message = friendlyApiMessage(error);
+
         setMessage(message, "warn");
 
         const panel = $(tab);
+
         if (!panel) return;
 
         panel.innerHTML = `
@@ -4589,6 +4857,7 @@
         setMessage("");
 
         const liveLabel = $("liveLabel");
+
         if (liveLabel) {
           liveLabel.textContent = `SHORT-only · ${currentMarketWeather().currentMarketWeatherKey} · ${new Date().toLocaleTimeString()}`;
         }
@@ -4609,6 +4878,7 @@
 
       function showTab(id) {
         const next = tabs.includes(id) ? id : "overview";
+
         state.activeTab = next;
 
         document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
@@ -4636,6 +4906,7 @@
 
         document.addEventListener("click", async (event) => {
           const target = event.target.closest("button");
+
           if (!target) return;
 
           const action = target.dataset.action;
@@ -4653,12 +4924,14 @@
 
           if (target.dataset.selectTarget) {
             const el = $(target.dataset.selectTarget);
+
             if (el && typeof el.select === "function") {
               el.focus();
               el.select();
               if (typeof el.setSelectionRange === "function") el.setSelectionRange(0, el.value.length);
               setMessage("Output geselecteerd. Je kunt nu kopiëren.", "ok");
             }
+
             return;
           }
 
@@ -4715,8 +4988,9 @@
             state.currentMarketWeatherRegime = "";
             state.currentMarketWeatherTrendSide = "";
             state.currentMarketWeatherKey = "";
+            state.lastKnownMarketWeather = null;
             state.micros = null;
-            setMessage("MarketWeather override gewist.", "ok");
+            setMessage("MarketWeather override gewist. Backend auto-mode actief; UNKNOWN wordt niet meegestuurd.", "ok");
             await refresh(state.activeTab);
             return;
           }
@@ -4773,6 +5047,7 @@
 
       function bootFallback() {
         const overview = $("overview");
+
         if (!overview) return;
 
         overview.innerHTML = `
@@ -4780,7 +5055,7 @@
             ${metricCard("Status", "BOOTED", "frontend script is geladen")}
             ${metricCard("Learning key", PERSISTENT_LEARNING_KEY)}
             ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
-            ${metricCard("Veto", "EMPIRICAL", "LCB95(avgR)<0")}
+            ${metricCard("Unknown override", "BLOCKED", "geen UNKNOWN query override")}
           </div>
 
           <div class="card">
@@ -4801,6 +5076,7 @@
           showTab(tabs.includes(initialTab) ? initialTab : "overview");
         } catch (error) {
           const main = document.querySelector("main");
+
           if (main) {
             main.insertAdjacentHTML(
               "afterbegin",
