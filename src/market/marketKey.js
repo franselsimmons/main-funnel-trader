@@ -4,6 +4,12 @@ export const MARKET_WEATHER_KEY_VERSION = 'SHORT_MARKET_WEATHER_KEY_V1';
 export const MARKET_WEATHER_CONFIRMATION_VERSION = 'SHORT_MARKET_WEATHER_CONFIRMATION_3_OF_5_V1';
 export const MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION = 'SHORT_PLAYBOOK_REFRESH_ON_CONFIRMED_WEATHER_CHANGE_V1';
 
+export const ENTRY_MARKET_WEATHER_CAPTURE_VERSION = 'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V1';
+export const MARKET_WEATHER_AGGREGATION_VERSION = 'SHORT_MARKET_WEATHER_AGGREGATION_V1_REGIME_REGIMETREND';
+export const MARKET_WEATHER_SELECTOR_VERSION = 'SHORT_CURRENT_MARKET_PLAYBOOK_SELECTOR_V1_OBSERVE';
+export const MARKET_WEATHER_FDR_VERSION = 'SHORT_MARKET_WEATHER_PLAYBOOK_FDR_FINAL_SLOTS_V1_OBSERVE';
+export const MARKET_WEATHER_FEATURE_FLAGS_VERSION = 'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V1_OBSERVE';
+
 export const UNKNOWN_MARKET_WEATHER_VALUE = 'UNKNOWN';
 export const UNKNOWN_MARKET_WEATHER_KEY = 'UNKNOWN|UNKNOWN';
 
@@ -14,8 +20,19 @@ export const DEFAULT_CONFIRMED_MARKET_WEATHER_MIN_HOLD_MIN = 90;
 export const DEFAULT_PLAYBOOK_MAX_AGE_MIN = 240;
 
 // Backward-compatible named exports expected by tradeSystem.js / weeklyCandidates.js.
+export const SHORT_MARKET_WEATHER_KEY_VERSION = MARKET_WEATHER_KEY_VERSION;
+export const SHORT_MARKET_WEATHER_CONFIRMATION_VERSION = MARKET_WEATHER_CONFIRMATION_VERSION;
+export const SHORT_MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION = MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION;
+export const SHORT_ENTRY_MARKET_WEATHER_CAPTURE_VERSION = ENTRY_MARKET_WEATHER_CAPTURE_VERSION;
+export const SHORT_MARKET_WEATHER_AGGREGATION_VERSION = MARKET_WEATHER_AGGREGATION_VERSION;
+export const SHORT_MARKET_WEATHER_SELECTOR_VERSION = MARKET_WEATHER_SELECTOR_VERSION;
+export const SHORT_MARKET_WEATHER_FDR_VERSION = MARKET_WEATHER_FDR_VERSION;
+export const SHORT_MARKET_WEATHER_FEATURE_FLAGS_VERSION = MARKET_WEATHER_FEATURE_FLAGS_VERSION;
+
 export const PLAYBOOK_MAX_AGE_MIN = DEFAULT_PLAYBOOK_MAX_AGE_MIN;
 export const PLAYBOOK_MAX_AGE_MS = PLAYBOOK_MAX_AGE_MIN * 60 * 1000;
+export const SHORT_PLAYBOOK_MAX_AGE_MIN = PLAYBOOK_MAX_AGE_MIN;
+export const SHORT_PLAYBOOK_MAX_AGE_MS = PLAYBOOK_MAX_AGE_MS;
 
 const REGIME_SQUEEZE = 'SQUEEZE';
 const REGIME_CHOP = 'CHOP';
@@ -118,7 +135,7 @@ function hasUsableValue(value) {
   return value !== undefined && value !== null && value !== '';
 }
 
-function msFromMinutes(minutes) {
+export function msFromMinutes(minutes) {
   const n = safeNumber(minutes, 0);
   return Math.max(0, n) * 60 * 1000;
 }
@@ -394,6 +411,7 @@ export function buildEntryMarketWeatherSnapshot(input = {}, capturedAt = nowMs()
   const capturedAtMs = normalizeTimestampMs(capturedAt, nowMs());
 
   return {
+    entryMarketWeatherCaptureVersion: ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
     entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
     entryMarketWeatherKey,
     entryMarketWeatherRegime,
@@ -410,6 +428,8 @@ export function buildEntryMarketWeatherSnapshot(input = {}, capturedAt = nowMs()
     },
 
     entryMarketWeatherSnapshotLocked: true,
+    entryMarketWeatherImmutable: true,
+    entryMarketWeatherNeverRecomputedAtExit: true,
     entryMarketWeatherIsUnknown: entryMarketWeatherKey === UNKNOWN_MARKET_WEATHER_KEY
   };
 }
@@ -421,6 +441,7 @@ export function attachEntryMarketWeatherSnapshot(target = {}, input = {}, captur
   if (hasExistingEntryKey && target.entryMarketWeatherSnapshotLocked) {
     return {
       ...target,
+      entryMarketWeatherCaptureVersion: target.entryMarketWeatherCaptureVersion || ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
       entryMarketWeatherKeyVersion: target.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
       entryMarketWeatherKey: existing.key,
       entryMarketWeatherRegime: existing.regime,
@@ -438,6 +459,8 @@ export function attachEntryMarketWeatherSnapshot(target = {}, input = {}, captur
         fullV1: existing.key
       },
       entryMarketWeatherSnapshotLocked: true,
+      entryMarketWeatherImmutable: true,
+      entryMarketWeatherNeverRecomputedAtExit: true,
       entryMarketWeatherIsUnknown: existing.key === UNKNOWN_MARKET_WEATHER_KEY
     };
   }
@@ -445,6 +468,7 @@ export function attachEntryMarketWeatherSnapshot(target = {}, input = {}, captur
   if (hasExistingEntryKey && (existing.valid || existing.key === UNKNOWN_MARKET_WEATHER_KEY)) {
     return {
       ...target,
+      entryMarketWeatherCaptureVersion: target.entryMarketWeatherCaptureVersion || ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
       entryMarketWeatherKeyVersion: target.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
       entryMarketWeatherKey: existing.key,
       entryMarketWeatherRegime: existing.regime,
@@ -459,6 +483,8 @@ export function attachEntryMarketWeatherSnapshot(target = {}, input = {}, captur
         fullV1: existing.key
       },
       entryMarketWeatherSnapshotLocked: true,
+      entryMarketWeatherImmutable: true,
+      entryMarketWeatherNeverRecomputedAtExit: true,
       entryMarketWeatherIsUnknown: existing.key === UNKNOWN_MARKET_WEATHER_KEY
     };
   }
@@ -475,6 +501,7 @@ export function preserveEntryMarketWeatherSnapshot(position = {}, fallbackInput 
 
   if (hasExistingEntryKey && (existing.valid || existing.key === UNKNOWN_MARKET_WEATHER_KEY)) {
     return {
+      entryMarketWeatherCaptureVersion: position.entryMarketWeatherCaptureVersion || ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
       entryMarketWeatherKeyVersion: position.entryMarketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
       entryMarketWeatherKey: existing.key,
       entryMarketWeatherRegime: existing.regime,
@@ -492,6 +519,8 @@ export function preserveEntryMarketWeatherSnapshot(position = {}, fallbackInput 
         fullV1: existing.key
       },
       entryMarketWeatherSnapshotLocked: true,
+      entryMarketWeatherImmutable: true,
+      entryMarketWeatherNeverRecomputedAtExit: true,
       entryMarketWeatherIsUnknown: existing.key === UNKNOWN_MARKET_WEATHER_KEY
     };
   }
@@ -983,6 +1012,15 @@ export function marketWeatherFeatureFlags() {
     marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
     marketWeatherConfirmationVersion: MARKET_WEATHER_CONFIRMATION_VERSION,
     marketWeatherPlaybookRefreshVersion: MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION,
+    entryMarketWeatherCaptureVersion: ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherSelectorVersion: MARKET_WEATHER_SELECTOR_VERSION,
+    marketWeatherFdrVersion: MARKET_WEATHER_FDR_VERSION,
+    marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+
+    shortMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    shortMarketWeatherConfirmationVersion: SHORT_MARKET_WEATHER_CONFIRMATION_VERSION,
+    shortMarketWeatherPlaybookRefreshVersion: SHORT_MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION,
 
     capture: 'live',
     aggregation: 'live',
@@ -993,6 +1031,9 @@ export function marketWeatherFeatureFlags() {
 
     playbookMaxAgeMin: PLAYBOOK_MAX_AGE_MIN,
     playbookMaxAgeMs: PLAYBOOK_MAX_AGE_MS,
+    shortPlaybookMaxAgeMin: SHORT_PLAYBOOK_MAX_AGE_MIN,
+    shortPlaybookMaxAgeMs: SHORT_PLAYBOOK_MAX_AGE_MS,
+
     forcePlaybookRefreshOnConfirmedWeatherChange: true,
     weatherConfirmationRequired: DEFAULT_WEATHER_CONFIRMATION_REQUIRED,
     weatherConfirmationWindowSamples: DEFAULT_WEATHER_CONFIRMATION_WINDOW_SAMPLES,
@@ -1005,6 +1046,21 @@ export default {
   MARKET_WEATHER_KEY_VERSION,
   MARKET_WEATHER_CONFIRMATION_VERSION,
   MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION,
+  ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
+  MARKET_WEATHER_AGGREGATION_VERSION,
+  MARKET_WEATHER_SELECTOR_VERSION,
+  MARKET_WEATHER_FDR_VERSION,
+  MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+
+  SHORT_MARKET_WEATHER_KEY_VERSION,
+  SHORT_MARKET_WEATHER_CONFIRMATION_VERSION,
+  SHORT_MARKET_WEATHER_PLAYBOOK_REFRESH_VERSION,
+  SHORT_ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
+  SHORT_MARKET_WEATHER_AGGREGATION_VERSION,
+  SHORT_MARKET_WEATHER_SELECTOR_VERSION,
+  SHORT_MARKET_WEATHER_FDR_VERSION,
+  SHORT_MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+
   UNKNOWN_MARKET_WEATHER_VALUE,
   UNKNOWN_MARKET_WEATHER_KEY,
 
@@ -1013,8 +1069,13 @@ export default {
   DEFAULT_WEATHER_CONFIRMATION_WINDOW_SAMPLES,
   DEFAULT_CONFIRMED_MARKET_WEATHER_MIN_HOLD_MIN,
   DEFAULT_PLAYBOOK_MAX_AGE_MIN,
+
   PLAYBOOK_MAX_AGE_MIN,
   PLAYBOOK_MAX_AGE_MS,
+  SHORT_PLAYBOOK_MAX_AGE_MIN,
+  SHORT_PLAYBOOK_MAX_AGE_MS,
+
+  msFromMinutes,
 
   normalizeMarketWeatherRegime,
   normalizeMarketWeatherTrendSide,
