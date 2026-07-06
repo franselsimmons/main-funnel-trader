@@ -53,6 +53,8 @@ const RAW_FIELD_ALLOWLIST = [
   'currentMarketWeatherTrendSide',
   'confirmedMarketWeatherRegime',
   'confirmedMarketWeatherTrendSide',
+  'entryMarketWeatherRegime',
+  'entryMarketWeatherTrendSide',
   'currentRegime',
   'currentTrendSide',
   'confirmedRegime',
@@ -101,9 +103,38 @@ function nowMs() {
   return Date.now();
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isScalar(value) {
+  return value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint';
+}
+
 function safeString(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
-  return String(value).trim();
+  if (!isScalar(value)) return fallback;
+
+  const raw = String(value).trim();
+
+  if (!raw) return fallback;
+
+  const upperRaw = raw.toUpperCase();
+
+  if (
+    upperRaw === '[OBJECT OBJECT]' ||
+    upperRaw === 'OBJECT_OBJECT' ||
+    upperRaw === 'OBJECT OBJECT'
+  ) {
+    return fallback;
+  }
+
+  return raw;
 }
 
 function safeNumber(value, fallback = null) {
@@ -120,7 +151,16 @@ function safeUpperToken(value, fallback = UNKNOWN_MARKET_WEATHER_VALUE) {
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
 
-  return token || fallback;
+  if (
+    !token ||
+    token === 'OBJECT_OBJECT' ||
+    token === 'OBJECT' ||
+    token === 'OBJECT_OBJECT_OBJECT'
+  ) {
+    return fallback;
+  }
+
+  return token;
 }
 
 function firstDefined(...values) {
@@ -131,8 +171,171 @@ function firstDefined(...values) {
   return undefined;
 }
 
+function firstScalar(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue;
+    if (!isScalar(value)) continue;
+
+    const text = safeString(value, '');
+    if (!text) continue;
+
+    return value;
+  }
+
+  return undefined;
+}
+
 function hasUsableValue(value) {
   return value !== undefined && value !== null && value !== '';
+}
+
+function hasUsableScalar(value) {
+  return firstScalar(value) !== undefined;
+}
+
+function plainOrEmpty(value) {
+  return isPlainObject(value) ? value : {};
+}
+
+function nestedObject(...values) {
+  for (const value of values) {
+    if (isPlainObject(value)) return value;
+  }
+
+  return {};
+}
+
+function regimeFromObject(input = {}) {
+  const source = plainOrEmpty(input);
+
+  return firstDefined(
+    source.entryMarketWeatherRegime,
+    source.confirmedMarketWeatherRegime,
+    source.currentMarketWeatherRegime,
+    source.marketWeatherRegime,
+    source.confirmedRegime,
+    source.currentRegime,
+    source.regime,
+
+    source.confirmedMarketWeather?.confirmedMarketWeatherRegime,
+    source.confirmedMarketWeather?.currentMarketWeatherRegime,
+    source.confirmedMarketWeather?.marketWeatherRegime,
+    source.confirmedMarketWeather?.regime,
+
+    source.currentMarketWeather?.currentMarketWeatherRegime,
+    source.currentMarketWeather?.marketWeatherRegime,
+    source.currentMarketWeather?.regime,
+
+    source.marketWeather?.entryMarketWeatherRegime,
+    source.marketWeather?.confirmedMarketWeatherRegime,
+    source.marketWeather?.currentMarketWeatherRegime,
+    source.marketWeather?.marketWeatherRegime,
+    source.marketWeather?.regime,
+
+    source.marketWeatherContext?.entryMarketWeatherRegime,
+    source.marketWeatherContext?.confirmedMarketWeatherRegime,
+    source.marketWeatherContext?.currentMarketWeatherRegime,
+    source.marketWeatherContext?.marketWeatherRegime,
+    source.marketWeatherContext?.regime,
+
+    source.weather?.entryMarketWeatherRegime,
+    source.weather?.confirmedMarketWeatherRegime,
+    source.weather?.currentMarketWeatherRegime,
+    source.weather?.marketWeatherRegime,
+    source.weather?.regime,
+
+    source.market?.entryMarketWeatherRegime,
+    source.market?.confirmedMarketWeatherRegime,
+    source.market?.currentMarketWeatherRegime,
+    source.market?.marketWeatherRegime,
+    source.market?.regime
+  );
+}
+
+function trendSideFromObject(input = {}) {
+  const source = plainOrEmpty(input);
+
+  return firstDefined(
+    source.entryMarketWeatherTrendSide,
+    source.confirmedMarketWeatherTrendSide,
+    source.currentMarketWeatherTrendSide,
+    source.marketWeatherTrendSide,
+    source.confirmedTrendSide,
+    source.currentTrendSide,
+    source.trendSide,
+
+    source.confirmedMarketWeather?.confirmedMarketWeatherTrendSide,
+    source.confirmedMarketWeather?.currentMarketWeatherTrendSide,
+    source.confirmedMarketWeather?.marketWeatherTrendSide,
+    source.confirmedMarketWeather?.trendSide,
+
+    source.currentMarketWeather?.currentMarketWeatherTrendSide,
+    source.currentMarketWeather?.marketWeatherTrendSide,
+    source.currentMarketWeather?.trendSide,
+
+    source.marketWeather?.entryMarketWeatherTrendSide,
+    source.marketWeather?.confirmedMarketWeatherTrendSide,
+    source.marketWeather?.currentMarketWeatherTrendSide,
+    source.marketWeather?.marketWeatherTrendSide,
+    source.marketWeather?.trendSide,
+
+    source.marketWeatherContext?.entryMarketWeatherTrendSide,
+    source.marketWeatherContext?.confirmedMarketWeatherTrendSide,
+    source.marketWeatherContext?.currentMarketWeatherTrendSide,
+    source.marketWeatherContext?.marketWeatherTrendSide,
+    source.marketWeatherContext?.trendSide,
+
+    source.weather?.entryMarketWeatherTrendSide,
+    source.weather?.confirmedMarketWeatherTrendSide,
+    source.weather?.currentMarketWeatherTrendSide,
+    source.weather?.marketWeatherTrendSide,
+    source.weather?.trendSide,
+
+    source.market?.entryMarketWeatherTrendSide,
+    source.market?.confirmedMarketWeatherTrendSide,
+    source.market?.currentMarketWeatherTrendSide,
+    source.market?.marketWeatherTrendSide,
+    source.market?.trendSide
+  );
+}
+
+function keyFromObject(input = {}) {
+  const source = plainOrEmpty(input);
+
+  return firstScalar(
+    source.entryMarketWeatherKey,
+    source.confirmedMarketWeatherKey,
+    source.currentMarketWeatherKey,
+    source.marketWeatherKey,
+
+    source.confirmedMarketWeather?.confirmedMarketWeatherKey,
+    source.confirmedMarketWeather?.currentMarketWeatherKey,
+    source.confirmedMarketWeather?.marketWeatherKey,
+
+    source.currentMarketWeather?.currentMarketWeatherKey,
+    source.currentMarketWeather?.confirmedMarketWeatherKey,
+    source.currentMarketWeather?.marketWeatherKey,
+
+    source.marketWeather?.entryMarketWeatherKey,
+    source.marketWeather?.confirmedMarketWeatherKey,
+    source.marketWeather?.currentMarketWeatherKey,
+    source.marketWeather?.marketWeatherKey,
+
+    source.marketWeatherContext?.entryMarketWeatherKey,
+    source.marketWeatherContext?.confirmedMarketWeatherKey,
+    source.marketWeatherContext?.currentMarketWeatherKey,
+    source.marketWeatherContext?.marketWeatherKey,
+
+    source.weather?.entryMarketWeatherKey,
+    source.weather?.confirmedMarketWeatherKey,
+    source.weather?.currentMarketWeatherKey,
+    source.weather?.marketWeatherKey,
+
+    source.market?.entryMarketWeatherKey,
+    source.market?.confirmedMarketWeatherKey,
+    source.market?.currentMarketWeatherKey,
+    source.market?.marketWeatherKey
+  );
 }
 
 export function msFromMinutes(minutes) {
@@ -149,13 +352,15 @@ function minutesBetween(fromMs, toMs = nowMs()) {
   return Math.max(0, (b - a) / 60000);
 }
 
-function normalizeTimestampMs(value, fallback = null) {
+export function normalizeTimestampMs(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
 
   if (typeof value === 'number' && Number.isFinite(value)) {
     if (value > 0 && value < 9999999999) return Math.round(value * 1000);
     return Math.round(value);
   }
+
+  if (!isScalar(value)) return fallback;
 
   const parsedNumber = Number(value);
   if (Number.isFinite(parsedNumber)) {
@@ -199,6 +404,10 @@ function pickRawFields(source = {}) {
 }
 
 export function normalizeMarketWeatherRegime(value) {
+  if (isPlainObject(value)) {
+    return normalizeMarketWeatherRegime(regimeFromObject(value));
+  }
+
   const raw = safeUpperToken(value);
 
   if (raw === UNKNOWN_MARKET_WEATHER_VALUE) return REGIME_UNKNOWN;
@@ -240,6 +449,10 @@ export function normalizeMarketWeatherRegime(value) {
 }
 
 export function normalizeMarketWeatherTrendSide(value) {
+  if (isPlainObject(value)) {
+    return normalizeMarketWeatherTrendSide(trendSideFromObject(value));
+  }
+
   const raw = safeUpperToken(value);
 
   if (raw === UNKNOWN_MARKET_WEATHER_VALUE) return TREND_SIDE_UNKNOWN;
@@ -281,13 +494,43 @@ export function normalizeMarketWeatherTrendSide(value) {
 }
 
 export function buildEntryMarketWeatherKey(regime, trendSide) {
+  if (isPlainObject(regime) && trendSide === undefined) {
+    const explicitKey = keyFromObject(regime);
+
+    if (hasUsableScalar(explicitKey)) {
+      return parseMarketWeatherKey(explicitKey).key;
+    }
+
+    const objectRegime = regimeFromObject(regime);
+    const objectTrendSide = trendSideFromObject(regime);
+
+    return buildEntryMarketWeatherKey(objectRegime, objectTrendSide);
+  }
+
   const normalizedRegime = normalizeMarketWeatherRegime(regime);
   const normalizedTrendSide = normalizeMarketWeatherTrendSide(trendSide);
 
   return `${normalizedRegime}|${normalizedTrendSide}`;
 }
 
+export const buildMarketWeatherKey = buildEntryMarketWeatherKey;
+
 export function parseMarketWeatherKey(key) {
+  if (isPlainObject(key)) {
+    const explicitKey = keyFromObject(key);
+
+    if (hasUsableScalar(explicitKey)) {
+      return parseMarketWeatherKey(explicitKey);
+    }
+
+    const builtKey = buildEntryMarketWeatherKey(
+      regimeFromObject(key),
+      trendSideFromObject(key)
+    );
+
+    return parseMarketWeatherKey(builtKey);
+  }
+
   const raw = safeString(key, '');
   const parts = raw.split('|').map((x) => safeString(x));
 
@@ -324,64 +567,60 @@ export function isValidMarketWeatherKey(key, { allowUnknown = false } = {}) {
 }
 
 export function extractMarketWeatherInput(input = {}) {
-  const source =
-    input.marketWeather ||
-    input.marketWeatherContext ||
-    input.weather ||
-    input.market ||
-    input;
+  const root = plainOrEmpty(input);
 
-  const scannerRow =
-    input.scannerRow ||
-    input.row ||
-    input.candidate ||
-    input.tradeCandidate ||
-    {};
-
-  const merged = {
-    ...scannerRow,
-    ...source,
-    ...input
-  };
-
-  const explicitKey = firstDefined(
-    merged.entryMarketWeatherKey,
-    merged.confirmedMarketWeatherKey,
-    merged.currentMarketWeatherKey,
-    merged.marketWeatherKey
+  const source = nestedObject(
+    root.marketWeather,
+    root.marketWeatherContext,
+    root.weather,
+    root.market,
+    root.currentMarketWeather,
+    root.confirmedMarketWeather
   );
 
-  const parsedKey = parseMarketWeatherKey(explicitKey);
+  const scannerRow = nestedObject(
+    root.scannerRow,
+    root.row,
+    root.candidate,
+    root.tradeCandidate
+  );
+
+  const scannerNested = nestedObject(
+    scannerRow.marketWeather,
+    scannerRow.marketWeatherContext,
+    scannerRow.weather,
+    scannerRow.market,
+    scannerRow.currentMarketWeather,
+    scannerRow.confirmedMarketWeather
+  );
+
+  const merged = {
+    ...scannerNested,
+    ...scannerRow,
+    ...source,
+    ...root
+  };
+
+  const explicitKey = keyFromObject(merged);
+  const parsedKey = hasUsableScalar(explicitKey)
+    ? parseMarketWeatherKey(explicitKey)
+    : parseMarketWeatherKey(null);
 
   const regime = parsedKey.valid
     ? parsedKey.regime
-    : normalizeMarketWeatherRegime(firstDefined(
-        merged.entryMarketWeatherRegime,
-        merged.confirmedMarketWeatherRegime,
-        merged.currentMarketWeatherRegime,
-        merged.marketWeatherRegime,
-        merged.confirmedRegime,
-        merged.currentRegime,
-        merged.regime
-      ));
+    : normalizeMarketWeatherRegime(regimeFromObject(merged));
 
   const trendSide = parsedKey.valid
     ? parsedKey.trendSide
-    : normalizeMarketWeatherTrendSide(firstDefined(
-        merged.entryMarketWeatherTrendSide,
-        merged.confirmedMarketWeatherTrendSide,
-        merged.currentMarketWeatherTrendSide,
-        merged.marketWeatherTrendSide,
-        merged.confirmedTrendSide,
-        merged.currentTrendSide,
-        merged.trendSide
-      ));
+    : normalizeMarketWeatherTrendSide(trendSideFromObject(merged));
+
+  const key = buildEntryMarketWeatherKey(regime, trendSide);
 
   return compactObject({
     ...merged,
     marketWeatherRegime: regime,
     marketWeatherTrendSide: trendSide,
-    marketWeatherKey: buildEntryMarketWeatherKey(regime, trendSide)
+    marketWeatherKey: key
   });
 }
 
@@ -559,25 +798,34 @@ export function currentMarketWeatherFromInput(input = {}) {
 }
 
 export function confirmedMarketWeatherFromInput(input = {}) {
-  const source =
-    input.confirmedMarketWeather ||
-    input.marketWeather ||
-    input.marketWeatherContext ||
-    input.weather ||
-    input;
+  const root = plainOrEmpty(input);
 
-  const explicitKey = firstDefined(
+  const source = nestedObject(
+    root.confirmedMarketWeather,
+    root.currentMarketWeather,
+    root.marketWeather,
+    root.marketWeatherContext,
+    root.weather,
+    root.market
+  );
+
+  const merged = {
+    ...source,
+    ...root
+  };
+
+  const explicitKey = firstScalar(
     source.confirmedMarketWeatherKey,
     source.currentMarketWeatherKey,
     source.marketWeatherKey,
-    input.confirmedMarketWeatherKey,
-    input.currentMarketWeatherKey,
-    input.marketWeatherKey
+    root.confirmedMarketWeatherKey,
+    root.currentMarketWeatherKey,
+    root.marketWeatherKey
   );
 
   const parsedExplicit = parseMarketWeatherKey(explicitKey);
 
-  if (hasUsableValue(explicitKey) && (parsedExplicit.valid || parsedExplicit.key === UNKNOWN_MARKET_WEATHER_KEY)) {
+  if (hasUsableScalar(explicitKey) && (parsedExplicit.valid || parsedExplicit.key === UNKNOWN_MARKET_WEATHER_KEY)) {
     return {
       confirmedMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
       confirmedMarketWeatherKey: parsedExplicit.key,
@@ -585,35 +833,14 @@ export function confirmedMarketWeatherFromInput(input = {}) {
       confirmedMarketWeatherTrendSide: parsedExplicit.trendSide,
       confirmedMarketWeatherIsUnknown: parsedExplicit.key === UNKNOWN_MARKET_WEATHER_KEY,
       confirmedMarketWeatherAt: normalizeTimestampMs(
-        firstDefined(source.confirmedMarketWeatherAt, source.capturedAt, input.confirmedMarketWeatherAt),
+        firstDefined(source.confirmedMarketWeatherAt, source.capturedAt, root.confirmedMarketWeatherAt),
         nowMs()
       )
     };
   }
 
-  const regime = normalizeMarketWeatherRegime(firstDefined(
-    source.confirmedMarketWeatherRegime,
-    source.currentMarketWeatherRegime,
-    source.marketWeatherRegime,
-    source.confirmedRegime,
-    source.currentRegime,
-    source.regime,
-    input.confirmedMarketWeatherRegime,
-    input.currentMarketWeatherRegime,
-    input.marketWeatherRegime
-  ));
-
-  const trendSide = normalizeMarketWeatherTrendSide(firstDefined(
-    source.confirmedMarketWeatherTrendSide,
-    source.currentMarketWeatherTrendSide,
-    source.marketWeatherTrendSide,
-    source.confirmedTrendSide,
-    source.currentTrendSide,
-    source.trendSide,
-    input.confirmedMarketWeatherTrendSide,
-    input.currentMarketWeatherTrendSide,
-    input.marketWeatherTrendSide
-  ));
+  const regime = normalizeMarketWeatherRegime(regimeFromObject(merged));
+  const trendSide = normalizeMarketWeatherTrendSide(trendSideFromObject(merged));
 
   const key = buildEntryMarketWeatherKey(regime, trendSide);
 
@@ -624,7 +851,7 @@ export function confirmedMarketWeatherFromInput(input = {}) {
     confirmedMarketWeatherTrendSide: trendSide,
     confirmedMarketWeatherIsUnknown: key === UNKNOWN_MARKET_WEATHER_KEY,
     confirmedMarketWeatherAt: normalizeTimestampMs(
-      firstDefined(source.confirmedMarketWeatherAt, source.capturedAt, input.confirmedMarketWeatherAt),
+      firstDefined(source.confirmedMarketWeatherAt, source.capturedAt, root.confirmedMarketWeatherAt),
       nowMs()
     )
   };
@@ -645,9 +872,17 @@ export function buildMarketWeatherSample(input = {}, sampledAt = nowMs()) {
 }
 
 export function normalizeMarketWeatherSamples(samples = []) {
-  if (!Array.isArray(samples)) return [];
+  const inputSamples = Array.isArray(samples)
+    ? samples
+    : Array.isArray(samples?.samples)
+      ? samples.samples
+      : Array.isArray(samples?.recentSamples)
+        ? samples.recentSamples
+        : hasUsableValue(samples)
+          ? [samples]
+          : [];
 
-  return samples
+  return inputSamples
     .map((sample) => {
       if (!sample) return null;
 
@@ -663,16 +898,10 @@ export function normalizeMarketWeatherSamples(samples = []) {
         };
       }
 
-      const explicitKey = firstDefined(
-        sample.marketWeatherKey,
-        sample.currentMarketWeatherKey,
-        sample.confirmedMarketWeatherKey,
-        sample.entryMarketWeatherKey
-      );
-
+      const explicitKey = keyFromObject(sample);
       const parsed = parseMarketWeatherKey(explicitKey);
 
-      if (hasUsableValue(explicitKey) && (parsed.valid || parsed.key === UNKNOWN_MARKET_WEATHER_KEY)) {
+      if (hasUsableScalar(explicitKey) && (parsed.valid || parsed.key === UNKNOWN_MARKET_WEATHER_KEY)) {
         return {
           marketWeatherKeyVersion: sample.marketWeatherKeyVersion || MARKET_WEATHER_KEY_VERSION,
           marketWeatherKey: parsed.key,
@@ -705,7 +934,7 @@ export function confirmMarketWeatherKey(samples = [], options = {}) {
     safeNumber(options.sampleIntervalMin, DEFAULT_MARKET_WEATHER_SAMPLE_INTERVAL_MIN)
   );
 
-  const previousConfirmedKey = firstDefined(
+  const previousConfirmedKey = firstScalar(
     options.previousConfirmedMarketWeatherKey,
     options.previousConfirmedKey
   );
@@ -825,7 +1054,7 @@ export function isFreshConfirmedMarketWeather(confirmedWeather = {}, options = {
 
   const asOfMs = normalizeTimestampMs(options.asOf, nowMs());
 
-  const key = firstDefined(
+  const key = firstScalar(
     confirmedWeather.confirmedMarketWeatherKey,
     confirmedWeather.currentMarketWeatherKey,
     confirmedWeather.marketWeatherKey
@@ -881,7 +1110,7 @@ export function isPlaybookFreshForConfirmedWeather(playbook = {}, confirmedWeath
 
   const confirmed = confirmedMarketWeatherFromInput(confirmedWeather);
 
-  const playbookKey = firstDefined(
+  const playbookKey = firstScalar(
     playbook.currentMarketWeatherKey,
     playbook.confirmedMarketWeatherKey,
     playbook.marketWeatherKey
@@ -953,14 +1182,16 @@ export function shouldForcePlaybookRefreshOnWeatherChange(previousWeather = {}, 
 }
 
 export function marketWeatherTradeReadinessGate(input = {}) {
-  const key = firstDefined(
+  const key = firstScalar(
     input.currentMarketWeatherKey,
     input.confirmedMarketWeatherKey,
     input.entryMarketWeatherKey,
     input.marketWeatherKey
   );
 
-  const parsed = parseMarketWeatherKey(key);
+  const parsed = hasUsableScalar(key)
+    ? parseMarketWeatherKey(key)
+    : parseMarketWeatherKey(input);
 
   const blocked = parsed.key === UNKNOWN_MARKET_WEATHER_KEY;
 
@@ -982,15 +1213,20 @@ export function sameMarketWeatherKey(a, b) {
 }
 
 export function marketWeatherMatchesEntry(entry = {}, current = {}) {
-  const entryKey = firstDefined(entry.entryMarketWeatherKey, entry.marketWeatherKey);
-  const currentKey = firstDefined(
+  const entryKey = firstScalar(entry.entryMarketWeatherKey, entry.marketWeatherKey);
+  const currentKey = firstScalar(
     current.currentMarketWeatherKey,
     current.confirmedMarketWeatherKey,
     current.marketWeatherKey
   );
 
-  const parsedEntry = parseMarketWeatherKey(entryKey);
-  const parsedCurrent = parseMarketWeatherKey(currentKey);
+  const parsedEntry = hasUsableScalar(entryKey)
+    ? parseMarketWeatherKey(entryKey)
+    : parseMarketWeatherKey(entry);
+
+  const parsedCurrent = hasUsableScalar(currentKey)
+    ? parseMarketWeatherKey(currentKey)
+    : parseMarketWeatherKey(current);
 
   const matched =
     parsedEntry.valid &&
@@ -1076,10 +1312,12 @@ export default {
   SHORT_PLAYBOOK_MAX_AGE_MS,
 
   msFromMinutes,
+  normalizeTimestampMs,
 
   normalizeMarketWeatherRegime,
   normalizeMarketWeatherTrendSide,
   buildEntryMarketWeatherKey,
+  buildMarketWeatherKey,
   parseMarketWeatherKey,
   isUnknownMarketWeatherKey,
   isValidMarketWeatherKey,
