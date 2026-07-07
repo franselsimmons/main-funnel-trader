@@ -1,19 +1,17 @@
 // ================= FILE: src/analyze/analyzeEngine.js =================
 
 import { createHash } from 'crypto';
-import { CONFIG } from '../config.js';
-import { KEYS } from '../keys.js';
-import { getDurableRedis, getVolatileRedis, getJson, setJson } from '../redis.js';
-import { safeNumber, sideToTradeSide } from '../utils.js';
-import { classifyMicroFamily, classifyMacroFamily } from './microFamilies.js';
-import {
-  createMicroStats,
-  updateObservation,
-  updateOutcome,
-  refreshStats,
-  getWeeklyTradingCandidates as scoreWeeklyTradingCandidates
-} from './scoring.js';
-import { applyCosts } from '../trade/costModel.js';
+
+import * as ConfigModule from '../config.js';
+import * as KeysModule from '../keys.js';
+import * as RedisApi from '../redis.js';
+import * as Utils from '../utils.js';
+import * as MicroFamilies from './microFamilies.js';
+import * as Scoring from './scoring.js';
+import * as CostModel from '../trade/costModel.js';
+
+const CONFIG = ConfigModule.CONFIG || {};
+const KEYS = KeysModule.KEYS || {};
 
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
@@ -52,28 +50,46 @@ const MIN_COMPLETED_EMPIRICAL_VETO = 35;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
 const SHORT_MARKET_WEATHER_KEY_V1 = 'SHORT_MARKET_WEATHER_KEY_V1';
-const ENTRY_MARKET_WEATHER_CAPTURE_VERSION = 'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V2_IMMUTABLE_KNOWN_KEY_REPAIR';
-const MARKET_WEATHER_FEATURE_FLAGS_VERSION = 'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V2_STATS_REPAIR';
-const MARKET_WEATHER_AGGREGATION_VERSION = 'SHORT_MARKET_WEATHER_AGGREGATION_V2_NETR_STATS_REPAIR';
+const UNKNOWN_MARKET_WEATHER_KEY = 'UNKNOWN|UNKNOWN';
 
-const EMPIRICAL_VETO_VERSION = 'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V2_NETR_STATS';
-const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MM_RUNTIME_STATUS_GATE_V3_NETR_STATS_REPAIR';
+const ENTRY_MARKET_WEATHER_CAPTURE_VERSION =
+  'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V4_IMMUTABLE_NETR_REPAIR';
+const MARKET_WEATHER_FEATURE_FLAGS_VERSION =
+  'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V3_NETR_REPAIR_SOURCE_OF_TRUTH';
+const MARKET_WEATHER_AGGREGATION_VERSION =
+  'SHORT_MARKET_WEATHER_AGGREGATION_V3_NETR_SOURCE_OF_TRUTH';
 
-const NET_R_STATS_VERSION = 'SHORT_NET_R_STATS_V2_RECORD_OUTCOME_SOURCE_OF_TRUTH';
-const STATS_INVARIANT_VERSION = 'SHORT_STATS_INVARIANT_NETR_TOTALR_AVGR_PF_REPAIR_V2';
+const EMPIRICAL_VETO_VERSION =
+  'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V3_NETR_SOURCE_OF_TRUTH';
+const MICRO_MICRO_RUNTIME_GATE_VERSION =
+  'SHORT_MM_RUNTIME_STATUS_GATE_V4_NETR_SOURCE_OF_TRUTH';
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V2_NETR_STATS';
+const NET_R_STATS_VERSION =
+  'SHORT_NET_R_STATS_V3_RECORD_OUTCOME_SOURCE_OF_TRUTH';
+const STATS_INVARIANT_VERSION =
+  'SHORT_STATS_INVARIANT_NETR_TOTALR_AVGR_PF_REPAIR_V3';
+
+const MEASUREMENT_FIX_VERSION =
+  'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V3_NETR_SOURCE_OF_TRUTH';
 const POSITION_MEASUREMENT_FIX_VERSION = MEASUREMENT_FIX_VERSION;
-const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V3_MARKET_WEATHER_NETR_STATS';
-const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V3_NETR_STATS';
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V16_MARKET_WEATHER_EMPIRICAL_VETO_NETR_STATS';
-const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V4_MARKET_WEATHER';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V9_MARKET_WEATHER_NETR_STATS';
-const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V3_NETR_STATS';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_MICRO_MICRO_ONLY_V5_NETR_STATS';
-const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_POLICY_BLOCK_V3_NARROWED';
+const MICRO_MICRO_VERSION =
+  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V4_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
+const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V4_NETR_SOURCE_OF_TRUTH';
+const COST_MODEL_VERSION =
+  'POSITION_ENGINE_SHORT_NET_COST_V17_MARKET_WEATHER_EMPIRICAL_VETO_NETR_SOURCE_OF_TRUTH';
+const OBSERVATION_DEDUPE_VERSION =
+  'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V5_MARKET_WEATHER';
+const OUTCOME_DEDUPE_VERSION =
+  'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V10_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
+const SELECTION_ENGINE_VERSION =
+  'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V4_NETR_SOURCE_OF_TRUTH';
+const ADAPTIVE_UI_VERSION =
+  'SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_MICRO_MICRO_ONLY_V6_NETR_SOURCE_OF_TRUTH';
+const WEAK_CONTRA_ENTRY_GATE_VERSION =
+  'SHORT_E_WEAK_CONTRA_POLICY_BLOCK_V4_NARROWED';
 
-const PRIMARY_LEARNING_ID_RULE = 'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V4_MARKET_WEATHER_NETR_STATS';
+const PRIMARY_LEARNING_ID_RULE =
+  'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V5_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
 
 const MICRO_MICRO_STATUS_OBSERVING = 'OBSERVING';
 const MICRO_MICRO_STATUS_PASSED = 'PASSED';
@@ -121,14 +137,27 @@ function upper(value = '') {
   return String(value || '').trim().toUpperCase();
 }
 
+function fallbackSafeNumber(value, fallback = 0) {
+  const x = Number(value);
+  return Number.isFinite(x) ? x : fallback;
+}
+
+function safeNumber(value, fallback = 0) {
+  if (typeof Utils.safeNumber === 'function') {
+    const x = Utils.safeNumber(value, fallback);
+    return Number.isFinite(Number(x)) ? Number(x) : fallback;
+  }
+
+  return fallbackSafeNumber(value, fallback);
+}
+
 function n(value, fallback = 0) {
   const x = safeNumber(value, fallback);
   return Number.isFinite(x) ? x : fallback;
 }
 
 function finite(value) {
-  const x = Number(value);
-  return Number.isFinite(x);
+  return Number.isFinite(Number(value));
 }
 
 function round4(value) {
@@ -199,6 +228,168 @@ function norm(value = '', fallback = '') {
     .replace(/^_+|_+$/g, '') || fallback;
 }
 
+function jsonSafe(value) {
+  const seen = new WeakSet();
+
+  return JSON.parse(JSON.stringify(value, (key, val) => {
+    if (typeof val === 'bigint') return Number(val);
+
+    if (val && typeof val === 'object') {
+      if (seen.has(val)) return undefined;
+      seen.add(val);
+    }
+
+    return val;
+  }));
+}
+
+function getDurableRedisSafe() {
+  try {
+    return typeof RedisApi.getDurableRedis === 'function'
+      ? RedisApi.getDurableRedis()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getVolatileRedisSafe() {
+  try {
+    return typeof RedisApi.getVolatileRedis === 'function'
+      ? RedisApi.getVolatileRedis()
+      : getDurableRedisSafe();
+  } catch {
+    return getDurableRedisSafe();
+  }
+}
+
+async function getJsonSafe(redis, key, fallback = null) {
+  if (!redis || !key) return fallback;
+
+  try {
+    if (typeof RedisApi.getJson === 'function') {
+      return await RedisApi.getJson(redis, key, fallback);
+    }
+
+    if (typeof redis.get === 'function') {
+      const raw = await redis.get(key);
+
+      if (raw === null || raw === undefined) return fallback;
+
+      if (typeof raw === 'string') {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return raw;
+        }
+      }
+
+      return raw;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
+async function setJsonSafe(redis, key, value) {
+  if (!redis || !key) return false;
+
+  try {
+    const safe = jsonSafe(value);
+
+    if (typeof RedisApi.setJson === 'function') {
+      await RedisApi.setJson(redis, key, safe);
+      return true;
+    }
+
+    if (typeof redis.set === 'function') {
+      await redis.set(key, JSON.stringify(safe));
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+async function redisSetNx(redis, key, value, ttlSec) {
+  if (!redis || !key) {
+    return {
+      ok: true,
+      claimed: true,
+      duplicate: false,
+      method: 'NO_REDIS_LOCAL_ALLOW'
+    };
+  }
+
+  const ttl = Math.max(60, Math.floor(n(ttlSec, 60)));
+
+  for (const opts of [{ ex: ttl, nx: true }, { EX: ttl, NX: true }]) {
+    try {
+      const result = await redis.set(key, value, opts);
+
+      if (result === null || result === false) {
+        return {
+          ok: true,
+          claimed: false,
+          duplicate: true,
+          method: 'SET_NX',
+          key
+        };
+      }
+
+      if (result === true || result === 1 || String(result).toUpperCase() === 'OK') {
+        return {
+          ok: true,
+          claimed: true,
+          duplicate: false,
+          method: 'SET_NX',
+          key
+        };
+      }
+    } catch {
+      // Try next syntax.
+    }
+  }
+
+  try {
+    const existing = typeof redis.get === 'function'
+      ? await redis.get(key)
+      : null;
+
+    if (existing !== null && existing !== undefined) {
+      return {
+        ok: true,
+        claimed: false,
+        duplicate: true,
+        method: 'GET_THEN_SET',
+        key
+      };
+    }
+
+    await redis.set(key, value, { ex: ttl }).catch(() => null);
+
+    return {
+      ok: true,
+      claimed: true,
+      duplicate: false,
+      method: 'GET_THEN_SET',
+      key
+    };
+  } catch {
+    return {
+      ok: false,
+      claimed: true,
+      duplicate: false,
+      method: 'REDIS_ERROR_ALLOW',
+      key
+    };
+  }
+}
+
 function shortKey(key, fallback = null) {
   const raw = String(key || fallback || '').trim();
 
@@ -235,21 +426,56 @@ function getWeekTradingCandidatesKey(weekKey) {
 }
 
 async function readJsonAny(key, fallback = null) {
-  const volatile = getVolatileRedis();
-  const durable = getDurableRedis();
+  const volatile = getVolatileRedisSafe();
+  const durable = getDurableRedisSafe();
 
-  const v = await getJson(volatile, key, null).catch(() => null);
+  const v = await getJsonSafe(volatile, key, null);
   if (v) return v;
 
-  const d = await getJson(durable, key, null).catch(() => null);
+  const d = await getJsonSafe(durable, key, null);
   return d || fallback;
 }
 
 async function setJsonEverywhere(key, value) {
   const safeValue = jsonSafe(value);
 
-  await setJson(getDurableRedis(), key, safeValue);
-  await setJson(getVolatileRedis(), key, safeValue).catch(() => null);
+  await setJsonSafe(getDurableRedisSafe(), key, safeValue);
+  await setJsonSafe(getVolatileRedisSafe(), key, safeValue).catch(() => null);
+}
+
+function sideToTradeSideSafe(value) {
+  if (typeof Utils.sideToTradeSide === 'function') {
+    const side = Utils.sideToTradeSide(value);
+    if (side === TARGET_TRADE_SIDE || side === OPPOSITE_TRADE_SIDE) return side;
+  }
+
+  const raw = upper(value);
+
+  if (
+    raw === 'SHORT' ||
+    raw === 'BEAR' ||
+    raw === 'BEARISH' ||
+    raw === 'SELL' ||
+    raw.includes('SHORT') ||
+    raw.includes('BEAR') ||
+    raw.includes('SELL')
+  ) {
+    return TARGET_TRADE_SIDE;
+  }
+
+  if (
+    raw === 'LONG' ||
+    raw === 'BULL' ||
+    raw === 'BULLISH' ||
+    raw === 'BUY' ||
+    raw.includes('LONG') ||
+    raw.includes('BULL') ||
+    raw.includes('BUY')
+  ) {
+    return OPPOSITE_TRADE_SIDE;
+  }
+
+  return 'UNKNOWN';
 }
 
 function marketWeatherFeatureFlags() {
@@ -310,7 +536,7 @@ function normalizeMarketWeatherTrendSide(value = '') {
 
   if (!raw) return 'UNKNOWN';
 
-  const side = sideToTradeSide(raw);
+  const side = sideToTradeSideSafe(raw);
 
   if (side === TARGET_TRADE_SIDE) return 'BEARISH';
   if (side === OPPOSITE_TRADE_SIDE) return 'BULLISH';
@@ -359,7 +585,7 @@ function parseEntryMarketWeatherKey(value = '') {
   if (!raw || raw.includes('[OBJECT OBJECT]')) {
     return {
       valid: false,
-      key: 'UNKNOWN|UNKNOWN',
+      key: UNKNOWN_MARKET_WEATHER_KEY,
       regime: 'UNKNOWN',
       trendSide: 'UNKNOWN'
     };
@@ -370,7 +596,7 @@ function parseEntryMarketWeatherKey(value = '') {
   if (parts.length < 2) {
     return {
       valid: false,
-      key: 'UNKNOWN|UNKNOWN',
+      key: UNKNOWN_MARKET_WEATHER_KEY,
       regime: 'UNKNOWN',
       trendSide: 'UNKNOWN'
     };
@@ -381,7 +607,7 @@ function parseEntryMarketWeatherKey(value = '') {
   const valid = regime !== 'UNKNOWN' && trendSide !== 'UNKNOWN';
   const key = valid
     ? buildEntryMarketWeatherKey({ regime, trendSide })
-    : 'UNKNOWN|UNKNOWN';
+    : UNKNOWN_MARKET_WEATHER_KEY;
 
   return {
     valid,
@@ -399,17 +625,6 @@ function firstKnownMarketWeatherKey(...values) {
   }
 
   return null;
-}
-
-function isUnknownEntryMarketWeather(weather = {}) {
-  const parsed = parseEntryMarketWeatherKey(weather.entryMarketWeatherKey);
-
-  return (
-    !parsed.valid ||
-    parsed.key === 'UNKNOWN|UNKNOWN' ||
-    upper(weather.entryMarketWeatherRegime || parsed.regime) === 'UNKNOWN' ||
-    upper(weather.entryMarketWeatherTrendSide || parsed.trendSide) === 'UNKNOWN'
-  );
 }
 
 function compactEntryMarketWeatherRaw(value = null) {
@@ -549,7 +764,7 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
   );
 
   return {
-    entryMarketWeatherKey: parsed.valid ? parsed.key : 'UNKNOWN|UNKNOWN',
+    entryMarketWeatherKey: parsed.valid ? parsed.key : UNKNOWN_MARKET_WEATHER_KEY,
     entryMarketWeatherKeyVersion: row.entryMarketWeatherKeyVersion || SHORT_MARKET_WEATHER_KEY_V1,
     entryMarketWeatherRegime: parsed.valid ? parsed.regime : 'UNKNOWN',
     entryMarketWeatherTrendSide: parsed.valid ? parsed.trendSide : 'UNKNOWN',
@@ -574,6 +789,17 @@ function attachEntryMarketWeather(row = {}, timestamp = now()) {
     entryMarketWeather: weather.entryMarketWeatherRaw,
     marketWeatherFeatureFlags: marketWeatherFeatureFlags()
   };
+}
+
+function isUnknownEntryMarketWeather(row = {}) {
+  const parsed = parseEntryMarketWeatherKey(row.entryMarketWeatherKey);
+
+  return (
+    !parsed.valid ||
+    parsed.key === UNKNOWN_MARKET_WEATHER_KEY ||
+    upper(row.entryMarketWeatherRegime || parsed.regime) === 'UNKNOWN' ||
+    upper(row.entryMarketWeatherTrendSide || parsed.trendSide) === 'UNKNOWN'
+  );
 }
 
 function emptyWeatherCell() {
@@ -612,7 +838,7 @@ function finalizeWeatherCell(cell = {}) {
   const completed = n(cell.completed, 0);
   const wins = n(cell.wins, 0);
   const totalR = n(cell.totalR, 0);
-  const totalCostR = n(cell.totalCostR, 0);
+  const totalCostR = Math.max(0, n(cell.totalCostR, 0));
   const directSLCount = n(cell.directSLCount, 0);
 
   return {
@@ -630,22 +856,6 @@ function finalizeWeatherCell(cell = {}) {
     winrate: completed > 0 ? wins / completed : 0,
     directSLPct: completed > 0 ? directSLCount / completed : 0
   };
-}
-
-function outcomeNetR(event = {}) {
-  return n(
-    event.netR ??
-      event.shortNetR ??
-      event.exitR ??
-      event.realizedNetR ??
-      event.realizedR ??
-      event.r,
-    0
-  );
-}
-
-function outcomeCostR(event = {}) {
-  return Math.max(0, n(event.costR ?? event.avgCostR ?? event.totalCostR, 0));
 }
 
 function updateWeatherCell(cell = {}, event = {}, type = 'OBSERVATION') {
@@ -676,7 +886,11 @@ function updateWeatherCell(cell = {}, event = {}, type = 'OBSERVATION') {
 }
 
 function updateMarketWeatherAggregation(row = {}, event = {}, type = 'OBSERVATION') {
-  const weather = resolveEntryMarketWeather(event, event.entryMarketWeatherCapturedAt || event.createdAt || event.openedAt || now());
+  const weather = resolveEntryMarketWeather(
+    event,
+    event.entryMarketWeatherCapturedAt || event.createdAt || event.openedAt || now()
+  );
+
   const regime = weather.entryMarketWeatherRegime || 'UNKNOWN';
   const regimeTrend = weather.entryMarketWeatherKey || buildEntryMarketWeatherKey({
     regime,
@@ -748,7 +962,7 @@ function normalizeNetRStats(value = {}) {
   base.minR = n(base.minR, 0);
   base.maxR = n(base.maxR, 0);
   base.recentOutcomes = Array.isArray(base.recentOutcomes)
-    ? base.recentOutcomes.slice(-80)
+    ? base.recentOutcomes.slice(-100)
     : [];
   base.version = NET_R_STATS_VERSION;
 
@@ -781,6 +995,7 @@ function finalizeNetRStats(value = {}) {
     : stats.grossWinR > 0
       ? 99
       : 0;
+
   const lcb95AvgR = lcb95FromMoments({
     completed,
     totalR: stats.totalR,
@@ -800,21 +1015,109 @@ function finalizeNetRStats(value = {}) {
   };
 }
 
+function numericField(row = {}, keys = []) {
+  for (const key of keys) {
+    if (hasValue(row[key]) && Number.isFinite(Number(row[key]))) {
+      return Number(row[key]);
+    }
+  }
+
+  return null;
+}
+
+function calcShortGrossRFromEvent(event = {}) {
+  const explicit = numericField(event, [
+    'grossR',
+    'shortGrossR',
+    'rawR',
+    'realizedGrossR'
+  ]);
+
+  if (explicit !== null) return explicit;
+
+  const entry = n(event.entry ?? event.entryPrice, 0);
+  const exit = n(event.exitPrice ?? event.exit, 0);
+  const initialSl = n(event.initialSl ?? event.sl, 0);
+
+  if (entry <= 0 || exit <= 0 || initialSl <= entry) return 0;
+
+  return (entry - exit) / (initialSl - entry);
+}
+
+function outcomeCostR(event = {}) {
+  const explicit = numericField(event, [
+    'costR',
+    'netCostR',
+    'estimatedCostR',
+    'avgCostR'
+  ]);
+
+  if (explicit !== null) return Math.max(0, explicit);
+
+  const totalCost = numericField(event, ['totalCostR']);
+  if (totalCost !== null) return Math.max(0, totalCost);
+
+  return 0;
+}
+
+function outcomeNetR(event = {}) {
+  const explicit = numericField(event, [
+    'netR',
+    'shortNetR',
+    'exitR',
+    'realizedNetR',
+    'realizedR',
+    'r'
+  ]);
+
+  const grossR = calcShortGrossRFromEvent(event);
+  const costR = outcomeCostR(event);
+  const repaired = grossR - costR;
+
+  if (explicit === null) return repaired;
+
+  const explicitLooksBlank =
+    Math.abs(explicit) < 1e-12 &&
+    Math.abs(grossR) > 1e-12;
+
+  if (explicitLooksBlank) return repaired;
+
+  return explicit;
+}
+
 function slimNetOutcome(event = {}) {
   const netR = outcomeNetR(event);
   const costR = outcomeCostR(event);
+  const grossR = calcShortGrossRFromEvent(event);
 
   return {
     symbol: event.symbol || null,
     tradeId: event.tradeId || null,
     outcomeIdentity: event.outcomeIdentity || event.stableOutcomeIdentity || null,
     exitReason: event.exitReason || event.reason || null,
+
     netR: round6(netR),
+    shortNetR: round6(netR),
+    exitR: round6(netR),
+    realizedNetR: round6(netR),
+    realizedR: round6(netR),
+    r: round6(netR),
+
+    grossR: round6(grossR),
+    shortGrossR: round6(grossR),
+    rawR: round6(grossR),
+
     costR: round6(costR),
+    avgCostR: round6(costR),
+
+    win: netR > 0,
+    loss: netR < 0,
+    flat: netR === 0,
+
     directSL: Boolean(event.directSL || event.directToSL),
     openedAt: event.openedAt || event.createdAt || null,
     closedAt: event.closedAt || event.completedAt || event.ts || null,
-    entryMarketWeatherKey: event.entryMarketWeatherKey || 'UNKNOWN|UNKNOWN'
+    entryMarketWeatherKey: event.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY
   };
 }
 
@@ -854,7 +1157,7 @@ function updateNetRStats(statsInput = {}, event = {}) {
   stats.recentOutcomes = [
     ...stats.recentOutcomes,
     slimNetOutcome(event)
-  ].slice(-80);
+  ].slice(-100);
 
   stats.updatedAt = now();
 
@@ -862,67 +1165,113 @@ function updateNetRStats(statsInput = {}, event = {}) {
 }
 
 function aggregateRecentOutcomes(outcomes = []) {
-  const stats = emptyNetRStats();
+  let stats = emptyNetRStats();
 
   for (const outcome of Array.isArray(outcomes) ? outcomes : []) {
     if (!outcome || typeof outcome !== 'object') continue;
-
-    const netR = outcomeNetR(outcome);
-    const costR = outcomeCostR(outcome);
-
-    stats.completed += 1;
-    stats.totalR += netR;
-    stats.totalCostR += costR;
-    stats.sumR += netR;
-    stats.sumSqR += netR * netR;
-
-    if (stats.completed === 1) {
-      stats.minR = netR;
-      stats.maxR = netR;
-    } else {
-      stats.minR = Math.min(stats.minR, netR);
-      stats.maxR = Math.max(stats.maxR, netR);
-    }
-
-    if (netR > 0) {
-      stats.wins += 1;
-      stats.grossWinR += netR;
-    } else if (netR < 0) {
-      stats.losses += 1;
-      stats.grossLossR += Math.abs(netR);
-    } else {
-      stats.flats += 1;
-    }
-
-    if (outcome.directSL || outcome.directToSL) stats.directSLCount += 1;
+    stats = updateNetRStats(stats, outcome);
   }
 
   stats.recentOutcomes = (Array.isArray(outcomes) ? outcomes : [])
-    .slice(-80)
+    .slice(-100)
     .map(slimNetOutcome);
-  stats.updatedAt = stats.completed > 0 ? now() : null;
 
   return finalizeNetRStats(stats);
 }
 
 function hasUsableNetStats(row = {}) {
   const stats = row.netRStats || row.shortNetRStats || row.outcomeNetRStats;
-  return Boolean(stats && typeof stats === 'object' && n(stats.completed, 0) > 0);
+
+  return Boolean(
+    stats &&
+    typeof stats === 'object' &&
+    n(stats.completed, 0) > 0
+  );
+}
+
+function explicitLegacyStats(row = {}) {
+  const completed = Math.max(
+    n(row.completed, 0),
+    n(row.outcomeSample, 0),
+    n(row.closed, 0)
+  );
+
+  if (completed <= 0) return null;
+
+  const totalR = n(row.netTotalR ?? row.shortNetTotalR ?? row.totalR, 0);
+  const avgR = n(row.netAvgR ?? row.shortNetAvgR ?? row.avgR, 0);
+  const wins = Math.max(0, n(row.wins, 0));
+  const losses = Math.max(0, n(row.losses, 0));
+  const flats = Math.max(0, n(row.flats, Math.max(0, completed - wins - losses)));
+  const cost = Math.max(0, n(row.totalCostR ?? row.avgCostR * completed, 0));
+
+  const useTotal = totalR !== 0 ? totalR : avgR * completed;
+
+  const stats = {
+    ...emptyNetRStats(),
+    completed,
+    wins,
+    losses,
+    flats,
+    totalR: useTotal,
+    totalCostR: cost,
+    grossWinR: Math.max(0, n(row.grossWinR ?? row.totalWinR ?? row.netWinR, 0)),
+    grossLossR: Math.max(0, Math.abs(n(row.grossLossR ?? row.totalLossR ?? row.netLossR, 0))),
+    directSLCount: Math.max(0, n(row.directSLCount, 0)),
+    sumR: useTotal,
+    sumSqR: Math.max(0, n(row.sumSqR, 0)),
+    recentOutcomes: Array.isArray(row.recentOutcomes)
+      ? row.recentOutcomes.slice(-100).map(slimNetOutcome)
+      : [],
+    updatedAt: row.updatedAt || now()
+  };
+
+  if (stats.sumSqR <= 0 && stats.recentOutcomes.length > 1) {
+    return aggregateRecentOutcomes(stats.recentOutcomes);
+  }
+
+  return finalizeNetRStats(stats);
+}
+
+function chooseBestStatsSource(row = {}) {
+  const netStats = hasUsableNetStats(row)
+    ? finalizeNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats)
+    : null;
+
+  const recentStats = Array.isArray(row.recentOutcomes) && row.recentOutcomes.length
+    ? aggregateRecentOutcomes(row.recentOutcomes)
+    : null;
+
+  const legacyStats = explicitLegacyStats(row);
+
+  const score = (stats) => {
+    if (!stats || n(stats.completed, 0) <= 0) return -1;
+
+    let s = n(stats.completed, 0);
+
+    if (Math.abs(n(stats.totalR, 0)) > 1e-12) s += 10000;
+    if (Math.abs(n(stats.grossWinR, 0)) > 1e-12 || Math.abs(n(stats.grossLossR, 0)) > 1e-12) s += 5000;
+    if (Array.isArray(stats.recentOutcomes) && stats.recentOutcomes.length) s += 1000;
+    if (Number.isFinite(Number(stats.lcb95AvgR))) s += 100;
+
+    return s;
+  };
+
+  const candidates = [
+    { source: 'NET_R_STATS', stats: netStats },
+    { source: 'RECENT_OUTCOMES', stats: recentStats },
+    { source: 'LEGACY_FIELDS', stats: legacyStats }
+  ].filter((x) => x.stats && n(x.stats.completed, 0) > 0);
+
+  candidates.sort((a, b) => score(b.stats) - score(a.stats));
+
+  return candidates[0] || null;
 }
 
 function repairStatsInvariants(row = {}) {
   if (!row || typeof row !== 'object') return row;
 
-  let sourceStats = null;
-  let source = null;
-
-  if (hasUsableNetStats(row)) {
-    sourceStats = finalizeNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats);
-    source = 'NET_R_STATS';
-  } else if (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0) {
-    sourceStats = aggregateRecentOutcomes(row.recentOutcomes);
-    source = 'RECENT_OUTCOMES';
-  }
+  const best = chooseBestStatsSource(row);
 
   const completedExisting = Math.max(
     n(row.completed, 0),
@@ -932,7 +1281,14 @@ function repairStatsInvariants(row = {}) {
 
   const totalRExisting = n(row.totalR ?? row.netTotalR ?? row.shortNetTotalR, 0);
   const avgRExisting = n(row.avgR ?? row.netAvgR ?? row.shortNetAvgR, 0);
-  const explicitLcb = n(row.avgRLCB95 ?? row.lcb95AvgR ?? row.avgRLowerBound95, NaN);
+  const explicitLcb = n(
+    row.standaloneMicroMicroLifetimeLCB95AvgR ??
+      row.exactMicroMicroLifetimeLCB95AvgR ??
+      row.avgRLCB95 ??
+      row.lcb95AvgR ??
+      row.avgRLowerBound95,
+    NaN
+  );
 
   const suspiciousLegacyStats =
     completedExisting > 0 &&
@@ -940,30 +1296,24 @@ function repairStatsInvariants(row = {}) {
     avgRExisting === 0 &&
     Number.isFinite(explicitLcb) &&
     explicitLcb < 0 &&
-    !sourceStats;
+    !best;
 
-  if (!sourceStats) {
+  if (!best) {
     return {
       ...row,
       statsInvariantVersion: STATS_INVARIANT_VERSION,
+      netRStatsVersion: NET_R_STATS_VERSION,
       statsIntegrityWarning: suspiciousLegacyStats
         ? 'COMPLETED_AND_NEGATIVE_LCB_BUT_NO_NETR_SOURCE_TO_REPAIR_LEGACY_ROW'
         : row.statsIntegrityWarning || null,
-      legacyStatsNeedRebuildFromRawOutcomes: suspiciousLegacyStats || Boolean(row.legacyStatsNeedRebuildFromRawOutcomes)
+      legacyStatsNeedRebuildFromRawOutcomes:
+        suspiciousLegacyStats ||
+        Boolean(row.legacyStatsNeedRebuildFromRawOutcomes)
     };
   }
 
-  const completed = Math.max(sourceStats.completed, completedExisting && source === 'RECENT_OUTCOMES' ? sourceStats.completed : sourceStats.completed);
-  const wins = sourceStats.wins;
-  const losses = sourceStats.losses;
-  const flats = sourceStats.flats;
-  const totalR = sourceStats.totalR;
-  const totalCostR = sourceStats.totalCostR;
-  const avgR = sourceStats.avgR;
-  const avgCostR = sourceStats.avgCostR;
-  const winrate = sourceStats.winrate;
-  const directSLPct = sourceStats.directSLPct;
-  const profitFactor = sourceStats.profitFactor;
+  const sourceStats = finalizeNetRStats(best.stats);
+  const completed = sourceStats.completed;
   const lcb95AvgR = sourceStats.completed > 1
     ? sourceStats.lcb95AvgR
     : Number.isFinite(explicitLcb)
@@ -977,32 +1327,32 @@ function repairStatsInvariants(row = {}) {
     outcomeSample: completed,
     closed: completed,
 
-    wins,
-    losses,
-    flats,
+    wins: sourceStats.wins,
+    losses: sourceStats.losses,
+    flats: sourceStats.flats,
 
-    totalR,
-    netTotalR: totalR,
-    shortNetTotalR: totalR,
+    totalR: sourceStats.totalR,
+    netTotalR: sourceStats.totalR,
+    shortNetTotalR: sourceStats.totalR,
 
-    avgR,
-    netAvgR: avgR,
-    shortNetAvgR: avgR,
+    avgR: sourceStats.avgR,
+    netAvgR: sourceStats.avgR,
+    shortNetAvgR: sourceStats.avgR,
 
-    totalCostR,
-    avgCostR,
+    totalCostR: sourceStats.totalCostR,
+    avgCostR: sourceStats.avgCostR,
 
     grossWinR: sourceStats.grossWinR,
     grossLossR: sourceStats.grossLossR,
-    profitFactor,
-    pf: profitFactor,
+    profitFactor: sourceStats.profitFactor,
+    pf: sourceStats.profitFactor,
 
-    winrate,
-    winRate: winrate,
-    fairWinrate: winrate,
+    winrate: sourceStats.winrate,
+    winRate: sourceStats.winrate,
+    fairWinrate: sourceStats.winrate,
 
     directSLCount: sourceStats.directSLCount,
-    directSLPct,
+    directSLPct: sourceStats.directSLPct,
 
     sumR: sourceStats.sumR,
     sumSqR: sourceStats.sumSqR,
@@ -1017,9 +1367,11 @@ function repairStatsInvariants(row = {}) {
     exactMicroMicroLifetimeLCB95AvgR: lcb95AvgR,
 
     netRStats: sourceStats,
+    shortNetRStats: sourceStats,
+    outcomeNetRStats: sourceStats,
     netRStatsVersion: NET_R_STATS_VERSION,
     statsInvariantVersion: STATS_INVARIANT_VERSION,
-    statsRepairedFrom: source,
+    statsRepairedFrom: best.source,
     statsRepairedAt: now(),
     statsIntegrityWarning: null,
     legacyStatsNeedRebuildFromRawOutcomes: false
@@ -1027,16 +1379,21 @@ function repairStatsInvariants(row = {}) {
 }
 
 function applyOutcomeStatsInvariant(row = {}, event = {}) {
-  const updatedStats = updateNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats || {}, event);
+  const updatedStats = updateNetRStats(
+    row.netRStats || row.shortNetRStats || row.outcomeNetRStats || {},
+    event
+  );
 
   return repairStatsInvariants({
     ...row,
     netRStats: updatedStats,
+    shortNetRStats: updatedStats,
+    outcomeNetRStats: updatedStats,
     recentOutcomes: Array.isArray(row.recentOutcomes)
       ? [
           ...row.recentOutcomes,
           slimOutcome(event)
-        ].slice(-80)
+        ].slice(-100)
       : [slimOutcome(event)]
   });
 }
@@ -1146,6 +1503,8 @@ function modeFlags() {
     netRStatsVersion: NET_R_STATS_VERSION,
     statsInvariantVersion: STATS_INVARIANT_VERSION,
     netRStatsAreSourceOfTruthForAvgRTotalRProfitFactor: true,
+    netRZeroRepairEnabled: true,
+    grossRMinusCostRUsedWhenNetRBlankZero: true,
 
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
     empiricalVetoUsesLcb95: true,
@@ -1195,21 +1554,6 @@ function flags(row = {}) {
     ...modeFlags(),
     ...row
   };
-}
-
-function jsonSafe(value) {
-  const seen = new WeakSet();
-
-  return JSON.parse(JSON.stringify(value, (key, val) => {
-    if (typeof val === 'bigint') return Number(val);
-
-    if (val && typeof val === 'object') {
-      if (seen.has(val)) return undefined;
-      seen.add(val);
-    }
-
-    return val;
-  }));
 }
 
 function parseShortTaxonomyMicroId(id = '') {
@@ -1513,7 +1857,7 @@ function inferTradeSide(row = {}) {
     row.actualScannerSide,
     row.side
   ]
-    .map((x) => sideToTradeSide(upper(x)))
+    .map((x) => sideToTradeSideSafe(upper(x)))
     .find((x) => x === TARGET_TRADE_SIDE || x === OPPOSITE_TRADE_SIDE);
 
   if (direct) return direct;
@@ -1625,10 +1969,10 @@ function policyBlockedGate(row = {}) {
   }
 
   return {
-    version: 'SHORT_POLICY_BLOCK_GATE_V3_SYSTEM_RULES_ONLY_NARROWED',
+    version: 'SHORT_POLICY_BLOCK_GATE_V4_SYSTEM_RULES_ONLY_NARROWED',
     blocked: reasons.length > 0,
     policyBlocked: reasons.length > 0,
-    reasons,
+    reasons: uniq(reasons),
     reason: reasons[0] || null,
     systemRules: [
       'E_WEAK_CONTRA',
@@ -1643,68 +1987,28 @@ function policyBlockedGate(row = {}) {
   };
 }
 
-function recentOutcomeMoments(row = {}) {
-  const outcomes = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes
-    : [];
-
-  let count = 0;
-  let sum = 0;
-  let sumSq = 0;
-
-  for (const outcome of outcomes) {
-    if (!outcome || typeof outcome !== 'object') continue;
-
-    const r = outcomeNetR(outcome);
-
-    count += 1;
-    sum += r;
-    sumSq += r * r;
-  }
-
-  if (count <= 1) {
-    return {
-      count,
-      mean: count ? sum / count : 0,
-      stdDev: 0
-    };
-  }
-
-  const variance = Math.max(0, (sumSq - (sum * sum) / count) / (count - 1));
-
-  return {
-    count,
-    mean: sum / count,
-    stdDev: Math.sqrt(variance)
-  };
-}
-
 function avgRLCB95(row = {}) {
-  if (hasUsableNetStats(row)) {
-    return finalizeNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats).lcb95AvgR;
+  const repaired = repairStatsInvariants(row);
+
+  if (hasUsableNetStats(repaired)) {
+    return finalizeNetRStats(repaired.netRStats || repaired.shortNetRStats || repaired.outcomeNetRStats).lcb95AvgR;
   }
 
   const explicit = n(
-    row.standaloneMicroMicroLifetimeLCB95AvgR ??
-      row.exactMicroMicroLifetimeLCB95AvgR ??
-      row.avgRLCB95 ??
-      row.lcb95AvgR ??
-      row.avgRLowerBound95,
+    repaired.standaloneMicroMicroLifetimeLCB95AvgR ??
+      repaired.exactMicroMicroLifetimeLCB95AvgR ??
+      repaired.avgRLCB95 ??
+      repaired.lcb95AvgR ??
+      repaired.avgRLowerBound95,
     NaN
   );
 
   if (Number.isFinite(explicit)) return explicit;
 
-  const completed = n(row.completed ?? row.outcomeSample ?? row.closed, 0);
-  const avgR = n(row.avgR ?? row.netAvgR, 0);
+  const completed = n(repaired.completed ?? repaired.outcomeSample ?? repaired.closed, 0);
+  const avgR = n(repaired.avgR ?? repaired.netAvgR, 0);
 
   if (completed <= 1) return 0;
-
-  const moments = recentOutcomeMoments(row);
-
-  if (moments.count > 1) {
-    return avgR - 1.96 * (moments.stdDev / Math.sqrt(moments.count));
-  }
 
   return avgR - 1.96 * (1 / Math.sqrt(completed));
 }
@@ -1743,8 +2047,21 @@ function empiricalVetoGate(row = {}) {
   };
 }
 
+function signalTypeFromGate({ passed, observing, policyBlocked, empiricalVetoStatus, rejected, riskFractionForEntry }) {
+  if (policyBlocked || empiricalVetoStatus || rejected) return SIGNAL_TYPE_BLOCKED;
+  if (passed && riskFractionForEntry > 0) return SIGNAL_TYPE_TRADE_READY;
+  if (passed) return SIGNAL_TYPE_WATCH_ONLY;
+  if (observing) return SIGNAL_TYPE_OBSERVE_ONLY;
+
+  return SIGNAL_TYPE_BLOCKED;
+}
+
 function applyRuntimeGates(row = {}) {
-  const withWeather = attachEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    row,
+    row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now()
+  );
+
   const repaired = repairStatsInvariants(withWeather);
   const id = rowIdentityId(repaired);
   const parsed = parseShortTaxonomyMicroId(id);
@@ -1834,11 +2151,23 @@ function applyRuntimeGates(row = {}) {
   const rejected = status === MICRO_MICRO_STATUS_REJECTED;
   const observing = status === MICRO_MICRO_STATUS_OBSERVING;
 
-  const signalType = passed
-    ? SIGNAL_TYPE_TRADE_READY
-    : observing
-      ? SIGNAL_TYPE_OBSERVE_ONLY
-      : SIGNAL_TYPE_BLOCKED;
+  const rawRisk = n(
+    repaired.riskFractionForEntry ??
+      repaired.riskFraction ??
+      repaired.positionRiskFraction,
+    0
+  );
+
+  const riskFractionForEntry = passed && rawRisk > 0 ? rawRisk : 0;
+
+  const signalType = signalTypeFromGate({
+    passed,
+    observing,
+    policyBlocked,
+    empiricalVetoStatus,
+    rejected,
+    riskFractionForEntry
+  });
 
   return flags({
     ...repaired,
@@ -1871,8 +2200,19 @@ function applyRuntimeGates(row = {}) {
     microMicroPolicyBlocked: policyBlocked,
 
     signalType,
-    proofTier: repaired.proofTier || (passed ? 'EXACT_MICRO_MICRO_LCB95_PROOF' : observing ? 'OBSERVING' : policyBlocked ? 'POLICY_BLOCKED' : 'BLOCKED'),
-    riskFractionForEntry: passed ? n(repaired.riskFractionForEntry, 0) : 0,
+    proofTier: passed
+      ? riskFractionForEntry > 0
+        ? 'EXACT_MICRO_MICRO_LCB95_PROOF'
+        : 'PASSED_RISK_ZERO_WAITING_FOR_POSITION_SIZING'
+      : observing
+        ? 'OBSERVATION_ONLY'
+        : policyBlocked
+          ? 'POLICY_BLOCKED'
+          : empiricalVetoStatus
+            ? 'EMPIRICAL_VETO'
+            : 'BLOCKED',
+
+    riskFractionForEntry,
 
     microMicroRuntimeGate: {
       version: MICRO_MICRO_RUNTIME_GATE_VERSION,
@@ -1891,17 +2231,17 @@ function applyRuntimeGates(row = {}) {
       policyReasons: policyGate.reasons,
 
       eligible: passed,
-      tradingEligible: passed,
-      discordEligible: passed,
-      discordActivationEligible: passed,
+      tradingEligible: passed && riskFractionForEntry > 0,
+      discordEligible: passed && riskFractionForEntry > 0,
+      discordActivationEligible: passed && riskFractionForEntry > 0,
 
       virtualLearningAllowed: passed || observing,
       virtualObservationAllowed: passed || observing,
       virtualEntryAllowed: passed || observing,
 
       blocksNewVirtualEntry: empiricalVetoStatus || policyBlocked || rejected,
-      blocksLiveRiskEntry: empiricalVetoStatus || empiricalVetoDetected || policyBlocked || rejected || unknownWeather,
-      blocksDiscordTradeReady: !passed,
+      blocksLiveRiskEntry: empiricalVetoStatus || empiricalVetoDetected || policyBlocked || rejected || unknownWeather || riskFractionForEntry <= 0,
+      blocksDiscordTradeReady: signalType !== SIGNAL_TYPE_TRADE_READY,
 
       id,
       microMicroFamilyId: id,
@@ -1924,7 +2264,10 @@ function applyRuntimeGates(row = {}) {
 function slimOutcome(row = {}) {
   if (!row || typeof row !== 'object') return row;
 
-  const withWeather = attachEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.openedAt || row.createdAt || row.completedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    row,
+    row.entryMarketWeatherCapturedAt || row.openedAt || row.createdAt || row.completedAt || now()
+  );
 
   const mm = microMicroIdFrom(
     withWeather.microMicroFamilyId ||
@@ -1938,10 +2281,19 @@ function slimOutcome(row = {}) {
     withWeather
   );
 
-  const child = childIdFrom(mm || withWeather.childTrueMicroFamilyId || withWeather.trueMicroFamilyId || withWeather.microFamilyId, withWeather);
+  const child = childIdFrom(
+    mm ||
+      withWeather.childTrueMicroFamilyId ||
+      withWeather.trueMicroFamilyId ||
+      withWeather.microFamilyId,
+    withWeather
+  );
+
   const parent = parentIdFrom(child || mm, withWeather);
   const primaryId = mm || child || parent || null;
   const netR = outcomeNetR(withWeather);
+  const grossR = calcShortGrossRFromEvent(withWeather);
+  const costR = outcomeCostR(withWeather);
 
   return flags({
     type: withWeather.type || 'OUTCOME',
@@ -1969,12 +2321,12 @@ function slimOutcome(row = {}) {
     realizedR: netR,
     r: netR,
 
-    grossR: n(withWeather.grossR ?? withWeather.shortGrossR ?? withWeather.rawR, 0),
-    shortGrossR: n(withWeather.shortGrossR ?? withWeather.grossR ?? withWeather.rawR, 0),
-    rawR: n(withWeather.rawR ?? withWeather.grossR ?? withWeather.shortGrossR, 0),
+    grossR,
+    shortGrossR: grossR,
+    rawR: grossR,
 
-    costR: outcomeCostR(withWeather),
-    avgCostR: outcomeCostR(withWeather),
+    costR,
+    avgCostR: costR,
 
     win: withWeather.win === true || netR > 0,
     loss: withWeather.loss === true || netR < 0,
@@ -2023,7 +2375,10 @@ function slimOutcome(row = {}) {
 function sanitizeStatsRow(row = {}) {
   if (!row || typeof row !== 'object') return {};
 
-  const withWeather = attachEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    row,
+    row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now()
+  );
 
   const clone = {
     ...withWeather
@@ -2061,7 +2416,7 @@ function sanitizeStatsRow(row = {}) {
     : [];
 
   clone.examples = Array.isArray(row.examples)
-    ? row.examples.slice(-8).map((example) => (
+    ? row.examples.slice(-12).map((example) => (
       example && typeof example === 'object'
         ? {
             symbol: example.symbol || null,
@@ -2074,11 +2429,19 @@ function sanitizeStatsRow(row = {}) {
     : [];
 
   clone.recentOutcomes = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes.slice(-80).map(slimOutcome)
+    ? row.recentOutcomes.slice(-100).map(slimOutcome)
     : [];
 
   if (row.netRStats && typeof row.netRStats === 'object') {
     clone.netRStats = finalizeNetRStats(row.netRStats);
+  }
+
+  if (row.shortNetRStats && typeof row.shortNetRStats === 'object') {
+    clone.shortNetRStats = finalizeNetRStats(row.shortNetRStats);
+  }
+
+  if (row.outcomeNetRStats && typeof row.outcomeNetRStats === 'object') {
+    clone.outcomeNetRStats = finalizeNetRStats(row.outcomeNetRStats);
   }
 
   return repairStatsInvariants(clone);
@@ -2087,38 +2450,27 @@ function sanitizeStatsRow(row = {}) {
 function safeRefreshStats(row = {}) {
   const safeRow = repairStatsInvariants(sanitizeStatsRow(row));
 
+  if (typeof Scoring.refreshStats !== 'function') {
+    return applyRuntimeGates(safeRow);
+  }
+
   try {
-    const refreshed = refreshStats(safeRow);
+    const refreshed = Scoring.refreshStats(safeRow);
     const merged = repairStatsInvariants({
       ...safeRow,
       ...refreshed,
-      netRStats: refreshed?.netRStats || safeRow.netRStats || null
+      netRStats: safeRow.netRStats || refreshed?.netRStats || null,
+      shortNetRStats: safeRow.shortNetRStats || refreshed?.shortNetRStats || null,
+      outcomeNetRStats: safeRow.outcomeNetRStats || refreshed?.outcomeNetRStats || null
     });
 
     return applyRuntimeGates(merged);
   } catch (error) {
-    const outcomes = Array.isArray(safeRow.recentOutcomes)
-      ? safeRow.recentOutcomes
-      : [];
-
-    const fromRecent = outcomes.length
-      ? aggregateRecentOutcomes(outcomes)
-      : null;
-
-    let fallbackRow = {
+    return applyRuntimeGates({
       ...safeRow,
       refreshStatsFallbackUsed: true,
       refreshStatsFallbackReason: error?.message || String(error)
-    };
-
-    if (fromRecent && fromRecent.completed > 0) {
-      fallbackRow = {
-        ...fallbackRow,
-        netRStats: safeRow.netRStats || fromRecent
-      };
-    }
-
-    return applyRuntimeGates(repairStatsInvariants(fallbackRow));
+    });
   }
 }
 
@@ -2486,29 +2838,33 @@ function evaluateWeakContraEntryGate(row = {}, taxonomy = {}) {
   };
 }
 
+function classifyMacroFamilySafe(row = {}) {
+  if (typeof MicroFamilies.classifyMacroFamily !== 'function') return {};
+
+  try {
+    return MicroFamilies.classifyMacroFamily(row) || {};
+  } catch {
+    return {};
+  }
+}
+
+function classifyMicroFamilySafe(row = {}) {
+  if (typeof MicroFamilies.classifyMicroFamily !== 'function') return {};
+
+  try {
+    return MicroFamilies.classifyMicroFamily(row) || {};
+  } catch {
+    return {};
+  }
+}
+
 function enrichWithMicroFamily(row = {}) {
   if (!isShort(row)) return null;
 
   const withWeather = attachEntryMarketWeather(row, row.createdAt || row.openedAt || now());
-
-  let macro = {};
-  let micro = {};
-
-  try {
-    macro = classifyMacroFamily(withWeather) || {};
-  } catch {
-    // Fallback taxonomy below.
-  }
-
-  try {
-    micro = classifyMicroFamily(withWeather) || {};
-  } catch {
-    // Fallback taxonomy below.
-  }
-
   const classified = {
-    ...macro,
-    ...micro
+    ...classifyMacroFamilySafe(withWeather),
+    ...classifyMicroFamilySafe(withWeather)
   };
 
   const taxonomy = classifyTaxonomy(withWeather, classified);
@@ -2672,16 +3028,48 @@ function statusFor(row = {}) {
 
 function signalTypeForRow(row = {}) {
   const status = row.microMicroRuntimeStatus || row.microMicroRuntimeGateStatus || row.microMicroStatus;
+  const risk = n(row.riskFractionForEntry, 0);
 
-  if (status === MICRO_MICRO_STATUS_PASSED) return SIGNAL_TYPE_TRADE_READY;
+  if (status === MICRO_MICRO_STATUS_PASSED && risk > 0) return SIGNAL_TYPE_TRADE_READY;
+  if (status === MICRO_MICRO_STATUS_PASSED) return SIGNAL_TYPE_WATCH_ONLY;
   if (status === MICRO_MICRO_STATUS_OBSERVING) return SIGNAL_TYPE_OBSERVE_ONLY;
   if (status === MICRO_MICRO_STATUS_CONTEXT_ONLY) return SIGNAL_TYPE_OBSERVE_ONLY;
 
   return SIGNAL_TYPE_BLOCKED;
 }
 
+function createMicroStatsSafe(initial = {}) {
+  if (typeof Scoring.createMicroStats === 'function') {
+    try {
+      return Scoring.createMicroStats(initial) || initial;
+    } catch {
+      return initial;
+    }
+  }
+
+  return {
+    ...initial,
+    seen: 0,
+    observed: 0,
+    observations: 0,
+    completed: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    totalR: 0,
+    avgR: 0,
+    profitFactor: 0,
+    netRStats: emptyNetRStats(),
+    marketWeatherStats: normalizeWeatherStats()
+  };
+}
+
 function applyLayerIdentity(row = {}, id = '') {
-  const withWeather = attachEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    row,
+    row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now()
+  );
+
   const learningId = normalizeLearningFamilyId(id, withWeather);
   const parsed = parseShortTaxonomyMicroId(learningId);
 
@@ -2693,9 +3081,7 @@ function applyLayerIdentity(row = {}, id = '') {
 
   const child = parsed.childTrueMicroFamilyId || childIdFrom(learningId, withWeather);
   const parent = parsed.parentTrueMicroFamilyId || parentIdFrom(learningId, withWeather);
-  const mm = isMicroMicro
-    ? parsed.microMicroFamilyId
-    : null;
+  const mm = isMicroMicro ? parsed.microMicroFamilyId : null;
 
   const layer = parsed.learningLayer;
   const minCompleted = minCompletedFor(learningId);
@@ -2886,10 +3272,10 @@ function compactMicro(row = {}) {
       : [],
 
     examples: Array.isArray(gated.examples)
-      ? gated.examples.slice(-8)
+      ? gated.examples.slice(-12)
       : [],
     recentOutcomes: Array.isArray(gated.recentOutcomes)
-      ? gated.recentOutcomes.slice(-80).map(slimOutcome)
+      ? gated.recentOutcomes.slice(-100).map(slimOutcome)
       : [],
 
     minCompletedForActiveLearning: min,
@@ -3058,6 +3444,15 @@ export async function getWeekMicrosByIds(weekKey, ids = []) {
   );
 }
 
+function localTradingCandidates(micros = {}) {
+  return Object.values(normalizeMicros(micros))
+    .map((row) => applyRuntimeGates(row))
+    .filter((row) => layerFor(rowIdentityId(row)) === LAYER_MICRO_MICRO)
+    .filter((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_PASSED)
+    .filter((row) => n(row.riskFractionForEntry, 0) > 0)
+    .sort(compareRows);
+}
+
 export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmptyFullSave = false } = {}) {
   if (!weekKey) throw new Error('WEEK_KEY_MISSING');
 
@@ -3143,19 +3538,13 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: clean,
     microFamilies: ids.length,
-    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_STATS',
+    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH',
     uiShowsOnlyMicroMicro: true,
     uiAllowsOnlyMicroMicroSelection: true
   };
 
   const topRows = topObject(clean, 300);
-  const candidates = scoreWeeklyTradingCandidates(clean, {
-    requireCurrentFitMatch: false,
-    currentFitLookup: currentFitLookupFromStoredRow
-  })
-    .map((row) => applyRuntimeGates(row))
-    .filter((row) => layerFor(rowIdentityId(row)) === LAYER_MICRO_MICRO)
-    .filter((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_PASSED);
+  const candidates = localTradingCandidates(clean);
 
   await setJsonEverywhere(getWeekMicrosBaseKey(weekKey), payload);
 
@@ -3163,7 +3552,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: topRows,
     count: Object.keys(topRows).length,
-    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_STATS'
+    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH'
   });
 
   await setJsonEverywhere(getWeekTradingCandidatesKey(weekKey), {
@@ -3172,7 +3561,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
       candidates.map((row) => [rowIdentityId(row), row])
     ),
     count: candidates.length,
-    storageMode: 'ELIGIBLE_LIFETIME_LCB_MICRO_MICRO_CANDIDATES_PREVIEW_PASSED_ONLY_NETR_STATS'
+    storageMode: 'ELIGIBLE_LIFETIME_LCB_MICRO_MICRO_CANDIDATES_PREVIEW_PASSED_RISK_POSITIVE_ONLY_NETR_SOURCE_OF_TRUTH'
   });
 
   await setJsonEverywhere(getWeekMetaKey(weekKey), {
@@ -3185,7 +3574,11 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
 }
 
 function getOrCreateMicro(micros, classified, learningId) {
-  const withWeather = attachEntryMarketWeather(classified, classified.entryMarketWeatherCapturedAt || classified.createdAt || classified.openedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    classified,
+    classified.entryMarketWeatherCapturedAt || classified.createdAt || classified.openedAt || now()
+  );
+
   const id = normalizeLearningFamilyId(learningId, withWeather);
 
   if (!id) throw new Error('LEARNING_FAMILY_ID_REQUIRED');
@@ -3197,7 +3590,7 @@ function getOrCreateMicro(micros, classified, learningId) {
   const primaryId = parsed.isMicroMicro ? mm : id;
 
   if (!micros[id]) {
-    micros[id] = createMicroStats({
+    micros[id] = createMicroStatsSafe({
       ...resolveEntryMarketWeather(withWeather, withWeather.createdAt || withWeather.openedAt || now()),
 
       id,
@@ -3234,7 +3627,9 @@ function getOrCreateMicro(micros, classified, learningId) {
       definitionParts: withWeather.definitionParts || [],
 
       marketWeatherStats: normalizeWeatherStats(),
-      netRStats: emptyNetRStats()
+      netRStats: emptyNetRStats(),
+      shortNetRStats: emptyNetRStats(),
+      outcomeNetRStats: emptyNetRStats()
     });
   }
 
@@ -3254,7 +3649,7 @@ function getOrCreateMicro(micros, classified, learningId) {
   return micros[id];
 }
 
-function obsKey(snapshotId, symbol, learningId, entry = 0, entryMarketWeatherKey = 'UNKNOWN|UNKNOWN') {
+function obsKey(snapshotId, symbol, learningId, entry = 0, entryMarketWeatherKey = UNKNOWN_MARKET_WEATHER_KEY) {
   const base = typeof KEYS.analyze?.obsLast === 'function'
     ? KEYS.analyze.obsLast(snapshotId, symbol, learningId)
     : null;
@@ -3271,54 +3666,10 @@ function outcomeKey(weekKey, identity, learningId) {
 }
 
 async function claim(redis, key, ttlSec, type) {
-  const value = String(now());
-
-  for (const opts of [{ ex: ttlSec, nx: true }, { EX: ttlSec, NX: true }]) {
-    try {
-      const res = await redis.set(key, value, opts);
-
-      if (res === null || res === false) {
-        return {
-          claimed: false,
-          duplicate: true,
-          method: 'SET_NX',
-          key,
-          type
-        };
-      }
-
-      if (res === true || res === 1 || String(res).toUpperCase() === 'OK') {
-        return {
-          claimed: true,
-          duplicate: false,
-          method: 'SET_NX',
-          key,
-          type
-        };
-      }
-    } catch {
-      // Try next syntax.
-    }
-  }
-
-  const existing = await redis.get(key).catch(() => null);
-
-  if (existing !== null && existing !== undefined) {
-    return {
-      claimed: false,
-      duplicate: true,
-      method: 'GET_THEN_SET',
-      key,
-      type
-    };
-  }
-
-  await redis.set(key, value, { ex: ttlSec }).catch(() => null);
+  const result = await redisSetNx(redis, key, String(now()), ttlSec);
 
   return {
-    claimed: true,
-    duplicate: false,
-    method: 'GET_THEN_SET',
+    ...result,
     key,
     type
   };
@@ -3332,6 +3683,26 @@ function outcomeTtl() {
   return Math.max(60, Math.floor(n(CONFIG?.analyze?.outcomeDedupeTtlSec, 86400 * 14)));
 }
 
+function updateObservationLocal(micro = {}, event = {}) {
+  micro.seen = n(micro.seen, 0) + 1;
+  micro.observed = n(micro.observed, 0) + 1;
+  micro.observations = n(micro.observations, 0) + 1;
+  micro.lastSeenAt = event.createdAt || now();
+  micro.updatedAt = now();
+
+  micro.examples = [
+    ...(Array.isArray(micro.examples) ? micro.examples : []),
+    {
+      symbol: event.symbol || null,
+      contractSymbol: event.contractSymbol || null,
+      createdAt: event.createdAt || now(),
+      source: event.source || 'VIRTUAL'
+    }
+  ].slice(-12);
+
+  return micro;
+}
+
 export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSISTENT_LEARNING_KEY } = {}) {
   const input = Array.isArray(metricsRows)
     ? metricsRows.filter(Boolean).filter(isShort)
@@ -3339,10 +3710,13 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
 
   if (!input.length) return [];
 
-  const rows = input.map((row) => enrichWithMicroFamily(attachEntryMarketWeather(row, row.createdAt || row.openedAt || now()))).filter(Boolean);
+  const rows = input
+    .map((row) => enrichWithMicroFamily(attachEntryMarketWeather(row, row.createdAt || row.openedAt || now())))
+    .filter(Boolean);
+
   if (!rows.length) return [];
 
-  const redis = getDurableRedis();
+  const redis = getDurableRedisSafe();
   const micros = await getWeekMicros(weekKey);
 
   const touched = new Set();
@@ -3400,22 +3774,29 @@ export async function analyzeCandidatesBatch(metricsRows = [], { weekKey = PERSI
 
       const micro = getOrCreateMicro(micros, layerRow, id);
 
-      updateObservation(
-        micro,
-        flags({
-          ...layerRow,
-          ...weather,
-          source: 'VIRTUAL',
-          weekKey,
-          observationDedupeKey: key,
-          observationDedupeMethod: c.method,
-          observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
-          observationRecorded: true,
-          observationCounted: true,
-          countObservation: true,
-          createdAt: row.createdAt || now()
-        })
-      );
+      const observationEvent = flags({
+        ...layerRow,
+        ...weather,
+        source: 'VIRTUAL',
+        weekKey,
+        observationDedupeKey: key,
+        observationDedupeMethod: c.method,
+        observationDedupeVersion: OBSERVATION_DEDUPE_VERSION,
+        observationRecorded: true,
+        observationCounted: true,
+        countObservation: true,
+        createdAt: row.createdAt || now()
+      });
+
+      updateObservationLocal(micro, observationEvent);
+
+      if (typeof Scoring.updateObservation === 'function') {
+        try {
+          Scoring.updateObservation(micro, observationEvent);
+        } catch {
+          // Local observation stats remain source of truth for this file.
+        }
+      }
 
       Object.assign(
         micro,
@@ -3528,7 +3909,11 @@ function isDirectSL(position = {}, reason = '') {
 }
 
 function stableOutcomeIdentity(outcome = {}, child = '') {
-  const withWeather = attachEntryMarketWeather(outcome, outcome.entryMarketWeatherCapturedAt || outcome.openedAt || outcome.createdAt || outcome.completedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    outcome,
+    outcome.entryMarketWeatherCapturedAt || outcome.openedAt || outcome.createdAt || outcome.completedAt || now()
+  );
+
   const mm = microMicroIdFrom(
     withWeather.microMicroFamilyId ||
       withWeather.trueMicroMicroFamilyId ||
@@ -3546,7 +3931,7 @@ function stableOutcomeIdentity(outcome = {}, child = '') {
     n(withWeather.exit ?? withWeather.exitPrice, 0).toFixed(8),
     child,
     mm,
-    withWeather.entryMarketWeatherKey || 'UNKNOWN|UNKNOWN'
+    withWeather.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY
   ].join('|');
 
   return hashText(raw, 24);
@@ -3567,7 +3952,10 @@ function hasMicroIds(row = {}) {
 }
 
 function ensureOutcomeIds(outcome = {}) {
-  const withWeather = attachEntryMarketWeather(outcome, outcome.entryMarketWeatherCapturedAt || outcome.openedAt || outcome.createdAt || outcome.completedAt || now());
+  const withWeather = attachEntryMarketWeather(
+    outcome,
+    outcome.entryMarketWeatherCapturedAt || outcome.openedAt || outcome.createdAt || outcome.completedAt || now()
+  );
 
   const enriched = hasMicroIds(withWeather)
     ? flags(withWeather)
@@ -3625,7 +4013,10 @@ function ensureOutcomeIds(outcome = {}) {
 export function buildOutcomeFromPosition({ position, exitPrice, exitReason, source = 'VIRTUAL' }) {
   if (!position) throw new Error('POSITION_REQUIRED_FOR_OUTCOME');
 
-  const positionWithWeather = attachEntryMarketWeather(position, position.entryMarketWeatherCapturedAt || position.openedAt || position.createdAt || now());
+  const positionWithWeather = attachEntryMarketWeather(
+    position,
+    position.entryMarketWeatherCapturedAt || position.openedAt || position.createdAt || now()
+  );
 
   const entry = n(positionWithWeather.entry, 0);
   const initialSl = n(positionWithWeather.initialSl || positionWithWeather.sl, 0);
@@ -3644,22 +4035,34 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
     exit
   });
 
-  const cost = applyCosts({
-    side: TARGET_TRADE_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    grossMovePct: grossMove,
-    riskPct,
-    entrySpreadPct: n(positionWithWeather.spreadPct, 0),
-    exitSpreadPct: n(positionWithWeather.exitSpreadPct ?? positionWithWeather.spreadPct, 0)
-  }) || {};
+  let cost = {};
 
-  const costR = n(cost.costR, 0);
-  const netR = n(cost.netR, grossR - costR);
+  try {
+    cost = typeof CostModel.applyCosts === 'function'
+      ? CostModel.applyCosts({
+          side: TARGET_TRADE_SIDE,
+          tradeSide: TARGET_TRADE_SIDE,
+          grossMovePct: grossMove,
+          riskPct,
+          entrySpreadPct: n(positionWithWeather.spreadPct, 0),
+          exitSpreadPct: n(positionWithWeather.exitSpreadPct ?? positionWithWeather.spreadPct, 0)
+        }) || {}
+      : {};
+  } catch {
+    cost = {};
+  }
+
+  const costR = Math.max(0, n(cost.costR, 0));
+  const netR = grossR - costR;
+
   const closedAt = n(positionWithWeather.closedAt || positionWithWeather.completedAt, now());
   const ids = ensureOutcomeIds(positionWithWeather) || {};
   const child = ids.childTrueMicroFamilyId || childIdFrom(ids.microMicroFamilyId || ids.trueMicroFamilyId, ids);
   const mm = ids.microMicroFamilyId || ids.trueMicroMicroFamilyId || ids.exactMicroMicroFamilyId || '';
-  const weather = resolveEntryMarketWeather(positionWithWeather, positionWithWeather.openedAt || positionWithWeather.createdAt || closedAt);
+  const weather = resolveEntryMarketWeather(
+    positionWithWeather,
+    positionWithWeather.openedAt || positionWithWeather.createdAt || closedAt
+  );
 
   const identity = [
     TARGET_TRADE_SIDE,
@@ -3736,6 +4139,7 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
     netCostModelApplied: true,
     costModel: COST_MODEL_VERSION,
     costModelVersion: COST_MODEL_VERSION,
+    netRSource: 'ANALYZE_ENGINE_GROSS_R_MINUS_COST_R_SOURCE_OF_TRUTH',
 
     openedAt: positionWithWeather.openedAt || positionWithWeather.createdAt || null,
     closedAt,
@@ -3747,7 +4151,10 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
 }
 
 export async function recordOutcome(outcome = {}, { source = outcome.source || 'VIRTUAL', weekKey = PERSISTENT_LEARNING_KEY } = {}) {
-  const outcomeWithWeather = attachEntryMarketWeather(outcome, outcome.entryMarketWeatherCapturedAt || outcome.openedAt || outcome.createdAt || outcome.completedAt || now());
+  const outcomeWithWeather = attachEntryMarketWeather(
+    outcome,
+    outcome.entryMarketWeatherCapturedAt || outcome.openedAt || outcome.createdAt || outcome.completedAt || now()
+  );
 
   if (!isShort(outcomeWithWeather)) {
     return flags({
@@ -3773,7 +4180,10 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     });
   }
 
-  const weather = resolveEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.openedAt || row.createdAt || row.completedAt || now());
+  const weather = resolveEntryMarketWeather(
+    row,
+    row.entryMarketWeatherCapturedAt || row.openedAt || row.createdAt || row.completedAt || now()
+  );
 
   const child = childIdFrom(row.childTrueMicroFamilyId || row.trueMicroFamilyId || row.microFamilyId, row);
   const parent = parentIdFrom(child, row);
@@ -3792,7 +4202,7 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     });
   }
 
-  const redis = getDurableRedis();
+  const redis = getDurableRedisSafe();
   const micros = await getWeekMicros(weekKey);
   const touched = new Set();
   const outcomeIdentity = stableOutcomeIdentity({
@@ -3802,6 +4212,8 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
   const results = [];
 
   const netR = outcomeNetR(row);
+  const grossR = calcShortGrossRFromEvent(row);
+  const costR = outcomeCostR(row);
 
   const normalizedOutcome = flags({
     ...slimOutcome({
@@ -3811,6 +4223,10 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
       outcomeSource: source,
       weekKey,
 
+      grossR,
+      shortGrossR: grossR,
+      rawR: grossR,
+
       netR,
       shortNetR: netR,
       exitR: netR,
@@ -3818,8 +4234,8 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
       realizedR: netR,
       r: netR,
 
-      costR: outcomeCostR(row),
-      avgCostR: outcomeCostR(row),
+      costR,
+      avgCostR: costR,
 
       win: netR > 0,
       loss: netR < 0,
@@ -3901,11 +4317,13 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
       recordedAt: now()
     });
 
-    updateOutcome(
-      micro,
-      countedOutcome,
-      source
-    );
+    if (typeof Scoring.updateOutcome === 'function') {
+      try {
+        Scoring.updateOutcome(micro, countedOutcome, source);
+      } catch {
+        // NetR stats below remain the source of truth.
+      }
+    }
 
     Object.assign(
       micro,
@@ -4024,6 +4442,8 @@ function normalizeTradingCandidate(row = {}, index = 0, weekKey = PERSISTENT_LEA
   const id = rowIdentityId(gated);
   const parsed = parseShortTaxonomyMicroId(id);
   const passed = gated.microMicroRuntimeStatus === MICRO_MICRO_STATUS_PASSED;
+  const risk = passed ? n(gated.riskFractionForEntry, 0) : 0;
+  const tradeReady = passed && risk > 0;
 
   return flags({
     ...gated,
@@ -4035,11 +4455,11 @@ function normalizeTradingCandidate(row = {}, index = 0, weekKey = PERSISTENT_LEA
     weekKey,
 
     tradingCandidate: true,
-    tradingEligible: passed,
-    eligibleGatePassed: passed,
-    discordActivationEligible: passed,
+    tradingEligible: tradeReady,
+    eligibleGatePassed: tradeReady,
+    discordActivationEligible: tradeReady,
 
-    selectionSource: 'LIFETIME_LCB_CURRENTFIT_WITH_EMPIRICAL_VETO_NETR_STATS',
+    selectionSource: 'LIFETIME_LCB_CURRENTFIT_WITH_EMPIRICAL_VETO_NETR_SOURCE_OF_TRUTH',
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
 
     learningFamilyId: id,
@@ -4066,14 +4486,14 @@ function normalizeTradingCandidate(row = {}, index = 0, weekKey = PERSISTENT_LEA
     baseMicroFamilyId: parsed.parentTrueMicroFamilyId,
     legacyMicroFamilyId: parsed.parentTrueMicroFamilyId,
 
-    discordMatchId: passed ? id : null,
-    selectedLearningFamilyId: passed ? id : null,
-    selectedMicroFamilyId: passed ? id : null,
-    selectedTrueMicroFamilyId: passed ? id : null,
-    selectedChildTrueMicroFamilyId: passed ? parsed.childTrueMicroFamilyId : null,
-    selectedMicroMicroFamilyId: passed ? id : null,
-    selectedTrueMicroMicroFamilyId: passed ? id : null,
-    selectedExactMicroMicroFamilyId: passed ? id : null,
+    discordMatchId: tradeReady ? id : null,
+    selectedLearningFamilyId: tradeReady ? id : null,
+    selectedMicroFamilyId: tradeReady ? id : null,
+    selectedTrueMicroFamilyId: tradeReady ? id : null,
+    selectedChildTrueMicroFamilyId: tradeReady ? parsed.childTrueMicroFamilyId : null,
+    selectedMicroMicroFamilyId: tradeReady ? id : null,
+    selectedTrueMicroMicroFamilyId: tradeReady ? id : null,
+    selectedExactMicroMicroFamilyId: tradeReady ? id : null,
 
     selectable: true,
     uiVisible: true,
@@ -4082,8 +4502,8 @@ function normalizeTradingCandidate(row = {}, index = 0, weekKey = PERSISTENT_LEA
     layer: LAYER_MICRO_MICRO,
     selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
 
-    signalType: passed ? SIGNAL_TYPE_TRADE_READY : signalTypeForRow(gated),
-    riskFractionForEntry: passed ? n(gated.riskFractionForEntry, 0) : 0
+    signalType: tradeReady ? SIGNAL_TYPE_TRADE_READY : signalTypeForRow(gated),
+    riskFractionForEntry: risk
   });
 }
 
@@ -4097,16 +4517,23 @@ export async function getWeeklyTradingCandidates(
   } = {}
 ) {
   const micros = await getWeekMicros(weekKey);
+  const lookup = currentFitLookup || currentFitLookupFromStoredRow;
 
-  const all = scoreWeeklyTradingCandidates(micros, {
-    requireCurrentFitMatch,
-    currentFitLookup: currentFitLookup || currentFitLookupFromStoredRow
-  })
+  const all = Object.values(normalizeMicros(micros))
     .map((row) => applyRuntimeGates(row))
     .filter((row) => layerFor(rowIdentityId(row)) === LAYER_MICRO_MICRO)
+    .filter((row) => {
+      if (!requireCurrentFitMatch) return true;
+
+      const fit = lookup(row);
+      return fit !== 'MISFIT';
+    })
     .sort(compareRows);
 
-  const passed = all.filter((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_PASSED);
+  const passed = all.filter((row) => (
+    row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_PASSED &&
+    n(row.riskFractionForEntry, 0) > 0
+  ));
 
   const candidates = passed
     .slice(0, Math.max(1, Math.floor(n(limit, 10))))
@@ -4115,6 +4542,7 @@ export async function getWeeklyTradingCandidates(
   if (!includeMeta) return candidates;
 
   const bestFallback = all.find((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_OBSERVING) ||
+    all.find((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_PASSED) ||
     all.find((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_REJECTED) ||
     all.find((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_EMPIRICAL_VETO) ||
     all.find((row) => row.microMicroRuntimeStatus === MICRO_MICRO_STATUS_POLICY_BLOCKED) ||
@@ -4141,6 +4569,7 @@ export async function getWeeklyTradingCandidates(
       selectionUsesLifetimeStats: true,
       selectionUsesLCBAvgR: true,
       selectionRequiresEligibleGate: true,
+      selectionRequiresRiskFractionPositive: true,
       selectionRequiresCurrentFitMatch: requireCurrentFitMatch,
       empiricalVetoBlocksSelection: true,
       policyBlockedBlocksSelection: true,
@@ -4166,3 +4595,16 @@ export async function getWeeklyTradingCandidates(
 export async function getAnalyzeMicroRowsByIds(weekKey = PERSISTENT_LEARNING_KEY, ids = []) {
   return getWeekMicrosByIds(weekKey, ids);
 }
+
+export default {
+  analyzeCandidatesBatch,
+  buildOutcomeFromPosition,
+  recordOutcome,
+  createShadowPosition,
+  getWeekMicros,
+  getWeekTopMicros,
+  getWeekMicrosByIds,
+  saveWeekMicros,
+  getWeeklyTradingCandidates,
+  getAnalyzeMicroRowsByIds
+};
