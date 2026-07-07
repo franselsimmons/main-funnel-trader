@@ -52,25 +52,28 @@ const MIN_COMPLETED_EMPIRICAL_VETO = 35;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
 const SHORT_MARKET_WEATHER_KEY_V1 = 'SHORT_MARKET_WEATHER_KEY_V1';
-const ENTRY_MARKET_WEATHER_CAPTURE_VERSION = 'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V1_IMMUTABLE';
-const MARKET_WEATHER_FEATURE_FLAGS_VERSION = 'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V1_OBSERVE';
-const MARKET_WEATHER_AGGREGATION_VERSION = 'SHORT_MARKET_WEATHER_AGGREGATION_V1_LIFETIME_REGIME_REGIMETREND';
+const ENTRY_MARKET_WEATHER_CAPTURE_VERSION = 'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V2_IMMUTABLE_KNOWN_KEY_REPAIR';
+const MARKET_WEATHER_FEATURE_FLAGS_VERSION = 'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V2_STATS_REPAIR';
+const MARKET_WEATHER_AGGREGATION_VERSION = 'SHORT_MARKET_WEATHER_AGGREGATION_V2_NETR_STATS_REPAIR';
 
-const EMPIRICAL_VETO_VERSION = 'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V1';
-const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MM_RUNTIME_STATUS_GATE_V2_EMPIRICAL_VETO_LCB95';
+const EMPIRICAL_VETO_VERSION = 'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V2_NETR_STATS';
+const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MM_RUNTIME_STATUS_GATE_V3_NETR_STATS_REPAIR';
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
+const NET_R_STATS_VERSION = 'SHORT_NET_R_STATS_V2_RECORD_OUTCOME_SOURCE_OF_TRUTH';
+const STATS_INVARIANT_VERSION = 'SHORT_STATS_INVARIANT_NETR_TOTALR_AVGR_PF_REPAIR_V2';
+
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V2_NETR_STATS';
 const POSITION_MEASUREMENT_FIX_VERSION = MEASUREMENT_FIX_VERSION;
-const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V2_MARKET_WEATHER_EMPIRICAL_VETO';
-const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V15_MARKET_WEATHER_EMPIRICAL_VETO';
-const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V3_MARKET_WEATHER';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V4_MARKET_WEATHER_EMPIRICAL_VETO';
-const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V2_EMPIRICAL_VETO';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_MICRO_MICRO_ONLY_V4';
-const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_POLICY_BLOCK_V2';
+const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V3_MARKET_WEATHER_NETR_STATS';
+const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V3_NETR_STATS';
+const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V16_MARKET_WEATHER_EMPIRICAL_VETO_NETR_STATS';
+const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V4_MARKET_WEATHER';
+const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V9_MARKET_WEATHER_NETR_STATS';
+const SELECTION_ENGINE_VERSION = 'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V3_NETR_STATS';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_MICRO_MICRO_ONLY_V5_NETR_STATS';
+const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_POLICY_BLOCK_V3_NARROWED';
 
-const PRIMARY_LEARNING_ID_RULE = 'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V3_MARKET_WEATHER';
+const PRIMARY_LEARNING_ID_RULE = 'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V4_MARKET_WEATHER_NETR_STATS';
 
 const MICRO_MICRO_STATUS_OBSERVING = 'OBSERVING';
 const MICRO_MICRO_STATUS_PASSED = 'PASSED';
@@ -272,14 +275,23 @@ function marketWeatherFeatureFlags() {
     fdrHardLiveDecisionEnabled: false,
     discordTradeReadyHardLiveDecisionEnabled: false,
 
+    unknownWeatherNeverTradeReady: true,
+    unknownWeatherRiskFractionForEntry: 0,
+    unknownWeatherSignalType: SIGNAL_TYPE_OBSERVE_ONLY,
+
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
     empiricalVetoUsesLcb95NotRawAvgR: true,
     empiricalVetoBlocksParentFallbackRescue: true,
     shrinkageCanDiagnoseButCannotOverrideVeto: true,
 
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION,
+    netRStatsAreSourceOfTruthForAvgRTotalRProfitFactor: true,
+
     riskSourceOfTruth: 'riskFractionForEntry',
     proofTierIsLabelOnly: true,
-    signalTypeIsActionLabelOnly: true
+    signalTypeIsActionLabelOnly: false,
+    signalTypeIsDerivedOnly: true
   };
 }
 
@@ -341,16 +353,62 @@ function buildEntryMarketWeatherKey({ regime, trendSide } = {}) {
   return `${r}|${t}`;
 }
 
+function parseEntryMarketWeatherKey(value = '') {
+  const raw = String(value || '').trim().toUpperCase();
+
+  if (!raw || raw.includes('[OBJECT OBJECT]')) {
+    return {
+      valid: false,
+      key: 'UNKNOWN|UNKNOWN',
+      regime: 'UNKNOWN',
+      trendSide: 'UNKNOWN'
+    };
+  }
+
+  const parts = raw.split('|');
+
+  if (parts.length < 2) {
+    return {
+      valid: false,
+      key: 'UNKNOWN|UNKNOWN',
+      regime: 'UNKNOWN',
+      trendSide: 'UNKNOWN'
+    };
+  }
+
+  const regime = normalizeMarketWeatherRegime(parts[0]);
+  const trendSide = normalizeMarketWeatherTrendSide(parts[1]);
+  const valid = regime !== 'UNKNOWN' && trendSide !== 'UNKNOWN';
+  const key = valid
+    ? buildEntryMarketWeatherKey({ regime, trendSide })
+    : 'UNKNOWN|UNKNOWN';
+
+  return {
+    valid,
+    key,
+    regime: valid ? regime : 'UNKNOWN',
+    trendSide: valid ? trendSide : 'UNKNOWN'
+  };
+}
+
+function firstKnownMarketWeatherKey(...values) {
+  for (const value of values) {
+    const parsed = parseEntryMarketWeatherKey(value);
+
+    if (parsed.valid) return parsed;
+  }
+
+  return null;
+}
+
 function isUnknownEntryMarketWeather(weather = {}) {
-  const key = upper(weather.entryMarketWeatherKey || '');
-  const regime = upper(weather.entryMarketWeatherRegime || '');
-  const trendSide = upper(weather.entryMarketWeatherTrendSide || '');
+  const parsed = parseEntryMarketWeatherKey(weather.entryMarketWeatherKey);
 
   return (
-    !key ||
-    key === 'UNKNOWN|UNKNOWN' ||
-    regime === 'UNKNOWN' ||
-    trendSide === 'UNKNOWN'
+    !parsed.valid ||
+    parsed.key === 'UNKNOWN|UNKNOWN' ||
+    upper(weather.entryMarketWeatherRegime || parsed.regime) === 'UNKNOWN' ||
+    upper(weather.entryMarketWeatherTrendSide || parsed.trendSide) === 'UNKNOWN'
   );
 }
 
@@ -365,12 +423,22 @@ function compactEntryMarketWeatherRaw(value = null) {
     createdAt: value.createdAt,
     completedAt: value.completedAt,
     updatedAt: value.updatedAt,
+    rememberedAt: value.rememberedAt,
+
+    confirmedMarketWeatherKey: value.confirmedMarketWeatherKey,
+    currentMarketWeatherKey: value.currentMarketWeatherKey,
+    entryMarketWeatherKey: value.entryMarketWeatherKey,
+    marketWeatherKey: value.marketWeatherKey,
 
     marketWeatherRegime: value.marketWeatherRegime,
+    confirmedMarketWeatherRegime: value.confirmedMarketWeatherRegime,
+    currentMarketWeatherRegime: value.currentMarketWeatherRegime,
     currentRegime: value.currentRegime,
     regime: value.regime,
 
     marketWeatherTrendSide: value.marketWeatherTrendSide,
+    confirmedMarketWeatherTrendSide: value.confirmedMarketWeatherTrendSide,
+    currentMarketWeatherTrendSide: value.currentMarketWeatherTrendSide,
     currentTrendSide: value.currentTrendSide,
     trendSide: value.trendSide,
 
@@ -385,6 +453,7 @@ function compactEntryMarketWeatherRaw(value = null) {
     btcChange1h: value.btcChange1h,
     btcChange24h: value.btcChange24h,
 
+    source: value.source,
     compactedForRedis: true
   };
 
@@ -418,35 +487,61 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
       null
   );
 
-  const regime = normalizeMarketWeatherRegime(firstValue(
+  const knownKey = firstKnownMarketWeatherKey(
+    row.entryMarketWeatherKey,
+    row.confirmedMarketWeatherKey,
+    row.currentMarketWeatherKey,
+    row.marketWeatherKey,
+    rawSnapshot?.entryMarketWeatherKey,
+    rawSnapshot?.confirmedMarketWeatherKey,
+    rawSnapshot?.currentMarketWeatherKey,
+    rawSnapshot?.marketWeatherKey
+  );
+
+  const regime = knownKey?.regime || normalizeMarketWeatherRegime(firstValue(
     row.entryMarketWeatherRegime,
+    row.confirmedMarketWeatherRegime,
+    row.currentMarketWeatherRegime,
+    rawSnapshot?.confirmedMarketWeatherRegime,
+    rawSnapshot?.currentMarketWeatherRegime,
     rawSnapshot?.marketWeatherRegime,
     rawSnapshot?.currentRegime,
     rawSnapshot?.regime,
-    row.currentMarketWeatherRegime,
+    row.marketWeatherRegime,
     row.currentRegime,
     row.regime
   ));
 
-  const trendSide = normalizeMarketWeatherTrendSide(firstValue(
+  const trendSide = knownKey?.trendSide || normalizeMarketWeatherTrendSide(firstValue(
     row.entryMarketWeatherTrendSide,
+    row.confirmedMarketWeatherTrendSide,
+    row.currentMarketWeatherTrendSide,
+    rawSnapshot?.confirmedMarketWeatherTrendSide,
+    rawSnapshot?.currentMarketWeatherTrendSide,
     rawSnapshot?.marketWeatherTrendSide,
     rawSnapshot?.currentTrendSide,
     rawSnapshot?.trendSide,
-    row.currentMarketWeatherTrendSide,
+    row.marketWeatherTrendSide,
     row.currentTrendSide,
     row.trendSide
   ));
 
-  const explicitKey = String(row.entryMarketWeatherKey || '').trim().toUpperCase();
-  const builtKey = buildEntryMarketWeatherKey({ regime, trendSide });
-  const key = explicitKey || builtKey;
+  const builtKey = buildEntryMarketWeatherKey({
+    regime,
+    trendSide
+  });
+
+  const parsedBuilt = parseEntryMarketWeatherKey(builtKey);
+  const parsed = knownKey || parsedBuilt;
 
   const capturedAt = n(
     row.entryMarketWeatherCapturedAt ||
+      row.confirmedMarketWeatherAt ||
+      row.confirmedAt ||
       rawSnapshot?.createdAt ||
       rawSnapshot?.completedAt ||
       rawSnapshot?.updatedAt ||
+      rawSnapshot?.rememberedAt ||
       row.openedAt ||
       row.createdAt ||
       timestamp,
@@ -454,10 +549,10 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
   );
 
   return {
-    entryMarketWeatherKey: key,
+    entryMarketWeatherKey: parsed.valid ? parsed.key : 'UNKNOWN|UNKNOWN',
     entryMarketWeatherKeyVersion: row.entryMarketWeatherKeyVersion || SHORT_MARKET_WEATHER_KEY_V1,
-    entryMarketWeatherRegime: regime,
-    entryMarketWeatherTrendSide: trendSide,
+    entryMarketWeatherRegime: parsed.valid ? parsed.regime : 'UNKNOWN',
+    entryMarketWeatherTrendSide: parsed.valid ? parsed.trendSide : 'UNKNOWN',
     entryMarketWeatherCapturedAt: capturedAt,
     entryMarketWeatherRaw: rawSnapshot,
     entryMarketWeatherRawAvailableFields: Array.isArray(row.entryMarketWeatherRawAvailableFields)
@@ -465,7 +560,8 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
       : availableFieldsFromRaw(rawSnapshot),
     entryMarketWeatherCaptureVersion: ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
     entryMarketWeatherImmutable: true,
-    entryMarketWeatherNeverRecomputedAtExit: true
+    entryMarketWeatherNeverRecomputedAtExit: true,
+    entryMarketWeatherIsUnknown: !parsed.valid
   };
 }
 
@@ -536,6 +632,22 @@ function finalizeWeatherCell(cell = {}) {
   };
 }
 
+function outcomeNetR(event = {}) {
+  return n(
+    event.netR ??
+      event.shortNetR ??
+      event.exitR ??
+      event.realizedNetR ??
+      event.realizedR ??
+      event.r,
+    0
+  );
+}
+
+function outcomeCostR(event = {}) {
+  return Math.max(0, n(event.costR ?? event.avgCostR ?? event.totalCostR, 0));
+}
+
 function updateWeatherCell(cell = {}, event = {}, type = 'OBSERVATION') {
   const out = {
     ...emptyWeatherCell(),
@@ -547,8 +659,8 @@ function updateWeatherCell(cell = {}, event = {}, type = 'OBSERVATION') {
     return finalizeWeatherCell(out);
   }
 
-  const netR = n(event.netR ?? event.exitR ?? event.realizedR ?? event.r, 0);
-  const costR = Math.max(0, n(event.costR ?? event.avgCostR, 0));
+  const netR = outcomeNetR(event);
+  const costR = outcomeCostR(event);
 
   out.completed += 1;
   out.totalR += netR;
@@ -592,6 +704,341 @@ function updateMarketWeatherAggregation(row = {}, event = {}, type = 'OBSERVATIO
     marketWeatherStats: stats,
     entryMarketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION
   };
+}
+
+function emptyNetRStats() {
+  return {
+    version: NET_R_STATS_VERSION,
+    completed: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    totalR: 0,
+    totalCostR: 0,
+    grossWinR: 0,
+    grossLossR: 0,
+    directSLCount: 0,
+    sumR: 0,
+    sumSqR: 0,
+    minR: 0,
+    maxR: 0,
+    recentOutcomes: [],
+    updatedAt: null
+  };
+}
+
+function normalizeNetRStats(value = {}) {
+  const safe = value && typeof value === 'object' ? value : {};
+  const base = {
+    ...emptyNetRStats(),
+    ...safe
+  };
+
+  base.completed = Math.max(0, n(base.completed, 0));
+  base.wins = Math.max(0, n(base.wins, 0));
+  base.losses = Math.max(0, n(base.losses, 0));
+  base.flats = Math.max(0, n(base.flats, 0));
+  base.totalR = n(base.totalR, 0);
+  base.totalCostR = Math.max(0, n(base.totalCostR, 0));
+  base.grossWinR = Math.max(0, n(base.grossWinR, 0));
+  base.grossLossR = Math.max(0, n(base.grossLossR, 0));
+  base.directSLCount = Math.max(0, n(base.directSLCount, 0));
+  base.sumR = n(base.sumR, base.totalR);
+  base.sumSqR = Math.max(0, n(base.sumSqR, 0));
+  base.minR = n(base.minR, 0);
+  base.maxR = n(base.maxR, 0);
+  base.recentOutcomes = Array.isArray(base.recentOutcomes)
+    ? base.recentOutcomes.slice(-80)
+    : [];
+  base.version = NET_R_STATS_VERSION;
+
+  return base;
+}
+
+function lcb95FromMoments({ completed, totalR, sumSqR } = {}) {
+  const c = n(completed, 0);
+  const total = n(totalR, 0);
+  const ss = Math.max(0, n(sumSqR, 0));
+
+  if (c <= 1) return 0;
+
+  const avg = total / c;
+  const variance = Math.max(0, (ss - (total * total) / c) / (c - 1));
+  const sd = Math.sqrt(variance);
+
+  return avg - 1.96 * (sd / Math.sqrt(c));
+}
+
+function finalizeNetRStats(value = {}) {
+  const stats = normalizeNetRStats(value);
+  const completed = stats.completed;
+  const avgR = completed > 0 ? stats.totalR / completed : 0;
+  const avgCostR = completed > 0 ? stats.totalCostR / completed : 0;
+  const winrate = completed > 0 ? stats.wins / completed : 0;
+  const directSLPct = completed > 0 ? stats.directSLCount / completed : 0;
+  const profitFactor = stats.grossLossR > 0
+    ? stats.grossWinR / stats.grossLossR
+    : stats.grossWinR > 0
+      ? 99
+      : 0;
+  const lcb95AvgR = lcb95FromMoments({
+    completed,
+    totalR: stats.totalR,
+    sumSqR: stats.sumSqR
+  });
+
+  return {
+    ...stats,
+    avgR,
+    avgCostR,
+    winrate,
+    directSLPct,
+    profitFactor,
+    lcb95AvgR,
+    avgRLCB95: lcb95AvgR,
+    finalizedAt: now()
+  };
+}
+
+function slimNetOutcome(event = {}) {
+  const netR = outcomeNetR(event);
+  const costR = outcomeCostR(event);
+
+  return {
+    symbol: event.symbol || null,
+    tradeId: event.tradeId || null,
+    outcomeIdentity: event.outcomeIdentity || event.stableOutcomeIdentity || null,
+    exitReason: event.exitReason || event.reason || null,
+    netR: round6(netR),
+    costR: round6(costR),
+    directSL: Boolean(event.directSL || event.directToSL),
+    openedAt: event.openedAt || event.createdAt || null,
+    closedAt: event.closedAt || event.completedAt || event.ts || null,
+    entryMarketWeatherKey: event.entryMarketWeatherKey || 'UNKNOWN|UNKNOWN'
+  };
+}
+
+function updateNetRStats(statsInput = {}, event = {}) {
+  const stats = normalizeNetRStats(statsInput);
+  const netR = outcomeNetR(event);
+  const costR = outcomeCostR(event);
+
+  stats.completed += 1;
+  stats.totalR += netR;
+  stats.totalCostR += costR;
+  stats.sumR += netR;
+  stats.sumSqR += netR * netR;
+
+  if (stats.completed === 1) {
+    stats.minR = netR;
+    stats.maxR = netR;
+  } else {
+    stats.minR = Math.min(stats.minR, netR);
+    stats.maxR = Math.max(stats.maxR, netR);
+  }
+
+  if (netR > 0) {
+    stats.wins += 1;
+    stats.grossWinR += netR;
+  } else if (netR < 0) {
+    stats.losses += 1;
+    stats.grossLossR += Math.abs(netR);
+  } else {
+    stats.flats += 1;
+  }
+
+  if (event.directSL || event.directToSL) {
+    stats.directSLCount += 1;
+  }
+
+  stats.recentOutcomes = [
+    ...stats.recentOutcomes,
+    slimNetOutcome(event)
+  ].slice(-80);
+
+  stats.updatedAt = now();
+
+  return finalizeNetRStats(stats);
+}
+
+function aggregateRecentOutcomes(outcomes = []) {
+  const stats = emptyNetRStats();
+
+  for (const outcome of Array.isArray(outcomes) ? outcomes : []) {
+    if (!outcome || typeof outcome !== 'object') continue;
+
+    const netR = outcomeNetR(outcome);
+    const costR = outcomeCostR(outcome);
+
+    stats.completed += 1;
+    stats.totalR += netR;
+    stats.totalCostR += costR;
+    stats.sumR += netR;
+    stats.sumSqR += netR * netR;
+
+    if (stats.completed === 1) {
+      stats.minR = netR;
+      stats.maxR = netR;
+    } else {
+      stats.minR = Math.min(stats.minR, netR);
+      stats.maxR = Math.max(stats.maxR, netR);
+    }
+
+    if (netR > 0) {
+      stats.wins += 1;
+      stats.grossWinR += netR;
+    } else if (netR < 0) {
+      stats.losses += 1;
+      stats.grossLossR += Math.abs(netR);
+    } else {
+      stats.flats += 1;
+    }
+
+    if (outcome.directSL || outcome.directToSL) stats.directSLCount += 1;
+  }
+
+  stats.recentOutcomes = (Array.isArray(outcomes) ? outcomes : [])
+    .slice(-80)
+    .map(slimNetOutcome);
+  stats.updatedAt = stats.completed > 0 ? now() : null;
+
+  return finalizeNetRStats(stats);
+}
+
+function hasUsableNetStats(row = {}) {
+  const stats = row.netRStats || row.shortNetRStats || row.outcomeNetRStats;
+  return Boolean(stats && typeof stats === 'object' && n(stats.completed, 0) > 0);
+}
+
+function repairStatsInvariants(row = {}) {
+  if (!row || typeof row !== 'object') return row;
+
+  let sourceStats = null;
+  let source = null;
+
+  if (hasUsableNetStats(row)) {
+    sourceStats = finalizeNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats);
+    source = 'NET_R_STATS';
+  } else if (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0) {
+    sourceStats = aggregateRecentOutcomes(row.recentOutcomes);
+    source = 'RECENT_OUTCOMES';
+  }
+
+  const completedExisting = Math.max(
+    n(row.completed, 0),
+    n(row.outcomeSample, 0),
+    n(row.closed, 0)
+  );
+
+  const totalRExisting = n(row.totalR ?? row.netTotalR ?? row.shortNetTotalR, 0);
+  const avgRExisting = n(row.avgR ?? row.netAvgR ?? row.shortNetAvgR, 0);
+  const explicitLcb = n(row.avgRLCB95 ?? row.lcb95AvgR ?? row.avgRLowerBound95, NaN);
+
+  const suspiciousLegacyStats =
+    completedExisting > 0 &&
+    totalRExisting === 0 &&
+    avgRExisting === 0 &&
+    Number.isFinite(explicitLcb) &&
+    explicitLcb < 0 &&
+    !sourceStats;
+
+  if (!sourceStats) {
+    return {
+      ...row,
+      statsInvariantVersion: STATS_INVARIANT_VERSION,
+      statsIntegrityWarning: suspiciousLegacyStats
+        ? 'COMPLETED_AND_NEGATIVE_LCB_BUT_NO_NETR_SOURCE_TO_REPAIR_LEGACY_ROW'
+        : row.statsIntegrityWarning || null,
+      legacyStatsNeedRebuildFromRawOutcomes: suspiciousLegacyStats || Boolean(row.legacyStatsNeedRebuildFromRawOutcomes)
+    };
+  }
+
+  const completed = Math.max(sourceStats.completed, completedExisting && source === 'RECENT_OUTCOMES' ? sourceStats.completed : sourceStats.completed);
+  const wins = sourceStats.wins;
+  const losses = sourceStats.losses;
+  const flats = sourceStats.flats;
+  const totalR = sourceStats.totalR;
+  const totalCostR = sourceStats.totalCostR;
+  const avgR = sourceStats.avgR;
+  const avgCostR = sourceStats.avgCostR;
+  const winrate = sourceStats.winrate;
+  const directSLPct = sourceStats.directSLPct;
+  const profitFactor = sourceStats.profitFactor;
+  const lcb95AvgR = sourceStats.completed > 1
+    ? sourceStats.lcb95AvgR
+    : Number.isFinite(explicitLcb)
+      ? explicitLcb
+      : 0;
+
+  return {
+    ...row,
+
+    completed,
+    outcomeSample: completed,
+    closed: completed,
+
+    wins,
+    losses,
+    flats,
+
+    totalR,
+    netTotalR: totalR,
+    shortNetTotalR: totalR,
+
+    avgR,
+    netAvgR: avgR,
+    shortNetAvgR: avgR,
+
+    totalCostR,
+    avgCostR,
+
+    grossWinR: sourceStats.grossWinR,
+    grossLossR: sourceStats.grossLossR,
+    profitFactor,
+    pf: profitFactor,
+
+    winrate,
+    winRate: winrate,
+    fairWinrate: winrate,
+
+    directSLCount: sourceStats.directSLCount,
+    directSLPct,
+
+    sumR: sourceStats.sumR,
+    sumSqR: sourceStats.sumSqR,
+    stdDevR: sourceStats.completed > 1
+      ? Math.sqrt(Math.max(0, (sourceStats.sumSqR - (sourceStats.totalR * sourceStats.totalR) / sourceStats.completed) / (sourceStats.completed - 1)))
+      : 0,
+
+    avgRLCB95: lcb95AvgR,
+    lcb95AvgR,
+    avgRLowerBound95: lcb95AvgR,
+    standaloneMicroMicroLifetimeLCB95AvgR: lcb95AvgR,
+    exactMicroMicroLifetimeLCB95AvgR: lcb95AvgR,
+
+    netRStats: sourceStats,
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION,
+    statsRepairedFrom: source,
+    statsRepairedAt: now(),
+    statsIntegrityWarning: null,
+    legacyStatsNeedRebuildFromRawOutcomes: false
+  };
+}
+
+function applyOutcomeStatsInvariant(row = {}, event = {}) {
+  const updatedStats = updateNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats || {}, event);
+
+  return repairStatsInvariants({
+    ...row,
+    netRStats: updatedStats,
+    recentOutcomes: Array.isArray(row.recentOutcomes)
+      ? [
+          ...row.recentOutcomes,
+          slimOutcome(event)
+        ].slice(-80)
+      : [slimOutcome(event)]
+  });
 }
 
 function modeFlags() {
@@ -696,6 +1143,10 @@ function modeFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION,
+    netRStatsAreSourceOfTruthForAvgRTotalRProfitFactor: true,
+
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
     empiricalVetoUsesLcb95: true,
     empiricalVetoUsesRawAvgR: false,
@@ -707,7 +1158,8 @@ function modeFlags() {
     costModelVersion: COST_MODEL_VERSION,
     riskSourceOfTruth: 'riskFractionForEntry',
     proofTierIsLabelOnly: true,
-    signalTypeIsActionLabelOnly: true,
+    signalTypeIsActionLabelOnly: false,
+    signalTypeIsDerivedOnly: true,
     maxAllowedRiskBandIsOptionalCap: true,
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: candle.low <= tp',
@@ -778,7 +1230,7 @@ function parseShortTaxonomyMicroId(id = '') {
   let baseValue = value;
   let microMicroHash = null;
 
-  const mm = /^(MICRO_SHORT_.+)_MM_([A-Z0-9]{6,24})$/u.exec(value);
+  const mm = /^(MICRO_SHORT_.+)_MM_([A-Z0-9]{6,64})$/u.exec(value);
 
   if (mm) {
     baseValue = mm[1];
@@ -963,7 +1415,7 @@ function microMicroIdFrom(id = '', row = {}) {
     return `${child}_${MICRO_MICRO_SUFFIX}_${hash}`;
   }
 
-  const xr = /^(MICRO_SHORT_.+)_XR_([A-Z0-9]{6,24})$/u.exec(
+  const xr = /^(MICRO_SHORT_.+)_XR_([A-Z0-9]{6,64})$/u.exec(
     upper(row.executionMicroFamilyId || row.executionFingerprintMicroFamilyId || '')
   );
 
@@ -1137,10 +1589,6 @@ function policyBlockedGate(row = {}) {
   const parsed = parseShortTaxonomyMicroId(id);
   const reasons = [];
 
-  if (parsed.isMicroMicro && !isMicroMicroId(id)) {
-    reasons.push('EXACT_MICRO_MICRO_ID_REQUIRED');
-  }
-
   const side = inferTradeSide(row);
 
   if (side !== TARGET_TRADE_SIDE) {
@@ -1162,11 +1610,22 @@ function policyBlockedGate(row = {}) {
   }
 
   if (row.policyBlocked === true && row.policyBlockedReason) {
-    reasons.push(row.policyBlockedReason);
+    const reason = upper(row.policyBlockedReason);
+
+    if (
+      reason === 'E_WEAK_CONTRA_POLICY_BLOCK' ||
+      reason.includes('SCANNER') ||
+      reason.includes('EXECUTION') ||
+      reason.includes('LONG') ||
+      reason.includes('GEOMETRY') ||
+      reason.includes('SIDE')
+    ) {
+      reasons.push(row.policyBlockedReason);
+    }
   }
 
   return {
-    version: 'SHORT_POLICY_BLOCK_GATE_V2_SYSTEM_RULES_ONLY',
+    version: 'SHORT_POLICY_BLOCK_GATE_V3_SYSTEM_RULES_ONLY_NARROWED',
     blocked: reasons.length > 0,
     policyBlocked: reasons.length > 0,
     reasons,
@@ -1177,7 +1636,10 @@ function policyBlockedGate(row = {}) {
       'INVALID_GEOMETRY',
       'NON_SHORT',
       'KNOWN_FORBIDDEN_FAMILY'
-    ]
+    ],
+    currentFitPolicyBlockDisabled: true,
+    marketWeatherPolicyBlockDisabled: true,
+    inheritedForbiddenPolicyIgnoredUnlessExplicitSystemRule: true
   };
 }
 
@@ -1193,7 +1655,7 @@ function recentOutcomeMoments(row = {}) {
   for (const outcome of outcomes) {
     if (!outcome || typeof outcome !== 'object') continue;
 
-    const r = n(outcome.netR ?? outcome.exitR ?? outcome.realizedR ?? outcome.r, 0);
+    const r = outcomeNetR(outcome);
 
     count += 1;
     sum += r;
@@ -1218,11 +1680,16 @@ function recentOutcomeMoments(row = {}) {
 }
 
 function avgRLCB95(row = {}) {
+  if (hasUsableNetStats(row)) {
+    return finalizeNetRStats(row.netRStats || row.shortNetRStats || row.outcomeNetRStats).lcb95AvgR;
+  }
+
   const explicit = n(
-    row.avgRLCB95 ??
+    row.standaloneMicroMicroLifetimeLCB95AvgR ??
+      row.exactMicroMicroLifetimeLCB95AvgR ??
+      row.avgRLCB95 ??
       row.lcb95AvgR ??
-      row.avgRLowerBound95 ??
-      row.shrunkLCB95AvgR,
+      row.avgRLowerBound95,
     NaN
   );
 
@@ -1245,8 +1712,9 @@ function avgRLCB95(row = {}) {
 function empiricalVetoGate(row = {}) {
   const id = rowIdentityId(row);
   const exact = isMicroMicroId(id);
-  const completed = n(row.completed ?? row.outcomeSample ?? row.closed, 0);
-  const lcb = avgRLCB95(row);
+  const repaired = repairStatsInvariants(row);
+  const completed = n(repaired.completed ?? repaired.outcomeSample ?? repaired.closed, 0);
+  const lcb = avgRLCB95(repaired);
 
   const explicit =
     row.empiricalVeto === true &&
@@ -1277,20 +1745,21 @@ function empiricalVetoGate(row = {}) {
 
 function applyRuntimeGates(row = {}) {
   const withWeather = attachEntryMarketWeather(row, row.entryMarketWeatherCapturedAt || row.createdAt || row.openedAt || now());
-  const id = rowIdentityId(withWeather);
+  const repaired = repairStatsInvariants(withWeather);
+  const id = rowIdentityId(repaired);
   const parsed = parseShortTaxonomyMicroId(id);
-  const completed = n(withWeather.completed ?? withWeather.outcomeSample ?? withWeather.closed, 0);
-  const avgR = n(withWeather.avgR ?? withWeather.netAvgR, 0);
-  const totalR = n(withWeather.totalR ?? withWeather.netTotalR, 0);
-  const pf = n(withWeather.profitFactor ?? withWeather.pf, 0);
-  const avgCostR = n(withWeather.avgCostR, 0);
-  const directSLPct = n(withWeather.directSLPct, 0);
-  const lcb = avgRLCB95(withWeather);
-  const unknownWeather = isUnknownEntryMarketWeather(withWeather);
+  const completed = n(repaired.completed ?? repaired.outcomeSample ?? repaired.closed, 0);
+  const avgR = n(repaired.avgR ?? repaired.netAvgR, 0);
+  const totalR = n(repaired.totalR ?? repaired.netTotalR, 0);
+  const pf = n(repaired.profitFactor ?? repaired.pf, 0);
+  const avgCostR = n(repaired.avgCostR, 0);
+  const directSLPct = n(repaired.directSLPct, 0);
+  const lcb = avgRLCB95(repaired);
+  const unknownWeather = isUnknownEntryMarketWeather(repaired);
 
   if (!parsed.isMicroMicro) {
     return flags({
-      ...withWeather,
+      ...repaired,
       avgRLCB95: round6(lcb),
       lcb95AvgR: round6(lcb),
       microMicroRuntimeStatus: MICRO_MICRO_STATUS_CONTEXT_ONLY,
@@ -1304,6 +1773,7 @@ function applyRuntimeGates(row = {}) {
         observing: false,
         rejected: false,
         empiricalVeto: false,
+        empiricalVetoDetected: false,
         policyBlocked: false,
         reason: 'PARENT_OR_CHILD_CONTEXT_ONLY_NOT_SELECTABLE',
         id
@@ -1313,9 +1783,9 @@ function applyRuntimeGates(row = {}) {
     });
   }
 
-  const policyGate = policyBlockedGate(withWeather);
+  const policyGate = policyBlockedGate(repaired);
   const vetoGate = empiricalVetoGate({
-    ...withWeather,
+    ...repaired,
     avgRLCB95: lcb,
     lcb95AvgR: lcb
   });
@@ -1358,7 +1828,8 @@ function applyRuntimeGates(row = {}) {
   }
 
   const passed = status === MICRO_MICRO_STATUS_PASSED;
-  const empiricalVeto = status === MICRO_MICRO_STATUS_EMPIRICAL_VETO;
+  const empiricalVetoStatus = status === MICRO_MICRO_STATUS_EMPIRICAL_VETO;
+  const empiricalVetoDetected = vetoGate.triggered;
   const policyBlocked = status === MICRO_MICRO_STATUS_POLICY_BLOCKED;
   const rejected = status === MICRO_MICRO_STATUS_REJECTED;
   const observing = status === MICRO_MICRO_STATUS_OBSERVING;
@@ -1370,12 +1841,14 @@ function applyRuntimeGates(row = {}) {
       : SIGNAL_TYPE_BLOCKED;
 
   return flags({
-    ...withWeather,
+    ...repaired,
 
     avgRLCB95: round6(lcb),
     lcb95AvgR: round6(lcb),
 
-    empiricalVeto,
+    empiricalVeto: empiricalVetoDetected,
+    empiricalVetoDetected,
+    empiricalVetoAlsoDetected: policyBlocked && empiricalVetoDetected,
     empiricalVetoReason: vetoGate.empiricalVetoReason,
     empiricalVetoGate: vetoGate,
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
@@ -1393,12 +1866,13 @@ function applyRuntimeGates(row = {}) {
     microMicroPassed: passed,
     microMicroObserving: observing,
     microMicroRejected: rejected,
-    microMicroEmpiricalVeto: empiricalVeto,
+    microMicroEmpiricalVeto: empiricalVetoStatus,
+    microMicroEmpiricalVetoDetected: empiricalVetoDetected,
     microMicroPolicyBlocked: policyBlocked,
 
     signalType,
-    proofTier: withWeather.proofTier || (passed ? 'EXACT_MICRO_MICRO_LCB95_PROOF' : observing ? 'OBSERVING' : 'BLOCKED'),
-    riskFractionForEntry: passed ? n(withWeather.riskFractionForEntry, 0) : 0,
+    proofTier: repaired.proofTier || (passed ? 'EXACT_MICRO_MICRO_LCB95_PROOF' : observing ? 'OBSERVING' : policyBlocked ? 'POLICY_BLOCKED' : 'BLOCKED'),
+    riskFractionForEntry: passed ? n(repaired.riskFractionForEntry, 0) : 0,
 
     microMicroRuntimeGate: {
       version: MICRO_MICRO_RUNTIME_GATE_VERSION,
@@ -1406,7 +1880,9 @@ function applyRuntimeGates(row = {}) {
       passed,
       observing,
       rejected,
-      empiricalVeto,
+      empiricalVeto: empiricalVetoStatus,
+      empiricalVetoDetected,
+      empiricalVetoAlsoDetected: policyBlocked && empiricalVetoDetected,
       policyBlocked,
       marketWeatherUnknown: unknownWeather,
       reason,
@@ -1423,8 +1899,8 @@ function applyRuntimeGates(row = {}) {
       virtualObservationAllowed: passed || observing,
       virtualEntryAllowed: passed || observing,
 
-      blocksNewVirtualEntry: empiricalVeto || policyBlocked || rejected,
-      blocksLiveRiskEntry: empiricalVeto || policyBlocked || rejected || unknownWeather,
+      blocksNewVirtualEntry: empiricalVetoStatus || policyBlocked || rejected,
+      blocksLiveRiskEntry: empiricalVetoStatus || empiricalVetoDetected || policyBlocked || rejected || unknownWeather,
       blocksDiscordTradeReady: !passed,
 
       id,
@@ -1438,7 +1914,9 @@ function applyRuntimeGates(row = {}) {
       avgCostR: round4(avgCostR),
       directSLPct: round4(directSLPct),
       empiricalVetoGate: vetoGate,
-      policyGate
+      policyGate,
+      netRStatsVersion: NET_R_STATS_VERSION,
+      statsInvariantVersion: STATS_INVARIANT_VERSION
     }
   });
 }
@@ -1463,6 +1941,7 @@ function slimOutcome(row = {}) {
   const child = childIdFrom(mm || withWeather.childTrueMicroFamilyId || withWeather.trueMicroFamilyId || withWeather.microFamilyId, withWeather);
   const parent = parentIdFrom(child || mm, withWeather);
   const primaryId = mm || child || parent || null;
+  const netR = outcomeNetR(withWeather);
 
   return flags({
     type: withWeather.type || 'OUTCOME',
@@ -1483,23 +1962,23 @@ function slimOutcome(row = {}) {
     closedAt: withWeather.closedAt || withWeather.completedAt || withWeather.ts || null,
     completedAt: withWeather.completedAt || withWeather.closedAt || withWeather.ts || null,
 
-    netR: n(withWeather.netR ?? withWeather.exitR ?? withWeather.realizedR ?? withWeather.r, 0),
-    shortNetR: n(withWeather.shortNetR ?? withWeather.netR ?? withWeather.exitR ?? withWeather.realizedR ?? withWeather.r, 0),
-    exitR: n(withWeather.exitR ?? withWeather.netR ?? withWeather.realizedR ?? withWeather.r, 0),
-    realizedNetR: n(withWeather.realizedNetR ?? withWeather.netR ?? withWeather.exitR ?? withWeather.r, 0),
-    realizedR: n(withWeather.realizedR ?? withWeather.netR ?? withWeather.exitR ?? withWeather.r, 0),
-    r: n(withWeather.r ?? withWeather.netR ?? withWeather.exitR ?? withWeather.realizedR, 0),
+    netR,
+    shortNetR: netR,
+    exitR: netR,
+    realizedNetR: netR,
+    realizedR: netR,
+    r: netR,
 
     grossR: n(withWeather.grossR ?? withWeather.shortGrossR ?? withWeather.rawR, 0),
     shortGrossR: n(withWeather.shortGrossR ?? withWeather.grossR ?? withWeather.rawR, 0),
     rawR: n(withWeather.rawR ?? withWeather.grossR ?? withWeather.shortGrossR, 0),
 
-    costR: n(withWeather.costR ?? withWeather.avgCostR, 0),
-    avgCostR: n(withWeather.avgCostR ?? withWeather.costR, 0),
+    costR: outcomeCostR(withWeather),
+    avgCostR: outcomeCostR(withWeather),
 
-    win: withWeather.win === true || n(withWeather.netR ?? withWeather.exitR ?? withWeather.realizedR ?? withWeather.r, 0) > 0,
-    loss: withWeather.loss === true || n(withWeather.netR ?? withWeather.exitR ?? withWeather.realizedR ?? withWeather.r, 0) < 0,
-    flat: withWeather.flat === true || n(withWeather.netR ?? withWeather.exitR ?? withWeather.realizedR ?? withWeather.r, 0) === 0,
+    win: withWeather.win === true || netR > 0,
+    loss: withWeather.loss === true || netR < 0,
+    flat: withWeather.flat === true || netR === 0,
 
     directSL: Boolean(withWeather.directSL || withWeather.directToSL),
     directToSL: Boolean(withWeather.directSL || withWeather.directToSL),
@@ -1585,94 +2064,61 @@ function sanitizeStatsRow(row = {}) {
     ? row.examples.slice(-8).map((example) => (
       example && typeof example === 'object'
         ? {
-          symbol: example.symbol || null,
-          contractSymbol: example.contractSymbol || null,
-          createdAt: example.createdAt || example.openedAt || null,
-          source: example.source || 'VIRTUAL'
-        }
+            symbol: example.symbol || null,
+            contractSymbol: example.contractSymbol || null,
+            createdAt: example.createdAt || example.openedAt || null,
+            source: example.source || 'VIRTUAL'
+          }
         : example
     ))
     : [];
 
   clone.recentOutcomes = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes.slice(-40).map(slimOutcome)
+    ? row.recentOutcomes.slice(-80).map(slimOutcome)
     : [];
 
-  return clone;
+  if (row.netRStats && typeof row.netRStats === 'object') {
+    clone.netRStats = finalizeNetRStats(row.netRStats);
+  }
+
+  return repairStatsInvariants(clone);
 }
 
 function safeRefreshStats(row = {}) {
-  const safeRow = sanitizeStatsRow(row);
+  const safeRow = repairStatsInvariants(sanitizeStatsRow(row));
 
   try {
-    return applyRuntimeGates(refreshStats(safeRow));
+    const refreshed = refreshStats(safeRow);
+    const merged = repairStatsInvariants({
+      ...safeRow,
+      ...refreshed,
+      netRStats: refreshed?.netRStats || safeRow.netRStats || null
+    });
+
+    return applyRuntimeGates(merged);
   } catch (error) {
     const outcomes = Array.isArray(safeRow.recentOutcomes)
       ? safeRow.recentOutcomes
       : [];
 
-    let wins = n(safeRow.wins, 0);
-    let losses = n(safeRow.losses, 0);
-    let flats = n(safeRow.flats, 0);
-    let totalR = n(safeRow.totalR, 0);
-    let totalCostR = n(safeRow.totalCostR, 0);
-    let directSLCount = n(safeRow.directSLCount, 0);
+    const fromRecent = outcomes.length
+      ? aggregateRecentOutcomes(outcomes)
+      : null;
 
-    if (outcomes.length) {
-      wins = 0;
-      losses = 0;
-      flats = 0;
-      totalR = 0;
-      totalCostR = 0;
-      directSLCount = 0;
-
-      for (const outcome of outcomes) {
-        const netR = n(outcome.netR ?? outcome.exitR ?? outcome.realizedR ?? outcome.r, 0);
-        const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
-
-        totalR += netR;
-        totalCostR += costR;
-
-        if (netR > 0) wins += 1;
-        else if (netR < 0) losses += 1;
-        else flats += 1;
-
-        if (outcome.directSL || outcome.directToSL) directSLCount += 1;
-      }
-    }
-
-    const completed = Math.max(
-      n(safeRow.completed, 0),
-      n(safeRow.outcomeSample, 0),
-      wins + losses + flats,
-      outcomes.length
-    );
-
-    const avgR = completed > 0 ? totalR / completed : 0;
-    const avgCostR = completed > 0 ? totalCostR / completed : 0;
-    const winrate = completed > 0 ? wins / completed : 0;
-
-    return applyRuntimeGates({
+    let fallbackRow = {
       ...safeRow,
       refreshStatsFallbackUsed: true,
-      refreshStatsFallbackReason: error?.message || String(error),
+      refreshStatsFallbackReason: error?.message || String(error)
+    };
 
-      wins,
-      losses,
-      flats,
-      completed,
-      outcomeSample: completed,
+    if (fromRecent && fromRecent.completed > 0) {
+      fallbackRow = {
+        ...fallbackRow,
+        netRStats: safeRow.netRStats || fromRecent
+      };
+    }
 
-      totalR,
-      avgR,
-      winrate,
-
-      totalCostR,
-      avgCostR,
-
-      directSLCount,
-      directSLPct: completed > 0 ? directSLCount / completed : 0
-    });
+    return applyRuntimeGates(repairStatsInvariants(fallbackRow));
   }
 }
 
@@ -2138,7 +2584,8 @@ function enrichWithMicroFamily(row = {}) {
       `ENTRY_MARKET_WEATHER_KEY_VERSION=${withWeather.entryMarketWeatherKeyVersion}`,
       `ENTRY_MARKET_WEATHER_REGIME=${withWeather.entryMarketWeatherRegime}`,
       `ENTRY_MARKET_WEATHER_TREND_SIDE=${withWeather.entryMarketWeatherTrendSide}`,
-      `MEASUREMENT_FIX=${MEASUREMENT_FIX_VERSION}`
+      `MEASUREMENT_FIX=${MEASUREMENT_FIX_VERSION}`,
+      `NET_R_STATS=${NET_R_STATS_VERSION}`
     ],
     parentDefinitionParts: [
       `TRADE_SIDE=${TARGET_TRADE_SIDE}`,
@@ -2442,7 +2889,7 @@ function compactMicro(row = {}) {
       ? gated.examples.slice(-8)
       : [],
     recentOutcomes: Array.isArray(gated.recentOutcomes)
-      ? gated.recentOutcomes.slice(-40).map(slimOutcome)
+      ? gated.recentOutcomes.slice(-80).map(slimOutcome)
       : [],
 
     minCompletedForActiveLearning: min,
@@ -2651,6 +3098,14 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
 
     acc[status] = n(acc[status], 0) + 1;
 
+    if (row.empiricalVeto === true || row.empiricalVetoDetected === true) {
+      acc.empiricalVetoFlaggedRows = n(acc.empiricalVetoFlaggedRows, 0) + 1;
+    }
+
+    if (row.policyBlocked === true) {
+      acc.policyBlockedFlaggedRows = n(acc.policyBlockedFlaggedRows, 0) + 1;
+    }
+
     return acc;
   }, {});
 
@@ -2677,6 +3132,9 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
     microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
 
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION,
+
     manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY'
   });
@@ -2685,7 +3143,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: clean,
     microFamilies: ids.length,
-    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY_MARKET_WEATHER',
+    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_STATS',
     uiShowsOnlyMicroMicro: true,
     uiAllowsOnlyMicroMicroSelection: true
   };
@@ -2705,7 +3163,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: topRows,
     count: Object.keys(topRows).length,
-    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY_MARKET_WEATHER'
+    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_STATS'
   });
 
   await setJsonEverywhere(getWeekTradingCandidatesKey(weekKey), {
@@ -2714,7 +3172,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
       candidates.map((row) => [rowIdentityId(row), row])
     ),
     count: candidates.length,
-    storageMode: 'ELIGIBLE_LIFETIME_LCB_MICRO_MICRO_CANDIDATES_PREVIEW_PASSED_ONLY'
+    storageMode: 'ELIGIBLE_LIFETIME_LCB_MICRO_MICRO_CANDIDATES_PREVIEW_PASSED_ONLY_NETR_STATS'
   });
 
   await setJsonEverywhere(getWeekMetaKey(weekKey), {
@@ -2775,7 +3233,8 @@ function getOrCreateMicro(micros, classified, learningId) {
       tradeSide: TARGET_TRADE_SIDE,
       definitionParts: withWeather.definitionParts || [],
 
-      marketWeatherStats: normalizeWeatherStats()
+      marketWeatherStats: normalizeWeatherStats(),
+      netRStats: emptyNetRStats()
     });
   }
 
@@ -3192,7 +3651,7 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
     riskPct,
     entrySpreadPct: n(positionWithWeather.spreadPct, 0),
     exitSpreadPct: n(positionWithWeather.exitSpreadPct ?? positionWithWeather.spreadPct, 0)
-  });
+  }) || {};
 
   const costR = n(cost.costR, 0);
   const netR = n(cost.netR, grossR - costR);
@@ -3280,7 +3739,10 @@ export function buildOutcomeFromPosition({ position, exitPrice, exitReason, sour
 
     openedAt: positionWithWeather.openedAt || positionWithWeather.createdAt || null,
     closedAt,
-    completedAt: closedAt
+    completedAt: closedAt,
+
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION
   });
 }
 
@@ -3339,7 +3801,7 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
   }, child);
   const results = [];
 
-  const netR = n(row.netR ?? row.exitR ?? row.realizedR ?? row.r, 0);
+  const netR = outcomeNetR(row);
 
   const normalizedOutcome = flags({
     ...slimOutcome({
@@ -3356,8 +3818,8 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
       realizedR: netR,
       r: netR,
 
-      costR: n(row.costR ?? row.avgCostR, 0),
-      avgCostR: n(row.avgCostR ?? row.costR, 0),
+      costR: outcomeCostR(row),
+      avgCostR: outcomeCostR(row),
 
       win: netR > 0,
       loss: netR < 0,
@@ -3368,6 +3830,9 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
     }),
 
     ...weather,
+
+    outcomeIdentity,
+    stableOutcomeIdentity: row.stableOutcomeIdentity || outcomeIdentity,
 
     learningFamilyId: mm,
     learningMicroFamilyId: mm,
@@ -3388,7 +3853,10 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
 
     microMicroFamilyId: mm,
     trueMicroMicroFamilyId: mm,
-    exactMicroMicroFamilyId: mm
+    exactMicroMicroFamilyId: mm,
+
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION
   });
 
   for (const id of ids) {
@@ -3421,19 +3889,27 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
 
     const micro = getOrCreateMicro(micros, layerRow, id);
 
+    const countedOutcome = flags({
+      ...layerRow,
+      ...normalizedOutcome,
+      ...weather,
+      outcomeDedupeKey: key,
+      outcomeDedupeMethod: c.method,
+      outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
+      outcomeCounted: true,
+      countOutcome: true,
+      recordedAt: now()
+    });
+
     updateOutcome(
       micro,
-      flags({
-        ...layerRow,
-        ...weather,
-        outcomeDedupeKey: key,
-        outcomeDedupeMethod: c.method,
-        outcomeDedupeVersion: OUTCOME_DEDUPE_VERSION,
-        outcomeCounted: true,
-        countOutcome: true,
-        recordedAt: now()
-      }),
+      countedOutcome,
       source
+    );
+
+    Object.assign(
+      micro,
+      applyOutcomeStatsInvariant(micro, countedOutcome)
     );
 
     Object.assign(
@@ -3442,15 +3918,17 @@ export async function recordOutcome(outcome = {}, { source = outcome.source || '
         applyLayerIdentity(
           updateMarketWeatherAggregation(
             safeRefreshStats(micro),
-            {
-              ...layerRow,
-              ...weather
-            },
+            countedOutcome,
             'OUTCOME'
           ),
           id
         )
       )
+    );
+
+    Object.assign(
+      micro,
+      repairStatsInvariants(micro)
     );
 
     touched.add(id);
@@ -3561,7 +4039,7 @@ function normalizeTradingCandidate(row = {}, index = 0, weekKey = PERSISTENT_LEA
     eligibleGatePassed: passed,
     discordActivationEligible: passed,
 
-    selectionSource: 'LIFETIME_LCB_CURRENTFIT_WITH_EMPIRICAL_VETO',
+    selectionSource: 'LIFETIME_LCB_CURRENTFIT_WITH_EMPIRICAL_VETO_NETR_STATS',
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
 
     learningFamilyId: id,
@@ -3656,6 +4134,8 @@ export async function getWeeklyTradingCandidates(
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_V1,
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
     microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    netRStatsVersion: NET_R_STATS_VERSION,
+    statsInvariantVersion: STATS_INVARIANT_VERSION,
     rules: {
       selectionUsesWeeklyWinnerOnly: false,
       selectionUsesLifetimeStats: true,
