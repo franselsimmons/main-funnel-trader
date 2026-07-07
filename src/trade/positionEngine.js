@@ -490,7 +490,9 @@ function entryMarketWeatherFields(weather = {}) {
     entryMarketWeatherKnown: normalized.entryMarketWeatherKnown,
     entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
     entryMarketWeatherCapturedAt: normalized.capturedAt || now(),
-    entryMarketWeatherSource: normalized.source
+    entryMarketWeatherSource: normalized.source,
+    entryMarketWeatherImmutable: true,
+    entryMarketWeatherNeverRecomputedAtExit: true
   };
 }
 
@@ -2518,9 +2520,15 @@ function buildSnapshotSummary(snapshot) {
     ...sideFlags(),
     ...scopeFlags(),
     ...marketWeatherCoreFields(snapshot.marketWeather || snapshot),
+
     marketWeather: snapshot.marketWeather || null,
     currentMarketWeather: snapshot.currentMarketWeather || snapshot.marketWeather || null,
     confirmedMarketWeather: snapshot.confirmedMarketWeather || snapshot.marketWeather || null,
+
+    scannerMarketWeatherCaptured: Boolean(snapshot.scannerMarketWeatherCaptured),
+    scannerMarketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+    scannerCandidatesReceiveEntryMarketWeatherKey: true,
+    unknownWeatherDoesNotOverrideKnownWeather: true,
 
     snapshotId: snapshot.snapshotId,
     createdAt: snapshot.createdAt,
@@ -3355,7 +3363,9 @@ async function saveScannerSnapshots({
     volatileSnapshotKeys: [],
     volatileLatestKeys: [],
     durableSnapshotKeys: [],
-    durableLatestKeys: []
+    durableLatestKeys: [],
+    durableSnapshotWriteErrors: 0,
+    durableLatestWriteErrors: 0
   };
 
   for (const key of snapshotKeys) {
@@ -3393,37 +3403,45 @@ async function saveScannerSnapshots({
   }
 
   for (const key of snapshotKeys) {
-    await setScannerJson(
-      durableRedis,
-      key,
-      snapshot,
-      { ex: ttlSec },
-      {
-        latestKey,
-        snapshotKey,
-        allowedKeys,
-        role: 'SHORT_SCAN_SNAPSHOT_DURABLE_MIRROR'
-      }
-    ).catch(() => null);
+    try {
+      await setScannerJson(
+        durableRedis,
+        key,
+        snapshot,
+        { ex: ttlSec },
+        {
+          latestKey,
+          snapshotKey,
+          allowedKeys,
+          role: 'SHORT_SCAN_SNAPSHOT_DURABLE_MIRROR'
+        }
+      );
 
-    saved.durableSnapshotKeys.push(key);
+      saved.durableSnapshotKeys.push(key);
+    } catch {
+      saved.durableSnapshotWriteErrors += 1;
+    }
   }
 
   for (const key of latestKeys) {
-    await setScannerJson(
-      durableRedis,
-      key,
-      summary,
-      { ex: ttlSec },
-      {
-        latestKey,
-        snapshotKey,
-        allowedKeys,
-        role: 'SHORT_SCAN_LATEST_DURABLE_MIRROR'
-      }
-    ).catch(() => null);
+    try {
+      await setScannerJson(
+        durableRedis,
+        key,
+        summary,
+        { ex: ttlSec },
+        {
+          latestKey,
+          snapshotKey,
+          allowedKeys,
+          role: 'SHORT_SCAN_LATEST_DURABLE_MIRROR'
+        }
+      );
 
-    saved.durableLatestKeys.push(key);
+      saved.durableLatestKeys.push(key);
+    } catch {
+      saved.durableLatestWriteErrors += 1;
+    }
   }
 
   return saved;
@@ -3493,14 +3511,6 @@ export async function runScanner(options = {}) {
   const cleanCandidates = sortCandidates(allCandidates)
     .slice(0, scannerMaxCandidates());
 
-  const scannerGateCandidates = cleanCandidates.filter((candidate) => candidate.scannerGatePassed);
-  const analyzeOnlyCandidates = cleanCandidates.filter((candidate) => (
-    candidate.tradeDiscoveryOnly ||
-    candidate.discoveryOnly ||
-    candidate.analyzeOnly ||
-    !candidate.scannerGatePassed
-  ));
-
   const completedAt = now();
 
   const marketUniverseSave = await saveMarketUniverse({
@@ -3534,6 +3544,14 @@ export async function runScanner(options = {}) {
   const normalizedCleanCandidates = cleanCandidates.map((candidate) => normalizeShortCandidate(
     candidate,
     resolvedMarketWeather
+  ));
+
+  const scannerGateCandidates = normalizedCleanCandidates.filter((candidate) => candidate.scannerGatePassed);
+  const analyzeOnlyCandidates = normalizedCleanCandidates.filter((candidate) => (
+    candidate.tradeDiscoveryOnly ||
+    candidate.discoveryOnly ||
+    candidate.analyzeOnly ||
+    !candidate.scannerGatePassed
   ));
 
   const rawLongCandidatesIgnored =
@@ -3701,8 +3719,8 @@ export async function runScanner(options = {}) {
     ...snapshot,
     storage,
     persisted: true,
-    scannerLatestPreserved: true,
-    scannerSnapshotPreserved: true,
+    scannerLatestPreserved: storage.volatileLatestKeys.length > 0,
+    scannerSnapshotPreserved: storage.volatileSnapshotKeys.length > 0,
     scannerLatestDurableMirror: storage.durableLatestKeys.length > 0,
     scannerSnapshotDurableMirror: storage.durableSnapshotKeys.length > 0
   };
