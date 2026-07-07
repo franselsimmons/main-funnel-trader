@@ -35,6 +35,12 @@ const DEFAULT_MARKET_UNIVERSE_MIN_VOLUME_24H = 10_000;
 
 const DEFAULT_MARKET_WEATHER_TTL_SEC = 180;
 
+const MARKET_WEATHER_KEY_VERSION = 'SHORT_MARKET_WEATHER_KEY_V1';
+const MARKET_WEATHER_CAPTURE_VERSION = 'SHORT_SCANNER_MARKET_WEATHER_CAPTURE_V2_CONFIRMED_ENTRY_WEATHER';
+const MARKET_WEATHER_AGGREGATION_VERSION = 'SHORT_MARKET_WEATHER_AGGREGATION_V1_REGIME_REGIMETREND';
+
+const UNKNOWN_MARKET_WEATHER_KEY = 'UNKNOWN|UNKNOWN';
+
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_SCANNER_SIDE = 'bear';
 const TARGET_DASHBOARD_SIDE = 'bear';
@@ -84,6 +90,417 @@ function now() {
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function hasValue(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function firstKnownText(...values) {
+  for (const value of values) {
+    if (!hasValue(value)) continue;
+
+    const raw = String(Array.isArray(value) ? value[0] : value).trim();
+
+    if (!raw) continue;
+
+    const normalized = upper(raw);
+
+    if (normalized === 'UNKNOWN') continue;
+    if (normalized === UNKNOWN_MARKET_WEATHER_KEY) continue;
+    if (normalized.startsWith('UNKNOWN|')) continue;
+    if (normalized.endsWith('|UNKNOWN')) continue;
+
+    return raw;
+  }
+
+  return null;
+}
+
+function normalizeMarketWeatherRegime(value) {
+  const raw = upper(value);
+
+  if (!raw) return 'UNKNOWN';
+
+  if (raw.includes('SQUEEZE')) return 'SQUEEZE';
+  if (raw.includes('COMPRESSION')) return 'SQUEEZE';
+  if (raw.includes('COMPRESS')) return 'SQUEEZE';
+  if (raw.includes('COIL')) return 'SQUEEZE';
+  if (raw.includes('LOW_VOL')) return 'SQUEEZE';
+  if (raw.includes('LOWVOL')) return 'SQUEEZE';
+
+  if (raw.includes('TREND')) return 'TREND';
+  if (raw.includes('MOMENTUM')) return 'TREND';
+  if (raw.includes('FLOW')) return 'TREND';
+  if (raw.includes('DIRECTION')) return 'TREND';
+  if (raw.includes('HIGH_VOL')) return 'TREND';
+  if (raw.includes('HIGHVOL')) return 'TREND';
+
+  if (raw.includes('CHOP')) return 'CHOP';
+  if (raw.includes('RANGE')) return 'CHOP';
+  if (raw.includes('SIDEWAYS')) return 'CHOP';
+  if (raw.includes('MIXED')) return 'CHOP';
+
+  return raw || 'UNKNOWN';
+}
+
+function normalizeMarketWeatherTrendSide(value) {
+  const raw = upper(value);
+
+  if (!raw) return 'UNKNOWN';
+
+  if (raw.includes('BEARISH')) return 'BEARISH';
+  if (raw === 'BEAR') return 'BEARISH';
+  if (raw.includes('BEAR_')) return 'BEARISH';
+  if (raw.includes('_BEAR')) return 'BEARISH';
+  if (raw.includes('SHORT')) return 'BEARISH';
+  if (raw.includes('SELL')) return 'BEARISH';
+  if (raw.includes('DOWN')) return 'BEARISH';
+  if (raw.includes('DOWNSIDE')) return 'BEARISH';
+  if (raw.includes('RISK_OFF')) return 'BEARISH';
+
+  if (raw.includes('BULLISH')) return 'BULLISH';
+  if (raw === 'BULL') return 'BULLISH';
+  if (raw.includes('BULL_')) return 'BULLISH';
+  if (raw.includes('_BULL')) return 'BULLISH';
+  if (raw.includes('LONG')) return 'BULLISH';
+  if (raw.includes('BUY')) return 'BULLISH';
+  if (raw.includes('UP')) return 'BULLISH';
+  if (raw.includes('UPSIDE')) return 'BULLISH';
+  if (raw.includes('RISK_ON')) return 'BULLISH';
+
+  if (raw.includes('NEUTRAL')) return 'NEUTRAL';
+  if (raw.includes('MIXED')) return 'NEUTRAL';
+  if (raw.includes('FLAT')) return 'NEUTRAL';
+  if (raw.includes('QUIET')) return 'NEUTRAL';
+
+  return raw || 'UNKNOWN';
+}
+
+function buildMarketWeatherKey({ regime, trendSide }) {
+  const normalizedRegime = normalizeMarketWeatherRegime(regime);
+  const normalizedTrendSide = normalizeMarketWeatherTrendSide(trendSide);
+
+  if (
+    normalizedRegime === 'UNKNOWN' ||
+    normalizedTrendSide === 'UNKNOWN'
+  ) {
+    return UNKNOWN_MARKET_WEATHER_KEY;
+  }
+
+  return `${normalizedRegime}|${normalizedTrendSide}`;
+}
+
+function parseMarketWeatherKey(value) {
+  const raw = upper(value);
+
+  if (!raw || !raw.includes('|')) {
+    return {
+      key: UNKNOWN_MARKET_WEATHER_KEY,
+      regime: 'UNKNOWN',
+      trendSide: 'UNKNOWN',
+      known: false
+    };
+  }
+
+  const [regimeRaw, trendRaw] = raw.split('|');
+
+  const regime = normalizeMarketWeatherRegime(regimeRaw);
+  const trendSide = normalizeMarketWeatherTrendSide(trendRaw);
+  const key = buildMarketWeatherKey({ regime, trendSide });
+  const known = key !== UNKNOWN_MARKET_WEATHER_KEY;
+
+  return {
+    key,
+    regime: known ? regime : 'UNKNOWN',
+    trendSide: known ? trendSide : 'UNKNOWN',
+    known
+  };
+}
+
+function marketWeatherKnown(key) {
+  return parseMarketWeatherKey(key).known;
+}
+
+function makeUnknownMarketWeather(reason = 'MARKET_WEATHER_UNKNOWN') {
+  return {
+    ok: false,
+    available: false,
+    known: false,
+    currentMarketWeatherKnown: false,
+    confirmedMarketWeatherKnown: false,
+    entryMarketWeatherKnown: false,
+
+    currentMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
+    confirmedMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
+    entryMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
+    marketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
+
+    currentMarketWeatherRegime: 'UNKNOWN',
+    confirmedMarketWeatherRegime: 'UNKNOWN',
+    entryMarketWeatherRegime: 'UNKNOWN',
+    currentRegime: 'UNKNOWN',
+    regime: 'UNKNOWN',
+
+    currentMarketWeatherTrendSide: 'UNKNOWN',
+    confirmedMarketWeatherTrendSide: 'UNKNOWN',
+    entryMarketWeatherTrendSide: 'UNKNOWN',
+    currentTrendSide: 'UNKNOWN',
+    trendSide: 'UNKNOWN',
+
+    currentMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    confirmedMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+
+    reason,
+    source: reason,
+    capturedAt: now(),
+    updatedAt: now()
+  };
+}
+
+function normalizeMarketWeatherSnapshot(input = {}, source = 'UNKNOWN') {
+  if (!input || typeof input !== 'object') {
+    return makeUnknownMarketWeather('INVALID_MARKET_WEATHER_INPUT');
+  }
+
+  const directKey = firstKnownText(
+    input.entryMarketWeatherKey,
+    input.confirmedMarketWeatherKey,
+    input.currentMarketWeatherKey,
+    input.marketWeatherKey,
+    input.key
+  );
+
+  let parsed = directKey
+    ? parseMarketWeatherKey(directKey)
+    : null;
+
+  if (!parsed?.known) {
+    const regime = firstKnownText(
+      input.entryMarketWeatherRegime,
+      input.confirmedMarketWeatherRegime,
+      input.currentMarketWeatherRegime,
+      input.currentRegime,
+      input.marketWeatherRegime,
+      input.regime
+    );
+
+    const trendSide = firstKnownText(
+      input.entryMarketWeatherTrendSide,
+      input.confirmedMarketWeatherTrendSide,
+      input.currentMarketWeatherTrendSide,
+      input.currentTrendSide,
+      input.marketWeatherTrendSide,
+      input.trendSide,
+      input.marketTrendSide,
+      input.currentTrend,
+      input.trend,
+      input.marketSide,
+      input.bias
+    );
+
+    parsed = parseMarketWeatherKey(buildMarketWeatherKey({
+      regime,
+      trendSide
+    }));
+  }
+
+  if (!parsed.known) {
+    return {
+      ...makeUnknownMarketWeather(input.reason || 'MARKET_WEATHER_UNKNOWN'),
+      rawMarketWeather: input,
+      source: input.source || source
+    };
+  }
+
+  const updatedAt = firstPositiveNumber(
+    input.entryMarketWeatherCapturedAt,
+    input.confirmedMarketWeatherUpdatedAt,
+    input.currentMarketWeatherUpdatedAt,
+    input.updatedAt,
+    input.generatedAt,
+    input.completedAt,
+    input.createdAt,
+    input.ts,
+    now()
+  );
+
+  return {
+    ...input,
+
+    ok: input.ok !== false,
+    available: input.available !== false,
+    known: true,
+    currentMarketWeatherKnown: true,
+    confirmedMarketWeatherKnown: true,
+    entryMarketWeatherKnown: true,
+
+    currentMarketWeatherKey: parsed.key,
+    confirmedMarketWeatherKey: parsed.key,
+    entryMarketWeatherKey: parsed.key,
+    marketWeatherKey: parsed.key,
+
+    currentMarketWeatherRegime: parsed.regime,
+    confirmedMarketWeatherRegime: parsed.regime,
+    entryMarketWeatherRegime: parsed.regime,
+    currentRegime: parsed.regime,
+    regime: parsed.regime,
+
+    currentMarketWeatherTrendSide: parsed.trendSide,
+    confirmedMarketWeatherTrendSide: parsed.trendSide,
+    entryMarketWeatherTrendSide: parsed.trendSide,
+    currentTrendSide: parsed.trendSide,
+    trendSide: parsed.trendSide,
+
+    currentMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    confirmedMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+
+    source: input.source || source,
+    reason: null,
+    capturedAt: input.capturedAt || updatedAt,
+    updatedAt
+  };
+}
+
+function resolveRunMarketWeather(options = {}, derivedPayload = {}) {
+  const fromOptions = normalizeMarketWeatherSnapshot({
+    currentMarketWeatherKey: options.currentMarketWeatherKey,
+    confirmedMarketWeatherKey: options.confirmedMarketWeatherKey,
+    entryMarketWeatherKey: options.entryMarketWeatherKey,
+
+    currentMarketWeatherRegime: options.currentMarketWeatherRegime,
+    confirmedMarketWeatherRegime: options.confirmedMarketWeatherRegime,
+    entryMarketWeatherRegime: options.entryMarketWeatherRegime,
+
+    currentMarketWeatherTrendSide: options.currentMarketWeatherTrendSide,
+    confirmedMarketWeatherTrendSide: options.confirmedMarketWeatherTrendSide,
+    entryMarketWeatherTrendSide: options.entryMarketWeatherTrendSide,
+
+    source: 'SCANNER_OPTIONS_CONFIRMED_MARKET_WEATHER',
+    capturedAt: now()
+  }, 'SCANNER_OPTIONS_CONFIRMED_MARKET_WEATHER');
+
+  if (fromOptions.known) return fromOptions;
+
+  const fromOptionsObject = normalizeMarketWeatherSnapshot(
+    options.marketWeather ||
+      options.currentMarketWeather ||
+      options.confirmedMarketWeather ||
+      options.scannerMarketWeather ||
+      {},
+    'SCANNER_OPTIONS_MARKET_WEATHER_OBJECT'
+  );
+
+  if (fromOptionsObject.known) return fromOptionsObject;
+
+  const fromDerived = normalizeMarketWeatherSnapshot(
+    derivedPayload,
+    'SCANNER_DERIVED_MARKET_WEATHER'
+  );
+
+  if (fromDerived.known) return fromDerived;
+
+  return makeUnknownMarketWeather('SCANNER_MARKET_WEATHER_UNKNOWN');
+}
+
+function marketWeatherCoreFields(weather = {}) {
+  const normalized = normalizeMarketWeatherSnapshot(weather, weather.source || 'MARKET_WEATHER_CORE_FIELDS');
+
+  return {
+    currentMarketWeatherKey: normalized.currentMarketWeatherKey,
+    confirmedMarketWeatherKey: normalized.confirmedMarketWeatherKey,
+    marketWeatherKey: normalized.marketWeatherKey,
+
+    currentMarketWeatherRegime: normalized.currentMarketWeatherRegime,
+    confirmedMarketWeatherRegime: normalized.confirmedMarketWeatherRegime,
+    currentRegime: normalized.currentMarketWeatherRegime,
+    regime: normalized.currentMarketWeatherRegime,
+
+    currentMarketWeatherTrendSide: normalized.currentMarketWeatherTrendSide,
+    confirmedMarketWeatherTrendSide: normalized.confirmedMarketWeatherTrendSide,
+    currentTrendSide: normalized.currentMarketWeatherTrendSide,
+    trendSide: normalized.currentMarketWeatherTrendSide,
+
+    currentMarketWeatherKnown: normalized.currentMarketWeatherKnown,
+    confirmedMarketWeatherKnown: normalized.confirmedMarketWeatherKnown,
+
+    currentMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    confirmedMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+
+    marketWeatherSource: normalized.source,
+    marketWeatherCapturedAt: normalized.capturedAt || now()
+  };
+}
+
+function entryMarketWeatherFields(weather = {}) {
+  const normalized = normalizeMarketWeatherSnapshot(weather, weather.source || 'ENTRY_MARKET_WEATHER_FIELDS');
+
+  return {
+    entryMarketWeatherKey: normalized.entryMarketWeatherKey,
+    entryMarketWeatherRegime: normalized.entryMarketWeatherRegime,
+    entryMarketWeatherTrendSide: normalized.entryMarketWeatherTrendSide,
+    entryMarketWeatherKnown: normalized.entryMarketWeatherKnown,
+    entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    entryMarketWeatherCapturedAt: normalized.capturedAt || now(),
+    entryMarketWeatherSource: normalized.source
+  };
+}
+
+function resolveCandidateEntryMarketWeather(candidate = {}, scannerMarketWeather = {}) {
+  const candidateWeather = normalizeMarketWeatherSnapshot({
+    entryMarketWeatherKey: candidate.entryMarketWeatherKey,
+    confirmedMarketWeatherKey: candidate.confirmedMarketWeatherKey,
+    currentMarketWeatherKey: candidate.currentMarketWeatherKey,
+    marketWeatherKey: candidate.marketWeatherKey,
+
+    entryMarketWeatherRegime: candidate.entryMarketWeatherRegime,
+    confirmedMarketWeatherRegime: candidate.confirmedMarketWeatherRegime,
+    currentMarketWeatherRegime: candidate.currentMarketWeatherRegime,
+    currentRegime: candidate.currentRegime,
+
+    entryMarketWeatherTrendSide: candidate.entryMarketWeatherTrendSide,
+    confirmedMarketWeatherTrendSide: candidate.confirmedMarketWeatherTrendSide,
+    currentMarketWeatherTrendSide: candidate.currentMarketWeatherTrendSide,
+    currentTrendSide: candidate.currentTrendSide,
+
+    source: 'CANDIDATE_EXISTING_MARKET_WEATHER',
+    capturedAt: candidate.entryMarketWeatherCapturedAt || candidate.createdAt || now()
+  }, 'CANDIDATE_EXISTING_MARKET_WEATHER');
+
+  if (candidateWeather.known) {
+    return candidateWeather;
+  }
+
+  const scannerWeather = normalizeMarketWeatherSnapshot(
+    scannerMarketWeather,
+    scannerMarketWeather.source || 'SCANNER_CONFIRMED_MARKET_WEATHER'
+  );
+
+  if (scannerWeather.known) {
+    return {
+      ...scannerWeather,
+      source: scannerWeather.source || 'SCANNER_CONFIRMED_MARKET_WEATHER',
+      candidatePartialWeatherIgnored: (
+        candidate.entryMarketWeatherKey &&
+        !marketWeatherKnown(candidate.entryMarketWeatherKey)
+      )
+        ? candidate.entryMarketWeatherKey
+        : null
+    };
+  }
+
+  return makeUnknownMarketWeather('CANDIDATE_AND_SCANNER_MARKET_WEATHER_UNKNOWN');
 }
 
 function namespacedShortKey(key, fallback) {
@@ -302,6 +719,14 @@ function learningFlags() {
     selectionGranularity: 'EXACT_75_CHILD',
     fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
 
+    marketWeatherCaptureEnabled: true,
+    scannerCandidatesReceiveEntryMarketWeatherKey: true,
+    entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherExcludedFromFamilyId: true,
+    marketWeatherDoesNotChangeScannerFingerprint: true,
+
     riskTradeSide: TARGET_TRADE_SIDE,
     shortRiskShape: 'tp < entry < sl',
     validShortRiskShape: 'entry > 0 && tp < entry && sl > entry',
@@ -411,6 +836,16 @@ function sideFlags() {
     coinNameExcludedFromFamilyId: true,
     hashesExcludedFromFamilyId: true,
     bucketGranularity: 'LOW_MID_HIGH',
+
+    marketWeatherCaptureEnabled: true,
+    scannerCapturesConfirmedMarketWeather: true,
+    scannerCandidatesReceiveEntryMarketWeatherKey: true,
+    entryMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherExcludedFromFamilyId: true,
+    marketWeatherDoesNotChangeScannerFingerprint: true,
+    unknownWeatherDoesNotOverrideKnownWeather: true,
 
     persistentLearningKey: PERSISTENT_LEARNING_KEY,
     autoRotationActivationDisabled: true,
@@ -1243,7 +1678,7 @@ function buildScannerFingerprint({
     scannerBucketId: scannerMicroFamilyId,
     scannerMacroBucketId: scannerMacroFamilyId,
     scannerFamilySource: 'SCANNER_DISCOVERY',
-    scannerFingerprintVersion: 'short_scanner_v5_metadata_only_market_universe',
+    scannerFingerprintVersion: 'short_scanner_v6_metadata_only_market_weather_safe',
     scannerFingerprintRole: 'METADATA_ONLY',
     scannerFingerprintsMetadataOnly: true,
     scannerFingerprintsUsedAsLearningFamily: false,
@@ -1275,6 +1710,8 @@ function buildScannerFingerprint({
     scannerHashExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
     symbolExcludedFromFamilyId: true,
+    marketWeatherExcludedFromFamilyId: true,
+    marketWeatherDoesNotChangeScannerFingerprint: true,
 
     ...learningFlags()
   };
@@ -1661,13 +2098,25 @@ function buildGateFlags({
   };
 }
 
-function normalizeShortCandidate(candidate = {}) {
+function normalizeShortCandidate(candidate = {}, scannerMarketWeather = {}) {
   const scannerMicroFamilyId = candidate.scannerMicroFamilyId || null;
   const scannerFamilyId = candidate.scannerFamilyId || null;
   const scannerMacroFamilyId = candidate.scannerMacroFamilyId || null;
 
+  const entryWeather = resolveCandidateEntryMarketWeather(candidate, scannerMarketWeather);
+
   return {
     ...candidate,
+
+    ...marketWeatherCoreFields(entryWeather),
+    ...entryMarketWeatherFields(entryWeather),
+
+    scannerMarketWeatherCaptured: entryWeather.known,
+    scannerMarketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+    scannerCandidateWeatherCaptureSource: entryWeather.source,
+    scannerCandidatePartialWeatherIgnored: entryWeather.candidatePartialWeatherIgnored || null,
+    scannerCandidatesReceiveEntryMarketWeatherKey: true,
+    unknownWeatherDoesNotOverrideKnownWeather: true,
 
     familyId: validLearningId(candidate.familyId) ? candidate.familyId : null,
 
@@ -1740,6 +2189,8 @@ function normalizeShortCandidate(candidate = {}) {
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
     hashesExcludedFromFamilyId: true,
+    marketWeatherExcludedFromFamilyId: true,
+    marketWeatherDoesNotChangeScannerFingerprint: true,
 
     isMirrorMicroFamily: false,
     observationMirror: false,
@@ -1767,7 +2218,8 @@ async function analyzeTickerCandidate({
   startedAt,
   btcState,
   regime,
-  getCandles
+  getCandles,
+  scannerMarketWeather
 }) {
   const normalizedTicker = normalizeScannerTicker(ticker);
 
@@ -1964,7 +2416,7 @@ async function analyzeTickerCandidate({
 
     scannerTs: startedAt,
     createdAt: startedAt
-  });
+  }, scannerMarketWeather);
 
   return {
     candidate,
@@ -2007,6 +2459,10 @@ function buildSnapshotSummary(snapshot) {
 
     ...sideFlags(),
     ...scopeFlags(),
+    ...marketWeatherCoreFields(snapshot.marketWeather || snapshot),
+    marketWeather: snapshot.marketWeather || null,
+    currentMarketWeather: snapshot.currentMarketWeather || snapshot.marketWeather || null,
+    confirmedMarketWeather: snapshot.confirmedMarketWeather || snapshot.marketWeather || null,
 
     snapshotId: snapshot.snapshotId,
     createdAt: snapshot.createdAt,
@@ -2030,6 +2486,7 @@ function buildSnapshotSummary(snapshot) {
     marketWeatherKeys: snapshot.marketWeatherKeys,
     marketWeatherSaved: snapshot.marketWeatherSaved,
     marketWeatherRole: snapshot.marketWeatherRole,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
 
     candidatesCount: snapshot.candidatesCount,
     scannerGateCandidatesCount: snapshot.scannerGateCandidatesCount,
@@ -2280,6 +2737,7 @@ async function setMarketWeatherJson(redis, key, value, options = {}, {
     key,
     {
       ...value,
+      ...marketWeatherCoreFields(value),
       scannerStorageRole: role || 'SHORT_MARKET_WEATHER_LATEST',
       marketWeatherRole: 'CURRENT_FIT_INPUT',
       marketWeatherInput: true,
@@ -2291,8 +2749,7 @@ async function setMarketWeatherJson(redis, key, value, options = {}, {
       writesAnalyze: false,
       writesLearningFamilies: false,
       writesMicroFamilies: false,
-      writesPositions: false,
-      writesRotation: false,
+      longRootTouched: false,
 
       currentFitSoftOnly: true,
       currentFitBlocksLearning: false,
@@ -2428,12 +2885,12 @@ function classifyMarketTrendSideFromRows(rows = [], btcContext = {}) {
   const bearishPct = pct(bearish, total);
   const btcState = upper(btcContext.btcState);
 
-  if (bearishPct >= 55 && bullishPct <= 35) return 'BEAR';
-  if (bullishPct >= 58 && bearishPct <= 32) return 'BULL';
-  if (btcState.includes('BEAR') && bearishPct >= 45) return 'BEAR';
-  if (btcState.includes('BULL') && bullishPct >= 50) return 'BULL';
+  if (bearishPct >= 55 && bullishPct <= 35) return 'BEARISH';
+  if (bullishPct >= 58 && bearishPct <= 32) return 'BULLISH';
+  if (btcState.includes('BEAR') && bearishPct >= 45) return 'BEARISH';
+  if (btcState.includes('BULL') && bullishPct >= 50) return 'BULLISH';
 
-  return 'MIXED';
+  return 'NEUTRAL';
 }
 
 function classifyMarketRegimeFromRows(rows = [], btcContext = {}) {
@@ -2549,8 +3006,21 @@ function buildMarketWeatherPayload({
   const neutralPct = pct(neutralCount, total);
   const squeezePct = pct(squeezeCount, total);
 
-  const currentTrendSide = classifyMarketTrendSideFromRows(rows, btcContext);
-  const currentRegime = classifyMarketRegimeFromRows(rows, btcContext);
+  const currentMarketWeatherRegime = normalizeMarketWeatherRegime(
+    classifyMarketRegimeFromRows(rows, btcContext)
+  );
+
+  const currentMarketWeatherTrendSide = normalizeMarketWeatherTrendSide(
+    classifyMarketTrendSideFromRows(rows, btcContext)
+  );
+
+  const currentMarketWeatherKey = buildMarketWeatherKey({
+    regime: currentMarketWeatherRegime,
+    trendSide: currentMarketWeatherTrendSide
+  });
+
+  const currentMarketWeatherKnown = currentMarketWeatherKey !== UNKNOWN_MARKET_WEATHER_KEY;
+
   const currentFlow = classifyMarketFlowFromRows(rows);
   const currentVolatilityState = classifyMarketVolatilityFromRows(rows);
 
@@ -2569,9 +3039,9 @@ function buildMarketWeatherPayload({
       );
 
   return {
-    ok: true,
-    available: true,
-    version: 'MARKET_WEATHER_ENGINE_FROM_SCANNER_V1',
+    ok: currentMarketWeatherKnown,
+    available: currentMarketWeatherKnown,
+    version: 'MARKET_WEATHER_ENGINE_FROM_SCANNER_V2_FULL_KEY',
     source: 'SCANNER_MARKET_UNIVERSE',
 
     snapshotId,
@@ -2580,11 +3050,28 @@ function buildMarketWeatherPayload({
     completedAt,
     updatedAt: completedAt,
 
-    currentRegime,
-    regime: currentRegime,
+    currentMarketWeatherKey,
+    confirmedMarketWeatherKey: currentMarketWeatherKey,
+    marketWeatherKey: currentMarketWeatherKey,
 
-    currentTrendSide,
-    trendSide: currentTrendSide,
+    currentMarketWeatherRegime,
+    confirmedMarketWeatherRegime: currentMarketWeatherRegime,
+    currentRegime: currentMarketWeatherRegime,
+    regime: currentMarketWeatherRegime,
+
+    currentMarketWeatherTrendSide,
+    confirmedMarketWeatherTrendSide: currentMarketWeatherTrendSide,
+    currentTrendSide: currentMarketWeatherTrendSide,
+    trendSide: currentMarketWeatherTrendSide,
+
+    currentMarketWeatherKnown,
+    confirmedMarketWeatherKnown: currentMarketWeatherKnown,
+
+    currentMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    confirmedMarketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherKeyVersion: MARKET_WEATHER_KEY_VERSION,
+    marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
+    marketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
 
     currentFlow,
     flow: currentFlow,
@@ -2716,16 +3203,31 @@ async function saveMarketWeather({
   startedAt,
   completedAt,
   btcContext,
-  options = {}
+  options = {},
+  scannerMarketWeather = null
 }) {
   const keys = marketWeatherKeys(options);
-  const payload = buildMarketWeatherPayload({
+  const derivedPayload = buildMarketWeatherPayload({
     rows,
     snapshotId,
     startedAt,
     completedAt,
     btcContext
   });
+
+  const resolvedWeather = normalizeMarketWeatherSnapshot(
+    scannerMarketWeather || derivedPayload,
+    scannerMarketWeather?.source || 'SCANNER_MARKET_WEATHER_SAVE'
+  );
+
+  const payload = {
+    ...derivedPayload,
+    ...marketWeatherCoreFields(resolvedWeather),
+    marketWeather: resolvedWeather,
+    currentMarketWeather: resolvedWeather,
+    confirmedMarketWeather: resolvedWeather,
+    source: resolvedWeather.source || derivedPayload.source || 'SCANNER_MARKET_UNIVERSE'
+  };
 
   const ttlSec = marketWeatherTtlSec();
   const savedKeys = [];
@@ -2782,6 +3284,19 @@ export async function runScanner(options = {}) {
     getCandles
   });
 
+  const derivedMarketWeatherPayload = buildMarketWeatherPayload({
+    rows: marketUniverseRows,
+    snapshotId,
+    startedAt,
+    completedAt: now(),
+    btcContext
+  });
+
+  const scannerMarketWeather = resolveRunMarketWeather(
+    options,
+    derivedMarketWeatherPayload
+  );
+
   const results = await mapConcurrent(
     universe,
     scannerConcurrency(),
@@ -2791,7 +3306,8 @@ export async function runScanner(options = {}) {
       startedAt,
       btcState: btcContext.btcState,
       regime: btcContext.regime,
-      getCandles
+      getCandles,
+      scannerMarketWeather
     })
   );
 
@@ -2799,7 +3315,7 @@ export async function runScanner(options = {}) {
     .map((row) => row?.candidate)
     .filter(Boolean)
     .filter(isTargetCandidate)
-    .map(normalizeShortCandidate)
+    .map((candidate) => normalizeShortCandidate(candidate, scannerMarketWeather))
     .filter((candidate) => !isScannerFingerprintId(candidate.trueMicroFamilyId))
     .filter((candidate) => !isScannerFingerprintId(candidate.microFamilyId))
     .filter((candidate) => !isExecutionFingerprintId(candidate.trueMicroFamilyId))
@@ -2835,8 +3351,16 @@ export async function runScanner(options = {}) {
     startedAt,
     completedAt,
     btcContext,
-    options
+    options,
+    scannerMarketWeather
   });
+
+  const resolvedMarketWeather = normalizeMarketWeatherSnapshot(
+    marketWeatherSave.payload?.marketWeather ||
+      marketWeatherSave.payload ||
+      scannerMarketWeather,
+    'SCANNER_SNAPSHOT_RESOLVED_MARKET_WEATHER'
+  );
 
   const rawLongCandidatesIgnored =
     results.filter((row) => row?.skippedTradeSide === OPPOSITE_TRADE_SIDE).length +
@@ -2855,6 +3379,16 @@ export async function runScanner(options = {}) {
 
     ...sideFlags(),
     ...scopeFlags(),
+    ...marketWeatherCoreFields(resolvedMarketWeather),
+
+    marketWeather: resolvedMarketWeather,
+    currentMarketWeather: resolvedMarketWeather,
+    confirmedMarketWeather: resolvedMarketWeather,
+
+    scannerMarketWeatherCaptured: resolvedMarketWeather.known,
+    scannerMarketWeatherCaptureVersion: MARKET_WEATHER_CAPTURE_VERSION,
+    scannerCandidatesReceiveEntryMarketWeatherKey: true,
+    unknownWeatherDoesNotOverrideKnownWeather: true,
 
     force: Boolean(options.force || options.forced),
 
