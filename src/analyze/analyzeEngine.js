@@ -53,43 +53,46 @@ const SHORT_MARKET_WEATHER_KEY_V1 = 'SHORT_MARKET_WEATHER_KEY_V1';
 const UNKNOWN_MARKET_WEATHER_KEY = 'UNKNOWN|UNKNOWN';
 
 const ENTRY_MARKET_WEATHER_CAPTURE_VERSION =
-  'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V4_IMMUTABLE_NETR_REPAIR';
+  'SHORT_ENTRY_MARKET_WEATHER_CAPTURE_V5_IMMUTABLE_ENTRY_ONLY_AGGREGATE_SAFE';
 const MARKET_WEATHER_FEATURE_FLAGS_VERSION =
-  'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V3_NETR_REPAIR_SOURCE_OF_TRUTH';
+  'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V4_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
 const MARKET_WEATHER_AGGREGATION_VERSION =
-  'SHORT_MARKET_WEATHER_AGGREGATION_V3_NETR_SOURCE_OF_TRUTH';
+  'SHORT_MARKET_WEATHER_AGGREGATION_V4_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
 
 const EMPIRICAL_VETO_VERSION =
-  'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V3_NETR_SOURCE_OF_TRUTH';
+  'SHORT_EXACT_MICRO_MICRO_EMPIRICAL_VETO_LCB95_V4_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
 const MICRO_MICRO_RUNTIME_GATE_VERSION =
-  'SHORT_MM_RUNTIME_STATUS_GATE_V4_NETR_SOURCE_OF_TRUTH';
+  'SHORT_MM_RUNTIME_STATUS_GATE_V5_AGGREGATE_GEOMETRY_SAFE_NETR_SOURCE_OF_TRUTH';
 
 const NET_R_STATS_VERSION =
-  'SHORT_NET_R_STATS_V3_RECORD_OUTCOME_SOURCE_OF_TRUTH';
+  'SHORT_NET_R_STATS_V4_RECORD_OUTCOME_SOURCE_OF_TRUTH';
 const STATS_INVARIANT_VERSION =
-  'SHORT_STATS_INVARIANT_NETR_TOTALR_AVGR_PF_REPAIR_V3';
+  'SHORT_STATS_INVARIANT_NETR_TOTALR_AVGR_PF_REPAIR_V4';
 
 const MEASUREMENT_FIX_VERSION =
-  'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V3_NETR_SOURCE_OF_TRUTH';
+  'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V4_NETR_SOURCE_OF_TRUTH';
 const POSITION_MEASUREMENT_FIX_VERSION = MEASUREMENT_FIX_VERSION;
 const MICRO_MICRO_VERSION =
-  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V4_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
-const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V4_NETR_SOURCE_OF_TRUTH';
+  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V5_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
+const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V5_NETR_SOURCE_OF_TRUTH';
 const COST_MODEL_VERSION =
-  'POSITION_ENGINE_SHORT_NET_COST_V17_MARKET_WEATHER_EMPIRICAL_VETO_NETR_SOURCE_OF_TRUTH';
+  'POSITION_ENGINE_SHORT_NET_COST_V18_MARKET_WEATHER_EMPIRICAL_VETO_NETR_SOURCE_OF_TRUTH';
 const OBSERVATION_DEDUPE_VERSION =
-  'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V5_MARKET_WEATHER';
+  'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V6_IMMUTABLE_MARKET_WEATHER';
 const OUTCOME_DEDUPE_VERSION =
-  'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V10_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
+  'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V11_IMMUTABLE_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
 const SELECTION_ENGINE_VERSION =
-  'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V4_NETR_SOURCE_OF_TRUTH';
+  'SHORT_LIFETIME_LCB_CURRENTFIT_SELECTION_V5_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
 const ADAPTIVE_UI_VERSION =
-  'SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_MICRO_MICRO_ONLY_V6_NETR_SOURCE_OF_TRUTH';
+  'SHORT_ADAPTIVE_UI_MARKETWEATHER_EMPIRICAL_VETO_MICRO_MICRO_ONLY_V7_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
 const WEAK_CONTRA_ENTRY_GATE_VERSION =
-  'SHORT_E_WEAK_CONTRA_POLICY_BLOCK_V4_NARROWED';
+  'SHORT_E_WEAK_CONTRA_POLICY_BLOCK_V5_NARROWED_AGGREGATE_SAFE';
+
+const POLICY_BLOCK_GATE_VERSION =
+  'SHORT_POLICY_BLOCK_GATE_V5_SYSTEM_RULES_ONLY_AGGREGATE_GEOMETRY_SAFE';
 
 const PRIMARY_LEARNING_ID_RULE =
-  'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V5_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH';
+  'MICRO_MICRO_PRIMARY_CHILD75_PARENT15_CONTEXT_ONLY_V6_IMMUTABLE_ENTRY_NETR_SOURCE_OF_TRUTH';
 
 const MICRO_MICRO_STATUS_OBSERVING = 'OBSERVING';
 const MICRO_MICRO_STATUS_PASSED = 'PASSED';
@@ -492,6 +495,9 @@ function marketWeatherFeatureFlags() {
     entryMarketWeatherCaptureEnabled: true,
     entryMarketWeatherImmutable: true,
     entryMarketWeatherNeverRecomputedAtExit: true,
+    entryMarketWeatherSourceOfTruth: 'ENTRY_ONLY_FOR_AGGREGATE_ROWS_CURRENT_CONFIRMED_ONLY_FOR_NEW_EVENTS',
+    aggregateRowsDoNotRecomputeEntryWeatherFromCurrent: true,
+    aggregateRowsDoNotRecomputeEntryWeatherFromConfirmed: true,
 
     marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_V1,
     marketWeatherAggregationVersion: MARKET_WEATHER_AGGREGATION_VERSION,
@@ -513,6 +519,10 @@ function marketWeatherFeatureFlags() {
     netRStatsVersion: NET_R_STATS_VERSION,
     statsInvariantVersion: STATS_INVARIANT_VERSION,
     netRStatsAreSourceOfTruthForAvgRTotalRProfitFactor: true,
+
+    policyBlockGateVersion: POLICY_BLOCK_GATE_VERSION,
+    aggregateRowsDoNotUseGeometryAsPolicyBlock: true,
+    invalidGeometryPolicyBlockOnlyForActionableTradeRows: true,
 
     riskSourceOfTruth: 'riskFractionForEntry',
     proofTierIsLabelOnly: true,
@@ -627,6 +637,104 @@ function firstKnownMarketWeatherKey(...values) {
   return null;
 }
 
+function looksLikeLearningFamilyText(row = {}) {
+  const text = upper([
+    row.id,
+    row.key,
+    row.rowId,
+    row.learningFamilyId,
+    row.learningMicroFamilyId,
+    row.analyzeMicroFamilyId,
+    row.microFamilyId,
+    row.trueMicroFamilyId,
+    row.childTrueMicroFamilyId,
+    row.base75ChildTrueMicroFamilyId,
+    row.parentTrueMicroFamilyId,
+    row.microMicroFamilyId,
+    row.trueMicroMicroFamilyId,
+    row.exactMicroMicroFamilyId
+  ].filter(Boolean).join('|'));
+
+  return text.includes('MICRO_SHORT_');
+}
+
+function hasTradeIdentity(row = {}) {
+  return Boolean(
+    row.tradeId ||
+      row.positionId ||
+      row.orderId ||
+      row.outcomeIdentity ||
+      row.stableOutcomeIdentity ||
+      row.closedAt ||
+      row.completedAt ||
+      row.openedAt ||
+      row.entry ||
+      row.entryPrice ||
+      row.exit ||
+      row.exitPrice
+  );
+}
+
+function hasAggregateStatsFields(row = {}) {
+  return Boolean(
+    row.netRStats ||
+      row.shortNetRStats ||
+      row.outcomeNetRStats ||
+      row.marketWeatherStats ||
+      Array.isArray(row.recentOutcomes) ||
+      hasValue(row.completed) ||
+      hasValue(row.outcomeSample) ||
+      hasValue(row.closed) ||
+      hasValue(row.seen) ||
+      hasValue(row.observed) ||
+      hasValue(row.observations)
+  );
+}
+
+function isAggregateLearningStatsRow(row = {}) {
+  if (!row || typeof row !== 'object') return false;
+
+  const type = upper(row.type || row.eventType || row.rowType || '');
+
+  if (
+    type.includes('OUTCOME') ||
+    type.includes('POSITION') ||
+    type.includes('TRADE') ||
+    type.includes('ENTRY') ||
+    type.includes('CANDIDATE') ||
+    type.includes('SIGNAL')
+  ) {
+    return false;
+  }
+
+  return looksLikeLearningFamilyText(row) && hasAggregateStatsFields(row) && !hasTradeIdentity(row);
+}
+
+function shouldAllowCurrentConfirmedWeatherFallback(row = {}) {
+  if (!row || typeof row !== 'object') return false;
+
+  if (isAggregateLearningStatsRow(row)) return false;
+
+  return Boolean(
+    row.allowCurrentWeatherAsEntryFallback === true ||
+      row.allowConfirmedWeatherAsEntryFallback === true ||
+      row.type === 'OUTCOME' ||
+      row.type === 'POSITION' ||
+      row.type === 'ENTRY' ||
+      row.type === 'CANDIDATE' ||
+      row.type === 'SIGNAL' ||
+      row.tradeId ||
+      row.positionId ||
+      row.symbol ||
+      row.contractSymbol ||
+      row.openedAt ||
+      row.createdAt ||
+      row.entry ||
+      row.entryPrice ||
+      row.price
+  );
+}
+
 function compactEntryMarketWeatherRaw(value = null) {
   if (!value || typeof value !== 'object') return null;
 
@@ -690,6 +798,9 @@ function availableFieldsFromRaw(raw = null) {
 }
 
 function resolveEntryMarketWeather(row = {}, timestamp = now()) {
+  const aggregateLearningRow = isAggregateLearningStatsRow(row);
+  const allowCurrentConfirmedFallback = shouldAllowCurrentConfirmedWeatherFallback(row);
+
   const existingRaw = row.entryMarketWeatherRaw && typeof row.entryMarketWeatherRaw === 'object'
     ? row.entryMarketWeatherRaw
     : null;
@@ -697,49 +808,72 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
   const rawSnapshot = compactEntryMarketWeatherRaw(
     existingRaw ||
       row.entryMarketWeather ||
-      row.currentMarketWeather ||
-      row.marketWeather ||
-      null
+      (
+        aggregateLearningRow
+          ? null
+          : row.currentMarketWeather || row.marketWeather || null
+      )
   );
 
-  const knownKey = firstKnownMarketWeatherKey(
+  const lockedEntryKey = firstKnownMarketWeatherKey(
     row.entryMarketWeatherKey,
-    row.confirmedMarketWeatherKey,
-    row.currentMarketWeatherKey,
-    row.marketWeatherKey,
-    rawSnapshot?.entryMarketWeatherKey,
-    rawSnapshot?.confirmedMarketWeatherKey,
-    rawSnapshot?.currentMarketWeatherKey,
-    rawSnapshot?.marketWeatherKey
+    rawSnapshot?.entryMarketWeatherKey
   );
 
-  const regime = knownKey?.regime || normalizeMarketWeatherRegime(firstValue(
+  let knownKey = lockedEntryKey;
+
+  if (!knownKey && allowCurrentConfirmedFallback) {
+    knownKey = firstKnownMarketWeatherKey(
+      row.confirmedMarketWeatherKey,
+      row.currentMarketWeatherKey,
+      row.marketWeatherKey,
+      rawSnapshot?.confirmedMarketWeatherKey,
+      rawSnapshot?.currentMarketWeatherKey,
+      rawSnapshot?.marketWeatherKey
+    );
+  }
+
+  let regime = knownKey?.regime || normalizeMarketWeatherRegime(firstValue(
     row.entryMarketWeatherRegime,
-    row.confirmedMarketWeatherRegime,
-    row.currentMarketWeatherRegime,
-    rawSnapshot?.confirmedMarketWeatherRegime,
-    rawSnapshot?.currentMarketWeatherRegime,
-    rawSnapshot?.marketWeatherRegime,
-    rawSnapshot?.currentRegime,
-    rawSnapshot?.regime,
-    row.marketWeatherRegime,
-    row.currentRegime,
-    row.regime
+    rawSnapshot?.marketWeatherRegime
   ));
 
-  const trendSide = knownKey?.trendSide || normalizeMarketWeatherTrendSide(firstValue(
+  let trendSide = knownKey?.trendSide || normalizeMarketWeatherTrendSide(firstValue(
     row.entryMarketWeatherTrendSide,
-    row.confirmedMarketWeatherTrendSide,
-    row.currentMarketWeatherTrendSide,
-    rawSnapshot?.confirmedMarketWeatherTrendSide,
-    rawSnapshot?.currentMarketWeatherTrendSide,
-    rawSnapshot?.marketWeatherTrendSide,
-    rawSnapshot?.currentTrendSide,
-    rawSnapshot?.trendSide,
-    row.marketWeatherTrendSide,
-    row.currentTrendSide,
-    row.trendSide
+    rawSnapshot?.marketWeatherTrendSide
   ));
+
+  if (
+    (regime === 'UNKNOWN' || trendSide === 'UNKNOWN') &&
+    allowCurrentConfirmedFallback &&
+    !aggregateLearningRow
+  ) {
+    regime = normalizeMarketWeatherRegime(firstValue(
+      row.confirmedMarketWeatherRegime,
+      row.currentMarketWeatherRegime,
+      rawSnapshot?.confirmedMarketWeatherRegime,
+      rawSnapshot?.currentMarketWeatherRegime,
+      rawSnapshot?.currentRegime,
+      rawSnapshot?.regime,
+      row.marketWeatherRegime,
+      row.currentRegime,
+      row.regime,
+      regime
+    ));
+
+    trendSide = normalizeMarketWeatherTrendSide(firstValue(
+      row.confirmedMarketWeatherTrendSide,
+      row.currentMarketWeatherTrendSide,
+      rawSnapshot?.confirmedMarketWeatherTrendSide,
+      rawSnapshot?.currentMarketWeatherTrendSide,
+      rawSnapshot?.currentTrendSide,
+      rawSnapshot?.trendSide,
+      row.marketWeatherTrendSide,
+      row.currentTrendSide,
+      row.trendSide,
+      trendSide
+    ));
+  }
 
   const builtKey = buildEntryMarketWeatherKey({
     regime,
@@ -751,8 +885,6 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
 
   const capturedAt = n(
     row.entryMarketWeatherCapturedAt ||
-      row.confirmedMarketWeatherAt ||
-      row.confirmedAt ||
       rawSnapshot?.createdAt ||
       rawSnapshot?.completedAt ||
       rawSnapshot?.updatedAt ||
@@ -763,11 +895,13 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
     timestamp
   );
 
+  const valid = Boolean(parsed?.valid);
+
   return {
-    entryMarketWeatherKey: parsed.valid ? parsed.key : UNKNOWN_MARKET_WEATHER_KEY,
+    entryMarketWeatherKey: valid ? parsed.key : UNKNOWN_MARKET_WEATHER_KEY,
     entryMarketWeatherKeyVersion: row.entryMarketWeatherKeyVersion || SHORT_MARKET_WEATHER_KEY_V1,
-    entryMarketWeatherRegime: parsed.valid ? parsed.regime : 'UNKNOWN',
-    entryMarketWeatherTrendSide: parsed.valid ? parsed.trendSide : 'UNKNOWN',
+    entryMarketWeatherRegime: valid ? parsed.regime : 'UNKNOWN',
+    entryMarketWeatherTrendSide: valid ? parsed.trendSide : 'UNKNOWN',
     entryMarketWeatherCapturedAt: capturedAt,
     entryMarketWeatherRaw: rawSnapshot,
     entryMarketWeatherRawAvailableFields: Array.isArray(row.entryMarketWeatherRawAvailableFields)
@@ -776,7 +910,17 @@ function resolveEntryMarketWeather(row = {}, timestamp = now()) {
     entryMarketWeatherCaptureVersion: ENTRY_MARKET_WEATHER_CAPTURE_VERSION,
     entryMarketWeatherImmutable: true,
     entryMarketWeatherNeverRecomputedAtExit: true,
-    entryMarketWeatherIsUnknown: !parsed.valid
+    entryMarketWeatherIsUnknown: !valid,
+    entryMarketWeatherResolvedFrom: lockedEntryKey
+      ? 'LOCKED_ENTRY_MARKET_WEATHER'
+      : allowCurrentConfirmedFallback && knownKey
+        ? 'CURRENT_OR_CONFIRMED_FALLBACK_FOR_NEW_EVENT_ONLY'
+        : valid
+          ? 'ENTRY_REGIME_TREND_FIELDS'
+          : 'UNKNOWN',
+    aggregateLearningRowEntryWeatherProtected: aggregateLearningRow,
+    aggregateRowsDoNotRecomputeEntryWeatherFromCurrent: aggregateLearningRow,
+    aggregateRowsDoNotRecomputeEntryWeatherFromConfirmed: aggregateLearningRow
   };
 }
 
@@ -1483,6 +1627,9 @@ function modeFlags() {
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_V1,
     entryMarketWeatherImmutable: true,
     entryMarketWeatherNeverRecomputedAtExit: true,
+    entryMarketWeatherSourceOfTruth: 'LOCKED_ENTRY_MARKET_WEATHER',
+    aggregateRowsDoNotRecomputeEntryWeatherFromCurrent: true,
+    aggregateRowsDoNotRecomputeEntryWeatherFromConfirmed: true,
     marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
 
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
@@ -1526,6 +1673,10 @@ function modeFlags() {
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
     grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
     currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    policyBlockGateVersion: POLICY_BLOCK_GATE_VERSION,
+    aggregateRowsDoNotUseGeometryAsPolicyBlock: true,
+    invalidGeometryPolicyBlockOnlyForActionableTradeRows: true,
 
     weakContraEntryGateEnabled: true,
     weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
@@ -1891,12 +2042,71 @@ function isShort(row = {}) {
   return inferTradeSide(row) === TARGET_TRADE_SIDE;
 }
 
+function hasAnyGeometryField(row = {}) {
+  return Boolean(
+    hasValue(row.entry) ||
+      hasValue(row.entryPrice) ||
+      hasValue(row.sl) ||
+      hasValue(row.initialSl) ||
+      hasValue(row.tp)
+  );
+}
+
+function hasCompleteGeometryFields(row = {}) {
+  return Boolean(
+    finite(row.entry ?? row.entryPrice) &&
+      finite(row.sl ?? row.initialSl) &&
+      finite(row.tp)
+  );
+}
+
+function isActionableTradeGeometryRow(row = {}) {
+  if (!row || typeof row !== 'object') return false;
+  if (isAggregateLearningStatsRow(row)) return false;
+
+  const type = upper(row.type || row.eventType || row.rowType || '');
+  const source = upper(row.source || row.outcomeSource || row.positionSource || '');
+
+  if (
+    type.includes('OUTCOME') ||
+    type.includes('POSITION') ||
+    type.includes('TRADE') ||
+    type.includes('ENTRY') ||
+    type.includes('CANDIDATE') ||
+    type.includes('SIGNAL')
+  ) {
+    return true;
+  }
+
+  if (
+    source.includes('POSITION') ||
+    source.includes('TRADE') ||
+    source.includes('VIRTUAL') ||
+    source.includes('SHADOW')
+  ) {
+    return Boolean(row.tradeId || row.positionId || row.symbol || hasAnyGeometryField(row));
+  }
+
+  return Boolean(
+    row.tradeId ||
+      row.positionId ||
+      row.orderId ||
+      (
+        (row.symbol || row.contractSymbol) &&
+        hasAnyGeometryField(row) &&
+        !hasAggregateStatsFields(row)
+      )
+  );
+}
+
 function validShortGeometry(row = {}) {
+  if (!hasAnyGeometryField(row)) return true;
+  if (!isActionableTradeGeometryRow(row)) return true;
+  if (!hasCompleteGeometryFields(row)) return true;
+
   const entry = n(row.entry ?? row.entryPrice, 0);
   const sl = n(row.sl ?? row.initialSl, 0);
   const tp = n(row.tp, 0);
-
-  if (!entry && !sl && !tp) return true;
 
   return entry > 0 && tp > 0 && sl > 0 && tp < entry && entry < sl;
 }
@@ -1939,7 +2149,9 @@ function policyBlockedGate(row = {}) {
     reasons.push(side === OPPOSITE_TRADE_SIDE ? 'NON_SHORT_LONG_DISABLED' : 'INVALID_SIDE_UNKNOWN');
   }
 
-  if (!validShortGeometry(row)) {
+  const geometryCheckApplied = isActionableTradeGeometryRow(row) && hasCompleteGeometryFields(row);
+
+  if (geometryCheckApplied && !validShortGeometry(row)) {
     reasons.push('INVALID_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED');
   }
 
@@ -1961,15 +2173,19 @@ function policyBlockedGate(row = {}) {
       reason.includes('SCANNER') ||
       reason.includes('EXECUTION') ||
       reason.includes('LONG') ||
-      reason.includes('GEOMETRY') ||
-      reason.includes('SIDE')
+      reason.includes('SIDE') ||
+      (
+        reason.includes('GEOMETRY') &&
+        geometryCheckApplied &&
+        !validShortGeometry(row)
+      )
     ) {
       reasons.push(row.policyBlockedReason);
     }
   }
 
   return {
-    version: 'SHORT_POLICY_BLOCK_GATE_V4_SYSTEM_RULES_ONLY_NARROWED',
+    version: POLICY_BLOCK_GATE_VERSION,
     blocked: reasons.length > 0,
     policyBlocked: reasons.length > 0,
     reasons: uniq(reasons),
@@ -1977,10 +2193,14 @@ function policyBlockedGate(row = {}) {
     systemRules: [
       'E_WEAK_CONTRA',
       'INVALID_SIDE',
-      'INVALID_GEOMETRY',
+      'INVALID_GEOMETRY_ACTIONABLE_TRADE_ROWS_ONLY',
       'NON_SHORT',
       'KNOWN_FORBIDDEN_FAMILY'
     ],
+    geometryCheckApplied,
+    aggregateLearningStatsRow: isAggregateLearningStatsRow(row),
+    aggregateRowsDoNotUseGeometryAsPolicyBlock: true,
+    invalidGeometryPolicyBlockOnlyForActionableTradeRows: true,
     currentFitPolicyBlockDisabled: true,
     marketWeatherPolicyBlockDisabled: true,
     inheritedForbiddenPolicyIgnoredUnlessExplicitSystemRule: true
@@ -3529,6 +3749,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
 
     netRStatsVersion: NET_R_STATS_VERSION,
     statsInvariantVersion: STATS_INVARIANT_VERSION,
+    policyBlockGateVersion: POLICY_BLOCK_GATE_VERSION,
 
     manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
     discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY'
@@ -3538,7 +3759,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: clean,
     microFamilies: ids.length,
-    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH',
+    storageMode: 'LAYERED_PARENT_CHILD_MICRO_MICRO_ROWS_MICRO_MICRO_PRIMARY_IMMUTABLE_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH',
     uiShowsOnlyMicroMicro: true,
     uiAllowsOnlyMicroMicroSelection: true
   };
@@ -3552,7 +3773,7 @@ export async function saveWeekMicros(weekKey, micros, { onlyIds = null, allowEmp
     ...common,
     rows: topRows,
     count: Object.keys(topRows).length,
-    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH'
+    storageMode: 'TOP_MICROS_AND_MICRO_MICROS_SNAPSHOT_MICRO_MICRO_PRIMARY_IMMUTABLE_MARKET_WEATHER_NETR_SOURCE_OF_TRUTH'
   });
 
   await setJsonEverywhere(getWeekTradingCandidatesKey(weekKey), {
@@ -4564,6 +4785,7 @@ export async function getWeeklyTradingCandidates(
     microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
     netRStatsVersion: NET_R_STATS_VERSION,
     statsInvariantVersion: STATS_INVARIANT_VERSION,
+    policyBlockGateVersion: POLICY_BLOCK_GATE_VERSION,
     rules: {
       selectionUsesWeeklyWinnerOnly: false,
       selectionUsesLifetimeStats: true,
@@ -4574,6 +4796,9 @@ export async function getWeeklyTradingCandidates(
       empiricalVetoBlocksSelection: true,
       policyBlockedBlocksSelection: true,
       unknownMarketWeatherBlocksTradeReady: true,
+      aggregateRowsDoNotRecomputeEntryWeatherFromCurrent: true,
+      aggregateRowsDoNotUseGeometryAsPolicyBlock: true,
+      invalidGeometryPolicyBlockOnlyForActionableTradeRows: true,
       discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
       selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
       parent15MatchTriggersDiscord: false,
