@@ -5,11 +5,6 @@ import * as ConfigModule from '../config.js';
 import * as KeysModule from '../keys.js';
 import * as RedisApi from '../redis.js';
 import * as Utils from '../utils.js';
-import * as AnalyzeEngine from '../analyze/analyzeEngine.js';
-import * as RotationEngine from '../analyze/rotationEngine.js';
-import * as PositionEngine from './positionEngine.js';
-import * as PositionSizing from './positionSizing.js';
-import * as Discord from '../discord/discord.js';
 import * as MarketKeyModule from '../market/marketKey.js';
 
 const CONFIG = ConfigModule.CONFIG || {};
@@ -50,7 +45,12 @@ const SELECTION_75_CHILD_CONTEXT = 'MICRO_75_CONTEXT_ONLY';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
 const TRADE_SYSTEM_VERSION =
-  'SHORT_TRADE_SYSTEM_V4_DEADLINE_SAFE_NO_KEYS_SCAN_ROUTE_LIMITS_HONORED';
+  'SHORT_TRADE_SYSTEM_V5_LAZY_IMPORT_DIRECT_SELECTION_CHUNKED_DEADLINE_SAFE';
+const SNAPSHOT_CHUNK_VERSION =
+  'SHORT_SNAPSHOT_CHUNK_CURSOR_V1_MAX_THREE_PER_RUN';
+const DIRECT_SELECTION_READER_VERSION =
+  'SHORT_DIRECT_MANUAL_SELECTION_READER_V1_NO_ROTATION_ENGINE';
+
 const ENTRY_RELAXATION_PROFILE =
   'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_WEATHER_CAPTURE_V5_DEADLINE_SAFE';
 const QUALITY_MEASUREMENT_PROFILE =
@@ -133,10 +133,22 @@ const BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE = true;
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
 
-const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 8;
-const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 14;
-const DEFAULT_MAX_ENTRIES_PER_RUN = 8;
-const DEFAULT_DATA_CONCURRENCY = 1;
+/*
+ * De route mag langer bestaan, maar tradeSystem stopt bewust eerder.
+ * Zo blijft tijd over voor Redis, lock-release en JSON-serialisatie.
+ */
+const DEFAULT_MAX_RUNTIME_MS = 17_500;
+const HARD_MAX_RUNTIME_MS = 21_000;
+const DEFAULT_HARD_RETURN_RESERVE_MS = 3_500;
+const DEFAULT_PHASE_RESERVE_MS = 2_100;
+const DEFAULT_ENTRY_LOOP_RESERVE_MS = 3_000;
+/*
+ * Maximaal drie kandidaten per run.
+ * Een Redis-cursor verwerkt de rest in volgende cron-runs.
+ */
+const DEFAULT_CANDIDATE_CHUNK_SIZE = 2;
+const HARD_MAX_CANDIDATE_CHUNK_SIZE = 3;
+const DEFAULT_MAX_ENTRIES_PER_RUN = 3;
 const DEFAULT_MAX_SNAPSHOT_AGE_SEC = 8 * 60;
 
 const DEFAULT_MIN_RISK_PCT = 0.0045;
@@ -156,26 +168,23 @@ const DEFAULT_ROUND_TRIP_SLIPPAGE_PCT = 0.0004;
 const DEFAULT_FALLBACK_SPREAD_PCT = 0.0008;
 const DEFAULT_SPREAD_COST_MULT = 1;
 
-const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 650;
-const DEFAULT_SNAPSHOT_TIMEOUT_MS = 900;
-const DEFAULT_ROTATION_TIMEOUT_MS = 650;
-const DEFAULT_ANALYZE_TIMEOUT_MS = 2500;
-const DEFAULT_CANDIDATE_TIMEOUT_MS = 900;
-const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 900;
-const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 700;
-const DEFAULT_REDIS_WRITE_TIMEOUT_MS = 700;
-const DEFAULT_DISCORD_TIMEOUT_MS = 900;
-
-const DEFAULT_MONITOR_TIMEOUT_MS = 2500;
-const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 350;
-const DEFAULT_MONITOR_BATCH_SIZE = 25;
-const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 40;
-
-const DEFAULT_MAX_RUNTIME_MS = 24000;
-const DEFAULT_HARD_RETURN_RESERVE_MS = 3200;
-const DEFAULT_PHASE_RESERVE_MS = 1800;
-const DEFAULT_ENTRY_LOOP_RESERVE_MS = 2500;
-const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 1;
+const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 500;
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 850;
+const DEFAULT_SELECTION_TIMEOUT_MS = 450;
+const DEFAULT_ANALYZE_TIMEOUT_MS = 2_100;
+const DEFAULT_ANALYZE_IMPORT_TIMEOUT_MS = 600;
+const DEFAULT_POSITION_IMPORT_TIMEOUT_MS = 600;
+const DEFAULT_DISCORD_IMPORT_TIMEOUT_MS = 450;
+const DEFAULT_SIZING_IMPORT_TIMEOUT_MS = 350;
+const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 650;
+const DEFAULT_MONITOR_TIMEOUT_MS = 1_700;
+const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 250;
+const DEFAULT_MONITOR_BATCH_SIZE = 10;
+const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 20;
+const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 600;
+const DEFAULT_REDIS_WRITE_TIMEOUT_MS = 500;
+const DEFAULT_DISCORD_TIMEOUT_MS = 650;
+const DEFAULT_REDIS_READ_TIMEOUT_MS = 160;
 
 const DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT = true;
 const DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH = true;
@@ -257,6 +266,10 @@ const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off', 'disabled', 'skip'
 
 const livePriceCache = new Map();
 let ACTIVE_RUN_OPTIONS = {};
+let ANALYZE_ENGINE_MODULE = null;
+let POSITION_ENGINE_MODULE = null;
+let POSITION_SIZING_MODULE = null;
+let DISCORD_MODULE = null;
 
 function now() {
   return Date.now();
@@ -322,7 +335,7 @@ function pct(part, total) {
   return t > 0 ? Number(((n(part, 0) / t) * 100).toFixed(2)) : 0;
 }
 
-function int(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+function int(value, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
   const parsed = Math.floor(n(value, fallback));
   return Math.max(min, Math.min(max, parsed));
 }
@@ -363,12 +376,28 @@ function uniqueStrings(values = []) {
   return out;
 }
 
-function timeoutPayload(label, ms) {
+function timeoutPayload(label, timeoutMs) {
   return new Promise((resolve) => {
-    setTimeout(
-      () => resolve({ __timeout: true, label, timeoutMs: ms }),
-      Math.max(1, int(ms, 1, 1, 60_000))
-    );
+    const timer = setTimeout(() => {
+      resolve({
+        __timeout: true,
+        label,
+        timeoutMs
+      });
+    }, Math.max(1, int(timeoutMs, 1, 1, 60_000)));
+    if (typeof timer?.unref === 'function') {
+      timer.unref();
+    }
+  });
+}
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => {
+    if (typeof setImmediate === 'function') {
+      setImmediate(resolve);
+    } else {
+      setTimeout(resolve, 0);
+    }
   });
 }
 
@@ -388,7 +417,7 @@ function createDeadline(startedAt, cfg) {
     cfg.maxRuntimeMs,
     DEFAULT_MAX_RUNTIME_MS,
     8000,
-    52_000
+    HARD_MAX_RUNTIME_MS
   );
 
   return {
@@ -519,6 +548,87 @@ const SHORT_KEYS = {
     )
   }
 };
+
+function snapshotCursorKey(snapshotId) {
+  return `${SHORT_KEY_PREFIX}TRADE:SNAPSHOT:CURSOR:${hashText(
+    snapshotId,
+    16
+  )}`;
+}
+
+async function deleteKeySafe(redis, key) {
+  if (!redis || !key || typeof redis.del !== 'function') {
+    return false;
+  }
+  try {
+    await redis.del(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readSnapshotCursor(snapshotId, cfg) {
+  if (!snapshotId) return 0;
+  const value = await withTimeout(
+    getJsonSafe(
+      safeGetDurableRedis(),
+      snapshotCursorKey(snapshotId),
+      null
+    ),
+    Math.min(220, cfg.redisWriteTimeoutMs),
+    'READ_SNAPSHOT_CURSOR'
+  );
+  if (isTimeoutResult(value) || !value) {
+    return 0;
+  }
+  if (typeof value === 'number') {
+    return Math.max(0, Math.floor(value));
+  }
+  return Math.max(
+    0,
+    int(
+      value.nextIndex ??
+      value.cursor ??
+      value.index,
+      0,
+      0,
+      100_000
+    )
+  );
+}
+
+async function persistSnapshotCursor({
+  snapshotId,
+  nextIndex,
+  totalCandidates,
+  complete,
+  runId,
+  cfg
+}) {
+  if (!snapshotId) return false;
+  const redis = safeGetDurableRedis();
+  const key = snapshotCursorKey(snapshotId);
+  if (complete) {
+    return deleteKeySafe(redis, key);
+  }
+  return setJsonWithTimeout(
+    redis,
+    key,
+    {
+      snapshotId,
+      nextIndex,
+      totalCandidates,
+      complete: false,
+      updatedAt: now(),
+      runId,
+      version: SNAPSHOT_CHUNK_VERSION,
+      namespace: SHORT_NAMESPACE
+    },
+    cfg.redisWriteTimeoutMs,
+    'SAVE_SNAPSHOT_CURSOR'
+  );
+}
 
 function safeGetDurableRedis() {
   try {
@@ -894,7 +1004,7 @@ function virtualFlags(row = {}) {
 function tradeConfig() {
   const options = ACTIVE_RUN_OPTIONS || {};
 
-  const maxRuntimeMs = int(
+  const requestedRuntime = int(
     first(
       options.maxRuntimeMs,
       CONFIG.short?.trade?.maxRuntimeMs,
@@ -902,8 +1012,12 @@ function tradeConfig() {
       CONFIG.trade?.maxRuntimeMs
     ),
     DEFAULT_MAX_RUNTIME_MS,
-    8000,
-    52_000
+    8_000,
+    HARD_MAX_RUNTIME_MS
+  );
+  const maxRuntimeMs = Math.min(
+    requestedRuntime,
+    HARD_MAX_RUNTIME_MS
   );
 
   const minRiskPct = n(first(
@@ -929,37 +1043,25 @@ function tradeConfig() {
       8000
     ),
 
-    maxCandidatesPerSnapshot: int(
+    candidateChunkSize: int(
       first(
+        options.candidateChunkSize,
         options.maxCandidatesPerSnapshot,
         options.maxCandidates,
-        CONFIG.short?.trade?.maxCandidatesPerSnapshot,
-        CONFIG.trade?.maxCandidatesPerSnapshot
+        CONFIG.short?.trade?.candidateChunkSize
       ),
-      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
+      DEFAULT_CANDIDATE_CHUNK_SIZE,
       1,
-      DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT
+      HARD_MAX_CANDIDATE_CHUNK_SIZE
     ),
-
-    analyzeMaxCandidatesPerSnapshot: int(
-      first(
-        options.analyzeMaxCandidatesPerSnapshot,
-        options.maxCandidatesPerSnapshot,
-        CONFIG.short?.trade?.analyzeMaxCandidatesPerSnapshot,
-        CONFIG.trade?.analyzeMaxCandidatesPerSnapshot
-      ),
-      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
-      1,
-      DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT
-    ),
-
-    hardMaxCandidatesPerSnapshot: DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT,
-
     maxEntriesPerRun: int(
-      first(options.maxEntriesPerRun, CONFIG.short?.trade?.maxEntriesPerRun),
+      first(
+        options.maxEntriesPerRun,
+        CONFIG.short?.trade?.maxEntriesPerRun
+      ),
       DEFAULT_MAX_ENTRIES_PER_RUN,
       0,
-      20
+      HARD_MAX_CANDIDATE_CHUNK_SIZE
     ),
 
     maxSnapshotAgeSec: n(first(
@@ -967,17 +1069,6 @@ function tradeConfig() {
       CONFIG.short?.trade?.maxSnapshotAgeSec,
       CONFIG.trade?.maxSnapshotAgeSec
     ), DEFAULT_MAX_SNAPSHOT_AGE_SEC),
-
-    dataConcurrency: int(
-      first(
-        options.dataConcurrency,
-        CONFIG.short?.trade?.dataConcurrency,
-        CONFIG.trade?.dataConcurrency
-      ),
-      DEFAULT_DATA_CONCURRENCY,
-      1,
-      2
-    ),
 
     minRiskPct,
     maxRiskPct,
@@ -1019,13 +1110,6 @@ function tradeConfig() {
       2000
     ),
 
-    candidateTimeoutMs: int(
-      first(options.candidateTimeoutMs, CONFIG.short?.trade?.candidateTimeoutMs, CONFIG.trade?.candidateTimeoutMs),
-      DEFAULT_CANDIDATE_TIMEOUT_MS,
-      100,
-      1800
-    ),
-
     analyzeTimeoutMs: int(
       first(options.analyzeTimeoutMs, CONFIG.short?.trade?.analyzeTimeoutMs, CONFIG.trade?.analyzeTimeoutMs),
       DEFAULT_ANALYZE_TIMEOUT_MS,
@@ -1033,11 +1117,50 @@ function tradeConfig() {
       3500
     ),
 
-    rotationTimeoutMs: int(
-      first(options.rotationTimeoutMs, CONFIG.short?.trade?.rotationTimeoutMs, CONFIG.trade?.rotationTimeoutMs),
-      DEFAULT_ROTATION_TIMEOUT_MS,
+    selectionTimeoutMs: int(
+      first(
+        options.selectionTimeoutMs,
+        CONFIG.short?.trade?.selectionTimeoutMs
+      ),
+      DEFAULT_SELECTION_TIMEOUT_MS,
       100,
-      1200
+      900
+    ),
+    analyzeImportTimeoutMs: int(
+      first(
+        options.analyzeImportTimeoutMs,
+        CONFIG.short?.trade?.analyzeImportTimeoutMs
+      ),
+      DEFAULT_ANALYZE_IMPORT_TIMEOUT_MS,
+      150,
+      1_200
+    ),
+    positionImportTimeoutMs: int(
+      first(
+        options.positionImportTimeoutMs,
+        CONFIG.short?.trade?.positionImportTimeoutMs
+      ),
+      DEFAULT_POSITION_IMPORT_TIMEOUT_MS,
+      150,
+      1_200
+    ),
+    discordImportTimeoutMs: int(
+      first(
+        options.discordImportTimeoutMs,
+        CONFIG.short?.trade?.discordImportTimeoutMs
+      ),
+      DEFAULT_DISCORD_IMPORT_TIMEOUT_MS,
+      100,
+      900
+    ),
+    sizingImportTimeoutMs: int(
+      first(
+        options.sizingImportTimeoutMs,
+        CONFIG.short?.trade?.sizingImportTimeoutMs
+      ),
+      DEFAULT_SIZING_IMPORT_TIMEOUT_MS,
+      100,
+      700
     ),
 
     monitorTimeoutMs: int(
@@ -1096,13 +1219,6 @@ function tradeConfig() {
       1500
     ),
 
-    minEntryLoopAttempts: int(
-      first(options.minEntryLoopAttempts, CONFIG.short?.trade?.minEntryLoopAttempts, CONFIG.trade?.minEntryLoopAttempts),
-      DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS,
-      0,
-      4
-    ),
-
     entryLoopReserveMs: int(
       first(options.entryLoopReserveMs, CONFIG.short?.trade?.entryLoopReserveMs, CONFIG.trade?.entryLoopReserveMs),
       DEFAULT_ENTRY_LOOP_RESERVE_MS,
@@ -1127,6 +1243,14 @@ function tradeConfig() {
       options.monitorOpenPositionsEnabled,
       CONFIG.short?.trade?.monitorOpenPositionsEnabled
     ), true),
+
+    monitorOnlyWhenPreloadedPositionsExist: bool(
+      first(
+        options.monitorOnlyWhenPreloadedPositionsExist,
+        CONFIG.short?.trade?.monitorOnlyWhenPreloadedPositionsExist
+      ),
+      true
+    ),
 
     skipMonitorWhenSameSnapshotProcessed: bool(first(
       options.skipMonitorWhenSameSnapshotProcessed,
@@ -3468,6 +3592,49 @@ function waitAction(candidate, reason, extra = {}) {
   };
 }
 
+function finiteOrNull(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? parsed
+    : null;
+}
+
+function firstFinite(...values) {
+  for (const value of values) {
+    const parsed = finiteOrNull(value);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function normalizedOutcomeR(outcome = {}) {
+  return firstFinite(
+    outcome.netR,
+    outcome.realizedNetR,
+    outcome.netResultR,
+    outcome.finalNetR,
+    outcome.exitNetR,
+    outcome.resultNetR,
+    outcome.realizedR,
+    outcome.exitR,
+    outcome.resultR,
+    outcome.finalR,
+    outcome.outcomeR,
+    outcome.pnlR,
+    outcome.r,
+    outcome.R
+  );
+}
+
 function aggregateRuntimeRecentOutcomes(row = {}) {
   const recent = Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [];
 
@@ -3477,14 +3644,11 @@ function aggregateRuntimeRecentOutcomes(row = {}) {
     const source = upper(outcome.source || outcome.outcomeSource || 'VIRTUAL');
     if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) return acc;
 
-    const r = n(
-      outcome.netR ??
-        outcome.exitR ??
-        outcome.realizedNetR ??
-        outcome.realizedR ??
-        outcome.r,
-      0
-    );
+    const r = normalizedOutcomeR(outcome);
+    if (r === null) {
+      acc.missingR += 1;
+      return acc;
+    }
 
     const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
 
@@ -3526,7 +3690,8 @@ function aggregateRuntimeRecentOutcomes(row = {}) {
     sumSquaredR: 0,
     grossWinR: 0,
     grossLossR: 0,
-    directSLCount: 0
+    directSLCount: 0,
+    missingR: 0
   });
 }
 
@@ -3734,6 +3899,42 @@ function runtimeCurrentFitLabel(row = {}) {
   return directLabel || 'UNKNOWN';
 }
 
+function hasCompletePositiveGeometry(row = {}) {
+  const entry = finiteOrNull(
+    first(row.entry, row.entryPrice)
+  );
+  const sl = finiteOrNull(
+    first(
+      row.sl,
+      row.initialSl,
+      row.stopLoss
+    )
+  );
+  const tp = finiteOrNull(
+    first(
+      row.tp,
+      row.takeProfit
+    )
+  );
+  const complete =
+    entry !== null &&
+    sl !== null &&
+    tp !== null &&
+    entry > 0 &&
+    sl > 0 &&
+    tp > 0;
+  return {
+    complete,
+    entry,
+    sl,
+    tp,
+    valid:
+      complete &&
+      tp < entry &&
+      entry < sl
+  };
+}
+
 function policyBlockedGate(row = {}) {
   const microMicroId = getMicroMicroFamilyId(row);
   const parsed = parseShortTaxonomyMicroId(microMicroId);
@@ -3752,19 +3953,11 @@ function policyBlockedGate(row = {}) {
     reasons.push('INVALID_SIDE_NON_SHORT');
   }
 
-  const hasFullGeometry =
-    hasValue(row.entry ?? row.entryPrice) &&
-    hasValue(row.sl ?? row.initialSl ?? row.stopLoss) &&
-    hasValue(row.tp ?? row.takeProfit);
-
-  if (hasFullGeometry) {
-    const entry = n(row.entry ?? row.entryPrice, 0);
-    const sl = n(row.sl ?? row.initialSl ?? row.stopLoss, 0);
-    const tp = n(row.tp ?? row.takeProfit, 0);
-
-    if (!(entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl)) {
-      reasons.push('INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED');
-    }
+  const geometry = hasCompletePositiveGeometry(row);
+  if (geometry.complete && !geometry.valid) {
+    reasons.push(
+      'INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED'
+    );
   }
 
   if (isScannerFingerprintId(row.microFamilyId || row.trueMicroFamilyId || row.learningFamilyId || row.id)) {
@@ -3777,21 +3970,6 @@ function policyBlockedGate(row = {}) {
 
   if (BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE && confirmationProfile === 'E_WEAK_CONTRA') {
     reasons.push('E_WEAK_CONTRA_POLICY_BLOCK');
-  }
-
-  if (row.policyBlocked === true && row.policyBlockedReason) {
-    const inherited = upper(row.policyBlockedReason);
-
-    if (
-      inherited.includes('KNOWN_FORBIDDEN_FAMILY') &&
-      confirmationProfile !== 'E_WEAK_CONTRA' &&
-      !isScannerFingerprintId(microMicroId) &&
-      !isExecutionFingerprintId(microMicroId)
-    ) {
-      // Oude brede bug bewust genegeerd.
-    } else {
-      reasons.push(row.policyBlockedReason);
-    }
   }
 
   return {
@@ -4510,7 +4688,97 @@ function rememberOpenSymbol(openSymbolSet, row = {}) {
   }
 }
 
+async function lazyImportAnalyzeEngine(deadline, cfg, warnings) {
+  if (ANALYZE_ENGINE_MODULE) return ANALYZE_ENGINE_MODULE;
+  const result = await withDeadline(
+    () => import('../analyze/analyzeEngine.js'),
+    {
+      deadline,
+      timeoutMs: cfg.analyzeImportTimeoutMs,
+      reserveMs: cfg.hardReturnReserveMs + 700,
+      label: 'IMPORT_ANALYZE_ENGINE_TIMEOUT',
+      fallback: null
+    }
+  );
+  if (!result) {
+    warnings.push('ANALYZE_ENGINE_IMPORT_TIMEOUT_OR_FAILED');
+    return null;
+  }
+  ANALYZE_ENGINE_MODULE = result;
+  return ANALYZE_ENGINE_MODULE;
+}
+
+async function lazyImportPositionEngine(deadline, cfg, warnings) {
+  if (POSITION_ENGINE_MODULE) return POSITION_ENGINE_MODULE;
+  const result = await withDeadline(
+    () => import('./positionEngine.js'),
+    {
+      deadline,
+      timeoutMs: cfg.positionImportTimeoutMs,
+      reserveMs: cfg.hardReturnReserveMs + 700,
+      label: 'IMPORT_POSITION_ENGINE_TIMEOUT',
+      fallback: null
+    }
+  );
+  if (!result) {
+    warnings.push('POSITION_ENGINE_IMPORT_TIMEOUT_OR_FAILED');
+    return null;
+  }
+  POSITION_ENGINE_MODULE = result;
+  return POSITION_ENGINE_MODULE;
+}
+
+async function lazyImportPositionSizing(deadline, cfg, warnings) {
+  if (POSITION_SIZING_MODULE) return POSITION_SIZING_MODULE;
+  const result = await withDeadline(
+    () => import('./positionSizing.js'),
+    {
+      deadline,
+      timeoutMs: cfg.sizingImportTimeoutMs,
+      reserveMs: cfg.hardReturnReserveMs + 500,
+      label: 'IMPORT_POSITION_SIZING_TIMEOUT',
+      fallback: null
+    }
+  );
+  if (!result) {
+    warnings.push(
+      'POSITION_SIZING_IMPORT_TIMEOUT_OR_FAILED_RISK_ZERO'
+    );
+    return null;
+  }
+  POSITION_SIZING_MODULE = result;
+  return POSITION_SIZING_MODULE;
+}
+
+async function lazyImportDiscord(deadline, cfg, warnings) {
+  if (DISCORD_MODULE) return DISCORD_MODULE;
+  const result = await withDeadline(
+    () => import('../discord/discord.js'),
+    {
+      deadline,
+      timeoutMs: cfg.discordImportTimeoutMs,
+      reserveMs: cfg.hardReturnReserveMs + 500,
+      label: 'IMPORT_DISCORD_TIMEOUT',
+      fallback: null
+    }
+  );
+  if (!result) {
+    warnings.push(
+      'DISCORD_IMPORT_TIMEOUT_OR_FAILED_ALERT_SKIPPED'
+    );
+    return null;
+  }
+  DISCORD_MODULE = result;
+  return DISCORD_MODULE;
+}
+
 async function loadOpenPositionsFast(cfg, runtimeWarnings, deadline) {
+  const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
+  if (!PositionEngine) {
+    runtimeWarnings.push('POSITION_ENGINE_UNAVAILABLE_OPEN_POSITIONS_EMPTY');
+    return [];
+  }
+
   if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) {
     runtimeWarnings.push('GET_OPEN_POSITIONS_SKIPPED_DEADLINE_NEAR');
     return [];
@@ -4569,6 +4837,12 @@ async function monitorOpenPositionsSafe({
   runtimeWarnings,
   deadline
 }) {
+  const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
+  if (!PositionEngine) {
+    runtimeWarnings.push('POSITION_ENGINE_UNAVAILABLE_MONITOR_SKIPPED');
+    return [];
+  }
+
   if (!cfg.monitorOpenPositionsEnabled) {
     runtimeWarnings.push('MONITOR_OPEN_POSITIONS_DISABLED_BY_CONFIG');
     return [];
@@ -4674,7 +4948,17 @@ function fallbackBuildOpenPositionFromEntry(entry = {}) {
   };
 }
 
-async function saveVirtualPositionFast(entry, cfg, deadline) {
+async function saveVirtualPositionFast(
+  entry,
+  cfg,
+  deadline,
+  runtimeWarnings
+) {
+  const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
+  if (!PositionEngine) {
+    return { ok: false, reason: 'POSITION_ENGINE_UNAVAILABLE' };
+  }
+
   if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 400)) {
     return { ok: false, reason: 'SAVE_OPEN_POSITION_SKIPPED_DEADLINE_NEAR' };
   }
@@ -4789,7 +5073,18 @@ function selectedRowMarketResolution(row = {}, currentMarketWeatherKey = UNKNOWN
   return 'lifetime';
 }
 
-function safeRiskFractionForEntry(input = {}, sizing = sizingConfig()) {
+async function safeRiskFractionForEntry(
+  input = {},
+  sizing = sizingConfig(),
+  deadline,
+  cfg,
+  runtimeWarnings
+) {
+  const PositionSizing = await lazyImportPositionSizing(deadline, cfg, runtimeWarnings);
+  if (!PositionSizing) {
+    return 0;
+  }
+
   const policyBlocked = input.policyBlocked === true || input.microMicroPolicyBlocked === true;
   const empiricalVeto = input.empiricalVeto === true || input.microMicroEmpiricalVeto === true;
   const proofTier = input.proofTier || PROOF_TIER_OBSERVATION_ONLY;
@@ -4883,75 +5178,81 @@ function deriveSignalAfterRisk({
   };
 }
 
-function extractRotationRows(activeRotation = {}) {
-  const normalized = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
-
-  return [
-    ...(Array.isArray(normalized?.microFamilies) ? normalized.microFamilies : []),
-    ...(Array.isArray(normalized?.rows) ? normalized.rows : []),
-    ...(Array.isArray(normalized?.activeRows) ? normalized.activeRows : []),
-    ...(Array.isArray(normalized?.selectedRows) ? normalized.selectedRows : []),
-    ...(Array.isArray(normalized?.candidates) ? normalized.candidates : [])
-  ];
+function callMaybeKey(value, fallback = null) {
+  if (typeof value === 'function') {
+    try {
+      return value();
+    } catch {
+      return fallback;
+    }
+  }
+  return value || fallback;
 }
 
-async function getActiveRotationSafe(cfg, marketContext, runtimeWarnings, deadline) {
-  if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) {
-    runtimeWarnings.push('ACTIVE_ROTATION_SKIPPED_DEADLINE_NEAR_DISCORD_SELECTION_EMPTY');
-    return null;
-  }
+function activeSelectionKeys() {
+  return uniqueStrings([
+    callMaybeKey(KEYS.short?.rotation?.active),
+    callMaybeKey(KEYS.short?.rotation?.current),
+    callMaybeKey(KEYS.rotation?.shortActive),
+    callMaybeKey(KEYS.rotation?.active),
+    callMaybeKey(KEYS.short?.discord?.selection),
+    callMaybeKey(KEYS.discord?.shortSelection),
+    `${SHORT_KEY_PREFIX}ROTATION:ACTIVE`,
+    `${SHORT_KEY_PREFIX}ROTATION:CURRENT`,
+    `${SHORT_KEY_PREFIX}ACTIVE:ROTATION`,
+    `${SHORT_KEY_PREFIX}DISCORD:SELECTION`,
+    `${SHORT_KEY_PREFIX}MANUAL:SELECTION`
+  ])
+    .map((key) => namespacedShortKey(key))
+    .slice(0, 7);
+}
 
-  if (typeof RotationEngine.getActiveRotation !== 'function') {
-    runtimeWarnings.push('GET_ACTIVE_ROTATION_FUNCTION_MISSING_DISCORD_SELECTION_EMPTY');
-    return null;
-  }
-
-  const activeRotationResult = await withDeadline(
-    () => RotationEngine.getActiveRotation({
-      weekKey: PERSISTENT_LEARNING_KEY,
-      persistentLearningKey: PERSISTENT_LEARNING_KEY,
-      targetTradeSide: TARGET_TRADE_SIDE,
-      tradeSide: TARGET_TRADE_SIDE,
-      side: TARGET_DASHBOARD_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-      namespace: SHORT_NAMESPACE,
-      keyPrefix: SHORT_KEY_PREFIX,
-      redisNamespace: SHORT_NAMESPACE,
-      redisKeyPrefix: SHORT_KEY_PREFIX,
-      shortOnly: true,
-      longDisabled: true,
-      exactTrueMicroOnly: true,
-      selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
-      trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-      childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-      parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-      microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-      trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
-      learningGranularity: CHILD75_LEARNING_GRANULARITY,
-      child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
-      parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-      microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-      microMicroVersion: MICRO_MICRO_VERSION,
-      discordActivationRequiresNetEdge: true,
-      discordActivationRequiresWeatherPlaybook: true,
-      discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-      currentMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
-      confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
-      marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION
-    }).catch(() => null),
-    {
+async function getActiveRotationDirect(
+  cfg,
+  runtimeWarnings,
+  deadline
+) {
+  if (
+    deadlineExceeded(
       deadline,
-      timeoutMs: cfg.rotationTimeoutMs,
-      label: 'ACTIVE_ROTATION_TIMEOUT',
-      fallback: null
-    }
-  );
-
-  if (!activeRotationResult) {
-    runtimeWarnings.push('ACTIVE_ROTATION_EMPTY_OR_TIMEOUT_DISCORD_SELECTION_EMPTY');
+      cfg.hardReturnReserveMs + 1_200
+    )
+  ) {
+    runtimeWarnings.push(
+      'DIRECT_SELECTION_READ_SKIPPED_DEADLINE_NEAR'
+    );
+    return null;
   }
-
-  return activeRotationResult;
+  const durableRedis = safeGetDurableRedis();
+  for (const key of activeSelectionKeys()) {
+    const result = await withDeadline(
+      () => getJsonSafe(durableRedis, key, null),
+      {
+        deadline,
+        timeoutMs: Math.min(
+          150,
+          cfg.selectionTimeoutMs
+        ),
+        reserveMs: cfg.hardReturnReserveMs + 900,
+        label: `DIRECT_SELECTION_READ_TIMEOUT:${key}`,
+        fallback: null
+      }
+    );
+    if (!result) continue;
+    runtimeWarnings.push(
+      `DIRECT_ACTIVE_SELECTION_READ_FROM:${key}`
+    );
+    return {
+      ...(typeof result === 'object' ? result : {}),
+      directSelectionKey: key,
+      directSelectionReaderVersion:
+        DIRECT_SELECTION_READER_VERSION
+    };
+  }
+  runtimeWarnings.push(
+    'DIRECT_ACTIVE_SELECTION_EMPTY'
+  );
+  return null;
 }
 
 function buildSelectedAlertContext(activeRotation, marketContext = {}) {
@@ -5214,14 +5515,17 @@ function getSelectedWeeklyStats(alertContext, microMicroFamilyId) {
     null;
 }
 
-function buildRiskAndSignalDecision({
+async function buildRiskAndSignalDecision({
   row,
   selectedWeeklyStats,
   selectedAlertMatch,
   runtimeStatusGate,
   currentFitGate,
   alertContext,
-  sizing
+  sizing,
+  deadline,
+  cfg,
+  runtimeWarnings
 } = {}) {
   const currentMarketWeatherKey = alertContext?.currentMarketWeatherKey || row.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY;
   const marketResolution = selectedRowMarketResolution(selectedWeeklyStats || row, currentMarketWeatherKey);
@@ -5232,7 +5536,7 @@ function buildRiskAndSignalDecision({
   const freshness = selectedAlertMatch?.playbookFreshness ||
     playbookFreshness(selectedWeeklyStats || row, currentMarketWeatherKey);
 
-  const riskFraction = safeRiskFractionForEntry({
+  const riskFraction = await safeRiskFractionForEntry({
     weeklyStats: selectedWeeklyStats || row,
     side: TARGET_DASHBOARD_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -5249,7 +5553,7 @@ function buildRiskAndSignalDecision({
     entryMarketWeatherRegime: row.entryMarketWeatherRegime || null,
     entryMarketWeatherTrendSide: row.entryMarketWeatherTrendSide || null,
     riskSourceOfTruth: 'riskFractionForEntry'
-  }, sizing);
+  }, sizing, deadline, cfg, runtimeWarnings);
 
   const derivedSignal = deriveSignalAfterRisk({
     runtimeStatusGate,
@@ -5295,6 +5599,18 @@ function buildRiskAndSignalDecision({
     tradeReadyManualOverrideAllowed: false,
     marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION
   };
+}
+
+function extractRotationRows(activeRotation = {}) {
+  const normalized = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
+
+  return [
+    ...(Array.isArray(normalized?.microFamilies) ? normalized.microFamilies : []),
+    ...(Array.isArray(normalized?.rows) ? normalized.rows : []),
+    ...(Array.isArray(normalized?.activeRows) ? normalized.activeRows : []),
+    ...(Array.isArray(normalized?.selectedRows) ? normalized.selectedRows : []),
+    ...(Array.isArray(normalized?.candidates) ? normalized.candidates : [])
+  ];
 }
 
 function buildVirtualEntryAction({
@@ -5568,7 +5884,12 @@ function buildDiscordEntryAlertPayload(entry = {}) {
   };
 }
 
-async function maybeSendDiscordEntryAlert(entry = {}, cfg = tradeConfig(), deadline = null) {
+async function maybeSendDiscordEntryAlert(
+  entry = {},
+  cfg = tradeConfig(),
+  deadline = null,
+  runtimeWarnings = []
+) {
   if (!cfg.discordSendEnabled) {
     return {
       sent: false,
@@ -5652,6 +5973,18 @@ async function maybeSendDiscordEntryAlert(entry = {}, cfg = tradeConfig(), deadl
       fireAndForget: false,
       reason: runtimeGate.reason || 'DISCORD_RUNTIME_NET_EDGE_GATE_BLOCKED',
       discordRuntimeActivationGate: runtimeGate
+    };
+  }
+
+  const Discord = await lazyImportDiscord(deadline, cfg, runtimeWarnings);
+  if (!Discord) {
+    return {
+      sent: false,
+      skipped: true,
+      queued: false,
+      awaited: false,
+      fireAndForget: false,
+      reason: 'DISCORD_MODULE_UNAVAILABLE'
     };
   }
 
@@ -5919,6 +6252,16 @@ function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
 }
 
 async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarnings, deadline) {
+  const AnalyzeEngine = await lazyImportAnalyzeEngine(deadline, cfg, runtimeWarnings);
+  if (!AnalyzeEngine) {
+    runtimeWarnings.push('ANALYZE_ENGINE_UNAVAILABLE_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+    return {
+      rows: liveRows,
+      analyzeError: 'ANALYZE_ENGINE_UNAVAILABLE',
+      analyzeFallbackUsed: true
+    };
+  }
+
   if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 500)) {
     runtimeWarnings.push('ANALYZE_SKIPPED_DEADLINE_NEAR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
     return {
@@ -6366,17 +6709,12 @@ function compactRunForRedis(result = {}) {
 function shouldMarkSnapshotProcessed(result = {}) {
   if (!result.snapshotId) return false;
   if (result.monitorOnly === true) return false;
-  if (result.reason === 'MONITOR_ONLY') return false;
-  if (result.reason === 'NO_SHORT_SCANNER_SNAPSHOT') return false;
-  if (result.reason === 'SNAPSHOT_TOO_STALE') return false;
-  if (result.reason === 'SNAPSHOT_ALREADY_PROCESSED') return false;
-  if (result.reason === 'DEADLINE_REACHED_BEFORE_ENTRY_LOOP') return false;
-
+  if (result.snapshotChunkComplete !== true) return false;
+  if (result.analyzeFallbackUsed === true) return false;
   return Boolean(
     n(result.analyzedMicroMicroRows, 0) > 0 ||
-      n(result.virtualCreatedRows, 0) > 0 ||
-      n(result.entryRows, 0) > 0 ||
-      n(result.virtualExitRows, 0) > 0
+    n(result.virtualCreatedRows, 0) > 0 ||
+    n(result.virtualExitRows, 0) > 0
   );
 }
 
@@ -6880,7 +7218,11 @@ export async function runTradeSystem(options = {}) {
       }));
     }
 
-    const activeRotation = await getActiveRotationSafe(cfg, marketContext, runtimeWarnings, deadline);
+    const activeRotation = await getActiveRotationDirect(
+      cfg,
+      runtimeWarnings,
+      deadline
+    );
     const alertContext = buildSelectedAlertContext(activeRotation, marketContext);
 
     if (alertContext.activeSelectionRuntimeFiltered) {
@@ -6894,9 +7236,38 @@ export async function runTradeSystem(options = {}) {
     const allTargetCandidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
       .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE);
 
-    const candidates = allTargetCandidates
-      .slice(0, cfg.maxCandidatesPerSnapshot)
-      .map((candidate) => attachCurrentFitContext({
+    const storedCursor = forceProcessSnapshot
+      ? 0
+      : await readSnapshotCursor(
+          snapshot.snapshotId,
+          cfg
+        );
+    const chunkStart = Math.min(
+      storedCursor,
+      allTargetCandidates.length
+    );
+    const chunkEndExclusive = Math.min(
+      allTargetCandidates.length,
+      chunkStart + cfg.candidateChunkSize
+    );
+    const chunkCandidates = allTargetCandidates.slice(
+      chunkStart,
+      chunkEndExclusive
+    );
+    const chunk = {
+      start: chunkStart,
+      endExclusive: chunkEndExclusive,
+      size: chunkCandidates.length,
+      total: allTargetCandidates.length,
+      nextIndex: chunkEndExclusive,
+      complete:
+        chunkEndExclusive >= allTargetCandidates.length
+    };
+    runtimeWarnings.push(
+      `SNAPSHOT_CHUNK:${chunk.start}-${chunk.endExclusive}/${chunk.total}`
+    );
+    const candidates = chunkCandidates.map((candidate) =>
+      attachCurrentFitContext({
         ...candidate,
         ...scannerMetadataFrom(candidate),
         ...sideFlags(),
@@ -6904,13 +7275,8 @@ export async function runTradeSystem(options = {}) {
         ...virtualFlags(candidate),
         btcState: snapshot.btcState,
         regime: snapshot.regime
-      }, marketContext));
-
-    const cappedCandidateCount = Math.max(0, allTargetCandidates.length - candidates.length);
-
-    if (cappedCandidateCount > 0) {
-      runtimeWarnings.push(`SHORT_CANDIDATES_CAPPED_FOR_ENTRY_BUDGET:${cappedCandidateCount}`);
-    }
+      }, marketContext)
+    );
 
     const processed = [];
 
@@ -7208,7 +7574,7 @@ export async function runTradeSystem(options = {}) {
         });
       const currentFitGate = discordCurrentFitGate(row);
 
-      const riskAndSignal = buildRiskAndSignalDecision({
+      const riskAndSignal = await buildRiskAndSignalDecision({
         row,
         selectedWeeklyStats,
         selectedAlertMatch: {
@@ -7218,7 +7584,10 @@ export async function runTradeSystem(options = {}) {
         runtimeStatusGate: selectedRuntimeStatusGate,
         currentFitGate,
         alertContext,
-        sizing
+        sizing,
+        deadline,
+        cfg,
+        runtimeWarnings
       });
 
       if (riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY) counters.tradeReadyRows += 1;
@@ -7266,7 +7635,12 @@ export async function runTradeSystem(options = {}) {
       });
 
       try {
-        const saveResult = await saveVirtualPositionFast(entry, cfg, deadline);
+        const saveResult = await saveVirtualPositionFast(
+          entry,
+          cfg,
+          deadline,
+          runtimeWarnings
+        );
 
         if (!saveResult.ok) {
           throw new Error(saveResult.reason || 'SAVE_OPEN_POSITION_FAILED');
@@ -7277,7 +7651,12 @@ export async function runTradeSystem(options = {}) {
         counters.entryRows += 1;
         counters.virtualCreatedRows += 1;
 
-        const discordResult = await maybeSendDiscordEntryAlert(entry, cfg, deadline);
+        const discordResult = await maybeSendDiscordEntryAlert(
+          entry,
+          cfg,
+          deadline,
+          runtimeWarnings
+        );
 
         if (discordResult.queued) counters.discordAlertsQueued += 1;
         if (discordResult.sent) counters.discordAlertsSent += 1;
@@ -7323,6 +7702,34 @@ export async function runTradeSystem(options = {}) {
 
     if (counters.entryLoopAttempts > 0 && !counters.entryLoopRuntimeBreak) {
       runtimeWarnings.push(`ENTRY_LOOP_COMPLETED_ATTEMPTS:${counters.entryLoopAttempts}`);
+    }
+
+    const canAdvanceCursor =
+      analyzeResult.analyzeFallbackUsed !== true &&
+      processed.length === candidates.length;
+    const effectiveNextIndex = canAdvanceCursor
+      ? chunk.nextIndex
+      : chunk.start;
+    const effectiveChunkComplete =
+      canAdvanceCursor &&
+      effectiveNextIndex >= chunk.total;
+    const cursorPersisted = await persistSnapshotCursor({
+      snapshotId: snapshot.snapshotId,
+      nextIndex: effectiveNextIndex,
+      totalCandidates: chunk.total,
+      complete: effectiveChunkComplete,
+      runId,
+      cfg
+    });
+    if (!cursorPersisted) {
+      runtimeWarnings.push(
+        'SNAPSHOT_CURSOR_PERSIST_FAILED_OR_TIMEOUT'
+      );
+    }
+    if (!effectiveChunkComplete) {
+      runtimeWarnings.push(
+        `SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`
+      );
     }
 
     const actionCountMap = buildRunActionCounts(actions, virtualExits);
@@ -7405,12 +7812,8 @@ export async function runTradeSystem(options = {}) {
       discordRuntimeGateRequired: true,
       discordRuntimeNeverTrustsActiveSelectionBlindly: true,
 
-      maxCandidatesPerSnapshot: cfg.maxCandidatesPerSnapshot,
-      analyzeMaxCandidatesPerSnapshot: cfg.analyzeMaxCandidatesPerSnapshot,
-      hardMaxCandidatesPerSnapshot: cfg.hardMaxCandidatesPerSnapshot,
+      candidateChunkSize: cfg.candidateChunkSize,
       maxEntriesPerRun: cfg.maxEntriesPerRun,
-      dataConcurrency: cfg.dataConcurrency,
-      candidateTimeoutMs: cfg.candidateTimeoutMs,
       analyzeTimeoutMs: cfg.analyzeTimeoutMs,
       monitorTimeoutMs: cfg.monitorTimeoutMs,
       monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
@@ -7418,13 +7821,22 @@ export async function runTradeSystem(options = {}) {
       monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
       monitorBatchSize: cfg.monitorBatchSize,
       openPositionMonitorLimit: cfg.openPositionMonitorLimit,
-      minEntryLoopAttempts: cfg.minEntryLoopAttempts,
       entryLoopReserveMs: cfg.entryLoopReserveMs,
       marketContextTimeoutMs: cfg.marketContextTimeoutMs,
       snapshotTimeoutMs: cfg.snapshotTimeoutMs,
       maxRuntimeMs: cfg.maxRuntimeMs,
       hardReturnReserveMs: cfg.hardReturnReserveMs,
       remainingMsAtReturn: remainingMs(deadline, 0),
+
+      snapshotChunkVersion: SNAPSHOT_CHUNK_VERSION,
+      snapshotChunkStart: chunk.start,
+      snapshotChunkEndExclusive: chunk.endExclusive,
+      snapshotChunkSize: chunk.size,
+      snapshotChunkTotalCandidates: chunk.total,
+      snapshotChunkNextIndex: effectiveNextIndex,
+      snapshotChunkComplete: effectiveChunkComplete,
+      snapshotChunkCursorPersisted: cursorPersisted,
+      snapshotChunkAdvanced: canAdvanceCursor,
 
       ...sideFlags(),
       ...virtualFlags(),
@@ -7472,7 +7884,7 @@ export async function runTradeSystem(options = {}) {
 
       candidates: candidates.length,
       allShortCandidatesBeforeCap: allTargetCandidates.length,
-      cappedCandidateCount,
+      cappedCandidateCount: 0,
       shortCandidateCount: candidates.length,
       longCandidateCount: 0,
       nonShortCandidateCount: snapshot.blockedNonShortCandidatesCount || 0,
