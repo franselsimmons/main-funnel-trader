@@ -121,10 +121,10 @@ const DEFAULT_MONITOR_POSITION_LIMIT = 150;
 const DEFAULT_MONITOR_BATCH_SIZE = 100;
 const DEFAULT_MONITOR_CONCURRENCY = 3;
 const DEFAULT_MONITOR_RUNTIME_MS = 12000;
-const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 2500;
+const DEFAULT_MONITOR_ONE_POSITION_TIMEOUT_MS = 7000; // verhoogd
 const DEFAULT_PRICE_FETCH_TIMEOUT_MS = 350;
 const DEFAULT_CANDLE_FETCH_TIMEOUT_MS = 1200;
-const DEFAULT_RECORD_OUTCOME_TIMEOUT_MS = 1500;
+const DEFAULT_RECORD_OUTCOME_TIMEOUT_MS = 4000; // verhoogd
 const DEFAULT_DISCORD_EXIT_TIMEOUT_MS = 1200;
 
 const BITGET_BASE_URL = 'https://api.bitget.com';
@@ -195,6 +195,46 @@ function upper(value) {
 
 function hasValue(value) {
   return value !== undefined && value !== null && value !== '';
+}
+
+// Nieuwe helperfuncties toegevoegd
+function finiteNumberOrNull(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    typeof value === 'boolean'
+  ) {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number
+    : null;
+}
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const number = finiteNumberOrNull(value);
+    if (number !== null) {
+      return number;
+    }
+  }
+  return null;
+}
+function extractOutcomeNetR(outcome = {}) {
+  return firstFiniteNumber(
+    outcome.netR,
+    outcome.shortNetR,
+    outcome.exitR,
+    outcome.realizedNetR,
+    outcome.realizedR,
+    outcome.resultR,
+    outcome.finalR,
+    outcome.outcomeR,
+    outcome.netResultR,
+    outcome.pnlR,
+    outcome.r
+  );
 }
 
 function clamp(value, min, max) {
@@ -2181,33 +2221,52 @@ function normalizeMicroMicroStatus(value = '') {
   return '';
 }
 
+// Vervangen aggregateRuntimeRecentOutcomes
 function aggregateRuntimeRecentOutcomes(row = {}) {
-  const recent = Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [];
-
+  const recent = Array.isArray(row.recentOutcomes)
+    ? row.recentOutcomes
+    : [];
   return recent.reduce((acc, outcome) => {
-    if (!outcome || typeof outcome !== 'object') return acc;
-
-    const source = upper(outcome.source || outcome.outcomeSource || 'VIRTUAL');
-
-    if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) return acc;
-
-    const r = safeNumber(
-      outcome.netR ??
-        outcome.exitR ??
-        outcome.realizedNetR ??
-        outcome.realizedR ??
-        outcome.r,
-      0
+    if (!outcome || typeof outcome !== 'object') {
+      return acc;
+    }
+    const source = upper(
+      outcome.source ||
+      outcome.outcomeSource ||
+      'VIRTUAL'
     );
-
-    const costR = Math.max(0, safeNumber(outcome.costR ?? outcome.avgCostR, 0));
-
+    if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) {
+      return acc;
+    }
+    const r = extractOutcomeNetR(outcome);
+    /*
+     * Kritiek:
+     * een ontbrekende of ongeldige R is GEEN flat trade.
+     *
+     * De oude code gebruikte:
+     * safeNumber(..., 0)
+     *
+     * Daardoor werd een kapotte outcome alsnog als completed + 0R geteld.
+     */
+    if (r === null) {
+      acc.invalidOutcomes += 1;
+      return acc;
+    }
+    const costR = Math.max(
+      0,
+      firstFiniteNumber(
+        outcome.costR,
+        outcome.avgCostR,
+        outcome.totalCostR,
+        outcome.netCostR,
+        0
+      ) ?? 0
+    );
     acc.completed += 1;
     acc.totalR += r;
     acc.totalCostR += costR;
     acc.sumR += r;
     acc.sumSquaredR += r * r;
-
     if (r > 0) {
       acc.wins += 1;
       acc.grossWinR += r;
@@ -2217,17 +2276,15 @@ function aggregateRuntimeRecentOutcomes(row = {}) {
     } else {
       acc.flats += 1;
     }
-
     if (
-      outcome.directSL ||
-      outcome.directToSL ||
-      outcome.directStopLoss ||
-      outcome.isDirectSL ||
+      outcome.directSL === true ||
+      outcome.directToSL === true ||
+      outcome.directStopLoss === true ||
+      outcome.isDirectSL === true ||
       upper(outcome.exitReason) === 'SL'
     ) {
       acc.directSLCount += 1;
     }
-
     return acc;
   }, {
     completed: 0,
@@ -2240,41 +2297,95 @@ function aggregateRuntimeRecentOutcomes(row = {}) {
     sumSquaredR: 0,
     grossWinR: 0,
     grossLossR: 0,
-    directSLCount: 0
+    directSLCount: 0,
+    invalidOutcomes: 0
   });
 }
 
+// Vervangen runtimeStatsSourceRow
 function runtimeStatsSourceRow(row = {}) {
-  const weekly = row.weeklyStats && typeof row.weeklyStats === 'object' ? row.weeklyStats : {};
-  const selected = row.selectedWeeklyStats && typeof row.selectedWeeklyStats === 'object' ? row.selectedWeeklyStats : {};
-  const gate = row.microMicroRuntimeGate && typeof row.microMicroRuntimeGate === 'object' ? row.microMicroRuntimeGate : {};
-  const discordGate = row.discordRuntimeActivationGate && typeof row.discordRuntimeActivationGate === 'object'
-    ? row.discordRuntimeActivationGate
-    : row.discordActivationGate && typeof row.discordActivationGate === 'object'
-      ? row.discordActivationGate
+  const weekly =
+    row.weeklyStats &&
+    typeof row.weeklyStats === 'object'
+      ? row.weeklyStats
       : {};
-
+  const selected =
+    row.selectedWeeklyStats &&
+    typeof row.selectedWeeklyStats === 'object'
+      ? row.selectedWeeklyStats
+      : {};
+  const gate =
+    row.microMicroRuntimeGate &&
+    typeof row.microMicroRuntimeGate === 'object'
+      ? row.microMicroRuntimeGate
+      : {};
+  const discordGate =
+    row.discordRuntimeActivationGate &&
+    typeof row.discordRuntimeActivationGate === 'object'
+      ? row.discordRuntimeActivationGate
+      : row.discordActivationGate &&
+          typeof row.discordActivationGate === 'object'
+        ? row.discordActivationGate
+        : {};
+  const weeklyNetRStats =
+    weekly.netRStats &&
+    typeof weekly.netRStats === 'object'
+      ? weekly.netRStats
+      : {};
+  const selectedNetRStats =
+    selected.netRStats &&
+    typeof selected.netRStats === 'object'
+      ? selected.netRStats
+      : {};
+  const rowNetRStats =
+    row.netRStats &&
+    typeof row.netRStats === 'object'
+      ? row.netRStats
+      : {};
+  /*
+   * Volgorde:
+   *
+   * oude ingebedde gates
+   * → weekly
+   * → selected
+   * → actuele hoofdrow
+   * → actuele canonical netRStats
+   *
+   * De oude versie deed de gate als laatste.
+   * Daardoor konden oude avgR/totalR/completed-waarden
+   * de nieuwere learning-statistieken overschrijven.
+   */
+  const canonicalNetRStats = {
+    ...weeklyNetRStats,
+    ...selectedNetRStats,
+    ...rowNetRStats
+  };
+  const hasCanonicalNetRStats =
+    Object.keys(canonicalNetRStats).length > 0;
   return {
-    ...row,
+    ...gate,
+    ...discordGate,
     ...weekly,
     ...selected,
-    ...discordGate,
-    ...gate,
-
+    ...row,
+    ...(hasCanonicalNetRStats
+      ? canonicalNetRStats
+      : {}),
+    netRStats: hasCanonicalNetRStats
+      ? canonicalNetRStats
+      : null,
     microMicroRuntimeGateStatus:
       row.microMicroRuntimeGateStatus ||
       row.microMicroStatus ||
       gate.status ||
       discordGate.status ||
       null,
-
     empiricalVeto:
       row.empiricalVeto === true ||
       weekly.empiricalVeto === true ||
       selected.empiricalVeto === true ||
       gate.empiricalVeto === true ||
       discordGate.empiricalVeto === true,
-
     empiricalVetoReason:
       row.empiricalVetoReason ||
       weekly.empiricalVetoReason ||
@@ -2282,14 +2393,12 @@ function runtimeStatsSourceRow(row = {}) {
       gate.empiricalVetoReason ||
       discordGate.empiricalVetoReason ||
       null,
-
     policyBlocked:
       row.policyBlocked === true ||
       weekly.policyBlocked === true ||
       selected.policyBlocked === true ||
       gate.policyBlocked === true ||
       discordGate.policyBlocked === true,
-
     policyBlockedReason:
       row.policyBlockedReason ||
       weekly.policyBlockedReason ||
@@ -2297,7 +2406,6 @@ function runtimeStatsSourceRow(row = {}) {
       gate.policyBlockedReason ||
       discordGate.policyBlockedReason ||
       null,
-
     microMicroFamilyId:
       rowMicroMicroId(row) ||
       rowMicroMicroId(selected) ||
@@ -2310,7 +2418,6 @@ function runtimeStatsSourceRow(row = {}) {
       gate.microMicroFamilyId ||
       discordGate.microMicroFamilyId ||
       null,
-
     trueMicroMicroFamilyId:
       row.trueMicroMicroFamilyId ||
       selected.trueMicroMicroFamilyId ||
@@ -2319,7 +2426,6 @@ function runtimeStatsSourceRow(row = {}) {
       discordGate.trueMicroMicroFamilyId ||
       rowMicroMicroId(row) ||
       null,
-
     exactMicroMicroFamilyId:
       row.exactMicroMicroFamilyId ||
       selected.exactMicroMicroFamilyId ||
@@ -2362,65 +2468,149 @@ function runtimeObservationSample(row = {}) {
   );
 }
 
+// Vervangen runtimeTotalR
 function runtimeTotalR(row = {}) {
   const source = runtimeStatsSourceRow(row);
   const completed = runtimeCompletedSample(source);
   const recent = aggregateRuntimeRecentOutcomes(source);
-
-  if (completed <= 0) return 0;
-
-  const virtualShadowTotal = safeNumber(source.virtualTotalR, 0) + safeNumber(source.shadowTotalR, 0);
-  if (virtualShadowTotal !== 0) return virtualShadowTotal;
-
-  if (recent.completed > 0) return recent.totalR;
-
-  return safeNumber(
-    source.shortNetTotalR ??
-      source.netShortTotalR ??
-      source.netTotalR ??
-      source.totalNetR ??
-      source.totalR,
-    0
+  if (completed <= 0) {
+    return 0;
+  }
+  const virtualTotalR = finiteNumberOrNull(
+    source.virtualTotalR
   );
+  const shadowTotalR = finiteNumberOrNull(
+    source.shadowTotalR
+  );
+  if (
+    virtualTotalR !== null ||
+    shadowTotalR !== null
+  ) {
+    return (
+      (virtualTotalR ?? 0) +
+      (shadowTotalR ?? 0)
+    );
+  }
+  const explicitLifetimeTotalR = firstFiniteNumber(
+    source.shortNetTotalR,
+    source.netShortTotalR,
+    source.netTotalR,
+    source.totalNetR,
+    source.totalR,
+    source.sumR
+  );
+  /*
+   * Lifetime-statistieken hebben voorrang.
+   * recentOutcomes is meestal maar een beperkte lijst
+   * en mag niet de volledige lifetime-total vervangen.
+   */
+  if (explicitLifetimeTotalR !== null) {
+    return explicitLifetimeTotalR;
+  }
+  if (recent.completed > 0) {
+    return recent.totalR;
+  }
+  return 0;
 }
 
+// Vervangen runtimeAvgR
 function runtimeAvgR(row = {}) {
   const source = runtimeStatsSourceRow(row);
   const completed = runtimeCompletedSample(source);
-
-  if (completed <= 0) return 0;
-
-  if (hasValue(source.avgNetR)) return safeNumber(source.avgNetR, 0);
-  if (hasValue(source.netAvgR)) return safeNumber(source.netAvgR, 0);
-  if (hasValue(source.avgR)) return safeNumber(source.avgR, 0);
-
-  return runtimeTotalR(source) / completed;
+  if (completed <= 0) {
+    return 0;
+  }
+  const totalR = runtimeTotalR(source);
+  const explicitAvgR = firstFiniteNumber(
+    source.avgNetR,
+    source.netAvgR,
+    source.avgR
+  );
+  /*
+   * Wanneer avgR per ongeluk nog 0 is,
+   * maar totalR wel is bijgewerkt,
+   * wordt avgR opnieuw correct afgeleid.
+   */
+  if (
+    explicitAvgR !== null &&
+    (
+      explicitAvgR !== 0 ||
+      totalR === 0
+    )
+  ) {
+    return explicitAvgR;
+  }
+  return totalR / completed;
 }
 
+// Vervangen runtimeStdDevR
 function runtimeStdDevR(row = {}) {
   const source = runtimeStatsSourceRow(row);
-  const explicit = safeNumber(
-    source.stdDevR ??
-      source.standardDeviationR ??
-      source.rStdDev,
-    NaN
-  );
-
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-
-  const recent = aggregateRuntimeRecentOutcomes(source);
   const completed = runtimeCompletedSample(source);
-
+  const explicit = firstFiniteNumber(
+    source.stdDevR,
+    source.standardDeviationR,
+    source.rStdDev
+  );
+  if (
+    explicit !== null &&
+    explicit >= 0
+  ) {
+    return explicit;
+  }
+  /*
+   * Gebruik eerst lifetime-momenten.
+   * Zo blijft LCB95 gebaseerd op dezelfde dataset
+   * als completed, avgR en totalR.
+   */
+  const lifetimeSumR = firstFiniteNumber(
+    source.sumR,
+    source.netRSum,
+    source.totalR
+  );
+  const lifetimeSumSquaredR = firstFiniteNumber(
+    source.sumSquaredR,
+    source.sumR2,
+    source.netRSumSquared
+  );
+  if (
+    completed > 1 &&
+    lifetimeSumR !== null &&
+    lifetimeSumSquaredR !== null
+  ) {
+    const variance = Math.max(
+      0,
+      (
+        lifetimeSumSquaredR -
+        (
+          lifetimeSumR *
+          lifetimeSumR
+        ) / completed
+      ) /
+      (
+        completed - 1
+      )
+    );
+    return Math.sqrt(variance);
+  }
+  const recent = aggregateRuntimeRecentOutcomes(source);
   if (recent.completed > 1) {
     const variance = Math.max(
       0,
-      (recent.sumSquaredR - (recent.sumR * recent.sumR) / recent.completed) / (recent.completed - 1)
+      (
+        recent.sumSquaredR -
+        (
+          recent.sumR *
+          recent.sumR
+        ) / recent.completed
+      ) /
+      (
+        recent.completed - 1
+      )
     );
-
     return Math.sqrt(variance);
   }
-
-  return completed > 1 ? Math.abs(runtimeAvgR(source)) : 0;
+  return 0;
 }
 
 function runtimeAvgRLCB95(row = {}) {
@@ -2501,38 +2691,101 @@ function runtimeDirectSLPct(row = {}) {
   return completed > 0 ? clamp(runtimeDirectSLCount(source) / completed, 0, 1) : 0;
 }
 
+// Vervangen runtimeProfitFactor
 function runtimeProfitFactor(row = {}) {
   const source = runtimeStatsSourceRow(row);
   const recent = aggregateRuntimeRecentOutcomes(source);
-
-  const winR = Math.max(
-    safeNumber(source.virtualWinR, 0) + safeNumber(source.shadowWinR, 0),
-    safeNumber(source.virtualGrossWinR, 0) + safeNumber(source.shadowGrossWinR, 0),
-    safeNumber(source.netWinR, 0),
-    safeNumber(source.totalWinR, 0),
-    safeNumber(source.grossWinR, 0),
-    recent.grossWinR,
-    0
+  const virtualWinR = firstFiniteNumber(
+    source.virtualWinR,
+    source.virtualGrossWinR
   );
-
-  const lossR = Math.max(
-    Math.abs(safeNumber(source.virtualLossR, 0) + safeNumber(source.shadowLossR, 0)),
-    Math.abs(safeNumber(source.virtualGrossLossR, 0) + safeNumber(source.shadowGrossLossR, 0)),
-    Math.abs(safeNumber(source.netLossR, 0)),
-    Math.abs(safeNumber(source.totalLossR, 0)),
-    Math.abs(safeNumber(source.grossLossR, 0)),
-    recent.grossLossR,
-    0
+  const shadowWinR = firstFiniteNumber(
+    source.shadowWinR,
+    source.shadowGrossWinR
   );
-
-  if (winR > 0 || lossR > 0) {
-    if (lossR <= 0) return 99;
+  const virtualLossR = firstFiniteNumber(
+    source.virtualLossR,
+    source.virtualGrossLossR
+  );
+  const shadowLossR = firstFiniteNumber(
+    source.shadowLossR,
+    source.shadowGrossLossR
+  );
+  const combinedVirtualWinR =
+    virtualWinR !== null ||
+    shadowWinR !== null
+      ? (
+          Math.max(0, virtualWinR ?? 0) +
+          Math.max(0, shadowWinR ?? 0)
+        )
+      : null;
+  const combinedVirtualLossR =
+    virtualLossR !== null ||
+    shadowLossR !== null
+      ? (
+          Math.abs(virtualLossR ?? 0) +
+          Math.abs(shadowLossR ?? 0)
+        )
+      : null;
+  const lifetimeWinR =
+    combinedVirtualWinR ??
+    firstFiniteNumber(
+      source.netWinR,
+      source.totalWinR,
+      source.grossWinR,
+      source.positiveR,
+      source.sumPositiveR
+    );
+  const lifetimeLossR =
+    combinedVirtualLossR ??
+    firstFiniteNumber(
+      source.netLossR,
+      source.totalLossR,
+      source.grossLossR,
+      source.negativeRAbs,
+      source.sumNegativeRAbs
+    );
+  if (
+    lifetimeWinR !== null ||
+    lifetimeLossR !== null
+  ) {
+    const winR = Math.max(
+      0,
+      lifetimeWinR ?? 0
+    );
+    const lossR = Math.abs(
+      lifetimeLossR ?? 0
+    );
+    if (lossR <= 0) {
+      return winR > 0
+        ? 99
+        : 0;
+    }
     return winR / lossR;
   }
-
-  const explicit = safeNumber(source.netProfitFactor ?? source.profitFactor ?? source.pf, NaN);
-  if (Number.isFinite(explicit)) return Math.max(0, explicit);
-
+  const explicit = firstFiniteNumber(
+    source.netProfitFactor,
+    source.profitFactor,
+    source.pf
+  );
+  if (explicit !== null) {
+    return Math.max(
+      0,
+      explicit
+    );
+  }
+  if (
+    recent.grossWinR > 0 ||
+    recent.grossLossR > 0
+  ) {
+    if (recent.grossLossR <= 0) {
+      return 99;
+    }
+    return (
+      recent.grossWinR /
+      recent.grossLossR
+    );
+  }
   return 0;
 }
 
@@ -2753,18 +3006,7 @@ function microMicroRuntimeGate(row = {}) {
   } else if (vetoGate.triggered) {
     status = MICRO_MICRO_STATUS_EMPIRICAL_VETO;
     reasons = [vetoGate.empiricalVetoReason];
-  } else if (
-    directStatus &&
-    directGateTrusted &&
-    directStatus !== MICRO_MICRO_STATUS_POLICY_BLOCKED &&
-    directStatus !== MICRO_MICRO_STATUS_EMPIRICAL_VETO
-  ) {
-    status = directStatus;
-    reasons = source.reasons || source.microMicroRuntimeGate?.reasons || [
-      directStatus === MICRO_MICRO_STATUS_PASSED
-        ? 'MICRO_MICRO_RUNTIME_GATE_PASSED_FROM_ENTRY'
-        : `MICRO_MICRO_RUNTIME_GATE_${directStatus}`
-    ];
+  // verwijder het directStatus-blok
   } else if (completed < MIN_MICRO_MICRO_COMPLETED_FOR_PASSED) {
     status = MICRO_MICRO_STATUS_OBSERVING;
     reasons = [`COMPLETED_BELOW_${MIN_MICRO_MICRO_COMPLETED_FOR_PASSED}`];
@@ -2843,7 +3085,12 @@ function microMicroRuntimeGate(row = {}) {
 
     statusRank: MICRO_MICRO_STATUS_RANK[status] ?? 99,
     thresholds: microMicroRuntimeGateConfig(),
-    directStatusUsed: Boolean(directStatus && directGateTrusted),
+    directStatusUsed: false, // gewijzigd
+    directStatusObserved: directStatus || null,
+    staleEmbeddedRuntimeStatusIgnored: Boolean(
+      directStatus &&
+      directGateTrusted
+    ),
 
     marketWeatherUnknownDoesNotPolicyBlock: true,
     marketWeatherUnknownDoesNotEmpiricalVeto: true,
@@ -4200,21 +4447,59 @@ function calcRewardPctFromPosition(position = {}) {
   return (entry - tp) / entry;
 }
 
+// Vervangen calcNetCostOutcome
 function calcNetCostOutcome({
   position,
   exitPrice
 } = {}) {
-  const riskPct = calcRiskPctFromPosition(position);
-  const grossMovePct = calcGrossMovePctFromPosition({
-    position,
+  const entry = finiteNumberOrNull(
+    position.entry
+  );
+  const initialSl = finiteNumberOrNull(
+    position.initialSl ??
+    position.sl
+  );
+  const resolvedExitPrice = finiteNumberOrNull(
     exitPrice
-  });
-
-  const grossR = calcGrossRFromPosition({
-    position,
-    exitPrice
-  });
-
+  );
+  /*
+   * Nooit een kapotte R-basis stil omzetten naar 0R.
+   */
+  if (
+    entry === null ||
+    initialSl === null ||
+    resolvedExitPrice === null ||
+    entry <= 0 ||
+    initialSl <= entry ||
+    resolvedExitPrice <= 0
+  ) {
+    throw new Error(
+      'OUTCOME_SHORT_R_BASIS_INVALID_ENTRY_INITIAL_SL_EXIT_REQUIRED'
+    );
+  }
+  const riskPct = calcRiskPctFromPosition(
+    position
+  );
+  const grossMovePct =
+    calcGrossMovePctFromPosition({
+      position,
+      exitPrice: resolvedExitPrice
+    });
+  const grossR =
+    calcGrossRFromPosition({
+      position,
+      exitPrice: resolvedExitPrice
+    });
+  if (
+    !Number.isFinite(riskPct) ||
+    !Number.isFinite(grossMovePct) ||
+    !Number.isFinite(grossR) ||
+    riskPct <= 0
+  ) {
+    throw new Error(
+      'OUTCOME_SHORT_R_CALCULATION_INVALID'
+    );
+  }
   const entrySpreadPct = safeNumber(
     position.spreadPct ??
       position.liveSpreadPct ??
@@ -4223,7 +4508,6 @@ function calcNetCostOutcome({
       CONFIG.cost?.fallbackSpreadPct,
     0
   );
-
   const exitSpreadPct = safeNumber(
     position.exitSpreadPct ??
       position.spreadPct ??
@@ -4233,7 +4517,6 @@ function calcNetCostOutcome({
       CONFIG.cost?.fallbackSpreadPct,
     0
   );
-
   const cost = applyCosts({
     side: TARGET_TRADE_SIDE,
     tradeSide: TARGET_TRADE_SIDE,
@@ -4243,45 +4526,107 @@ function calcNetCostOutcome({
     entrySpreadPct,
     exitSpreadPct
   }) || {};
-
-  const appliedGrossR = Number.isFinite(safeNumber(cost.grossR, null))
-    ? safeNumber(cost.grossR, grossR)
-    : grossR;
-
+  const costGrossR = finiteNumberOrNull(
+    cost.grossR
+  );
+  const appliedGrossR =
+    costGrossR !== null
+      ? costGrossR
+      : grossR;
+  const resolvedCostR = firstFiniteNumber(
+    cost.costR,
+    position.costR,
+    position.estimatedCostR,
+    position.avgCostR,
+    0
+  );
   const costR = Math.max(
     0,
-    safeNumber(
-      cost.costR ??
-        position.costR ??
-        position.estimatedCostR ??
-        position.avgCostR,
-      0
-    )
+    resolvedCostR ?? 0
   );
-
-  const netR = appliedGrossR - costR;
-
+  const netR =
+    appliedGrossR -
+    costR;
+  if (
+    !Number.isFinite(appliedGrossR) ||
+    !Number.isFinite(costR) ||
+    !Number.isFinite(netR)
+  ) {
+    throw new Error(
+      'OUTCOME_NET_R_NOT_FINITE'
+    );
+  }
   return {
     cost,
-
     riskPct,
-    rewardPct: calcRewardPctFromPosition(position),
+    rewardPct:
+      calcRewardPctFromPosition(
+        position
+      ),
     grossMovePct,
-
-    grossR: appliedGrossR,
+    grossR:
+      appliedGrossR,
     costR,
     netR,
-
-    feeR: Math.max(0, safeNumber(cost.feeR, 0)),
-    slippageR: Math.max(0, safeNumber(cost.slippageR, 0)),
-    marketImpactR: Math.max(0, safeNumber(cost.marketImpactR, 0)),
-    spreadCostR: Math.max(0, safeNumber(cost.spreadCostR, 0)),
-
-    feePct: safeNumber(cost.feePct, 0),
-    slippagePct: safeNumber(cost.slippagePct, 0),
-    costPct: safeNumber(cost.costPct, 0),
-    grossPnlPct: safeNumber(cost.grossPnlPct, grossMovePct * 100),
-    netPnlPct: safeNumber(cost.netPnlPct, (grossMovePct - safeNumber(cost.costRatio, 0)) * 100)
+    feeR: Math.max(
+      0,
+      safeNumber(
+        cost.feeR,
+        0
+      )
+    ),
+    slippageR: Math.max(
+      0,
+      safeNumber(
+        cost.slippageR,
+        0
+      )
+    ),
+    marketImpactR: Math.max(
+      0,
+      safeNumber(
+        cost.marketImpactR,
+        0
+      )
+    ),
+    spreadCostR: Math.max(
+      0,
+      safeNumber(
+        cost.spreadCostR,
+        0
+      )
+    ),
+    feePct:
+      safeNumber(
+        cost.feePct,
+        0
+      ),
+    slippagePct:
+      safeNumber(
+        cost.slippagePct,
+        0
+      ),
+    costPct:
+      safeNumber(
+        cost.costPct,
+        0
+      ),
+    grossPnlPct:
+      safeNumber(
+        cost.grossPnlPct,
+        grossMovePct * 100
+      ),
+    netPnlPct:
+      safeNumber(
+        cost.netPnlPct,
+        (
+          grossMovePct -
+          safeNumber(
+            cost.costRatio,
+            0
+          )
+        ) * 100
+      )
   };
 }
 
@@ -4357,11 +4702,17 @@ function applyNetCostModelToOutcome({
     netPnlPct: round6(net.netPnlPct),
     pnlPct: round6(net.netPnlPct),
 
+    // Toegevoegde extra R-aliassen
     netR: round6(net.netR),
     shortNetR: round6(net.netR),
     exitR: round6(net.netR),
     realizedNetR: round6(net.netR),
     realizedR: round6(net.netR),
+    resultR: round6(net.netR),
+    finalR: round6(net.netR),
+    outcomeR: round6(net.netR),
+    netResultR: round6(net.netR),
+    pnlR: round6(net.netR),
     r: round6(net.netR),
 
     win: net.netR > 0,
@@ -5654,6 +6005,52 @@ async function persistOutcomeNonBlocking(outcome, options = {}) {
   );
 }
 
+// Nieuwe functie: outcomePersistSucceeded
+function outcomePersistSucceeded(result = null) {
+  if (
+    !result ||
+    typeof result !== 'object'
+  ) {
+    return false;
+  }
+  const reason = upper(
+    result.reason ||
+    result.code ||
+    result.status ||
+    ''
+  );
+  const duplicateAlreadyStored =
+    result.deduped === true ||
+    result.duplicate === true ||
+    result.alreadyRecorded === true ||
+    reason.includes('DUPLICATE') ||
+    reason.includes('ALREADY_RECORDED') ||
+    reason.includes('ALREADY_PROCESSED');
+  if (duplicateAlreadyStored) {
+    return true;
+  }
+  if (
+    result.timeout === true ||
+    result.__timeout === true ||
+    result.__error === true ||
+    result.failed === true ||
+    result.ok === false
+  ) {
+    return false;
+  }
+  if (
+    result.error &&
+    result.ok !== true
+  ) {
+    return false;
+  }
+  /*
+   * recordOutcome kan ook direct de bijgewerkte
+   * learning-row teruggeven zonder ok:true.
+   */
+  return true;
+}
+
 async function closePosition({
   position,
   exit,
@@ -5755,23 +6152,79 @@ async function closePosition({
 
   const outcome = enrichOutcomeIdentity(netOutcome, closedPosition);
 
-  const recordResult = await persistOutcomeNonBlocking(outcome, options);
-  const discordResult = await maybeSendExitAlert(closedPosition, clonePlainObject(outcome), options);
-  const deleteResult = await deleteOpenPosition(closedPosition.symbol || closedPosition.contractSymbol)
-    .catch((error) => ({
-      deleted: false,
-      error: error?.message || String(error)
-    }));
-
+  // Gewijzigde closePosition logica
+  const recordResult = await persistOutcomeNonBlocking(
+    outcome,
+    options
+  );
+  const outcomePersisted =
+    outcomePersistSucceeded(
+      recordResult
+    );
+  /*
+   * Geen Discord-exit versturen wanneer de learning-outcome
+   * nog niet aantoonbaar is opgeslagen.
+   */
+  const discordResult = outcomePersisted
+    ? await maybeSendExitAlert(
+        closedPosition,
+        clonePlainObject(outcome),
+        options
+      )
+    : {
+        sent: false,
+        skipped: true,
+        reason: 'OUTCOME_NOT_DURABLY_RECORDED',
+        runtimeGateApproved: false,
+        exitAlertRuntimeGateRequired: true,
+        exitAlertRuntimeGateVersion:
+          EXIT_ALERT_RUNTIME_GATE_VERSION
+      };
+  /*
+   * Kritiek:
+   * verwijder de open positie alleen wanneer recordOutcome
+   * gelukt is of wanneer dezelfde outcome al eerder is opgeslagen.
+   *
+   * Bij timeout blijft de positie bestaan.
+   * De volgende monitorcyclus probeert de close opnieuw.
+   * De outcome-dedupe voorkomt dubbel tellen.
+   */
+  const deleteResult = outcomePersisted
+    ? await deleteOpenPosition(
+        closedPosition.symbol ||
+        closedPosition.contractSymbol
+      ).catch((error) => ({
+        deleted: false,
+        error:
+          error?.message ||
+          String(error)
+      }))
+    : {
+        deleted: false,
+        skipped: true,
+        reason:
+          'OUTCOME_NOT_DURABLY_RECORDED_OPEN_POSITION_RETAINED'
+      };
   return {
-    type: 'EXIT',
+    type: outcomePersisted
+      ? 'EXIT'
+      : 'EXIT_PENDING_OUTCOME_PERSIST',
     position: closedPosition,
     outcome: {
       ...outcome,
-      recordOutcomeResult: recordResult,
-      openPositionDeleteResult: deleteResult,
-      discordExitAlertResult: discordResult,
-      discordExitAlertSent: Boolean(discordResult.sent)
+      outcomePersisted,
+      outcomePersistenceRetryRequired:
+        !outcomePersisted,
+      recordOutcomeResult:
+        recordResult,
+      openPositionDeleteResult:
+        deleteResult,
+      discordExitAlertResult:
+        discordResult,
+      discordExitAlertSent:
+        Boolean(
+          discordResult.sent
+        )
     }
   };
 }
