@@ -19,22 +19,34 @@ const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
-const DEFAULT_LOCK_TTL_SEC = 70;
-const DEFAULT_STALE_LOCK_AFTER_SEC = 45;
-const DEFAULT_MAX_LOCK_TTL_SEC = 75;
+const VERCEL_MAX_DURATION_MS = 60_000;
+const ROUTE_RETURN_BUFFER_MS = 7_500;
+const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 50_000;
+const MIN_ROUTE_SOFT_TIMEOUT_MS = 12_000;
+const MAX_ROUTE_SOFT_TIMEOUT_MS = 52_000;
+
+const DEFAULT_LOCK_TTL_SEC = 80;
+const DEFAULT_STALE_LOCK_AFTER_SEC = 50;
+const DEFAULT_MAX_LOCK_TTL_SEC = 90;
 
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 const MIN_COMPLETED_MICRO_MICRO_ACTIVE = 35;
 
-const DEFAULT_MAX_RUNTIME_MS = 26000;
-const DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS = 26000;
-const DEFAULT_MONITOR_TIMEOUT_MS = 3500;
-const DEFAULT_MONITOR_ONLY_TIMEOUT_MS = 12000;
-const DEFAULT_MONITOR_BATCH_SIZE = 80;
-const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 150;
-const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 12;
-const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 25;
+const DEFAULT_MAX_RUNTIME_MS = 38_000;
+const DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS = 38_000;
+const DEFAULT_MONITOR_TIMEOUT_MS = 2_500;
+const DEFAULT_MONITOR_ONLY_TIMEOUT_MS = 6_000;
+const DEFAULT_MONITOR_BATCH_SIZE = 40;
+const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 80;
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 6;
+const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 10;
+
+const DEFAULT_CANDIDATE_TIMEOUT_MS = 2_000;
+const DEFAULT_ANALYZE_TIMEOUT_MS = 4_500;
+const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 800;
+const DEFAULT_ROTATION_TIMEOUT_MS = 800;
+const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 250;
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
@@ -48,20 +60,31 @@ const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
-const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
+const MICRO_MICRO_VERSION =
+  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V1';
 const RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V2';
-const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V13_MM_OUTCOME_RUNTIME_GATE';
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
-const OBSERVATION_DEDUPE_VERSION = 'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
-const OUTCOME_DEDUPE_VERSION = 'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V5_MM_IDENTITY_RUNTIME_GATE';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V4';
-const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V2';
+const COST_MODEL_VERSION =
+  'POSITION_ENGINE_SHORT_NET_COST_V13_MM_OUTCOME_RUNTIME_GATE';
+const MEASUREMENT_FIX_VERSION =
+  'SHORT_MEASUREMENT_FIX_CANDLE_FIRST_TOUCH_MICRO_MICRO_V1';
+const OBSERVATION_DEDUPE_VERSION =
+  'SHORT_OBS_DEDUPE_SNAPSHOT_SYMBOL_MICRO_ENTRY_V2';
+const OUTCOME_DEDUPE_VERSION =
+  'SHORT_OUTCOME_DEDUPE_CLOSED_POSITION_V5_MM_IDENTITY_RUNTIME_GATE';
+const ADAPTIVE_UI_VERSION =
+  'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MICRO_MICRO_ONLY_V4';
+const WEAK_CONTRA_ENTRY_GATE_VERSION =
+  'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V2';
 
-const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MICRO_MICRO_RUNTIME_GATE_OBSERVING_PASSED_REJECTED_POLICY_BLOCKED_V1';
-const DISCORD_ACTIVATION_GATE_VERSION = 'SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V2_TRADE_RUNTIME';
-const EXIT_ALERT_RUNTIME_GATE_VERSION = 'SHORT_EXIT_ALERT_RUNTIME_GATE_APPROVED_ONLY_V1';
+const MICRO_MICRO_RUNTIME_GATE_VERSION =
+  'SHORT_MICRO_MICRO_RUNTIME_GATE_OBSERVING_PASSED_REJECTED_POLICY_BLOCKED_V1';
+const DISCORD_ACTIVATION_GATE_VERSION =
+  'SHORT_MM_DISCORD_ACTIVATION_NET_EDGE_GATE_V2_TRADE_RUNTIME';
+const EXIT_ALERT_RUNTIME_GATE_VERSION =
+  'SHORT_EXIT_ALERT_RUNTIME_GATE_APPROVED_ONLY_V1';
 
-const TRADE_RUN_ROUTE_VERSION = 'SHORT_API_TRADE_RUN_CRASH_SAFE_MICRO_MICRO_RUNTIME_GATE_V10';
+const TRADE_RUN_ROUTE_VERSION =
+  'SHORT_API_TRADE_RUN_TIMEOUT_SAFE_MICRO_MICRO_RUNTIME_GATE_V11';
 
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
@@ -305,6 +328,10 @@ function getKeys() {
   return buildShortKeys(CORE?.KEYS || {});
 }
 
+function timeLeftMs(startedAt, budgetMs) {
+  return Math.max(0, safeNumber(budgetMs, 0) - (now() - startedAt));
+}
+
 function shouldDebug(req, body = {}) {
   return (
     isTrue(firstValue(req.query?.debug, false)) ||
@@ -390,8 +417,8 @@ function getRunSource(req, body = {}) {
   );
 
   return manual
-    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_CRASH_SAFE'
-    : 'CRON_OR_API_SHORT_TRADE_RUN_CRASH_SAFE';
+    ? 'ADMIN_MANUAL_SHORT_TRADE_RUN_TIMEOUT_SAFE'
+    : 'CRON_OR_API_SHORT_TRADE_RUN_TIMEOUT_SAFE';
 }
 
 function getPositionTimeStopMin() {
@@ -406,6 +433,35 @@ function getPositionTimeStopMin() {
 
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_POSITION_TIME_STOP_MIN;
   return Math.floor(value);
+}
+
+function getRouteSoftTimeoutMs(req, body = {}) {
+  const CONFIG = getConfig();
+
+  const requested = firstValue(
+    req.query?.routeSoftTimeoutMs ??
+      req.query?.route_soft_timeout_ms ??
+      req.query?.softTimeoutMs ??
+      req.query?.soft_timeout_ms ??
+      body.routeSoftTimeoutMs ??
+      body.route_soft_timeout_ms ??
+      body.softTimeoutMs ??
+      body.soft_timeout_ms,
+    null
+  );
+
+  const configured =
+    CONFIG.short?.trade?.routeSoftTimeoutMs ??
+    CONFIG.trade?.shortRouteSoftTimeoutMs ??
+    CONFIG.trade?.routeSoftTimeoutMs ??
+    DEFAULT_ROUTE_SOFT_TIMEOUT_MS;
+
+  return safeInt(
+    requested ?? configured,
+    DEFAULT_ROUTE_SOFT_TIMEOUT_MS,
+    MIN_ROUTE_SOFT_TIMEOUT_MS,
+    MAX_ROUTE_SOFT_TIMEOUT_MS
+  );
 }
 
 function getLockTtlSec(req, body = {}) {
@@ -472,8 +528,8 @@ function getMonitorTimeoutMs(req, body = {}, monitorOnly = false) {
       CONFIG.trade?.monitorTimeoutMs ??
       (monitorOnly ? DEFAULT_MONITOR_ONLY_TIMEOUT_MS : DEFAULT_MONITOR_TIMEOUT_MS),
     monitorOnly ? DEFAULT_MONITOR_ONLY_TIMEOUT_MS : DEFAULT_MONITOR_TIMEOUT_MS,
-    1000,
-    20000
+    800,
+    10_000
   );
 }
 
@@ -495,8 +551,8 @@ function getMaxRuntimeMs(req, body = {}, monitorOnly = false) {
       CONFIG.trade?.maxRuntimeMs ??
       (monitorOnly ? DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS : DEFAULT_MAX_RUNTIME_MS),
     monitorOnly ? DEFAULT_MONITOR_ONLY_MAX_RUNTIME_MS : DEFAULT_MAX_RUNTIME_MS,
-    8000,
-    35000
+    8_000,
+    42_000
   );
 }
 
@@ -545,8 +601,8 @@ function getMonitorBatchSize(req, body = {}) {
       CONFIG.trade?.monitorBatchSize ??
       DEFAULT_MONITOR_BATCH_SIZE,
     DEFAULT_MONITOR_BATCH_SIZE,
-    10,
-    150
+    5,
+    80
   );
 }
 
@@ -568,8 +624,8 @@ function getOpenPositionMonitorLimit(req, body = {}) {
       CONFIG.trade?.openPositionMonitorLimit ??
       DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
     DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
-    10,
-    300
+    5,
+    150
   );
 }
 
@@ -621,6 +677,11 @@ function runtimeGateFlags() {
 function baseFlags() {
   return {
     tradeRunRouteVersion: TRADE_RUN_ROUTE_VERSION,
+    vercelMaxDurationMs: VERCEL_MAX_DURATION_MS,
+    routeReturnBufferMs: ROUTE_RETURN_BUFFER_MS,
+    routeSoftTimeoutDefaultMs: DEFAULT_ROUTE_SOFT_TIMEOUT_MS,
+    timeoutSafeTradeRun: true,
+    routeSoftTimeoutPreventsVercel504: true,
 
     targetTradeSide: TARGET_TRADE_SIDE,
     dashboardSide: TARGET_DASHBOARD_SIDE,
@@ -838,6 +899,8 @@ function setHeaders(res) {
   res.setHeader('X-Debug-Safe-Dynamic-Imports', 'true');
   res.setHeader('X-Last-Error-Key', LAST_ERROR_KEY);
   res.setHeader('X-Caught-Runtime-Errors-Return-Http-200', String(ERROR_HTTP_200_FOR_CAUGHT_RUNTIME_ERRORS));
+  res.setHeader('X-Timeout-Safe-Trade-Run', 'true');
+  res.setHeader('X-Route-Soft-Timeout-Ms', String(DEFAULT_ROUTE_SOFT_TIMEOUT_MS));
 }
 
 function methodNotAllowed(res) {
@@ -1037,7 +1100,8 @@ async function acquireTradeLock({
     keyPrefix: SHORT_KEY_PREFIX,
     runSource,
     routeVersion: TRADE_RUN_ROUTE_VERSION,
-    staleSafeLock: true
+    staleSafeLock: true,
+    timeoutSafeTradeRun: true
   };
 
   const initialState = await readLockState(redis, lockKey);
@@ -1151,6 +1215,22 @@ async function runWithTradeLock({
     lock,
     lockRelease: released
   };
+}
+
+async function raceWithSoftTimeout(promise, timeoutMs, buildTimeoutValue) {
+  let timer = null;
+
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      resolve(buildTimeoutValue());
+    }, Math.max(1, timeoutMs));
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function unwrapRunResult(value) {
@@ -1785,6 +1865,12 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     runPhase: phase,
     tradeRunPhase: phase,
 
+    routeTimeoutSafe: true,
+    routeSoftTimeoutMs: getRouteSoftTimeoutMs(req, body),
+    routeReturnBufferMs: ROUTE_RETURN_BUFFER_MS,
+    abortBeforeVercelTimeout: true,
+    maxVercelDurationMs: VERCEL_MAX_DURATION_MS,
+
     monitorOpenPositionsFirst: true,
     monitorOpenPositions: true,
     processOpenPositions: true,
@@ -1818,14 +1904,14 @@ function buildRunOptions(req, body = {}, overrides = {}) {
     closeVirtualPositionsTimeoutMs: monitorTimeoutMs,
     closeShadowPositionsTimeoutMs: monitorTimeoutMs,
     positionMonitorTimeoutMs: monitorTimeoutMs,
-    monitorPriceFetchTimeoutMs: 400,
+    monitorPriceFetchTimeoutMs: DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS,
     monitorLivePriceFetchEnabled: false,
     monitorPriceSource: 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
 
-    candidateTimeoutMs: 3500,
-    analyzeTimeoutMs: 6000,
-    marketContextTimeoutMs: 1200,
-    rotationTimeoutMs: 1200,
+    candidateTimeoutMs: DEFAULT_CANDIDATE_TIMEOUT_MS,
+    analyzeTimeoutMs: DEFAULT_ANALYZE_TIMEOUT_MS,
+    marketContextTimeoutMs: DEFAULT_MARKET_CONTEXT_TIMEOUT_MS,
+    rotationTimeoutMs: DEFAULT_ROTATION_TIMEOUT_MS,
     maxRuntimeMs,
 
     monitorBatchSize,
@@ -2384,6 +2470,102 @@ function buildLockSkippedResponse({
   };
 }
 
+function buildRouteSoftTimeoutResponse({
+  req,
+  body = {},
+  startedAt,
+  phase,
+  routeSoftTimeoutMs,
+  lockKey,
+  lockTtlSec,
+  staleLockAfterSec,
+  snapshotInfo = null,
+  failureMeta = null,
+  debug = false
+}) {
+  return {
+    ok: false,
+    tradeOk: false,
+
+    skipped: true,
+    partial: true,
+    routeSoftTimeout: true,
+    routeSoftTimeoutBeforeVercel504: true,
+    reason: 'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504',
+    skipReason: 'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504',
+
+    message:
+      'Trade-run is gecontroleerd afgebroken voordat Vercel de functie met 504 timeout kon killen. De lock wordt niet geforceerd vrijgegeven; die verloopt via TTL zodat runs niet overlappen.',
+
+    ...baseFlags(),
+
+    runSource: getRunSource(req, body),
+    phase,
+
+    routeSoftTimeoutMs,
+    vercelMaxDurationMs: VERCEL_MAX_DURATION_MS,
+    routeReturnBufferMs: ROUTE_RETURN_BUFFER_MS,
+    durationMs: now() - startedAt,
+    completedAt: now(),
+
+    lock: {
+      key: lockKey,
+      ttlSec: lockTtlSec,
+      staleLockAfterSec,
+      released: false,
+      releaseReason: 'LOCK_LEFT_TO_EXPIRE_BY_TTL_AFTER_ROUTE_SOFT_TIMEOUT',
+      overlapProtection: true
+    },
+
+    snapshotInfo,
+
+    runId: null,
+    snapshotId: snapshotInfo?.latestSnapshotId || null,
+
+    entryRows: 0,
+    waitRows: 0,
+    virtualCreatedRows: 0,
+    virtualExitRows: 0,
+    shadowExitRows: 0,
+
+    counts: {
+      candidates: 0,
+      processed: 0,
+      entries: 0,
+      waits: 0,
+      observations: 0,
+      virtualExits: 0,
+      shadowExits: 0,
+      realExits: 0
+    },
+
+    warnings: [
+      'VERCEL_504_PREVENTED_BY_ROUTE_SOFT_TIMEOUT',
+      'TRADE_SYSTEM_DID_NOT_RETURN_WITHIN_ROUTE_BUDGET',
+      'LOCK_LEFT_TO_EXPIRE_BY_TTL_TO_PREVENT_OVERLAP',
+      'LOWER maxCandidatesPerSnapshot OR monitor limits if this repeats'
+    ],
+
+    shortPersistence: failureMeta
+      ? {
+          persistedShortRunMeta: true,
+          lastErrorKey: failureMeta.lastErrorKey || LAST_ERROR_KEY,
+          failureMeta: debug
+            ? failureMeta
+            : {
+                ok: failureMeta.ok,
+                reason: failureMeta.reason,
+                error: failureMeta.error,
+                phase: failureMeta.phase || phase,
+                lastErrorKey: failureMeta.lastErrorKey || LAST_ERROR_KEY
+              }
+        }
+      : null,
+
+    debug
+  };
+}
+
 function responseStatusForError(error) {
   const statusCode = Number(error?.statusCode);
 
@@ -2587,6 +2769,7 @@ export default async function handler(req, res) {
     const lockTtlSec = getLockTtlSec(req, body);
     const staleLockAfterSec = getStaleLockAfterSec(req, body);
     const runSource = getRunSource(req, body);
+    const routeSoftTimeoutMs = getRouteSoftTimeoutMs(req, body);
 
     if (shouldUnlockOnly(req, body)) {
       phase = 'UNLOCK_ONLY';
@@ -2615,7 +2798,10 @@ export default async function handler(req, res) {
     const snapshotInfo = await determineSnapshotInfo(req, body);
 
     phase = 'ACQUIRE_TRADE_LOCK_AND_RUN';
-    const rawResult = await runWithTradeLock({
+
+    let routeTimedOut = false;
+
+    const tradeRunPromise = runWithTradeLock({
       redis: durableRedis,
       lockKey,
       lockTtlSec,
@@ -2632,6 +2818,78 @@ export default async function handler(req, res) {
         };
       }
     });
+
+    tradeRunPromise.catch(async (error) => {
+      if (!routeTimedOut) return;
+
+      try {
+        await writeFailureRunMeta(durableRedis, error, {
+          durationMs: now() - startedAt,
+          phase: 'BACKGROUND_TRADE_RUN_REJECTED_AFTER_ROUTE_SOFT_TIMEOUT',
+          lockLeftForTtlAfterSoftTimeout: true
+        });
+      } catch {
+        // Background persistence mag nooit extra crash veroorzaken.
+      }
+    });
+
+    const remainingBudgetMs = Math.max(
+      1_000,
+      Math.min(
+        routeSoftTimeoutMs,
+        VERCEL_MAX_DURATION_MS - ROUTE_RETURN_BUFFER_MS,
+        timeLeftMs(startedAt, routeSoftTimeoutMs)
+      )
+    );
+
+    const rawResult = await raceWithSoftTimeout(
+      tradeRunPromise,
+      remainingBudgetMs,
+      () => {
+        routeTimedOut = true;
+
+        return {
+          ok: false,
+          skipped: true,
+          skippedNewEntries: true,
+          routeSoftTimeout: true,
+          reason: 'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504',
+          skipReason: 'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504'
+        };
+      }
+    );
+
+    if (rawResult?.routeSoftTimeout) {
+      phase = 'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504';
+
+      const softTimeoutError = new Error('ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504');
+      softTimeoutError.code = 'ROUTE_SOFT_TIMEOUT';
+      softTimeoutError.reason = 'TRADE_SYSTEM_DID_NOT_RETURN_WITHIN_ROUTE_BUDGET';
+
+      const failureMeta = await writeFailureRunMeta(durableRedis, softTimeoutError, {
+        durationMs: now() - startedAt,
+        phase,
+        routeSoftTimeoutMs,
+        remainingBudgetMs,
+        snapshotInfo,
+        lockLeftForTtlAfterSoftTimeout: true,
+        lockReleasedAfterError: false
+      }).catch(() => null);
+
+      return res.status(200).json(buildRouteSoftTimeoutResponse({
+        req,
+        body,
+        startedAt,
+        phase,
+        routeSoftTimeoutMs,
+        lockKey,
+        lockTtlSec,
+        staleLockAfterSec,
+        snapshotInfo,
+        failureMeta,
+        debug
+      }));
+    }
 
     if (rawResult?.skipped && rawResult?.reason === 'TRADE_RUN_LOCK_ACTIVE') {
       return res.status(200).json(buildLockSkippedResponse({
@@ -2716,6 +2974,10 @@ export default async function handler(req, res) {
       forceUnlock,
       lockTtlSec,
       staleLockAfterSec,
+
+      routeSoftTimeoutMs,
+      routeSoftTimeout: false,
+      routeSoftTimeoutBeforeVercel504: false,
 
       lock: {
         key: lockKey,
@@ -2890,6 +3152,7 @@ export default async function handler(req, res) {
           ? 'MONITOR_PREFLIGHT_FAILED_ENTRIES_MAY_STILL_BLOCK_ON_EXISTING_SYMBOLS'
           : null,
         'SCANNER_PRELOAD_DISABLED_FAST_TRADE_RUN_USE_API_SCANNER_RUN_SEPARATELY',
+        'TIMEOUT_SAFE_ROUTE_ENABLED_SOFT_RETURN_BEFORE_VERCEL_504',
         payload?.weakContraRejectedRows > 0
           ? `E_WEAK_CONTRA_ENTRY_GATE_REJECTED:${payload.weakContraRejectedRows}`
           : null,
