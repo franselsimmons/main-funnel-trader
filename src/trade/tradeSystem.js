@@ -50,41 +50,47 @@ const SELECTION_75_CHILD_CONTEXT = 'MICRO_75_CONTEXT_ONLY';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
 const TRADE_SYSTEM_VERSION =
-  'SHORT_TRADE_SYSTEM_WEATHER_AWARE_PLAYBOOK_SELECTOR_V3_IMPORT_SAFE_500_SAFE';
+  'SHORT_TRADE_SYSTEM_V4_DEADLINE_SAFE_NO_KEYS_SCAN_ROUTE_LIMITS_HONORED';
 const ENTRY_RELAXATION_PROFILE =
-  'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_WEATHER_CAPTURE_V4_FULL_CONFIRMED_WEATHER';
+  'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_WEATHER_CAPTURE_V5_DEADLINE_SAFE';
 const QUALITY_MEASUREMENT_PROFILE =
-  'SHORT_MICRO_MICRO_WEATHER_AWARE_SELECTOR_SAFE_PHASES_V3_500_SAFE';
+  'SHORT_MICRO_MICRO_SELECTOR_SAFE_PHASES_V4_DEADLINE_SAFE';
 
 const MICRO_MICRO_VERSION =
-  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V5_WEATHER_AWARE_IMPORT_SAFE';
+  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V6_DEADLINE_SAFE';
 
 const SHORT_RISK_PLAN_VERSION =
-  'SHORT_ADAPTIVE_RR_TP_SL_V4_WEATHER_AWARE_PLAYBOOK';
+  'SHORT_ADAPTIVE_RR_TP_SL_V5_DEADLINE_SAFE';
 
 const RR_SHADOW_GRID_VERSION =
-  'SHORT_RR_SHADOW_GRID_V4_WEATHER_AWARE';
+  'SHORT_RR_SHADOW_GRID_V5_DEADLINE_SAFE';
 
 const MICRO_MICRO_RUNTIME_GATE_VERSION =
-  'SHORT_MM_RUNTIME_STATUS_GATE_V4_WEATHER_EMPIRICAL_VETO';
+  'SHORT_MM_RUNTIME_STATUS_GATE_V5_DEADLINE_SAFE';
 
 const DISCORD_ACTIVATION_GATE_VERSION =
-  'SHORT_MM_DISCORD_ACTIVATION_GATE_EMPIRICAL_VETO_RISK_ZERO_V7_TRADE_SYSTEM';
+  'SHORT_MM_DISCORD_ACTIVATION_GATE_V8_DEADLINE_SAFE';
 
 const MARKET_WEATHER_FEATURE_FLAGS_VERSION =
-  'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V2_TRADE_SYSTEM_500_SAFE';
+  'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V3_TRADE_SYSTEM_DEADLINE_SAFE';
 
 const MARKET_WEATHER_SIGNAL_DECISION_VERSION =
-  'SHORT_MARKET_WEATHER_SIGNAL_DECISION_V3_RISK_AFTER_PROOF';
+  'SHORT_MARKET_WEATHER_SIGNAL_DECISION_V4_DEADLINE_SAFE';
 
 const MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION =
-  'SHORT_MARKET_WEATHER_PLAYBOOK_FRESHNESS_V2_MAX_AGE_240_REFRESH_ON_CHANGE';
+  'SHORT_MARKET_WEATHER_PLAYBOOK_FRESHNESS_V3_DEADLINE_SAFE';
 
 const EMPIRICAL_VETO_VERSION =
-  'SHORT_EXACT_MM_EMPIRICAL_VETO_LCB95_V2';
+  'SHORT_EXACT_MM_EMPIRICAL_VETO_LCB95_V3_DEADLINE_SAFE';
 
 const POSITION_SIZING_PROOF_INPUT_VERSION =
-  'SHORT_POSITION_SIZING_PROOF_INPUT_V3_WEATHER_PLAYBOOK';
+  'SHORT_POSITION_SIZING_PROOF_INPUT_V4_DEADLINE_SAFE';
+
+const WEAK_CONTRA_ENTRY_GATE_VERSION =
+  'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V5_POLICY_ONLY_DEADLINE_SAFE';
+
+const HARD_TIME_STOP_CLEANUP_VERSION =
+  'SHORT_TRADE_SYSTEM_MONITOR_HARD_TIME_STOP_PRE_PRICE_V3_DEADLINE_SAFE';
 
 const SIGNAL_TYPE_TRADE_READY = 'TRADE_READY';
 const SIGNAL_TYPE_WATCH_ONLY = 'WATCH_ONLY';
@@ -115,11 +121,6 @@ const MICRO_MICRO_STATUS_RANK = Object.freeze({
   [MICRO_MICRO_STATUS_POLICY_BLOCKED]: 4
 });
 
-const WEAK_CONTRA_ENTRY_GATE_VERSION =
-  'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V4_POLICY_ONLY';
-const HARD_TIME_STOP_CLEANUP_VERSION =
-  'SHORT_TRADE_SYSTEM_MONITOR_HARD_TIME_STOP_PRE_PRICE_V2';
-
 const MIN_DISCORD_ACTIVATION_COMPLETED = 35;
 const MIN_DISCORD_ACTIVATION_LCB95_AVG_R = 0;
 const MIN_DISCORD_ACTIVATION_AVG_R = 0;
@@ -131,9 +132,11 @@ const MIN_EMPIRICAL_VETO_COMPLETED = 35;
 const BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE = true;
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
-const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 10;
-const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 25;
-const DEFAULT_DATA_CONCURRENCY = 2;
+
+const DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT = 8;
+const DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT = 14;
+const DEFAULT_MAX_ENTRIES_PER_RUN = 8;
+const DEFAULT_DATA_CONCURRENCY = 1;
 const DEFAULT_MAX_SNAPSHOT_AGE_SEC = 8 * 60;
 
 const DEFAULT_MIN_RISK_PCT = 0.0045;
@@ -153,19 +156,26 @@ const DEFAULT_ROUND_TRIP_SLIPPAGE_PCT = 0.0004;
 const DEFAULT_FALLBACK_SPREAD_PCT = 0.0008;
 const DEFAULT_SPREAD_COST_MULT = 1;
 
-const DEFAULT_MONITOR_TIMEOUT_MS = 9500;
-const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 650;
-const DEFAULT_CANDIDATE_TIMEOUT_MS = 1600;
-const DEFAULT_ANALYZE_TIMEOUT_MS = 3500;
-const DEFAULT_ROTATION_TIMEOUT_MS = 900;
-const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 900;
-const DEFAULT_MAX_RUNTIME_MS = 26000;
-const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 2500;
-const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 1200;
-const DEFAULT_MONITOR_BATCH_SIZE = 150;
-const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 250;
-const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 3;
-const DEFAULT_ENTRY_LOOP_RESERVE_MS = 900;
+const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 650;
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 900;
+const DEFAULT_ROTATION_TIMEOUT_MS = 650;
+const DEFAULT_ANALYZE_TIMEOUT_MS = 2500;
+const DEFAULT_CANDIDATE_TIMEOUT_MS = 900;
+const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 900;
+const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 700;
+const DEFAULT_REDIS_WRITE_TIMEOUT_MS = 700;
+const DEFAULT_DISCORD_TIMEOUT_MS = 900;
+
+const DEFAULT_MONITOR_TIMEOUT_MS = 2500;
+const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 350;
+const DEFAULT_MONITOR_BATCH_SIZE = 25;
+const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 40;
+
+const DEFAULT_MAX_RUNTIME_MS = 24000;
+const DEFAULT_HARD_RETURN_RESERVE_MS = 3200;
+const DEFAULT_PHASE_RESERVE_MS = 1800;
+const DEFAULT_ENTRY_LOOP_RESERVE_MS = 2500;
+const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 1;
 
 const DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT = true;
 const DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH = true;
@@ -242,8 +252,8 @@ const SETUP_SET = new Set(SETUP_TYPES);
 const REGIME_SET = new Set(REGIME_BUCKETS);
 const CONFIRMATION_SET = new Set(CONFIRMATION_PROFILES);
 
-const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on']);
-const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off']);
+const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on', 'force', 'forced']);
+const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off', 'disabled', 'skip']);
 
 const livePriceCache = new Map();
 let ACTIVE_RUN_OPTIONS = {};
@@ -277,7 +287,6 @@ function bool(value, fallback = false) {
   if (typeof value === 'number') return value !== 0;
 
   const raw = String(value).trim().toLowerCase();
-
   if (TRUE_VALUES.has(raw)) return true;
   if (FALSE_VALUES.has(raw)) return false;
 
@@ -314,12 +323,8 @@ function pct(part, total) {
 }
 
 function int(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
-  return Math.max(min, Math.min(max, Math.floor(n(value, fallback))));
-}
-
-function minRuntimeFloor(value, fallback, minFloor, min = 1, max = Number.MAX_SAFE_INTEGER) {
-  const parsed = int(value, fallback, min, max);
-  return Math.max(minFloor, parsed);
+  const parsed = Math.floor(n(value, fallback));
+  return Math.max(min, Math.min(max, parsed));
 }
 
 function hashText(value, length = MICRO_MICRO_HASH_LEN) {
@@ -359,25 +364,81 @@ function uniqueStrings(values = []) {
 }
 
 function timeoutPayload(label, ms) {
-  return new Promise((resolve) => setTimeout(
-    () => resolve({ __timeout: true, label, timeoutMs: ms }),
-    Math.max(1, int(ms, 1))
-  ));
+  return new Promise((resolve) => {
+    setTimeout(
+      () => resolve({ __timeout: true, label, timeoutMs: ms }),
+      Math.max(1, int(ms, 1, 1, 60_000))
+    );
+  });
 }
 
 async function withTimeout(promise, ms, label) {
-  return Promise.race([promise, timeoutPayload(label, ms)]);
+  return Promise.race([
+    Promise.resolve(promise),
+    timeoutPayload(label, ms)
+  ]);
 }
 
 function isTimeoutResult(value) {
   return Boolean(value && typeof value === 'object' && value.__timeout === true);
 }
 
-function runtimeExceeded(startedAt, cfg, reserveMs = 1000) {
-  return now() - n(startedAt, now()) >= Math.max(
-    1000,
-    n(cfg.maxRuntimeMs, DEFAULT_MAX_RUNTIME_MS) - reserveMs
+function createDeadline(startedAt, cfg) {
+  const maxRuntimeMs = int(
+    cfg.maxRuntimeMs,
+    DEFAULT_MAX_RUNTIME_MS,
+    8000,
+    52_000
   );
+
+  return {
+    startedAt,
+    maxRuntimeMs,
+    deadlineAt: startedAt + maxRuntimeMs,
+    hardReturnReserveMs: cfg.hardReturnReserveMs
+  };
+}
+
+function remainingMs(deadline, reserveMs = DEFAULT_PHASE_RESERVE_MS) {
+  return Math.max(0, n(deadline?.deadlineAt, now()) - now() - reserveMs);
+}
+
+function deadlineExceeded(deadline, reserveMs = DEFAULT_PHASE_RESERVE_MS) {
+  return remainingMs(deadline, reserveMs) <= 0;
+}
+
+function timeoutInsideDeadline(ms, deadline, reserveMs = DEFAULT_PHASE_RESERVE_MS, minMs = 80) {
+  const budget = remainingMs(deadline, reserveMs);
+  if (budget <= 0) return 0;
+  return Math.max(minMs, Math.min(int(ms, minMs, minMs, 60_000), budget));
+}
+
+async function withDeadline(promiseFactory, {
+  deadline,
+  timeoutMs,
+  reserveMs = DEFAULT_PHASE_RESERVE_MS,
+  label,
+  fallback
+}) {
+  const ms = timeoutInsideDeadline(timeoutMs, deadline, reserveMs, 40);
+
+  if (ms <= 0) {
+    return typeof fallback === 'function'
+      ? fallback({ __deadline: true, label })
+      : fallback;
+  }
+
+  const result = await withTimeout(
+    Promise.resolve().then(promiseFactory),
+    ms,
+    label
+  );
+
+  if (isTimeoutResult(result)) {
+    return typeof fallback === 'function' ? fallback(result) : fallback;
+  }
+
+  return result;
 }
 
 function normalizeTimestampMs(value, fallback = 0) {
@@ -542,46 +603,624 @@ async function setJsonSafe(redis, key, value, options = {}) {
   return false;
 }
 
-async function getKeysSafe(redis, pattern, limit = 50) {
-  if (!redis || !pattern) return [];
+async function setJsonWithTimeout(redis, key, value, timeoutMs, label) {
+  const result = await withTimeout(
+    setJsonSafe(redis, key, value),
+    timeoutMs,
+    label
+  );
 
-  if (typeof RedisApi.getKeys === 'function') {
-    try {
-      const keys = await RedisApi.getKeys(redis, pattern, limit);
-      return Array.isArray(keys) ? keys.slice(0, limit) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  try {
-    if (typeof redis.keys === 'function') {
-      const keys = await redis.keys(pattern);
-      return Array.isArray(keys) ? keys.slice(0, limit) : [];
-    }
-  } catch {
-    return [];
-  }
-
-  return [];
+  return !isTimeoutResult(result) && result === true;
 }
 
-async function readJsonFromAnyRedis(keys = [], fallback = null) {
+async function readJsonFromAnyRedis(keys = [], fallback = null, timeoutMs = 500) {
   const volatileRedis = safeGetVolatileRedis();
   const durableRedis = safeGetDurableRedis();
   const keyList = uniqueStrings(keys).filter(Boolean);
 
   for (const key of keyList) {
-    const value = await getJsonSafe(volatileRedis, key, null);
-    if (value) return { value, source: `VOLATILE:${key}`, key };
+    const result = await withTimeout(
+      getJsonSafe(volatileRedis, key, null),
+      timeoutMs,
+      `VOLATILE_GET_TIMEOUT:${key}`
+    );
+
+    if (!isTimeoutResult(result) && result) {
+      return { value: result, source: `VOLATILE:${key}`, key };
+    }
   }
 
   for (const key of keyList) {
-    const value = await getJsonSafe(durableRedis, key, null);
-    if (value) return { value, source: `DURABLE:${key}`, key };
+    const result = await withTimeout(
+      getJsonSafe(durableRedis, key, null),
+      timeoutMs,
+      `DURABLE_GET_TIMEOUT:${key}`
+    );
+
+    if (!isTimeoutResult(result) && result) {
+      return { value: result, source: `DURABLE:${key}`, key };
+    }
   }
 
   return { value: fallback, source: null, key: null };
+}
+
+function sideFlags() {
+  return {
+    sideMode: 'SHORT_ONLY',
+    targetTradeSide: TARGET_TRADE_SIDE,
+    targetScannerSide: TARGET_SCANNER_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+    signalSide: TARGET_TRADE_SIDE,
+    entrySide: TARGET_TRADE_SIDE,
+    scannerSide: TARGET_SCANNER_SIDE,
+    actualScannerSide: TARGET_SCANNER_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false
+  };
+}
+
+function isolationFlags() {
+  return {
+    namespace: SHORT_NAMESPACE,
+    redisNamespace: SHORT_NAMESPACE,
+    keyPrefix: SHORT_KEY_PREFIX,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
+    longRootTouched: false,
+
+    scannerRunAllowed: false,
+    noScannerRun: true,
+    writesScanner: false,
+    writesScannerLatest: false,
+    writesScannerSnapshot: false,
+    writesMarketUniverse: false,
+    writesMarketWeather: false,
+
+    writesTrade: true,
+    writesAnalyze: true,
+    analyzePartialOnly: true,
+    analyzeFullOverwriteDisabled: true,
+
+    writesRotation: false,
+    writesManualSelection: false,
+    writesDiscordSelection: false,
+    preserveRotation: true,
+    preserveManualSelection: true,
+    preserveDiscordSelection: true,
+
+    realOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    noRealOrders: true,
+    noExchangeOrders: true,
+
+    globalMaxOpenPositionsBlockDisabled: true,
+    oneOpenPositionPerSymbol: true,
+    maxOneOpenPositionPerSymbol: true,
+    monitorOpenPositionsBeforeEntries: true,
+
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
+  };
+}
+
+function marketWeatherFeatureFlags() {
+  return {
+    version: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+
+    capture: 'live',
+    aggregation: 'live',
+    selector: 'observe',
+    sizingCap: 'observe',
+    fdr: 'observe',
+    discordTradeReady: 'validated_only',
+
+    marketWeatherCaptureEnabled: true,
+    marketWeatherAggregationEnabled: true,
+    marketWeatherSelectorEnabled: true,
+    marketWeatherSelectorMode: 'OBSERVE',
+    marketWeatherFdrEnabled: true,
+    marketWeatherFdrMode: 'OBSERVE',
+    marketWeatherSizingCapEnabled: true,
+    marketWeatherSizingCapMode: 'OBSERVE',
+    marketWeatherDiscordTradeReadyEnabled: false,
+
+    marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION,
+    marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
+
+    entryMarketWeatherImmutable: true,
+    entryMarketWeatherNeverRecomputedAtExit: true,
+    unknownMarketWeatherNeverTradeReady: true,
+
+    riskSourceOfTruth: 'riskFractionForEntry',
+    proofTierIsLabelOnly: true,
+    signalTypeIsDerivedOnly: true,
+    tradeReadyManualOverrideAllowed: false,
+
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    empiricalVetoUsesLcb95NotRawAvgR: true,
+    empiricalVetoBlocksParentRescue: true
+  };
+}
+
+function microPolicyFlags() {
+  return {
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+    trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+    learningGranularity: CHILD75_LEARNING_GRANULARITY,
+    child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
+    microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+
+    microMicroVersion: MICRO_MICRO_VERSION,
+    learningHierarchy: 'PARENT_15_TO_MICRO_75_TO_MICRO_MICRO',
+
+    parentSelectionAllowed: false,
+    micro75SelectionAllowed: false,
+    microMicroSelectionAllowed: true,
+    selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
+
+    manualSelectionOnly: true,
+    manualSelectionRequired: true,
+    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
+    discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
+    discordOnlyForSelectedMicroFamilies: false,
+    discordOnlyForSelectedMicroMicroFamilies: true,
+    discordOnlyForExactTrueMicroMatch: false,
+    discordOnlyForExactMicroMicroMatch: true,
+    parent15MatchTriggersDiscord: false,
+    child75MatchTriggersDiscord: false,
+    micro75MatchDoesNotTriggerDiscord: true,
+    scannerMatchTriggersDiscord: false,
+
+    discordActivationRequiresWeatherPlaybook: true,
+    discordActivationRequiresNetEdge: true,
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordRuntimeGateRequired: true,
+    discordRuntimeGateSource: 'ACTIVE_ROTATION_ROW_PERSISTENT_STATS_RECHECKED_IN_TRADE_SYSTEM'
+  };
+}
+
+function virtualFlags(row = {}) {
+  return {
+    virtualOnly: true,
+    virtualTracked: true,
+    virtualLearning: true,
+    source: row.source || 'VIRTUAL',
+    outcomeSource: row.outcomeSource || 'VIRTUAL',
+    paperTrade: true,
+    paperPosition: true,
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+    noRealOrders: true,
+    noExchangeOrders: true,
+
+    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    rrVariants: row.rrVariants || DEFAULT_RR_VARIANTS,
+
+    scannerFingerprintRole: 'METADATA_ONLY',
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    scannerBucketsMetadataOnly: true,
+    legacy25BucketsMetadataOnly: true,
+
+    executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+    executionFingerprintsMetadataOnly: false,
+    executionFingerprintsUsedAsLearningFamily: false,
+    executionFingerprintsCanDeriveMicroMicroContextHash: true,
+    executionContextHashIncludedInMicroMicroId: true,
+
+    scannerHashesExcludedFromFamilyId: true,
+    hashesExcludedFromFamilyId: false,
+    entryMarketWeatherKeyExcludedFromFamilyId: true,
+    weatherExcludedFromFamilyId: true,
+
+    analyzeMicroFamiliesOnly: true,
+    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
+    symbolExcludedFromFamilyId: true,
+    coinNameExcludedFromFamilyId: true,
+
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitCanBlockDiscord: true,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+
+    weakContraEntryGateEnabled: true,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraRejectedBlocksVirtualEntry: true,
+    weakContraRejectedBlocksLearning: false,
+
+    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    scoringRSource: 'netR',
+    winsLossesFlatsSource: 'netR',
+    winrateDefinition: 'netR > 0',
+    avgRSource: 'netR',
+    totalRSource: 'netR',
+    avgCostRShown: true,
+
+    riskTradeSide: TARGET_TRADE_SIDE,
+    validShortRiskShape: true,
+    shortRiskShape: 'tp < entry < sl',
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: candle.low <= tp',
+    slHitRule: 'SHORT: candle.high >= sl',
+    sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+    hardTimeStopNoPriceExit: DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT,
+    closeExpiredBeforePriceFetch: DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH,
+
+    marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+    marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
+    marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION,
+    marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
+
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    empiricalVetoUsesLcb95: true,
+    empiricalVetoBlocksParentFallbackRescue: true,
+    positionSizingProofInputVersion: POSITION_SIZING_PROOF_INPUT_VERSION,
+
+    ...microPolicyFlags()
+  };
+}
+
+function tradeConfig() {
+  const options = ACTIVE_RUN_OPTIONS || {};
+
+  const maxRuntimeMs = int(
+    first(
+      options.maxRuntimeMs,
+      CONFIG.short?.trade?.maxRuntimeMs,
+      CONFIG.trade?.shortMaxRuntimeMs,
+      CONFIG.trade?.maxRuntimeMs
+    ),
+    DEFAULT_MAX_RUNTIME_MS,
+    8000,
+    52_000
+  );
+
+  const minRiskPct = n(first(
+    options.minRiskPct,
+    CONFIG.short?.trade?.minRiskPct,
+    CONFIG.trade?.shortMinRiskPct,
+    CONFIG.trade?.minRiskPct
+  ), DEFAULT_MIN_RISK_PCT);
+
+  const maxRiskPct = n(first(
+    options.maxRiskPct,
+    CONFIG.short?.trade?.maxRiskPct,
+    CONFIG.trade?.shortMaxRiskPct,
+    CONFIG.trade?.maxRiskPct
+  ), DEFAULT_MAX_RISK_PCT);
+
+  return {
+    maxRuntimeMs,
+    hardReturnReserveMs: int(
+      first(options.hardReturnReserveMs, CONFIG.short?.trade?.hardReturnReserveMs),
+      DEFAULT_HARD_RETURN_RESERVE_MS,
+      1200,
+      8000
+    ),
+
+    maxCandidatesPerSnapshot: int(
+      first(
+        options.maxCandidatesPerSnapshot,
+        options.maxCandidates,
+        CONFIG.short?.trade?.maxCandidatesPerSnapshot,
+        CONFIG.trade?.maxCandidatesPerSnapshot
+      ),
+      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
+      1,
+      DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT
+    ),
+
+    analyzeMaxCandidatesPerSnapshot: int(
+      first(
+        options.analyzeMaxCandidatesPerSnapshot,
+        options.maxCandidatesPerSnapshot,
+        CONFIG.short?.trade?.analyzeMaxCandidatesPerSnapshot,
+        CONFIG.trade?.analyzeMaxCandidatesPerSnapshot
+      ),
+      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
+      1,
+      DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT
+    ),
+
+    hardMaxCandidatesPerSnapshot: DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT,
+
+    maxEntriesPerRun: int(
+      first(options.maxEntriesPerRun, CONFIG.short?.trade?.maxEntriesPerRun),
+      DEFAULT_MAX_ENTRIES_PER_RUN,
+      0,
+      20
+    ),
+
+    maxSnapshotAgeSec: n(first(
+      options.maxSnapshotAgeSec,
+      CONFIG.short?.trade?.maxSnapshotAgeSec,
+      CONFIG.trade?.maxSnapshotAgeSec
+    ), DEFAULT_MAX_SNAPSHOT_AGE_SEC),
+
+    dataConcurrency: int(
+      first(
+        options.dataConcurrency,
+        CONFIG.short?.trade?.dataConcurrency,
+        CONFIG.trade?.dataConcurrency
+      ),
+      DEFAULT_DATA_CONCURRENCY,
+      1,
+      2
+    ),
+
+    minRiskPct,
+    maxRiskPct,
+    fallbackRiskPct: n(first(
+      options.fallbackRiskPct,
+      CONFIG.short?.trade?.fallbackRiskPct,
+      CONFIG.trade?.fallbackRiskPct
+    ), DEFAULT_FALLBACK_RISK_PCT),
+
+    defaultRR: n(first(options.defaultRR, CONFIG.short?.trade?.defaultRR, CONFIG.trade?.defaultRR), DEFAULT_RR),
+    minRR: n(first(options.minRR, CONFIG.short?.trade?.minRR, CONFIG.trade?.minRR), DEFAULT_MIN_RR),
+    maxRR: n(first(options.maxRR, CONFIG.short?.trade?.maxRR, CONFIG.trade?.maxRR), DEFAULT_MAX_RR),
+    minRewardPct: n(first(options.minRewardPct, CONFIG.short?.trade?.minRewardPct, CONFIG.trade?.minRewardPct), DEFAULT_MIN_REWARD_PCT),
+    minDiscordRewardPct: n(first(options.minDiscordRewardPct, CONFIG.short?.trade?.minDiscordRewardPct, CONFIG.trade?.minDiscordRewardPct), DEFAULT_MIN_DISCORD_REWARD_PCT),
+    maxRiskToRewardDistanceRatio: n(first(options.maxRiskToRewardDistanceRatio, CONFIG.short?.trade?.maxRiskToRewardDistanceRatio, CONFIG.trade?.maxRiskToRewardDistanceRatio), DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO),
+
+    maxEstimatedCostR: n(first(options.maxEstimatedCostR, CONFIG.short?.trade?.maxEstimatedCostR, CONFIG.trade?.shortMaxEstimatedCostR, CONFIG.trade?.maxEstimatedCostR), DEFAULT_MAX_ESTIMATED_COST_R),
+    hardMaxEstimatedCostR: n(first(options.hardMaxEstimatedCostR, CONFIG.short?.trade?.hardMaxEstimatedCostR, CONFIG.trade?.hardMaxEstimatedCostR), DEFAULT_HARD_MAX_ESTIMATED_COST_R),
+    roundTripFeePct: n(first(options.roundTripFeePct, CONFIG.short?.cost?.roundTripFeePct, CONFIG.cost?.roundTripFeePct), DEFAULT_ROUND_TRIP_FEE_PCT),
+    roundTripSlippagePct: n(first(options.roundTripSlippagePct, CONFIG.short?.cost?.roundTripSlippagePct, CONFIG.cost?.roundTripSlippagePct), DEFAULT_ROUND_TRIP_SLIPPAGE_PCT),
+    fallbackSpreadPct: n(first(options.fallbackSpreadPct, CONFIG.short?.cost?.fallbackSpreadPct, CONFIG.cost?.fallbackSpreadPct), DEFAULT_FALLBACK_SPREAD_PCT),
+    spreadCostMult: n(first(options.spreadCostMult, CONFIG.short?.cost?.spreadCostMult, CONFIG.cost?.spreadCostMult), DEFAULT_SPREAD_COST_MULT),
+
+    rrVariants: Array.isArray(options.rrVariants) && options.rrVariants.length
+      ? options.rrVariants.map((x) => n(x, 0)).filter((x) => x > 0)
+      : DEFAULT_RR_VARIANTS,
+
+    marketContextTimeoutMs: int(
+      first(options.marketContextTimeoutMs, CONFIG.short?.trade?.marketContextTimeoutMs, CONFIG.trade?.marketContextTimeoutMs),
+      DEFAULT_MARKET_CONTEXT_TIMEOUT_MS,
+      100,
+      1500
+    ),
+
+    snapshotTimeoutMs: int(
+      first(options.snapshotTimeoutMs, CONFIG.short?.trade?.snapshotTimeoutMs),
+      DEFAULT_SNAPSHOT_TIMEOUT_MS,
+      150,
+      2000
+    ),
+
+    candidateTimeoutMs: int(
+      first(options.candidateTimeoutMs, CONFIG.short?.trade?.candidateTimeoutMs, CONFIG.trade?.candidateTimeoutMs),
+      DEFAULT_CANDIDATE_TIMEOUT_MS,
+      100,
+      1800
+    ),
+
+    analyzeTimeoutMs: int(
+      first(options.analyzeTimeoutMs, CONFIG.short?.trade?.analyzeTimeoutMs, CONFIG.trade?.analyzeTimeoutMs),
+      DEFAULT_ANALYZE_TIMEOUT_MS,
+      250,
+      3500
+    ),
+
+    rotationTimeoutMs: int(
+      first(options.rotationTimeoutMs, CONFIG.short?.trade?.rotationTimeoutMs, CONFIG.trade?.rotationTimeoutMs),
+      DEFAULT_ROTATION_TIMEOUT_MS,
+      100,
+      1200
+    ),
+
+    monitorTimeoutMs: int(
+      first(options.monitorTimeoutMs, CONFIG.short?.trade?.monitorTimeoutMs, CONFIG.trade?.monitorTimeoutMs),
+      DEFAULT_MONITOR_TIMEOUT_MS,
+      300,
+      8000
+    ),
+
+    monitorPriceFetchTimeoutMs: int(
+      first(options.monitorPriceFetchTimeoutMs, CONFIG.short?.trade?.monitorPriceFetchTimeoutMs, CONFIG.trade?.monitorPriceFetchTimeoutMs),
+      DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS,
+      80,
+      800
+    ),
+
+    monitorBatchSize: int(
+      first(options.monitorBatchSize, CONFIG.short?.trade?.monitorBatchSize, CONFIG.trade?.monitorBatchSize),
+      DEFAULT_MONITOR_BATCH_SIZE,
+      1,
+      80
+    ),
+
+    openPositionMonitorLimit: int(
+      first(options.openPositionMonitorLimit, CONFIG.short?.trade?.openPositionMonitorLimit, CONFIG.trade?.openPositionMonitorLimit),
+      DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
+      1,
+      120
+    ),
+
+    openPositionLoadTimeoutMs: int(
+      first(options.openPositionLoadTimeoutMs, CONFIG.short?.trade?.openPositionLoadTimeoutMs, CONFIG.trade?.openPositionLoadTimeoutMs),
+      DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS,
+      150,
+      2000
+    ),
+
+    savePositionTimeoutMs: int(
+      first(options.savePositionTimeoutMs, CONFIG.short?.trade?.savePositionTimeoutMs, CONFIG.trade?.savePositionTimeoutMs),
+      DEFAULT_SAVE_POSITION_TIMEOUT_MS,
+      150,
+      1500
+    ),
+
+    redisWriteTimeoutMs: int(
+      first(options.redisWriteTimeoutMs, CONFIG.short?.trade?.redisWriteTimeoutMs),
+      DEFAULT_REDIS_WRITE_TIMEOUT_MS,
+      150,
+      1500
+    ),
+
+    discordTimeoutMs: int(
+      first(options.discordTimeoutMs, CONFIG.short?.trade?.discordTimeoutMs),
+      DEFAULT_DISCORD_TIMEOUT_MS,
+      150,
+      1500
+    ),
+
+    minEntryLoopAttempts: int(
+      first(options.minEntryLoopAttempts, CONFIG.short?.trade?.minEntryLoopAttempts, CONFIG.trade?.minEntryLoopAttempts),
+      DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS,
+      0,
+      4
+    ),
+
+    entryLoopReserveMs: int(
+      first(options.entryLoopReserveMs, CONFIG.short?.trade?.entryLoopReserveMs, CONFIG.trade?.entryLoopReserveMs),
+      DEFAULT_ENTRY_LOOP_RESERVE_MS,
+      700,
+      5000
+    ),
+
+    positionTimeStopMin: n(first(
+      options.positionTimeStopMin,
+      CONFIG.short?.trade?.positionTimeStopMin,
+      CONFIG.trade?.positionTimeStopMin
+    ), 720),
+
+    monitorLivePriceFetchEnabled: bool(first(
+      options.monitorLivePriceFetchEnabled,
+      CONFIG.short?.trade?.monitorLivePriceFetchEnabled,
+      CONFIG.trade?.monitorLivePriceFetchEnabled
+    ), false),
+
+    monitorOpenPositionsEnabled: bool(first(
+      options.monitorOpenPositions,
+      options.monitorOpenPositionsEnabled,
+      CONFIG.short?.trade?.monitorOpenPositionsEnabled
+    ), true),
+
+    skipMonitorWhenSameSnapshotProcessed: bool(first(
+      options.skipMonitorWhenSameSnapshotProcessed,
+      CONFIG.short?.trade?.skipMonitorWhenSameSnapshotProcessed
+    ), false),
+
+    allowDeepSnapshotSearch: bool(first(
+      options.allowDeepSnapshotSearch,
+      options.forceDeepSnapshotSearch,
+      CONFIG.short?.trade?.allowDeepSnapshotSearch
+    ), false),
+
+    discordSendEnabled: bool(first(
+      options.discordSendEnabled,
+      CONFIG.short?.discord?.sendEnabled,
+      CONFIG.discord?.sendEnabled
+    ), true),
+
+    hardTimeStopNoPriceExit: bool(first(
+      options.hardTimeStopNoPriceExit,
+      CONFIG.short?.trade?.hardTimeStopNoPriceExit,
+      CONFIG.trade?.hardTimeStopNoPriceExit
+    ), DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT),
+
+    closeExpiredBeforePriceFetch: bool(first(
+      options.closeExpiredBeforePriceFetch,
+      CONFIG.short?.trade?.closeExpiredBeforePriceFetch,
+      CONFIG.trade?.closeExpiredBeforePriceFetch
+    ), DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH),
+
+    monitorCandleRangeEnabled: bool(first(
+      options.monitorCandleRangeEnabled,
+      CONFIG.short?.trade?.monitorCandleRangeEnabled,
+      CONFIG.trade?.monitorCandleRangeEnabled
+    ), DEFAULT_MONITOR_CANDLE_RANGE_ENABLED)
+  };
+}
+
+function sizingConfig() {
+  const options = ACTIVE_RUN_OPTIONS || {};
+
+  const enabled = bool(first(
+    options.sizingEnabled,
+    options.positionSizingEnabled,
+    options.usePositionSizing,
+    CONFIG.short?.sizing?.enabled,
+    CONFIG.short?.trade?.sizingEnabled,
+    CONFIG.sizing?.shortEnabled,
+    CONFIG.sizing?.enabled,
+    CONFIG.trade?.sizingEnabled
+  ), true);
+
+  const baseRiskPct = clamp(first(
+    options.baseRiskPct,
+    options.defaultRiskFraction,
+    options.riskFraction,
+    CONFIG.short?.sizing?.baseRiskPct,
+    CONFIG.short?.sizing?.defaultRiskFraction,
+    CONFIG.short?.trade?.baseRiskPct,
+    CONFIG.sizing?.shortBaseRiskPct,
+    CONFIG.sizing?.baseRiskPct,
+    CONFIG.trade?.baseRiskPct
+  ) ?? 0.0025, 0, 0.05);
+
+  const minRiskPct = clamp(first(
+    options.minPositionRiskPct,
+    options.minRiskFraction,
+    CONFIG.short?.sizing?.minRiskPct,
+    CONFIG.short?.sizing?.minRiskFraction,
+    CONFIG.sizing?.shortMinRiskPct,
+    CONFIG.sizing?.minRiskPct
+  ) ?? 0.0005, 0, 0.05);
+
+  const maxRiskPct = clamp(first(
+    options.maxPositionRiskPct,
+    options.maxRiskFraction,
+    CONFIG.short?.sizing?.maxRiskPct,
+    CONFIG.short?.sizing?.maxRiskFraction,
+    CONFIG.sizing?.shortMaxRiskPct,
+    CONFIG.sizing?.maxRiskPct
+  ) ?? 0.01, 0, 0.05);
+
+  return {
+    enabled,
+    baseRiskPct,
+    fallbackRiskPct: baseRiskPct,
+    minRiskPct,
+    maxRiskPct,
+    targetTradeSide: TARGET_TRADE_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    shortOnly: true,
+    longDisabled: true,
+    source: 'LOCAL_TRADE_SYSTEM_SIZING_CONFIG'
+  };
 }
 
 function normalizeMarketWeatherRegimeSafe(value = '') {
@@ -763,7 +1402,6 @@ function resolveMarketWeatherFromObjects(...objects) {
 
     for (const key of directKeys) {
       if (typeof key === 'object') continue;
-
       const parsed = parseKnownMarketWeatherKey(key);
 
       if (parsed.known) {
@@ -822,53 +1460,6 @@ function resolveMarketWeatherFromObjects(...objects) {
   };
 }
 
-function buildEntryMarketWeatherSnapshotSafe(input = {}, capturedAt = now()) {
-  const resolved = resolveMarketWeatherFromObjects(input);
-
-  if (typeof MarketKeyModule.buildEntryMarketWeatherSnapshot === 'function') {
-    try {
-      const snapshot = MarketKeyModule.buildEntryMarketWeatherSnapshot({
-        ...input,
-        entryMarketWeatherKey: resolved.key,
-        entryMarketWeatherRegime: resolved.regime,
-        entryMarketWeatherTrendSide: resolved.trendSide
-      }, capturedAt);
-
-      const parsed = parseKnownMarketWeatherKey(
-        snapshot?.entryMarketWeatherKey ||
-          resolved.key
-      );
-
-      return {
-        ...snapshot,
-        entryMarketWeatherKey: parsed.key,
-        entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-        entryMarketWeatherRegime: parsed.regime,
-        entryMarketWeatherTrendSide: parsed.trendSide,
-        entryMarketWeatherKnown: parsed.known
-      };
-    } catch {
-      // fallback below
-    }
-  }
-
-  return {
-    entryMarketWeatherKey: resolved.key,
-    entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    entryMarketWeatherRegime: resolved.regime,
-    entryMarketWeatherTrendSide: resolved.trendSide,
-    entryMarketWeatherKnown: resolved.known,
-    entryMarketWeatherCapturedAt: capturedAt,
-    entryMarketWeatherRaw: input.entryMarketWeatherRaw || input.marketWeatherRaw || input.currentMarketWeather || null,
-    entryMarketWeatherRawAvailableFields: Array.isArray(input.entryMarketWeatherRawAvailableFields)
-      ? input.entryMarketWeatherRawAvailableFields
-      : Object.keys(input || {}).filter((key) => {
-          const text = String(key || '').toLowerCase();
-          return text.includes('weather') || text.includes('regime') || text.includes('trend');
-        })
-  };
-}
-
 function isUnknownMarketWeatherKey(key = '') {
   return !parseKnownMarketWeatherKey(key).known;
 }
@@ -881,6 +1472,7 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
       row.confirmedAt,
       marketContext.confirmedAt,
       marketContext.createdAt,
+      row.entryCreatedAt,
       row.createdAt,
       now()
     ),
@@ -906,26 +1498,6 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
     entryMarketWeatherRawAvailableFields: Array.isArray(row.entryMarketWeatherRawAvailableFields)
       ? row.entryMarketWeatherRawAvailableFields
       : Object.keys(resolved.source || {}).slice(0, 80),
-    entryMarketWeatherSourceReadFrom:
-      row.entryMarketWeatherSourceReadFrom ||
-      row.currentMarketWeatherReadFrom ||
-      marketContext.sourceReadFrom ||
-      null,
-    entryMarketWeatherSourceKey:
-      row.entryMarketWeatherSourceKey ||
-      row.currentMarketWeatherSourceKey ||
-      marketContext.sourceKey ||
-      null,
-    entryMarketWeatherAgeSec:
-      row.entryMarketWeatherAgeSec ??
-      row.currentMarketWeatherAgeSec ??
-      marketContext.ageSec ??
-      null,
-    entryMarketWeatherStale: Boolean(
-      row.entryMarketWeatherStale ||
-      row.currentMarketWeatherStale ||
-      marketContext.stale
-    ),
     entryMarketWeatherImmutable: true,
     entryMarketWeatherNeverRecomputedAtExit: true,
     entryMarketWeatherIsUnknown: !parsed.known,
@@ -975,7 +1547,6 @@ function attachEntryMarketWeather(row = {}, marketContext = {}) {
       marketContext.source ||
       resolved.source ||
       null,
-    marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
     entryMarketWeatherFixedPartialKey: Boolean(
       row.entryMarketWeatherKey &&
         !rowResolved.known &&
@@ -1014,349 +1585,13 @@ function sideToTradeSideSafe(value) {
   return 'UNKNOWN';
 }
 
-function normalizeBaseSymbolSafe(value) {
-  if (typeof Utils.normalizeBaseSymbol === 'function') {
-    try {
-      return Utils.normalizeBaseSymbol(value);
-    } catch {
-      // fallback below
-    }
-  }
-
-  return String(value || '')
-    .trim()
-    .toUpperCase()
-    .replace(/USDT$/u, '')
-    .replace(/USDC$/u, '')
-    .replace(/USD$/u, '')
-    .replace(/_UMCBL$/u, '')
-    .replace(/-PERP$/u, '')
-    .replace(/[^A-Z0-9]/g, '');
-}
-
-function normalizeContractSymbolSafe(value) {
-  if (typeof Utils.normalizeContractSymbol === 'function') {
-    try {
-      return Utils.normalizeContractSymbol(value);
-    } catch {
-      // fallback below
-    }
-  }
-
-  const raw = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (!raw) return '';
-  if (raw.endsWith('USDT')) return raw;
-  return `${normalizeBaseSymbolSafe(raw)}USDT`;
-}
-
-function randomIdSafe(prefix = 'id') {
-  if (typeof Utils.randomId === 'function') {
-    try {
-      return Utils.randomId(prefix);
-    } catch {
-      // fallback below
-    }
-  }
-
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
-}
-
-async function mapConcurrentSafe(items = [], concurrency = 2, mapper = async (x) => x) {
-  if (typeof Utils.mapConcurrent === 'function') {
-    try {
-      return await Utils.mapConcurrent(items, concurrency, mapper);
-    } catch {
-      // fallback below
-    }
-  }
-
-  const input = Array.isArray(items) ? items : [];
-  const output = new Array(input.length);
-  let index = 0;
-
-  async function worker() {
-    while (index < input.length) {
-      const currentIndex = index;
-      index += 1;
-      output[currentIndex] = await mapper(input[currentIndex], currentIndex);
-    }
-  }
-
-  const workers = Array.from({ length: Math.max(1, concurrency) }, worker);
-  await Promise.all(workers);
-
-  return output;
-}
-
-function sideFlags() {
-  return {
-    sideMode: 'SHORT_ONLY',
-    targetTradeSide: TARGET_TRADE_SIDE,
-    targetScannerSide: TARGET_SCANNER_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-    signalSide: TARGET_TRADE_SIDE,
-    entrySide: TARGET_TRADE_SIDE,
-    scannerSide: TARGET_SCANNER_SIDE,
-    actualScannerSide: TARGET_SCANNER_SIDE,
-    analysisSide: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false
-  };
-}
-
-function isolationFlags() {
-  return {
-    namespace: SHORT_NAMESPACE,
-    redisNamespace: SHORT_NAMESPACE,
-    keyPrefix: SHORT_KEY_PREFIX,
-    redisKeyPrefix: SHORT_KEY_PREFIX,
-    persistentLearningKey: PERSISTENT_LEARNING_KEY,
-    redisKeysSeparatedFromLongRoot: true,
-    longRootTouched: false,
-
-    scannerRunAllowed: false,
-    noScannerRun: true,
-    writesScanner: false,
-    writesScannerLatest: false,
-    writesScannerSnapshot: false,
-    writesMarketUniverse: false,
-    writesMarketWeather: false,
-
-    writesTrade: true,
-    writesAnalyze: true,
-    analyzePartialOnly: true,
-    analyzeFullOverwriteDisabled: true,
-
-    writesRotation: false,
-    writesManualSelection: false,
-    writesDiscordSelection: false,
-    preserveRotation: true,
-    preserveManualSelection: true,
-    preserveDiscordSelection: true,
-
-    realOrdersDisabled: true,
-    exchangeCallsDisabled: true,
-    exchangeOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
-    noRealOrders: true,
-    noExchangeOrders: true,
-
-    globalMaxOpenPositionsBlockDisabled: true,
-    oneOpenPositionPerSymbol: true,
-    maxOneOpenPositionPerSymbol: true,
-    monitorOpenPositionsBeforeEntries: true,
-    monitorTimeoutDoesNotBlockEntries: true,
-
-    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
-  };
-}
-
-function marketWeatherFeatureFlags() {
-  return {
-    version: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
-    capture: 'live',
-    aggregation: 'live',
-    selector: 'observe',
-    sizingCap: 'observe',
-    fdr: 'observe',
-    discordTradeReady: 'validated_only',
-
-    marketWeatherCaptureEnabled: true,
-    marketWeatherAggregationEnabled: true,
-    marketWeatherSelectorEnabled: true,
-    marketWeatherSelectorMode: 'OBSERVE',
-    marketWeatherFdrEnabled: true,
-    marketWeatherFdrMode: 'OBSERVE',
-    marketWeatherSizingCapEnabled: true,
-    marketWeatherSizingCapMode: 'OBSERVE',
-    marketWeatherDiscordTradeReadyEnabled: false,
-
-    marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION,
-    marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
-
-    entryMarketWeatherImmutable: true,
-    entryMarketWeatherNeverRecomputedAtExit: true,
-    unknownMarketWeatherNeverTradeReady: true,
-
-    riskSourceOfTruth: 'riskFractionForEntry',
-    proofTierIsLabelOnly: true,
-    signalTypeIsDerivedOnly: true,
-    tradeReadyManualOverrideAllowed: false,
-
-    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-    empiricalVetoUsesLcb95NotRawAvgR: true,
-    empiricalVetoBlocksParentRescue: true
-  };
-}
-
-function microPolicyFlags() {
-  return {
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-    trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
-
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-    learningGranularity: CHILD75_LEARNING_GRANULARITY,
-    child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
-    microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-
-    microMicroVersion: MICRO_MICRO_VERSION,
-    learningHierarchy: 'PARENT_15_TO_MICRO_75_TO_MICRO_MICRO',
-
-    parentSelectionAllowed: false,
-    micro75SelectionAllowed: false,
-    microMicroSelectionAllowed: true,
-    selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
-
-    manualSelectionOnly: true,
-    manualSelectionRequired: true,
-    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
-    discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
-    discordOnlyForSelectedMicroFamilies: false,
-    discordOnlyForSelectedMicroMicroFamilies: true,
-    discordOnlyForExactTrueMicroMatch: false,
-    discordOnlyForExactMicroMicroMatch: true,
-    parent15MatchTriggersDiscord: false,
-    child75MatchTriggersDiscord: false,
-    micro75MatchDoesNotTriggerDiscord: true,
-    scannerMatchTriggersDiscord: false,
-
-    discordActivationRequiresWeatherPlaybook: true,
-    discordActivationRequiresNetEdge: true,
-    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-    discordRuntimeGateRequired: true,
-    discordRuntimeGateSource: 'ACTIVE_ROTATION_ROW_PERSISTENT_STATS_RECHECKED_IN_TRADE_SYSTEM'
-  };
-}
-
-function virtualFlags(row = {}) {
-  return {
-    virtualOnly: true,
-    virtualTracked: true,
-    virtualLearning: true,
-    source: row.source || 'VIRTUAL',
-    outcomeSource: row.outcomeSource || 'VIRTUAL',
-    paperTrade: true,
-    paperPosition: true,
-    realTrade: false,
-    realOrder: false,
-    exchangeOrder: false,
-    bitgetOrderPlaced: false,
-    noRealOrders: true,
-    noExchangeOrders: true,
-
-    riskPlanVersion: row.riskPlanVersion || SHORT_RISK_PLAN_VERSION,
-    rrShadowGridEnabled: true,
-    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
-    rrVariants: row.rrVariants || DEFAULT_RR_VARIANTS,
-
-    scannerFingerprintRole: 'METADATA_ONLY',
-    scannerFingerprintsMetadataOnly: true,
-    scannerFingerprintsUsedAsLearningFamily: false,
-    scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true,
-
-    executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
-    executionFingerprintsMetadataOnly: false,
-    executionFingerprintsUsedAsLearningFamily: false,
-    executionFingerprintsCanDeriveMicroMicroContextHash: true,
-    executionContextHashIncludedInMicroMicroId: true,
-
-    scannerHashesExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: false,
-    entryMarketWeatherKeyExcludedFromFamilyId: true,
-    weatherExcludedFromFamilyId: true,
-
-    analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
-    symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-
-    currentFitSoftOnly: true,
-    currentFitBlocksLearning: false,
-    currentFitBlocksVirtualLearning: false,
-    currentFitBlocksShadowLearning: false,
-    currentFitCanBlockDiscord: true,
-    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
-
-    weakContraEntryGateEnabled: true,
-    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
-    weakContraRejectedBlocksVirtualEntry: true,
-    weakContraRejectedBlocksLearning: false,
-
-    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
-    scoringRSource: 'netR',
-    winsLossesFlatsSource: 'netR',
-    winrateDefinition: 'netR > 0',
-    avgRSource: 'netR',
-    totalRSource: 'netR',
-    avgCostRShown: true,
-
-    riskTradeSide: TARGET_TRADE_SIDE,
-    validShortRiskShape: true,
-    shortRiskShape: 'tp < entry < sl',
-    riskGeometryRule: 'SHORT: tp < entry < sl',
-    tpHitRule: 'SHORT: candle.low <= tp',
-    slHitRule: 'SHORT: candle.high >= sl',
-    sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-
-    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
-    hardTimeStopNoPriceExit: DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT,
-    closeExpiredBeforePriceFetch: DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH,
-
-    marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
-    marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
-    marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION,
-    marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
-
-    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-    empiricalVetoUsesLcb95: true,
-    empiricalVetoBlocksParentFallbackRescue: true,
-    positionSizingProofInputVersion: POSITION_SIZING_PROOF_INPUT_VERSION,
-
-    ...microPolicyFlags()
-  };
-}
-
 function cleanSideText(value = '') {
   return upper(value, '')
     .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
     .replaceAll('LONGDISABLED_TRUE', 'SHORT')
     .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
-    .replaceAll('LONG_DISABLED_FALSE', '')
-    .replaceAll('LONGDISABLED_FALSE', '')
-    .replaceAll('BLOCK_LONG_FALSE', '')
-    .replaceAll('LONG_ENABLED_FALSE', '')
-    .replaceAll('LONG_ONLY_FALSE', '')
-    .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('SHORTDISABLED_FALSE', '')
-    .replaceAll('BLOCK_SHORT_FALSE', '')
-    .replaceAll('SHORT_ENABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY_FALSE', '')
-    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
-    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
-    .replaceAll('BLOCK_SHORT', 'LONG')
     .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
     .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
-    .replaceAll('BLOCK_LONG', 'SHORT')
-    .replaceAll('LONG_DISABLED', 'SHORT')
-    .replaceAll('LONGDISABLED', 'SHORT')
     .replaceAll('SHORT_ONLY_MODE', 'SHORT')
     .replaceAll('SHORT_ONLY', 'SHORT')
     .replaceAll('SHORT-ONLY', 'SHORT')
@@ -1392,17 +1627,6 @@ function hasShortSignal(value = '') {
     'BEAR',
     'BEARISH',
     'SELL',
-    'SIDE_SHORT',
-    'TRADE_SIDE_SHORT',
-    'TRADESIDE_SHORT',
-    'POSITION_SIDE_SHORT',
-    'POSITIONSIDE_SHORT',
-    'DIRECTION_SHORT',
-    'SIDE_BEAR',
-    'TRADE_SIDE_BEAR',
-    'DIRECTION_BEAR',
-    'SIDE_SELL',
-    'DIRECTION_SELL',
     'MICRO_SHORT',
     'FAMILY_SHORT'
   ]);
@@ -1414,17 +1638,6 @@ function hasLongSignal(value = '') {
     'BULL',
     'BULLISH',
     'BUY',
-    'SIDE_LONG',
-    'TRADE_SIDE_LONG',
-    'TRADESIDE_LONG',
-    'POSITION_SIDE_LONG',
-    'POSITIONSIDE_LONG',
-    'DIRECTION_LONG',
-    'SIDE_BULL',
-    'TRADE_SIDE_BULL',
-    'DIRECTION_BULL',
-    'SIDE_BUY',
-    'DIRECTION_BUY',
     'MICRO_LONG',
     'FAMILY_LONG'
   ]);
@@ -1447,8 +1660,6 @@ function normalizeTradeSide(side) {
   if (shortHit && longHit) {
     if (raw.includes('MICRO_SHORT_')) return TARGET_TRADE_SIDE;
     if (raw.includes('MICRO_LONG_')) return OPPOSITE_TRADE_SIDE;
-    if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_TRADE_SIDE;
-    if (raw.includes('TRADE_SIDE=LONG') || raw.includes('TRADESIDE=LONG')) return OPPOSITE_TRADE_SIDE;
   }
 
   return 'UNKNOWN';
@@ -1526,6 +1737,65 @@ function isTargetRow(row = {}) {
   return inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
 }
 
+function normalizeBaseSymbolSafe(value) {
+  if (typeof Utils.normalizeBaseSymbol === 'function') {
+    try {
+      return Utils.normalizeBaseSymbol(value);
+    } catch {
+      // fallback below
+    }
+  }
+
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/USDT$/u, '')
+    .replace(/USDC$/u, '')
+    .replace(/USD$/u, '')
+    .replace(/_UMCBL$/u, '')
+    .replace(/-PERP$/u, '')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function normalizeContractSymbolSafe(value) {
+  if (typeof Utils.normalizeContractSymbol === 'function') {
+    try {
+      return Utils.normalizeContractSymbol(value);
+    } catch {
+      // fallback below
+    }
+  }
+
+  const raw = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!raw) return '';
+  if (raw.endsWith('USDT')) return raw;
+  return `${normalizeBaseSymbolSafe(raw)}USDT`;
+}
+
+function normalizeCandidate(candidate = {}) {
+  const contractSymbol = normalizeContractSymbolSafe(candidate.contractSymbol || candidate.symbol);
+  const symbol = normalizeBaseSymbolSafe(candidate.symbol || contractSymbol) || normalizeBaseSymbolSafe(contractSymbol);
+
+  return {
+    ...candidate,
+    symbol,
+    baseSymbol: symbol,
+    contractSymbol
+  };
+}
+
+function randomIdSafe(prefix = 'id') {
+  if (typeof Utils.randomId === 'function') {
+    try {
+      return Utils.randomId(prefix);
+    } catch {
+      // fallback below
+    }
+  }
+
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
 function isScannerFingerprintId(id = '') {
   const value = upper(id);
 
@@ -1541,6 +1811,21 @@ function isScannerFingerprintId(id = '') {
     value.includes('__SCANNER__') ||
     value.includes('SCANNER_GATE_PASS') ||
     value.includes('SCANNER_GATE_FAIL')
+  );
+}
+
+function isExecutionFingerprintId(id = '') {
+  const value = upper(id);
+  if (/^MICRO_SHORT_.+_MM_[A-Z0-9]{6,24}$/u.test(value)) return false;
+
+  return (
+    value.includes(`_${EXECUTION_MICRO_SUFFIX}_`) ||
+    value.includes(`__${EXECUTION_MICRO_SUFFIX}__`) ||
+    value.includes('|XR|') ||
+    value.includes('EXECUTION_FINGERPRINT') ||
+    value.includes('EXECUTION_MICRO') ||
+    value.includes('EXECUTIONMICRO') ||
+    value.includes('REFINED_EXECUTION')
   );
 }
 
@@ -1676,27 +1961,41 @@ function isParentTrueMicroId(id = '') {
   return parseShortTaxonomyMicroId(id).isParent === true;
 }
 
-function isExecutionFingerprintId(id = '') {
-  const value = upper(id);
-  if (isSelectableMicroMicroId(value)) return false;
-
-  return (
-    value.includes(`_${EXECUTION_MICRO_SUFFIX}_`) ||
-    value.includes(`__${EXECUTION_MICRO_SUFFIX}__`) ||
-    value.includes('|XR|') ||
-    value.includes('EXECUTION_FINGERPRINT') ||
-    value.includes('EXECUTION_MICRO') ||
-    value.includes('EXECUTIONMICRO') ||
-    value.includes('REFINED_EXECUTION')
-  );
-}
-
 function normalizeSymbolToken(value = '') {
   return String(value || '')
     .toUpperCase()
     .replace(/USDT|USDC|USD|PERP|SWAP|FUTURES|SPOT/g, '')
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+}
+
+function symbolTokensFromAnySymbol(symbol = '') {
+  const contract = normalizeContractSymbolSafe(symbol);
+  const base = normalizeBaseSymbolSafe(symbol || contract);
+
+  return [
+    symbol,
+    contract,
+    base,
+    normalizeSymbolToken(symbol),
+    normalizeSymbolToken(contract),
+    normalizeSymbolToken(base)
+  ].map((value) => String(value || '').trim().toUpperCase()).filter(Boolean);
+}
+
+function symbolKey(value = '') {
+  const base = normalizeBaseSymbolSafe(value);
+  const contract = normalizeContractSymbolSafe(value);
+  const token = normalizeSymbolToken(value);
+  return normalizeSymbolToken(base || contract || token);
+}
+
+function rowSymbolKeys(row = {}) {
+  return [
+    row.symbol,
+    row.baseSymbol,
+    row.contractSymbol
+  ].flatMap(symbolTokensFromAnySymbol).map(symbolKey).filter(Boolean);
 }
 
 function cleanLearningFamilyId(id = '', row = {}) {
@@ -1766,36 +2065,6 @@ function normalizeBucketText(value, fallback = 'NA') {
     .slice(0, 64) || fallback;
 }
 
-function symbolTokensFromAnySymbol(symbol = '') {
-  const contract = normalizeContractSymbolSafe(symbol);
-  const base = normalizeBaseSymbolSafe(symbol || contract);
-
-  return [
-    symbol,
-    contract,
-    base,
-    normalizeSymbolToken(symbol),
-    normalizeSymbolToken(contract),
-    normalizeSymbolToken(base)
-  ].map((value) => String(value || '').trim().toUpperCase()).filter(Boolean);
-}
-
-function symbolKey(value = '') {
-  const base = normalizeBaseSymbolSafe(value);
-  const contract = normalizeContractSymbolSafe(value);
-  const token = normalizeSymbolToken(value);
-
-  return normalizeSymbolToken(base || contract || token);
-}
-
-function rowSymbolKeys(row = {}) {
-  return [
-    row.symbol,
-    row.baseSymbol,
-    row.contractSymbol
-  ].flatMap(symbolTokensFromAnySymbol).map(symbolKey).filter(Boolean);
-}
-
 function getTrueMicroFamilyId(row = {}) {
   const candidates = [
     row.childTrueMicroFamilyId,
@@ -1817,6 +2086,19 @@ function getTrueMicroFamilyId(row = {}) {
   }
 
   return '';
+}
+
+function getParentTrueMicroFamilyId(row = {}) {
+  const child = getTrueMicroFamilyId(row);
+  if (child) return parentIdFromChild(child);
+
+  return [
+    row.parentTrueMicroFamilyId,
+    row.coarseMicroFamilyId,
+    row.parentMicroFamilyId,
+    row.parentMacroFamilyId,
+    row.macroFamilyId
+  ].map((id) => cleanLearningFamilyId(id, row)).find(isParentTrueMicroId) || '';
 }
 
 function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
@@ -1845,10 +2127,6 @@ function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
     `ENTRY_DIST=${normalizeBucketText(row.entryDistancePct ?? row.entryDistanceBps ?? 'NA')}`,
     `RISK_PCT=${normalizeBucketText(row.riskPct ?? row.slDistancePct ?? 'NA')}`,
     `REWARD_PCT=${normalizeBucketText(row.rewardPct ?? row.tpDistancePct ?? 'NA')}`,
-    `RISK_REWARD_RATIO=${normalizeBucketText(row.riskToRewardDistanceRatio ?? 'NA')}`,
-    `FAKE_BREAKOUT=${row.fakeBreakout === true ? 'YES' : 'NO'}`,
-    `FAKE_RISK=${row.fakeBreakoutRisk === true ? 'YES' : 'NO'}`,
-    `WEAK_CONTRA_GATE=${row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'NA'}`,
     `CURRENT_FIT=${normalizeBucketText(row.currentFit || row.entryCurrentFit || 'NA')}`,
     `RISK_PLAN=${row.riskPlanVersion || SHORT_RISK_PLAN_VERSION}`,
     `HARD_TIME_STOP=${HARD_TIME_STOP_CLEANUP_VERSION}`,
@@ -1920,31 +2198,6 @@ function getMicroMicroFamilyId(row = {}) {
   const id = buildMicroMicroFamilyIdFromExecution(child, hash);
 
   return isSelectableMicroMicroId(id) ? id : '';
-}
-
-function getParentTrueMicroFamilyId(row = {}) {
-  const child = getTrueMicroFamilyId(row);
-  if (child) return parentIdFromChild(child);
-
-  return [
-    row.parentTrueMicroFamilyId,
-    row.coarseMicroFamilyId,
-    row.parentMicroFamilyId,
-    row.parentMacroFamilyId,
-    row.macroFamilyId
-  ].map((id) => cleanLearningFamilyId(id, row)).find(isParentTrueMicroId) || '';
-}
-
-function normalizeCandidate(candidate = {}) {
-  const contractSymbol = normalizeContractSymbolSafe(candidate.contractSymbol || candidate.symbol);
-  const symbol = normalizeBaseSymbolSafe(candidate.symbol || contractSymbol) || normalizeBaseSymbolSafe(contractSymbol);
-
-  return {
-    ...candidate,
-    symbol,
-    baseSymbol: symbol,
-    contractSymbol
-  };
 }
 
 function learningIdentityFields(row = {}) {
@@ -2085,6 +2338,27 @@ function scannerMetadataFrom(...rows) {
   };
 }
 
+function rowText(row = {}) {
+  return upper([
+    row.confirmationProfile,
+    row.scannerReason,
+    row.reason,
+    row.definition,
+    row.microDefinition,
+    row.microMicroDefinition,
+    row.flow,
+    row.flowCoarse,
+    row.obRelation,
+    row.btcRelation,
+    row.btcState,
+    row.currentFit,
+    row.entryCurrentFit,
+    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
+    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
+    ...(Array.isArray(row.microMicroDefinitionParts) ? row.microMicroDefinitionParts : [])
+  ].filter(Boolean).join('|'));
+}
+
 function setupFromRow(row = {}) {
   const parsed = parseShortTaxonomyMicroId(
     row.trueMicroFamilyId ||
@@ -2096,14 +2370,7 @@ function setupFromRow(row = {}) {
 
   if (parsed.setupType && SETUP_SET.has(parsed.setupType)) return parsed.setupType;
 
-  const text = upper([
-    row.scannerReason,
-    row.reason,
-    row.definition,
-    row.microDefinition,
-    row.microMicroDefinition,
-    ...(Array.isArray(row.definitionParts) ? row.definitionParts : [])
-  ].filter(Boolean).join('|'));
+  const text = rowText(row);
 
   if (text.includes('BREAKOUT') || text.includes('BREAKDOWN')) return 'BREAKOUT';
   if (text.includes('SWEEP')) return 'SWEEP_REVERSAL';
@@ -2152,27 +2419,6 @@ function regimeFromRow(row = {}, marketContext = {}) {
   );
 
   return direct !== 'UNKNOWN' ? direct : 'TREND';
-}
-
-function rowText(row = {}) {
-  return upper([
-    row.confirmationProfile,
-    row.scannerReason,
-    row.reason,
-    row.definition,
-    row.microDefinition,
-    row.microMicroDefinition,
-    row.flow,
-    row.flowCoarse,
-    row.obRelation,
-    row.btcRelation,
-    row.btcState,
-    row.currentFit,
-    row.entryCurrentFit,
-    ...(Array.isArray(row.definitionParts) ? row.definitionParts : []),
-    ...(Array.isArray(row.microDefinitionParts) ? row.microDefinitionParts : []),
-    ...(Array.isArray(row.microMicroDefinitionParts) ? row.microMicroDefinitionParts : [])
-  ].filter(Boolean).join('|'));
 }
 
 function confirmationFromRow(row = {}, marketContext = {}) {
@@ -2225,309 +2471,6 @@ function fallbackExact75Id(row = {}, marketContext = {}) {
   return `MICRO_SHORT_${setup}_${regime}_${confirmation}`;
 }
 
-function detectStructureSignal(row = {}) {
-  const text = rowText(row);
-
-  return Boolean(
-    row.retestConfirmed ||
-    row.pullbackConfirmed ||
-    row.sweepConfirmed ||
-    row.breakoutConfirmed ||
-    row.continuationConfirmed ||
-    row.compressionConfirmed ||
-    row.setupConfirmed ||
-    row.structureAlign ||
-    row.structureAligned ||
-    text.includes('RETEST') ||
-    text.includes('PULLBACK') ||
-    text.includes('SWEEP') ||
-    text.includes('STOP_RUN') ||
-    text.includes('BREAKOUT') ||
-    text.includes('BREAKDOWN') ||
-    text.includes('CONTINUATION') ||
-    text.includes('COMPRESSION') ||
-    text.includes('SQUEEZE')
-  );
-}
-
-function detectFlowSignal(row = {}, marketContext = {}) {
-  const text = rowText(row);
-  const obRelation = upper(row.obRelation);
-  const btcRelation = upper(row.btcRelation);
-  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
-
-  return Boolean(
-    row.flowAlign ||
-    row.flowAligned ||
-    row.momentumAlign ||
-    row.askFlowAlign ||
-    row.bearFlow ||
-    row.sellFlow ||
-    currentTrendSide === TARGET_TRADE_SIDE ||
-    obRelation === 'WITH' ||
-    obRelation === 'ASK_HEAVY' ||
-    btcRelation === 'BTC_WITH' ||
-    text.includes('FLOW_ALIGN') ||
-    text.includes('BEAR_FLOW') ||
-    text.includes('SELL_FLOW') ||
-    text.includes('ASK_FLOW') ||
-    text.includes('TREND')
-  );
-}
-
-function detectVolumeSignal(row = {}) {
-  const text = rowText(row);
-  const relVol = n(first(row.relativeVolume, row.relVolume, row.volumeExpansion, row.volumeScore, row.volumeStrength), NaN);
-
-  return Boolean(
-    row.volumeSpike ||
-    row.volumeConfirmed ||
-    row.volumeAlign ||
-    row.volumeAligned ||
-    row.volumeSpikeConfirmed ||
-    row.quoteVolumeSpike ||
-    row.obVolumeAlign ||
-    text.includes('VOLUME_ALIGN') ||
-    text.includes('VOL_ALIGN') ||
-    text.includes('VOLUME_SPIKE') ||
-    text.includes('VOL_EXP') ||
-    (Number.isFinite(relVol) && relVol >= 1.4)
-  );
-}
-
-function getRowConfluence(row = {}) {
-  return n(first(row.confluence, row.sniperScore, row.scannerScore, row.moveScore), 0);
-}
-
-function getRowRR(row = {}) {
-  return n(first(row.rr, row.primaryRr, row.riskReward, row.rewardRisk), 0);
-}
-
-function getRowSpreadPct(row = {}) {
-  const direct = n(row.spreadPct, NaN);
-  if (Number.isFinite(direct)) return direct;
-
-  const bps = n(row.spreadBps, NaN);
-  if (Number.isFinite(bps)) return bps / 10000;
-
-  return NaN;
-}
-
-function getRowDepthUsd1p(row = {}) {
-  return n(first(
-    row.depthMinUsd1p,
-    row.minDepthUsd1p,
-    row.depthUsd1p,
-    row.depthUsd,
-    row.orderbookDepthUsd,
-    row.liquidityDepthUsd
-  ), NaN);
-}
-
-function getRowCostR(row = {}) {
-  return n(first(row.estimatedCostR, row.costR, row.avgCostR), NaN);
-}
-
-function weakContraGateConfig() {
-  const options = ACTIVE_RUN_OPTIONS || {};
-
-  return {
-    enabled: bool(first(
-      options.weakContraGateEnabled,
-      CONFIG.short?.weakContra?.enabled,
-      CONFIG.short?.trade?.weakContraGateEnabled,
-      CONFIG.analyze?.weakContra?.enabled,
-      CONFIG.trade?.weakContraGateEnabled
-    ), true),
-
-    minConfluence: n(first(
-      options.weakContraMinConfluence,
-      CONFIG.short?.weakContra?.minConfluence,
-      CONFIG.short?.trade?.weakContraMinConfluence,
-      CONFIG.analyze?.weakContra?.minConfluence,
-      CONFIG.trade?.weakContraMinConfluence
-    ), 72),
-
-    minRR: n(first(
-      options.weakContraMinRR,
-      CONFIG.short?.weakContra?.minRR,
-      CONFIG.short?.trade?.weakContraMinRR,
-      CONFIG.analyze?.weakContra?.minRR,
-      CONFIG.trade?.weakContraMinRR
-    ), 1.15),
-
-    maxSpreadPct: n(first(
-      options.weakContraMaxSpreadPct,
-      CONFIG.short?.weakContra?.maxSpreadPct,
-      CONFIG.short?.trade?.weakContraMaxSpreadPct,
-      CONFIG.analyze?.weakContra?.maxSpreadPct,
-      CONFIG.trade?.weakContraMaxSpreadPct
-    ), 0.0015),
-
-    minDepthUsd1p: n(first(
-      options.weakContraMinDepthUsd1p,
-      CONFIG.short?.weakContra?.minDepthUsd1p,
-      CONFIG.short?.trade?.weakContraMinDepthUsd1p,
-      CONFIG.analyze?.weakContra?.minDepthUsd1p,
-      CONFIG.trade?.weakContraMinDepthUsd1p
-    ), 100000),
-
-    maxCostR: n(first(
-      options.weakContraMaxCostR,
-      CONFIG.short?.weakContra?.maxCostR,
-      CONFIG.short?.trade?.weakContraMaxCostR,
-      CONFIG.analyze?.weakContra?.maxCostR,
-      CONFIG.trade?.weakContraMaxCostR
-    ), 0.35),
-
-    requireStructure: bool(first(
-      options.weakContraRequireStructure,
-      CONFIG.short?.weakContra?.requireStructure,
-      CONFIG.short?.trade?.weakContraRequireStructure,
-      CONFIG.analyze?.weakContra?.requireStructure,
-      CONFIG.trade?.weakContraRequireStructure
-    ), true),
-
-    requireFlowOrVolume: bool(first(
-      options.weakContraRequireFlowOrVolume,
-      CONFIG.short?.weakContra?.requireFlowOrVolume,
-      CONFIG.short?.trade?.weakContraRequireFlowOrVolume,
-      CONFIG.analyze?.weakContra?.requireFlowOrVolume,
-      CONFIG.trade?.weakContraRequireFlowOrVolume
-    ), true),
-
-    requireDepthData: bool(first(
-      options.weakContraRequireDepthData,
-      CONFIG.short?.weakContra?.requireDepthData,
-      CONFIG.short?.trade?.weakContraRequireDepthData,
-      CONFIG.analyze?.weakContra?.requireDepthData,
-      CONFIG.trade?.weakContraRequireDepthData
-    ), false),
-
-    rejectFakeBreakout: bool(first(
-      options.weakContraRejectFakeBreakout,
-      CONFIG.short?.weakContra?.rejectFakeBreakout,
-      CONFIG.short?.trade?.weakContraRejectFakeBreakout,
-      CONFIG.analyze?.weakContra?.rejectFakeBreakout,
-      CONFIG.trade?.weakContraRejectFakeBreakout
-    ), true)
-  };
-}
-
-function weakContraApplies(row = {}, marketContext = {}) {
-  const confirmation = confirmationFromRow(row, marketContext);
-  const text = rowText(row);
-  const obRelation = upper(row.obRelation);
-  const btcRelation = upper(row.btcRelation);
-  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
-
-  return Boolean(
-    confirmation === 'E_WEAK_CONTRA' ||
-    row.weakContra === true ||
-    row.contraSignal === true ||
-    row.bullishDivergence === true ||
-    row.avoidShort === true ||
-    row.doNotShort === true ||
-    row.fakeBreakout === true ||
-    row.fakeBreakoutRisk === true ||
-    currentTrendSide === OPPOSITE_TRADE_SIDE ||
-    obRelation === 'AGAINST' ||
-    btcRelation === 'BTC_AGAINST' ||
-    text.includes('E_WEAK_CONTRA') ||
-    text.includes('WEAK_CONTRA') ||
-    text.includes('CONTRA')
-  );
-}
-
-function buildWeakContraEntryGate(row = {}, marketContext = {}) {
-  const cfg = weakContraGateConfig();
-  const confirmationProfile = confirmationFromRow(row, marketContext);
-  const applies = weakContraApplies(row, marketContext);
-  const structureAligned = detectStructureSignal(row);
-  const flowAligned = detectFlowSignal(row, marketContext);
-  const volumeAligned = detectVolumeSignal(row);
-
-  const confluence = getRowConfluence(row);
-  const rr = getRowRR(row);
-  const spreadPct = getRowSpreadPct(row);
-  const depthUsd1p = getRowDepthUsd1p(row);
-  const costR = getRowCostR(row);
-
-  const failures = [];
-
-  if (!cfg.enabled || !applies) {
-    return {
-      version: WEAK_CONTRA_ENTRY_GATE_VERSION,
-      enabled: Boolean(cfg.enabled),
-      applies: Boolean(applies),
-      passed: true,
-      allowed: true,
-      rejected: false,
-      reason: !cfg.enabled ? 'E_WEAK_CONTRA_GATE_DISABLED' : 'NOT_E_WEAK_CONTRA',
-      failures: [],
-      confirmationProfile,
-      structureAligned,
-      flowAligned,
-      volumeAligned,
-      confluence,
-      minConfluence: cfg.minConfluence,
-      rr,
-      minRR: cfg.minRR,
-      spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
-      maxSpreadPct: cfg.maxSpreadPct,
-      depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
-      minDepthUsd1p: cfg.minDepthUsd1p,
-      costR: Number.isFinite(costR) ? costR : null,
-      maxCostR: cfg.maxCostR
-    };
-  }
-
-  if (confluence < cfg.minConfluence) failures.push('E_WEAK_CONTRA_CONFLUENCE_BELOW_MIN');
-  if (rr < cfg.minRR) failures.push('E_WEAK_CONTRA_RR_BELOW_MIN');
-
-  if (!Number.isFinite(spreadPct)) failures.push('E_WEAK_CONTRA_SPREAD_UNKNOWN');
-  else if (spreadPct > cfg.maxSpreadPct) failures.push('E_WEAK_CONTRA_SPREAD_TOO_WIDE');
-
-  if (cfg.requireDepthData && !Number.isFinite(depthUsd1p)) failures.push('E_WEAK_CONTRA_DEPTH_UNKNOWN');
-  else if (Number.isFinite(depthUsd1p) && depthUsd1p < cfg.minDepthUsd1p) failures.push('E_WEAK_CONTRA_DEPTH_TOO_LOW');
-
-  if (Number.isFinite(costR) && costR > cfg.maxCostR) failures.push('E_WEAK_CONTRA_COST_R_TOO_HIGH');
-  if (cfg.requireStructure && !structureAligned) failures.push('E_WEAK_CONTRA_STRUCTURE_NOT_CONFIRMED');
-  if (cfg.requireFlowOrVolume && !flowAligned && !volumeAligned) failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
-  if (cfg.rejectFakeBreakout && (row.fakeBreakout === true || row.fakeBreakoutRisk === true)) failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
-
-  const passed = failures.length === 0;
-
-  return {
-    version: WEAK_CONTRA_ENTRY_GATE_VERSION,
-    enabled: Boolean(cfg.enabled),
-    applies: true,
-    passed,
-    allowed: passed,
-    rejected: !passed,
-    reason: passed ? 'E_WEAK_CONTRA_GATE_PASSED' : failures[0],
-    failures,
-    confirmationProfile,
-    structureAligned,
-    flowAligned,
-    volumeAligned,
-    confluence,
-    minConfluence: cfg.minConfluence,
-    rr,
-    minRR: cfg.minRR,
-    spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
-    maxSpreadPct: cfg.maxSpreadPct,
-    depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
-    minDepthUsd1p: cfg.minDepthUsd1p,
-    costR: Number.isFinite(costR) ? costR : null,
-    maxCostR: cfg.maxCostR,
-    requireStructure: Boolean(cfg.requireStructure),
-    requireFlowOrVolume: Boolean(cfg.requireFlowOrVolume),
-    requireDepthData: Boolean(cfg.requireDepthData),
-    rejectFakeBreakout: Boolean(cfg.rejectFakeBreakout)
-  };
-}
-
 function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
   const childTrueMicroFamilyId = fallbackExact75Id(row, marketContext);
   const parsed = parseShortTaxonomyMicroId(childTrueMicroFamilyId);
@@ -2569,16 +2512,7 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     confirmationProfile: parsed.confirmationProfile
   };
 
-  const weakContraEntryGate = buildWeakContraEntryGate(baseRow, marketContext);
-
-  const executionHash = existingMicroMicroHash || executionHashFromRow(
-    {
-      ...baseRow,
-      weakContraEntryGate,
-      weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null
-    },
-    childTrueMicroFamilyId
-  );
+  const executionHash = existingMicroMicroHash || executionHashFromRow(baseRow, childTrueMicroFamilyId);
 
   const microMicroFamilyId = existingMicroMicroFamilyId ||
     buildMicroMicroFamilyIdFromExecution(childTrueMicroFamilyId, executionHash);
@@ -2595,15 +2529,6 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     ...baseRow,
     ...identity,
 
-    weakContraEntryGate,
-    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
-    weakContraEntryAllowed: weakContraEntryGate.allowed,
-    weakContraRejected: weakContraEntryGate.rejected,
-    weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null,
-    blockVirtualEntry: weakContraEntryGate.rejected,
-    virtualObservationAllowed: true,
-    tradeCandidateAllowed: !weakContraEntryGate.rejected,
-
     exact75ChildTrueMicro: true,
     exactMicroMicro: Boolean(microMicroFamilyId),
     fallbackExact75: !getTrueMicroFamilyId(row),
@@ -2612,11 +2537,7 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     executionFingerprintHash: executionHash || row.executionFingerprintHash || null,
     executionFingerprintParts: Array.isArray(row.executionFingerprintParts)
       ? row.executionFingerprintParts
-      : buildExecutionFingerprintParts({
-          ...baseRow,
-          weakContraEntryGate,
-          weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null
-        }, childTrueMicroFamilyId),
+      : buildExecutionFingerprintParts(baseRow, childTrueMicroFamilyId),
     executionMicroFamilyId: executionHash
       ? `${childTrueMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionHash}`
       : row.executionMicroFamilyId || null,
@@ -2631,884 +2552,6 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     entryMarketWeatherKeyExcludedFromFamilyId: true,
     ...microPolicyFlags()
   };
-}
-
-function tradeConfig() {
-  const options = ACTIVE_RUN_OPTIONS || {};
-
-  const minRiskPct = n(first(
-    options.minRiskPct,
-    CONFIG.short?.trade?.minRiskPct,
-    CONFIG.trade?.shortMinRiskPct,
-    CONFIG.trade?.minRiskPct
-  ), DEFAULT_MIN_RISK_PCT);
-
-  const maxRiskPct = n(first(
-    options.maxRiskPct,
-    CONFIG.short?.trade?.maxRiskPct,
-    CONFIG.trade?.shortMaxRiskPct,
-    CONFIG.trade?.maxRiskPct
-  ), DEFAULT_MAX_RISK_PCT);
-
-  return {
-    maxCandidatesPerSnapshot: int(
-      first(options.maxCandidatesPerSnapshot, CONFIG.short?.trade?.maxCandidatesPerSnapshot, CONFIG.trade?.maxCandidatesPerSnapshot),
-      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
-      1,
-      DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT
-    ),
-    analyzeMaxCandidatesPerSnapshot: int(
-      first(options.analyzeMaxCandidatesPerSnapshot, CONFIG.short?.trade?.analyzeMaxCandidatesPerSnapshot, CONFIG.trade?.analyzeMaxCandidatesPerSnapshot),
-      DEFAULT_MAX_CANDIDATES_PER_SNAPSHOT,
-      1,
-      DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT
-    ),
-    hardMaxCandidatesPerSnapshot: DEFAULT_HARD_MAX_CANDIDATES_PER_SNAPSHOT,
-    maxSnapshotAgeSec: n(first(options.maxSnapshotAgeSec, CONFIG.short?.trade?.maxSnapshotAgeSec, CONFIG.trade?.maxSnapshotAgeSec), DEFAULT_MAX_SNAPSHOT_AGE_SEC),
-    dataConcurrency: int(first(options.dataConcurrency, CONFIG.short?.trade?.dataConcurrency, CONFIG.trade?.dataConcurrency), DEFAULT_DATA_CONCURRENCY, 1, 3),
-
-    minRiskPct,
-    maxRiskPct,
-    fallbackRiskPct: n(first(options.fallbackRiskPct, CONFIG.short?.trade?.fallbackRiskPct, CONFIG.trade?.fallbackRiskPct), DEFAULT_FALLBACK_RISK_PCT),
-    defaultRR: n(first(options.defaultRR, CONFIG.short?.trade?.defaultRR, CONFIG.trade?.defaultRR), DEFAULT_RR),
-    minRR: n(first(options.minRR, CONFIG.short?.trade?.minRR, CONFIG.trade?.minRR), DEFAULT_MIN_RR),
-    maxRR: n(first(options.maxRR, CONFIG.short?.trade?.maxRR, CONFIG.trade?.maxRR), DEFAULT_MAX_RR),
-    minRewardPct: n(first(options.minRewardPct, CONFIG.short?.trade?.minRewardPct, CONFIG.trade?.minRewardPct), DEFAULT_MIN_REWARD_PCT),
-    minDiscordRewardPct: n(first(options.minDiscordRewardPct, CONFIG.short?.trade?.minDiscordRewardPct, CONFIG.trade?.minDiscordRewardPct), DEFAULT_MIN_DISCORD_REWARD_PCT),
-    maxRiskToRewardDistanceRatio: n(first(options.maxRiskToRewardDistanceRatio, CONFIG.short?.trade?.maxRiskToRewardDistanceRatio, CONFIG.trade?.maxRiskToRewardDistanceRatio), DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO),
-
-    maxEstimatedCostR: n(first(options.maxEstimatedCostR, CONFIG.short?.trade?.maxEstimatedCostR, CONFIG.trade?.shortMaxEstimatedCostR, CONFIG.trade?.maxEstimatedCostR), DEFAULT_MAX_ESTIMATED_COST_R),
-    hardMaxEstimatedCostR: n(first(options.hardMaxEstimatedCostR, CONFIG.short?.trade?.hardMaxEstimatedCostR, CONFIG.trade?.hardMaxEstimatedCostR), DEFAULT_HARD_MAX_ESTIMATED_COST_R),
-    roundTripFeePct: n(first(options.roundTripFeePct, CONFIG.short?.cost?.roundTripFeePct, CONFIG.cost?.roundTripFeePct), DEFAULT_ROUND_TRIP_FEE_PCT),
-    roundTripSlippagePct: n(first(options.roundTripSlippagePct, CONFIG.short?.cost?.roundTripSlippagePct, CONFIG.cost?.roundTripSlippagePct), DEFAULT_ROUND_TRIP_SLIPPAGE_PCT),
-    fallbackSpreadPct: n(first(options.fallbackSpreadPct, CONFIG.short?.cost?.fallbackSpreadPct, CONFIG.cost?.fallbackSpreadPct), DEFAULT_FALLBACK_SPREAD_PCT),
-    spreadCostMult: n(first(options.spreadCostMult, CONFIG.short?.cost?.spreadCostMult, CONFIG.cost?.spreadCostMult), DEFAULT_SPREAD_COST_MULT),
-    rrVariants: Array.isArray(options.rrVariants) && options.rrVariants.length
-      ? options.rrVariants.map((x) => n(x, 0)).filter((x) => x > 0)
-      : DEFAULT_RR_VARIANTS,
-
-    candidateTimeoutMs: int(first(options.candidateTimeoutMs, CONFIG.short?.trade?.candidateTimeoutMs, CONFIG.trade?.candidateTimeoutMs), DEFAULT_CANDIDATE_TIMEOUT_MS, 300, 2500),
-    analyzeTimeoutMs: int(first(options.analyzeTimeoutMs, CONFIG.short?.trade?.analyzeTimeoutMs, CONFIG.trade?.analyzeTimeoutMs), DEFAULT_ANALYZE_TIMEOUT_MS, 500, 4500),
-    rotationTimeoutMs: int(first(options.rotationTimeoutMs, CONFIG.short?.trade?.rotationTimeoutMs, CONFIG.trade?.rotationTimeoutMs), DEFAULT_ROTATION_TIMEOUT_MS, 150, 1500),
-    marketContextTimeoutMs: int(first(options.marketContextTimeoutMs, CONFIG.short?.trade?.marketContextTimeoutMs, CONFIG.trade?.marketContextTimeoutMs), DEFAULT_MARKET_CONTEXT_TIMEOUT_MS, 200, 1500),
-
-    monitorTimeoutMs: minRuntimeFloor(
-      first(options.monitorTimeoutMs, CONFIG.short?.trade?.monitorTimeoutMs, CONFIG.trade?.monitorTimeoutMs),
-      DEFAULT_MONITOR_TIMEOUT_MS,
-      DEFAULT_MONITOR_TIMEOUT_MS,
-      1000,
-      15000
-    ),
-    monitorPriceFetchTimeoutMs: int(first(options.monitorPriceFetchTimeoutMs, CONFIG.short?.trade?.monitorPriceFetchTimeoutMs, CONFIG.trade?.monitorPriceFetchTimeoutMs), DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS, 100, 1200),
-    monitorBatchSize: Math.max(
-      DEFAULT_MONITOR_BATCH_SIZE,
-      int(first(options.monitorBatchSize, CONFIG.short?.trade?.monitorBatchSize, CONFIG.trade?.monitorBatchSize), DEFAULT_MONITOR_BATCH_SIZE, 5, 250)
-    ),
-    openPositionMonitorLimit: Math.max(
-      DEFAULT_OPEN_POSITION_MONITOR_LIMIT,
-      int(first(options.openPositionMonitorLimit, CONFIG.short?.trade?.openPositionMonitorLimit, CONFIG.trade?.openPositionMonitorLimit), DEFAULT_OPEN_POSITION_MONITOR_LIMIT, 10, 500)
-    ),
-    openPositionLoadTimeoutMs: int(first(options.openPositionLoadTimeoutMs, CONFIG.short?.trade?.openPositionLoadTimeoutMs, CONFIG.trade?.openPositionLoadTimeoutMs), DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS, 250, 4000),
-    savePositionTimeoutMs: int(first(options.savePositionTimeoutMs, CONFIG.short?.trade?.savePositionTimeoutMs, CONFIG.trade?.savePositionTimeoutMs), DEFAULT_SAVE_POSITION_TIMEOUT_MS, 250, 2500),
-    minEntryLoopAttempts: int(first(options.minEntryLoopAttempts, CONFIG.short?.trade?.minEntryLoopAttempts, CONFIG.trade?.minEntryLoopAttempts), DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS, 1, 8),
-    entryLoopReserveMs: int(first(options.entryLoopReserveMs, CONFIG.short?.trade?.entryLoopReserveMs, CONFIG.trade?.entryLoopReserveMs), DEFAULT_ENTRY_LOOP_RESERVE_MS, 250, 2500),
-    maxRuntimeMs: int(first(options.maxRuntimeMs, CONFIG.short?.trade?.maxRuntimeMs, CONFIG.trade?.maxRuntimeMs), DEFAULT_MAX_RUNTIME_MS, 8000, 30000),
-    positionTimeStopMin: n(first(options.positionTimeStopMin, CONFIG.short?.trade?.positionTimeStopMin, CONFIG.trade?.positionTimeStopMin), 720),
-    monitorLivePriceFetchEnabled: bool(first(options.monitorLivePriceFetchEnabled, CONFIG.short?.trade?.monitorLivePriceFetchEnabled, CONFIG.trade?.monitorLivePriceFetchEnabled), true),
-
-    hardTimeStopNoPriceExit: bool(first(options.hardTimeStopNoPriceExit, CONFIG.short?.trade?.hardTimeStopNoPriceExit, CONFIG.trade?.hardTimeStopNoPriceExit), DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT),
-    closeExpiredBeforePriceFetch: bool(first(options.closeExpiredBeforePriceFetch, CONFIG.short?.trade?.closeExpiredBeforePriceFetch, CONFIG.trade?.closeExpiredBeforePriceFetch), DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH),
-    monitorCandleRangeEnabled: bool(first(options.monitorCandleRangeEnabled, CONFIG.short?.trade?.monitorCandleRangeEnabled, CONFIG.trade?.monitorCandleRangeEnabled), DEFAULT_MONITOR_CANDLE_RANGE_ENABLED)
-  };
-}
-
-function sizingConfig() {
-  const options = ACTIVE_RUN_OPTIONS || {};
-
-  const enabled = bool(first(
-    options.sizingEnabled,
-    options.positionSizingEnabled,
-    options.usePositionSizing,
-    CONFIG.short?.sizing?.enabled,
-    CONFIG.short?.trade?.sizingEnabled,
-    CONFIG.sizing?.shortEnabled,
-    CONFIG.sizing?.enabled,
-    CONFIG.trade?.sizingEnabled
-  ), true);
-
-  const baseRiskPct = clamp(first(
-    options.baseRiskPct,
-    options.defaultRiskFraction,
-    options.riskFraction,
-    CONFIG.short?.sizing?.baseRiskPct,
-    CONFIG.short?.sizing?.defaultRiskFraction,
-    CONFIG.short?.trade?.baseRiskPct,
-    CONFIG.sizing?.shortBaseRiskPct,
-    CONFIG.sizing?.baseRiskPct,
-    CONFIG.trade?.baseRiskPct
-  ) ?? 0.0025, 0, 0.05);
-
-  const minRiskPct = clamp(first(
-    options.minPositionRiskPct,
-    options.minRiskFraction,
-    CONFIG.short?.sizing?.minRiskPct,
-    CONFIG.short?.sizing?.minRiskFraction,
-    CONFIG.sizing?.shortMinRiskPct,
-    CONFIG.sizing?.minRiskPct
-  ) ?? 0.0005, 0, 0.05);
-
-  const maxRiskPct = clamp(first(
-    options.maxPositionRiskPct,
-    options.maxRiskFraction,
-    CONFIG.short?.sizing?.maxRiskPct,
-    CONFIG.short?.sizing?.maxRiskFraction,
-    CONFIG.sizing?.shortMaxRiskPct,
-    CONFIG.sizing?.maxRiskPct
-  ) ?? 0.01, 0, 0.05);
-
-  const fallbackRiskPct = clamp(first(
-    options.sizingFallbackRiskPct,
-    CONFIG.short?.sizing?.fallbackRiskPct,
-    CONFIG.sizing?.shortFallbackRiskPct,
-    CONFIG.sizing?.fallbackRiskPct
-  ) ?? baseRiskPct, 0, 0.05);
-
-  return {
-    enabled,
-    baseRiskPct,
-    fallbackRiskPct,
-    minRiskPct,
-    maxRiskPct,
-    targetTradeSide: TARGET_TRADE_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    shortOnly: true,
-    longDisabled: true,
-    source: 'LOCAL_TRADE_SYSTEM_SIZING_CONFIG'
-  };
-}
-
-function aggregateRuntimeRecentOutcomes(row = {}) {
-  const recent = Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [];
-
-  return recent.reduce((acc, outcome) => {
-    if (!outcome || typeof outcome !== 'object') return acc;
-
-    const source = upper(outcome.source || outcome.outcomeSource || 'VIRTUAL');
-    if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) return acc;
-
-    const r = n(
-      outcome.netR ??
-        outcome.exitR ??
-        outcome.realizedNetR ??
-        outcome.realizedR ??
-        outcome.r,
-      0
-    );
-
-    const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
-
-    acc.completed += 1;
-    acc.totalR += r;
-    acc.totalCostR += costR;
-    acc.sumR += r;
-    acc.sumSquaredR += r * r;
-
-    if (r > 0) {
-      acc.wins += 1;
-      acc.grossWinR += r;
-    } else if (r < 0) {
-      acc.losses += 1;
-      acc.grossLossR += Math.abs(r);
-    } else {
-      acc.flats += 1;
-    }
-
-    if (
-      outcome.directSL ||
-      outcome.directToSL ||
-      outcome.directStopLoss ||
-      outcome.isDirectSL ||
-      upper(outcome.exitReason) === 'SL'
-    ) {
-      acc.directSLCount += 1;
-    }
-
-    return acc;
-  }, {
-    completed: 0,
-    wins: 0,
-    losses: 0,
-    flats: 0,
-    totalR: 0,
-    totalCostR: 0,
-    sumR: 0,
-    sumSquaredR: 0,
-    grossWinR: 0,
-    grossLossR: 0,
-    directSLCount: 0
-  });
-}
-
-function runtimeCompletedSample(row = {}) {
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
-  const virtualCompleted = n(row.virtualCompleted, 0);
-  const shadowCompleted = n(row.shadowCompleted, 0);
-  const virtualShadowCompleted = virtualCompleted + shadowCompleted;
-
-  return Math.max(
-    0,
-    virtualShadowCompleted,
-    n(row.completed, 0),
-    n(row.outcomeSample, 0),
-    n(row.closed, 0),
-    recent.completed
-  );
-}
-
-function runtimeObservationSample(row = {}) {
-  return Math.max(
-    0,
-    n(row.observationSample, 0),
-    n(row.seen, 0),
-    n(row.observations, 0),
-    runtimeCompletedSample(row)
-  );
-}
-
-function runtimeTotalR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
-  if (completed <= 0) return 0;
-
-  const virtualShadowTotal = n(row.virtualTotalR, 0) + n(row.shadowTotalR, 0);
-  if (virtualShadowTotal !== 0) return virtualShadowTotal;
-
-  if (recent.completed > 0) return recent.totalR;
-
-  return n(
-    row.shortNetTotalR ??
-      row.netShortTotalR ??
-      row.netTotalR ??
-      row.totalNetR ??
-      row.totalR,
-    0
-  );
-}
-
-function runtimeAvgR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  if (completed <= 0) return 0;
-
-  if (hasValue(row.avgNetR)) return n(row.avgNetR, 0);
-  if (hasValue(row.netAvgR)) return n(row.netAvgR, 0);
-  if (hasValue(row.avgR)) return n(row.avgR, 0);
-
-  return runtimeTotalR(row) / completed;
-}
-
-function runtimeStdDevR(row = {}) {
-  const explicit = n(
-    row.stdDevR ??
-      row.standardDeviationR ??
-      row.rStdDev,
-    NaN
-  );
-
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-
-  const recent = aggregateRuntimeRecentOutcomes(row);
-  const completed = runtimeCompletedSample(row);
-
-  if (recent.completed > 1) {
-    const variance = Math.max(
-      0,
-      (recent.sumSquaredR - (recent.sumR * recent.sumR) / recent.completed) / (recent.completed - 1)
-    );
-
-    return Math.sqrt(variance);
-  }
-
-  return completed > 1 ? Math.abs(runtimeAvgR(row)) : 0;
-}
-
-function runtimeLcb95AvgR(row = {}) {
-  const value = first(
-    row.microMicroLcb95AvgR,
-    row.microMicroLCB95AvgR,
-    row.lcb95AvgR,
-    row.lcb95NetAvgR,
-    row.avgRLcb95,
-    row.avgRLCB95,
-    row.netAvgRLCB95,
-    row.avgRLower95,
-    row.avgRLowerBound95,
-    row.avgRLowerConfidenceBound95,
-    row.lowerConfidenceBoundAvgR,
-    row.sampleAdjustedAvgRLowerBound,
-    row.sampleLcb95AvgR,
-    row.fairAvgRLowerBound
-  );
-
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) return parsed;
-
-  const completed = runtimeCompletedSample(row);
-  if (completed <= 1) return 0;
-
-  const avg = runtimeAvgR(row);
-  const sd = runtimeStdDevR(row);
-
-  return avg - 1.96 * (sd / Math.sqrt(completed));
-}
-
-function runtimeTotalCostR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
-  if (completed <= 0) return 0;
-
-  const virtualShadowCost = Math.max(0, n(row.virtualTotalCostR, 0)) + Math.max(0, n(row.shadowTotalCostR, 0));
-  if (virtualShadowCost > 0) return virtualShadowCost;
-
-  if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
-
-  if (hasValue(row.totalCostR)) return Math.max(0, n(row.totalCostR, 0));
-  if (hasValue(row.totalNetCostR)) return Math.max(0, n(row.totalNetCostR, 0));
-
-  for (const key of ['avgCostR', 'costR', 'netCostR', 'estimatedCostR']) {
-    if (hasValue(row[key]) && n(row[key], 0) > 0) {
-      return Math.max(0, n(row[key], 0)) * completed;
-    }
-  }
-
-  return 0;
-}
-
-function runtimeAvgCostR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  return completed > 0 ? runtimeTotalCostR(row) / completed : 0;
-}
-
-function runtimeDirectSLCount(row = {}) {
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
-  return Math.max(
-    0,
-    n(row.virtualDirectSLCount, 0) + n(row.shadowDirectSLCount, 0),
-    n(row.directSLCount, 0),
-    recent.directSLCount
-  );
-}
-
-function runtimeDirectSLPct(row = {}) {
-  if (hasValue(row.directSLPct)) {
-    const pctValue = n(row.directSLPct, 0);
-    return pctValue > 1 ? clamp(pctValue / 100, 0, 1) : clamp(pctValue, 0, 1);
-  }
-
-  const completed = runtimeCompletedSample(row);
-  return completed > 0 ? clamp(runtimeDirectSLCount(row) / completed, 0, 1) : 0;
-}
-
-function runtimeProfitFactor(row = {}) {
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
-  const winR = Math.max(
-    n(row.virtualWinR, 0) + n(row.shadowWinR, 0),
-    n(row.virtualGrossWinR, 0) + n(row.shadowGrossWinR, 0),
-    n(row.netWinR, 0),
-    n(row.totalWinR, 0),
-    n(row.grossWinR, 0),
-    recent.grossWinR,
-    0
-  );
-
-  const lossR = Math.max(
-    Math.abs(n(row.virtualLossR, 0) + n(row.shadowLossR, 0)),
-    Math.abs(n(row.virtualGrossLossR, 0) + n(row.shadowGrossLossR, 0)),
-    Math.abs(n(row.netLossR, 0)),
-    Math.abs(n(row.totalLossR, 0)),
-    Math.abs(n(row.grossLossR, 0)),
-    recent.grossLossR,
-    0
-  );
-
-  if (winR > 0 || lossR > 0) {
-    if (lossR <= 0) return 99;
-    return winR / lossR;
-  }
-
-  const explicit = n(row.netProfitFactor ?? row.profitFactor ?? row.pf, NaN);
-  if (Number.isFinite(explicit)) return Math.max(0, explicit);
-
-  return 0;
-}
-
-function runtimeCurrentFitLabel(row = {}) {
-  const directLabel = upper(row.currentFit || row.currentFitLabel || row.entryCurrentFit || '');
-  if (directLabel) {
-    if (directLabel.includes('MISFIT')) return 'MISFIT';
-    if (directLabel.includes('MATCH')) return directLabel.includes('WEAK') ? 'WEAK_MATCH' : 'MATCH';
-    if (directLabel.includes('FIT')) return directLabel;
-    if (directLabel.includes('OK')) return 'OK';
-    if (directLabel.includes('NEUTRAL')) return 'NEUTRAL';
-  }
-
-  const score = n(row.currentFitScore ?? row.entryCurrentFitScore ?? row.fitScore, 0);
-  if (score <= -20) return 'MISFIT';
-  if (score >= 45) return 'MATCH';
-  if (score >= 18) return 'WEAK_MATCH';
-  return directLabel || 'UNKNOWN';
-}
-
-function policyBlockedGate(row = {}) {
-  const microMicroId = getMicroMicroFamilyId(row);
-  const parsed = parseShortTaxonomyMicroId(microMicroId);
-  const confirmationProfile = upper(row.confirmationProfile || parsed.confirmationProfile || confirmationFromRow(row));
-  const reasons = [];
-
-  if (!microMicroId || !isSelectableMicroMicroId(microMicroId)) {
-    reasons.push('EXACT_MICRO_MICRO_ID_REQUIRED');
-  }
-
-  const side = inferRowTradeSide(row);
-
-  if (side === OPPOSITE_TRADE_SIDE) {
-    reasons.push('INVALID_SIDE_LONG_DISABLED');
-  } else if (side !== TARGET_TRADE_SIDE && side !== 'UNKNOWN') {
-    reasons.push('INVALID_SIDE_NON_SHORT');
-  }
-
-  if (hasValue(row.entry) || hasValue(row.sl) || hasValue(row.tp)) {
-    const entry = n(row.entry, 0);
-    const sl = n(row.sl ?? row.initialSl, 0);
-    const tp = n(row.tp, 0);
-
-    if (!(entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl)) {
-      reasons.push('INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED');
-    }
-  }
-
-  if (isScannerFingerprintId(row.microFamilyId || row.trueMicroFamilyId || row.learningFamilyId || row.id)) {
-    reasons.push('KNOWN_FORBIDDEN_FAMILY_SCANNER_FINGERPRINT');
-  }
-
-  if (isExecutionFingerprintId(row.learningMicroFamilyId || row.microFamilyId || row.id)) {
-    reasons.push('KNOWN_FORBIDDEN_FAMILY_EXECUTION_FINGERPRINT');
-  }
-
-  if (BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE && confirmationProfile === 'E_WEAK_CONTRA') {
-    reasons.push('E_WEAK_CONTRA_POLICY_BLOCK');
-  }
-
-  if (row.policyBlocked === true && row.policyBlockedReason) {
-    const inherited = upper(row.policyBlockedReason);
-
-    if (
-      inherited.includes('KNOWN_FORBIDDEN_FAMILY') &&
-      confirmationProfile !== 'E_WEAK_CONTRA' &&
-      !isScannerFingerprintId(microMicroId) &&
-      !isExecutionFingerprintId(microMicroId)
-    ) {
-      // Oude brede bug wordt bewust niet meegenomen.
-    } else {
-      reasons.push(row.policyBlockedReason);
-    }
-  }
-
-  return {
-    version: 'SHORT_POLICY_BLOCK_GATE_V4_SYSTEM_RULES_ONLY_NO_B_FLOW_BUG',
-    blocked: reasons.length > 0,
-    policyBlocked: reasons.length > 0,
-    reasons,
-    reason: reasons[0] || null,
-    systemRules: [
-      'E_WEAK_CONTRA',
-      'INVALID_SIDE',
-      'INVALID_GEOMETRY',
-      'NON_SHORT',
-      'KNOWN_FORBIDDEN_FAMILY'
-    ],
-    currentFitPolicyBlockDisabled: true
-  };
-}
-
-function exactMicroMicroEmpiricalVeto(row = {}) {
-  const microMicroId = getMicroMicroFamilyId(row);
-  const lcb95AvgR = runtimeLcb95AvgR(row);
-  const completed = runtimeCompletedSample(row);
-  const exactMicroMicro =
-    Boolean(microMicroId) &&
-    isSelectableMicroMicroId(microMicroId) &&
-    inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
-
-  const explicitReason = upper(row.empiricalVetoReason);
-  const explicitVeto =
-    row.empiricalVeto === true &&
-    (!explicitReason || explicitReason === 'EXACT_MICRO_MICRO_LCB95_NEGATIVE');
-
-  const triggered =
-    exactMicroMicro &&
-    completed >= MIN_EMPIRICAL_VETO_COMPLETED &&
-    Number.isFinite(Number(lcb95AvgR)) &&
-    Number(lcb95AvgR) < 0;
-
-  return {
-    version: EMPIRICAL_VETO_VERSION,
-    triggered: triggered || explicitVeto,
-    empiricalVeto: triggered || explicitVeto,
-    empiricalVetoReason: triggered || explicitVeto ? 'EXACT_MICRO_MICRO_LCB95_NEGATIVE' : null,
-    empiricalVetoUsesLcb95: true,
-    empiricalVetoUsesRawAvgR: false,
-    empiricalVetoBlocksParentFallbackRescue: true,
-    shrinkageCannotOverrideVeto: true,
-    id: microMicroId || null,
-    microMicroFamilyId: microMicroId || null,
-    completed,
-    minCompleted: MIN_EMPIRICAL_VETO_COMPLETED,
-    lcb95AvgR,
-    threshold: 0
-  };
-}
-
-function proofTierFromRuntimeStatus(status, marketResolution = null) {
-  if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return PROOF_TIER_POLICY_BLOCKED;
-  if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return PROOF_TIER_EMPIRICAL_VETO;
-  if (status === MICRO_MICRO_STATUS_OBSERVING) return PROOF_TIER_OBSERVATION_ONLY;
-  if (status === MICRO_MICRO_STATUS_REJECTED) return PROOF_TIER_OBSERVATION_ONLY;
-  if (status === MICRO_MICRO_STATUS_PASSED) {
-    return marketResolution && marketResolution !== 'lifetime'
-      ? PROOF_TIER_MICRO_MICRO_MARKET_PROOF
-      : PROOF_TIER_MICRO_MICRO_LIFETIME_PROOF;
-  }
-
-  return PROOF_TIER_OBSERVATION_ONLY;
-}
-
-function maxAllowedRiskBandFromProof(proofTier) {
-  if (proofTier === PROOF_TIER_MICRO_MICRO_MARKET_PROOF) return MAX_ALLOWED_RISK_BAND_HIGH;
-  if (proofTier === PROOF_TIER_MICRO_MICRO_LIFETIME_PROOF) return MAX_ALLOWED_RISK_BAND_LOW;
-  return MAX_ALLOWED_RISK_BAND_ZERO;
-}
-
-function microMicroRuntimeGate(row = {}) {
-  const microMicroId = getMicroMicroFamilyId(row);
-  const completed = runtimeCompletedSample(row);
-  const observed = runtimeObservationSample(row);
-  const avg = runtimeAvgR(row);
-  const lcb95AvgR = runtimeLcb95AvgR(row);
-  const total = runtimeTotalR(row);
-  const pf = runtimeProfitFactor(row);
-  const cost = runtimeAvgCostR(row);
-  const dsl = runtimeDirectSLPct(row);
-  const fit = runtimeCurrentFitLabel(row);
-
-  const policyGate = policyBlockedGate(row);
-  const empiricalVetoGate = exactMicroMicroEmpiricalVeto(row);
-  const edgeReasons = [];
-
-  if (!(lcb95AvgR > MIN_DISCORD_ACTIVATION_LCB95_AVG_R)) edgeReasons.push('LCB95_AVG_R_NOT_POSITIVE');
-  if (!(avg > MIN_DISCORD_ACTIVATION_AVG_R)) edgeReasons.push('AVG_R_NET_NOT_POSITIVE');
-  if (!(total > MIN_DISCORD_ACTIVATION_TOTAL_R)) edgeReasons.push('TOTAL_R_NET_NOT_POSITIVE');
-  if (!(pf > MIN_DISCORD_ACTIVATION_PROFIT_FACTOR)) edgeReasons.push('PROFIT_FACTOR_NOT_ABOVE_1');
-  if (cost > MAX_DISCORD_ACTIVATION_AVG_COST_R) edgeReasons.push('AVG_COST_R_TOO_HIGH');
-  if (dsl > MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT) edgeReasons.push('DIRECT_SL_PCT_TOO_HIGH');
-
-  let status = MICRO_MICRO_STATUS_OBSERVING;
-  let reasons = [];
-
-  if (policyGate.blocked) {
-    status = MICRO_MICRO_STATUS_POLICY_BLOCKED;
-    reasons = policyGate.reasons;
-  } else if (empiricalVetoGate.triggered) {
-    status = MICRO_MICRO_STATUS_EMPIRICAL_VETO;
-    reasons = [empiricalVetoGate.empiricalVetoReason];
-  } else if (completed < MIN_DISCORD_ACTIVATION_COMPLETED) {
-    status = MICRO_MICRO_STATUS_OBSERVING;
-    reasons = [`COMPLETED_BELOW_${MIN_DISCORD_ACTIVATION_COMPLETED}`];
-  } else if (edgeReasons.length > 0) {
-    status = MICRO_MICRO_STATUS_REJECTED;
-    reasons = edgeReasons;
-  } else {
-    status = MICRO_MICRO_STATUS_PASSED;
-    reasons = ['MICRO_MICRO_RUNTIME_GATE_PASSED'];
-  }
-
-  const passed = status === MICRO_MICRO_STATUS_PASSED;
-  const observing = status === MICRO_MICRO_STATUS_OBSERVING;
-  const rejected = status === MICRO_MICRO_STATUS_REJECTED;
-  const empiricalVeto = status === MICRO_MICRO_STATUS_EMPIRICAL_VETO;
-  const policyBlocked = status === MICRO_MICRO_STATUS_POLICY_BLOCKED;
-
-  const proofTier = proofTierFromRuntimeStatus(status, row.marketResolution || null);
-  const maxAllowedRiskBand = maxAllowedRiskBandFromProof(proofTier);
-
-  return {
-    version: MICRO_MICRO_RUNTIME_GATE_VERSION,
-    status,
-    passed,
-    observing,
-    rejected,
-    empiricalVeto,
-    policyBlocked,
-
-    eligible: passed,
-    discordEligible: passed,
-    discordActivationEligible: passed,
-    discordRuntimeActivationGatePassed: passed,
-
-    virtualLearningAllowed: observing || passed,
-    virtualObservationAllowed: observing || passed,
-    virtualEntryAllowed: observing || passed,
-    blocksNewVirtualEntry: rejected || empiricalVeto || policyBlocked,
-    blocksLiveRiskEntry: rejected || empiricalVeto || policyBlocked,
-    blocksDiscordTradeReady: !passed,
-
-    reason: passed ? 'MICRO_MICRO_RUNTIME_GATE_PASSED' : reasons[0],
-    reasons,
-    policyReasons: policyGate.reasons,
-    edgeReasons,
-
-    id: microMicroId || null,
-    microMicroFamilyId: microMicroId || null,
-    learningFamilyId: microMicroId || null,
-    completed: round(completed, 4),
-    observed: round(observed, 4),
-    avgR: round(avg, 4),
-    lcb95AvgR: round(lcb95AvgR, 6),
-    avgRLCB95: round(lcb95AvgR, 6),
-    totalR: round(total, 4),
-    profitFactor: round(pf, 4),
-    avgCostR: round(cost, 4),
-    directSLPct: round(dsl, 4),
-    currentFit: fit,
-    confirmationProfile: row.confirmationProfile || parseShortTaxonomyMicroId(microMicroId).confirmationProfile || null,
-    statusRank: MICRO_MICRO_STATUS_RANK[status] ?? 99,
-
-    policyGate,
-    empiricalVetoGate,
-    empiricalVetoReason: empiricalVeto ? empiricalVetoGate.empiricalVetoReason : null,
-    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-
-    proofTier,
-    maxAllowedRiskBand,
-    thresholds: {
-      minCompleted: MIN_DISCORD_ACTIVATION_COMPLETED,
-      minLcb95AvgR: MIN_DISCORD_ACTIVATION_LCB95_AVG_R,
-      minAvgR: MIN_DISCORD_ACTIVATION_AVG_R,
-      minTotalR: MIN_DISCORD_ACTIVATION_TOTAL_R,
-      minProfitFactor: MIN_DISCORD_ACTIVATION_PROFIT_FACTOR,
-      maxAvgCostR: MAX_DISCORD_ACTIVATION_AVG_COST_R,
-      maxDirectSLPct: MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT,
-      empiricalVetoMinCompleted: MIN_EMPIRICAL_VETO_COMPLETED
-    }
-  };
-}
-
-function runtimeDiscordActivationGate(row = {}) {
-  const gate = microMicroRuntimeGate(row);
-
-  return {
-    ...gate,
-    version: DISCORD_ACTIVATION_GATE_VERSION,
-    runtimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
-    eligible: gate.status === MICRO_MICRO_STATUS_PASSED,
-    blocked: gate.status !== MICRO_MICRO_STATUS_PASSED,
-    reason: gate.status === MICRO_MICRO_STATUS_PASSED
-      ? 'DISCORD_RUNTIME_NET_EDGE_GATE_PASSED'
-      : gate.reason,
-    discordEligible: gate.status === MICRO_MICRO_STATUS_PASSED,
-    discordActivationEligible: gate.status === MICRO_MICRO_STATUS_PASSED,
-    discordRuntimeActivationGatePassed: gate.status === MICRO_MICRO_STATUS_PASSED
-  };
-}
-
-function compareBestMicroMicroRows(a = {}, b = {}) {
-  const gateA = a?.microMicroRuntimeGate || microMicroRuntimeGate(a);
-  const gateB = b?.microMicroRuntimeGate || microMicroRuntimeGate(b);
-  const statusRankA = MICRO_MICRO_STATUS_RANK[gateA.status] ?? 99;
-  const statusRankB = MICRO_MICRO_STATUS_RANK[gateB.status] ?? 99;
-  if (statusRankA !== statusRankB) return statusRankA - statusRankB;
-
-  const lcbDiff = n(gateB.lcb95AvgR, 0) - n(gateA.lcb95AvgR, 0);
-  if (lcbDiff !== 0) return lcbDiff;
-
-  const avgDiff = n(gateB.avgR, 0) - n(gateA.avgR, 0);
-  if (avgDiff !== 0) return avgDiff;
-
-  const totalDiff = n(gateB.totalR, 0) - n(gateA.totalR, 0);
-  if (totalDiff !== 0) return totalDiff;
-
-  const pfDiff = n(gateB.profitFactor, 0) - n(gateA.profitFactor, 0);
-  if (pfDiff !== 0) return pfDiff;
-
-  const completedDiff = n(gateB.completed, 0) - n(gateA.completed, 0);
-  if (completedDiff !== 0) return completedDiff;
-
-  const observedDiff = n(gateB.observed, 0) - n(gateA.observed, 0);
-  if (observedDiff !== 0) return observedDiff;
-
-  return String(gateA.microMicroFamilyId || '').localeCompare(String(gateB.microMicroFamilyId || ''));
-}
-
-function validShortRiskShape(row = {}) {
-  const entry = n(row.entry ?? row.entryPrice, 0);
-  const sl = n(row.sl ?? row.initialSl ?? row.stopLoss, 0);
-  const tp = n(row.tp ?? row.takeProfit, 0);
-  return entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl;
-}
-
-function hasValidRiskShape(row = {}) {
-  const rr = n(row.rr, 0);
-
-  if (row.learningOnly === true) return false;
-  if (row.liveRiskValid === false) return false;
-  if (inferRowTradeSide(row) === OPPOSITE_TRADE_SIDE) return false;
-  if (rr <= 0) return false;
-
-  return validShortRiskShape(row);
-}
-
-function validateVirtualEntry(row = {}) {
-  const tradeSide = inferRowTradeSide(row);
-  const trueMicroFamilyId = getTrueMicroFamilyId(row);
-  const microMicroFamilyId = getMicroMicroFamilyId(row);
-
-  if (tradeSide === OPPOSITE_TRADE_SIDE) {
-    return { ok: false, reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM', tradeSide };
-  }
-
-  if (!trueMicroFamilyId || !isSelectableTrueMicroId(trueMicroFamilyId)) {
-    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_75_CHILD_TRUE_MICRO_FAMILY' };
-  }
-
-  if (!microMicroFamilyId || !isSelectableMicroMicroId(microMicroFamilyId)) {
-    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_MICRO_MICRO_FAMILY_ID' };
-  }
-
-  const runtimeGate = microMicroRuntimeGate(row);
-
-  if (runtimeGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) {
-    return {
-      ok: false,
-      reason: runtimeGate.reason || 'MICRO_MICRO_POLICY_BLOCKED',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status,
-      policyBlocked: true,
-      virtualLearningAllowed: false,
-      virtualEntryAllowed: false
-    };
-  }
-
-  if (runtimeGate.status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) {
-    return {
-      ok: false,
-      reason: runtimeGate.reason || 'EXACT_MICRO_MICRO_EMPIRICAL_VETO',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status,
-      empiricalVeto: true,
-      empiricalVetoReason: runtimeGate.empiricalVetoReason || 'EXACT_MICRO_MICRO_LCB95_NEGATIVE',
-      empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-      virtualLearningAllowed: false,
-      virtualEntryAllowed: false
-    };
-  }
-
-  if (runtimeGate.status === MICRO_MICRO_STATUS_REJECTED) {
-    return {
-      ok: false,
-      reason: runtimeGate.reason || 'MICRO_MICRO_REJECTED_BAD_NET_EDGE',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status,
-      virtualLearningAllowed: false,
-      virtualEntryAllowed: false
-    };
-  }
-
-  if (row.weakContraRejected === true || row.blockVirtualEntry === true) {
-    return {
-      ok: false,
-      reason: row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'E_WEAK_CONTRA_ENTRY_GATE_REJECTED',
-      weakContraEntryGate: row.weakContraEntryGate || null,
-      weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status
-    };
-  }
-
-  if (!hasValidRiskShape(row)) {
-    return {
-      ok: false,
-      reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status
-    };
-  }
-
-  if (n(row.estimatedCostR, 0) > tradeConfig().hardMaxEstimatedCostR) {
-    return {
-      ok: false,
-      reason: 'SHORT_ESTIMATED_COST_R_TOO_HIGH',
-      estimatedCostR: n(row.estimatedCostR, 0),
-      hardMaxEstimatedCostR: tradeConfig().hardMaxEstimatedCostR,
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status
-    };
-  }
-
-  return {
-    ok: true,
-    reason: runtimeGate.status === MICRO_MICRO_STATUS_OBSERVING
-      ? 'SHORT_VIRTUAL_LEARNING_OBSERVING_MICRO_MICRO'
-      : 'SHORT_VIRTUAL_LEARNING_PASSED_MICRO_MICRO',
-    rr: n(row.rr, 0),
-    riskPct: n(row.riskPct, 0),
-    rewardPct: n(row.rewardPct, 0),
-    estimatedCostR: n(row.estimatedCostR, 0),
-    rrShadowGridEnabled: true,
-    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
-    weakContraEntryGate: row.weakContraEntryGate || null,
-    weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
-    microMicroRuntimeGate: runtimeGate,
-    microMicroRuntimeGateStatus: runtimeGate.status,
-    virtualLearningAllowed: true,
-    virtualEntryAllowed: true,
-    discordEligible: runtimeGate.status === MICRO_MICRO_STATUS_PASSED,
-    empiricalVeto: false,
-    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-    proofTier: runtimeGate.proofTier,
-    maxAllowedRiskBand: runtimeGate.maxAllowedRiskBand
-  };
-}
-
-function waitAction(candidate, reason, extra = {}) {
-  return {
-    ...candidate,
-    action: 'WAIT',
-    reason,
-    virtualTracked: false,
-    liveEligible: false,
-    discordAlertEligible: false,
-    discordActivationEligible: false,
-    discordRuntimeActivationGatePassed: false,
-    signalType: SIGNAL_TYPE_BLOCKED,
-    riskFractionForEntry: 0,
-    ...sideFlags(),
-    ...virtualFlags(candidate),
-    ...isolationFlags(),
-    ...extra
-  };
-}
-
-function currentFitMaxWeatherAgeSec() {
-  return int(
-    first(CONFIG.short?.trade?.currentFitMaxWeatherAgeSec, CONFIG.trade?.currentFitMaxWeatherAgeSec),
-    15 * 60,
-    30,
-    24 * 3600
-  );
 }
 
 function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
@@ -3535,28 +2578,9 @@ function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
     now()
   ), now());
 
-  const snapshot = buildEntryMarketWeatherSnapshotSafe({
-    ...universeObj,
-    ...sourceObj,
-    ...meta,
-    entryMarketWeatherKey: resolved.key,
-    entryMarketWeatherRegime: resolved.regime,
-    entryMarketWeatherTrendSide: resolved.trendSide,
-    confirmedMarketWeatherKey: resolved.key,
-    confirmedMarketWeatherRegime: resolved.regime,
-    confirmedMarketWeatherTrendSide: resolved.trendSide,
-    currentMarketWeatherKey: resolved.key,
-    currentMarketWeatherRegime: resolved.regime,
-    currentMarketWeatherTrendSide: resolved.trendSide,
-    marketWeatherKey: resolved.key,
-    marketWeatherRegime: resolved.regime,
-    marketWeatherTrendSide: resolved.trendSide
-  }, now());
-
-  const parsed = parseKnownMarketWeatherKey(snapshot.entryMarketWeatherKey || resolved.key);
+  const parsed = parseKnownMarketWeatherKey(resolved.key);
 
   return {
-    ...snapshot,
     confirmed: parsed.known,
     confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     confirmedMarketWeatherKey: parsed.key,
@@ -3565,17 +2589,25 @@ function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
     confirmedMarketWeatherIsUnknown: !parsed.known,
     confirmedMarketWeatherAt: confirmedAt,
     confirmedAt,
+
     currentMarketWeatherKey: parsed.key,
     currentMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     currentMarketWeatherRegime: parsed.regime,
     currentMarketWeatherTrendSide: parsed.trendSide,
+
     entryMarketWeatherKey: parsed.key,
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     entryMarketWeatherRegime: parsed.regime,
     entryMarketWeatherTrendSide: parsed.trendSide,
+    entryMarketWeatherCapturedAt: confirmedAt,
+    entryMarketWeatherKnown: parsed.known,
+    entryMarketWeatherRaw: sourceObj,
+    entryMarketWeatherRawAvailableFields: Object.keys(sourceObj || {}).slice(0, 80),
+
     candidateMarketWeatherKey: parsed.key,
     candidateMarketWeatherRegime: parsed.regime,
     candidateMarketWeatherTrendSide: parsed.trendSide,
+
     sourceReason: resolved.sourceReason,
     reason: parsed.known
       ? 'MARKET_WEATHER_CONFIRMED_FROM_LATEST_CONTEXT'
@@ -3583,10 +2615,19 @@ function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
   };
 }
 
+function currentFitMaxWeatherAgeSec() {
+  return int(
+    first(CONFIG.short?.trade?.currentFitMaxWeatherAgeSec, CONFIG.trade?.currentFitMaxWeatherAgeSec),
+    15 * 60,
+    30,
+    24 * 3600
+  );
+}
+
 async function loadMarketContext() {
   const [weather, universe] = await Promise.all([
-    readJsonFromAnyRedis(MARKET_WEATHER_LATEST_KEYS, null),
-    readJsonFromAnyRedis(MARKET_UNIVERSE_LATEST_KEYS, null)
+    readJsonFromAnyRedis(MARKET_WEATHER_LATEST_KEYS, null, 180),
+    readJsonFromAnyRedis(MARKET_UNIVERSE_LATEST_KEYS, null, 180)
   ]);
 
   const source = weather.value && typeof weather.value === 'object' ? weather.value : {};
@@ -3611,30 +2652,6 @@ async function loadMarketContext() {
   const ageSec = createdAt > 0 ? Math.round((now() - createdAt) / 1000) : null;
   const stale = createdAt > 0 ? ageSec > currentFitMaxWeatherAgeSec() : true;
 
-  let freshConfirmed = { fresh: false, reason: 'FALLBACK_FRESHNESS_CHECK' };
-
-  if (typeof MarketKeyModule.isFreshConfirmedMarketWeather === 'function') {
-    try {
-      freshConfirmed = MarketKeyModule.isFreshConfirmedMarketWeather({
-        ...confirmed,
-        createdAt,
-        confirmedAt: first(source.confirmedAt, confirmed.confirmedAt, createdAt)
-      }, {
-        maxAgeMin: PLAYBOOK_MAX_AGE_MIN
-      });
-    } catch {
-      freshConfirmed = {
-        fresh: ageSec !== null && ageSec <= PLAYBOOK_MAX_AGE_MIN * 60,
-        reason: 'FALLBACK_FRESHNESS_AFTER_HELPER_ERROR'
-      };
-    }
-  } else {
-    freshConfirmed = {
-      fresh: ageSec !== null && ageSec <= PLAYBOOK_MAX_AGE_MIN * 60,
-      reason: 'FALLBACK_FRESHNESS_NO_HELPER'
-    };
-  }
-
   const resolved = resolveMarketWeatherFromObjects(
     confirmed,
     source,
@@ -3644,6 +2661,8 @@ async function loadMarketContext() {
   );
 
   const parsed = parseKnownMarketWeatherKey(resolved.key);
+
+  const freshConfirmed = ageSec !== null && ageSec <= PLAYBOOK_MAX_AGE_MIN * 60;
 
   return {
     ok: Boolean(weather.value) && parsed.known,
@@ -3656,8 +2675,8 @@ async function loadMarketContext() {
     createdAt,
     ageSec,
     stale,
-    freshConfirmed: Boolean(freshConfirmed.fresh),
-    freshConfirmedReason: freshConfirmed.reason || null,
+    freshConfirmed,
+    freshConfirmedReason: freshConfirmed ? 'CONFIRMED_WEATHER_FRESH' : 'CONFIRMED_WEATHER_STALE_OR_MISSING',
     confirmedMarketWeatherKey: parsed.key,
     confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     confirmedMarketWeatherRegime: parsed.regime,
@@ -3681,6 +2700,30 @@ async function loadMarketContext() {
     marketWeatherResolved: parsed.known,
     marketWeatherResolveReason: resolved.sourceReason || null,
     unknownWeatherBlocksTradeReady: !parsed.known
+  };
+}
+
+function fallbackMarketContext(reason = 'MARKET_CONTEXT_FALLBACK') {
+  return {
+    ok: false,
+    source: {},
+    universe: {},
+    entryMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
+    confirmedMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
+    entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    entryMarketWeatherRegime: 'UNKNOWN',
+    entryMarketWeatherTrendSide: 'UNKNOWN',
+    confirmedMarketWeatherRegime: 'UNKNOWN',
+    confirmedMarketWeatherTrendSide: 'UNKNOWN',
+    regime: 'UNKNOWN',
+    trendSide: 'UNKNOWN',
+    weatherTrendSide: 'UNKNOWN',
+    ageSec: null,
+    stale: true,
+    freshConfirmed: false,
+    freshConfirmedReason: reason,
+    unknownWeatherBlocksTradeReady: true
   };
 }
 
@@ -3770,7 +2813,7 @@ function attachCurrentFitContext(row = {}, marketContext = {}) {
   return {
     ...withWeather,
     currentMarketWeather: marketContext?.source || null,
-    currentMarketUniverse: marketContext?.universe || null,
+    currentMarketUniverse: null,
     confirmedMarketWeatherKey: marketContext?.confirmedMarketWeatherKey || withWeather.entryMarketWeatherKey,
     confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     confirmedMarketWeatherRegime: marketContext?.confirmedMarketWeatherRegime || withWeather.entryMarketWeatherRegime,
@@ -3821,6 +2864,238 @@ function discordCurrentFitGate(row = {}) {
     reason: `DISCORD_BLOCKED_CURRENT_FIT_${fit}`,
     currentFit: fit,
     currentFitConfidence: confidence
+  };
+}
+
+function getRowRR(row = {}) {
+  return n(first(row.rr, row.primaryRr, row.riskReward, row.rewardRisk), 0);
+}
+
+function getRowSpreadPct(row = {}) {
+  const direct = n(row.spreadPct, NaN);
+  if (Number.isFinite(direct)) return direct;
+
+  const bps = n(row.spreadBps, NaN);
+  if (Number.isFinite(bps)) return bps / 10000;
+
+  return NaN;
+}
+
+function getRowDepthUsd1p(row = {}) {
+  return n(first(
+    row.depthMinUsd1p,
+    row.minDepthUsd1p,
+    row.depthUsd1p,
+    row.depthUsd,
+    row.orderbookDepthUsd,
+    row.liquidityDepthUsd
+  ), NaN);
+}
+
+function getRowConfluence(row = {}) {
+  return n(first(row.confluence, row.sniperScore, row.scannerScore, row.moveScore), 0);
+}
+
+function getRowCostR(row = {}) {
+  return n(first(row.estimatedCostR, row.costR, row.avgCostR), NaN);
+}
+
+function detectStructureSignal(row = {}) {
+  const text = rowText(row);
+
+  return Boolean(
+    row.retestConfirmed ||
+    row.pullbackConfirmed ||
+    row.sweepConfirmed ||
+    row.breakoutConfirmed ||
+    row.continuationConfirmed ||
+    row.compressionConfirmed ||
+    row.setupConfirmed ||
+    row.structureAlign ||
+    row.structureAligned ||
+    text.includes('RETEST') ||
+    text.includes('PULLBACK') ||
+    text.includes('SWEEP') ||
+    text.includes('STOP_RUN') ||
+    text.includes('BREAKOUT') ||
+    text.includes('BREAKDOWN') ||
+    text.includes('CONTINUATION') ||
+    text.includes('COMPRESSION') ||
+    text.includes('SQUEEZE')
+  );
+}
+
+function detectFlowSignal(row = {}, marketContext = {}) {
+  const text = rowText(row);
+  const obRelation = upper(row.obRelation);
+  const btcRelation = upper(row.btcRelation);
+  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
+
+  return Boolean(
+    row.flowAlign ||
+    row.flowAligned ||
+    row.momentumAlign ||
+    row.askFlowAlign ||
+    row.bearFlow ||
+    row.sellFlow ||
+    currentTrendSide === TARGET_TRADE_SIDE ||
+    obRelation === 'WITH' ||
+    obRelation === 'ASK_HEAVY' ||
+    btcRelation === 'BTC_WITH' ||
+    text.includes('FLOW_ALIGN') ||
+    text.includes('BEAR_FLOW') ||
+    text.includes('SELL_FLOW') ||
+    text.includes('ASK_FLOW') ||
+    text.includes('TREND')
+  );
+}
+
+function detectVolumeSignal(row = {}) {
+  const text = rowText(row);
+  const relVol = n(first(row.relativeVolume, row.relVolume, row.volumeExpansion, row.volumeScore, row.volumeStrength), NaN);
+
+  return Boolean(
+    row.volumeSpike ||
+    row.volumeConfirmed ||
+    row.volumeAlign ||
+    row.volumeAligned ||
+    row.volumeSpikeConfirmed ||
+    row.quoteVolumeSpike ||
+    row.obVolumeAlign ||
+    text.includes('VOLUME_ALIGN') ||
+    text.includes('VOL_ALIGN') ||
+    text.includes('VOLUME_SPIKE') ||
+    text.includes('VOL_EXP') ||
+    (Number.isFinite(relVol) && relVol >= 1.4)
+  );
+}
+
+function weakContraGateConfig() {
+  const options = ACTIVE_RUN_OPTIONS || {};
+
+  return {
+    enabled: bool(first(
+      options.weakContraGateEnabled,
+      CONFIG.short?.weakContra?.enabled,
+      CONFIG.short?.trade?.weakContraGateEnabled,
+      CONFIG.analyze?.weakContra?.enabled,
+      CONFIG.trade?.weakContraGateEnabled
+    ), true),
+
+    minConfluence: n(first(options.weakContraMinConfluence, CONFIG.short?.weakContra?.minConfluence), 72),
+    minRR: n(first(options.weakContraMinRR, CONFIG.short?.weakContra?.minRR), 1.15),
+    maxSpreadPct: n(first(options.weakContraMaxSpreadPct, CONFIG.short?.weakContra?.maxSpreadPct), 0.0015),
+    minDepthUsd1p: n(first(options.weakContraMinDepthUsd1p, CONFIG.short?.weakContra?.minDepthUsd1p), 100000),
+    maxCostR: n(first(options.weakContraMaxCostR, CONFIG.short?.weakContra?.maxCostR), 0.35),
+    requireStructure: bool(first(options.weakContraRequireStructure, CONFIG.short?.weakContra?.requireStructure), true),
+    requireFlowOrVolume: bool(first(options.weakContraRequireFlowOrVolume, CONFIG.short?.weakContra?.requireFlowOrVolume), true),
+    requireDepthData: bool(first(options.weakContraRequireDepthData, CONFIG.short?.weakContra?.requireDepthData), false),
+    rejectFakeBreakout: bool(first(options.weakContraRejectFakeBreakout, CONFIG.short?.weakContra?.rejectFakeBreakout), true)
+  };
+}
+
+function weakContraApplies(row = {}, marketContext = {}) {
+  const confirmation = confirmationFromRow(row, marketContext);
+  const text = rowText(row);
+  const obRelation = upper(row.obRelation);
+  const btcRelation = upper(row.btcRelation);
+  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
+
+  return Boolean(
+    confirmation === 'E_WEAK_CONTRA' ||
+    row.weakContra === true ||
+    row.contraSignal === true ||
+    row.bullishDivergence === true ||
+    row.avoidShort === true ||
+    row.doNotShort === true ||
+    row.fakeBreakout === true ||
+    row.fakeBreakoutRisk === true ||
+    currentTrendSide === OPPOSITE_TRADE_SIDE ||
+    obRelation === 'AGAINST' ||
+    btcRelation === 'BTC_AGAINST' ||
+    text.includes('E_WEAK_CONTRA') ||
+    text.includes('WEAK_CONTRA') ||
+    text.includes('CONTRA')
+  );
+}
+
+function buildWeakContraEntryGate(row = {}, marketContext = {}) {
+  const cfg = weakContraGateConfig();
+  const confirmationProfile = confirmationFromRow(row, marketContext);
+  const applies = weakContraApplies(row, marketContext);
+  const structureAligned = detectStructureSignal(row);
+  const flowAligned = detectFlowSignal(row, marketContext);
+  const volumeAligned = detectVolumeSignal(row);
+
+  const confluence = getRowConfluence(row);
+  const rr = getRowRR(row);
+  const spreadPct = getRowSpreadPct(row);
+  const depthUsd1p = getRowDepthUsd1p(row);
+  const costR = getRowCostR(row);
+
+  const failures = [];
+
+  if (!cfg.enabled || !applies) {
+    return {
+      version: WEAK_CONTRA_ENTRY_GATE_VERSION,
+      enabled: Boolean(cfg.enabled),
+      applies: Boolean(applies),
+      passed: true,
+      allowed: true,
+      rejected: false,
+      reason: !cfg.enabled ? 'E_WEAK_CONTRA_GATE_DISABLED' : 'NOT_E_WEAK_CONTRA',
+      failures: [],
+      confirmationProfile,
+      structureAligned,
+      flowAligned,
+      volumeAligned,
+      confluence,
+      rr,
+      spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+      depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+      costR: Number.isFinite(costR) ? costR : null
+    };
+  }
+
+  if (confluence < cfg.minConfluence) failures.push('E_WEAK_CONTRA_CONFLUENCE_BELOW_MIN');
+  if (rr < cfg.minRR) failures.push('E_WEAK_CONTRA_RR_BELOW_MIN');
+
+  if (!Number.isFinite(spreadPct)) failures.push('E_WEAK_CONTRA_SPREAD_UNKNOWN');
+  else if (spreadPct > cfg.maxSpreadPct) failures.push('E_WEAK_CONTRA_SPREAD_TOO_WIDE');
+
+  if (cfg.requireDepthData && !Number.isFinite(depthUsd1p)) failures.push('E_WEAK_CONTRA_DEPTH_UNKNOWN');
+  else if (Number.isFinite(depthUsd1p) && depthUsd1p < cfg.minDepthUsd1p) failures.push('E_WEAK_CONTRA_DEPTH_TOO_LOW');
+
+  if (Number.isFinite(costR) && costR > cfg.maxCostR) failures.push('E_WEAK_CONTRA_COST_R_TOO_HIGH');
+  if (cfg.requireStructure && !structureAligned) failures.push('E_WEAK_CONTRA_STRUCTURE_NOT_CONFIRMED');
+  if (cfg.requireFlowOrVolume && !flowAligned && !volumeAligned) failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
+  if (cfg.rejectFakeBreakout && (row.fakeBreakout === true || row.fakeBreakoutRisk === true)) failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
+
+  const passed = failures.length === 0;
+
+  return {
+    version: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    enabled: Boolean(cfg.enabled),
+    applies: true,
+    passed,
+    allowed: passed,
+    rejected: !passed,
+    reason: passed ? 'E_WEAK_CONTRA_GATE_PASSED' : failures[0],
+    failures,
+    confirmationProfile,
+    structureAligned,
+    flowAligned,
+    volumeAligned,
+    confluence,
+    minConfluence: cfg.minConfluence,
+    rr,
+    minRR: cfg.minRR,
+    spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+    maxSpreadPct: cfg.maxSpreadPct,
+    depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+    minDepthUsd1p: cfg.minDepthUsd1p,
+    costR: Number.isFinite(costR) ? costR : null,
+    maxCostR: cfg.maxCostR
   };
 }
 
@@ -4104,7 +3379,7 @@ function standardizedRiskMetrics(candidate = {}, marketContext = {}) {
     moveScore: n(normalized.moveScore ?? normalized.scannerScore, 0),
     riskSource: 'COST_AWARE_ADAPTIVE_STANDARDIZED_SHORT_TP_SL',
     standardizedLearningRisk: true,
-    standardizedLearningRiskReason: 'VERCEL_SAFE_COST_AWARE_RR_GRID_SHORT_LEARNING_TP_SL',
+    standardizedLearningRiskReason: 'DEADLINE_SAFE_COST_AWARE_RR_GRID_SHORT_LEARNING_TP_SL',
     observationOnly: false,
     analysisInputOnly: false,
     learningOnly: false,
@@ -4112,7 +3387,7 @@ function standardizedRiskMetrics(candidate = {}, marketContext = {}) {
     liveDataTs: now()
   };
 
-  const row = applyAdaptiveShortRisk(baseRow, 'VERCEL_SAFE_COST_AWARE_RR_GRID_SHORT_LEARNING_TP_SL');
+  const row = applyAdaptiveShortRisk(baseRow, 'DEADLINE_SAFE_COST_AWARE_RR_GRID_SHORT_LEARNING_TP_SL');
   const weakContraEntryGate = buildWeakContraEntryGate(row, marketContext);
 
   return {
@@ -4172,6 +3447,1266 @@ async function safeProcessCandidate(candidate, marketContext = {}) {
       ]
     };
   }
+}
+
+function waitAction(candidate, reason, extra = {}) {
+  return {
+    ...candidate,
+    action: 'WAIT',
+    reason,
+    virtualTracked: false,
+    liveEligible: false,
+    discordAlertEligible: false,
+    discordActivationEligible: false,
+    discordRuntimeActivationGatePassed: false,
+    signalType: SIGNAL_TYPE_BLOCKED,
+    riskFractionForEntry: 0,
+    ...sideFlags(),
+    ...virtualFlags(candidate),
+    ...isolationFlags(),
+    ...extra
+  };
+}
+
+function aggregateRuntimeRecentOutcomes(row = {}) {
+  const recent = Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [];
+
+  return recent.reduce((acc, outcome) => {
+    if (!outcome || typeof outcome !== 'object') return acc;
+
+    const source = upper(outcome.source || outcome.outcomeSource || 'VIRTUAL');
+    if (!['VIRTUAL', 'SHADOW', 'PAPER', ''].includes(source)) return acc;
+
+    const r = n(
+      outcome.netR ??
+        outcome.exitR ??
+        outcome.realizedNetR ??
+        outcome.realizedR ??
+        outcome.r,
+      0
+    );
+
+    const costR = Math.max(0, n(outcome.costR ?? outcome.avgCostR, 0));
+
+    acc.completed += 1;
+    acc.totalR += r;
+    acc.totalCostR += costR;
+    acc.sumR += r;
+    acc.sumSquaredR += r * r;
+
+    if (r > 0) {
+      acc.wins += 1;
+      acc.grossWinR += r;
+    } else if (r < 0) {
+      acc.losses += 1;
+      acc.grossLossR += Math.abs(r);
+    } else {
+      acc.flats += 1;
+    }
+
+    if (
+      outcome.directSL ||
+      outcome.directToSL ||
+      outcome.directStopLoss ||
+      outcome.isDirectSL ||
+      upper(outcome.exitReason) === 'SL'
+    ) {
+      acc.directSLCount += 1;
+    }
+
+    return acc;
+  }, {
+    completed: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    totalR: 0,
+    totalCostR: 0,
+    sumR: 0,
+    sumSquaredR: 0,
+    grossWinR: 0,
+    grossLossR: 0,
+    directSLCount: 0
+  });
+}
+
+function runtimeCompletedSample(row = {}) {
+  const recent = aggregateRuntimeRecentOutcomes(row);
+
+  return Math.max(
+    0,
+    n(row.virtualCompleted, 0) + n(row.shadowCompleted, 0),
+    n(row.completed, 0),
+    n(row.outcomeSample, 0),
+    n(row.closed, 0),
+    recent.completed
+  );
+}
+
+function runtimeObservationSample(row = {}) {
+  return Math.max(
+    0,
+    n(row.observationSample, 0),
+    n(row.seen, 0),
+    n(row.observations, 0),
+    runtimeCompletedSample(row)
+  );
+}
+
+function runtimeTotalR(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  const recent = aggregateRuntimeRecentOutcomes(row);
+
+  if (completed <= 0) return 0;
+
+  const virtualShadowTotal = n(row.virtualTotalR, 0) + n(row.shadowTotalR, 0);
+  if (virtualShadowTotal !== 0) return virtualShadowTotal;
+
+  if (recent.completed > 0) return recent.totalR;
+
+  return n(
+    row.shortNetTotalR ??
+      row.netShortTotalR ??
+      row.netTotalR ??
+      row.totalNetR ??
+      row.totalR,
+    0
+  );
+}
+
+function runtimeAvgR(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  if (completed <= 0) return 0;
+
+  if (hasValue(row.avgNetR)) return n(row.avgNetR, 0);
+  if (hasValue(row.netAvgR)) return n(row.netAvgR, 0);
+  if (hasValue(row.avgR)) return n(row.avgR, 0);
+
+  return runtimeTotalR(row) / completed;
+}
+
+function runtimeStdDevR(row = {}) {
+  const explicit = n(row.stdDevR ?? row.standardDeviationR ?? row.rStdDev, NaN);
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+
+  const recent = aggregateRuntimeRecentOutcomes(row);
+  const completed = runtimeCompletedSample(row);
+
+  if (recent.completed > 1) {
+    const variance = Math.max(
+      0,
+      (recent.sumSquaredR - (recent.sumR * recent.sumR) / recent.completed) / (recent.completed - 1)
+    );
+
+    return Math.sqrt(variance);
+  }
+
+  return completed > 1 ? Math.abs(runtimeAvgR(row)) : 0;
+}
+
+function runtimeLcb95AvgR(row = {}) {
+  const value = first(
+    row.microMicroLcb95AvgR,
+    row.microMicroLCB95AvgR,
+    row.lcb95AvgR,
+    row.lcb95NetAvgR,
+    row.avgRLcb95,
+    row.avgRLCB95,
+    row.netAvgRLCB95,
+    row.avgRLower95,
+    row.avgRLowerBound95,
+    row.avgRLowerConfidenceBound95,
+    row.lowerConfidenceBoundAvgR,
+    row.sampleAdjustedAvgRLowerBound,
+    row.sampleLcb95AvgR,
+    row.fairAvgRLowerBound
+  );
+
+  const parsed = Number(value);
+  if (Number.isFinite(parsed)) return parsed;
+
+  const completed = runtimeCompletedSample(row);
+  if (completed <= 1) return 0;
+
+  const avg = runtimeAvgR(row);
+  const sd = runtimeStdDevR(row);
+
+  return avg - 1.96 * (sd / Math.sqrt(completed));
+}
+
+function runtimeTotalCostR(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  const recent = aggregateRuntimeRecentOutcomes(row);
+
+  if (completed <= 0) return 0;
+
+  const virtualShadowCost = Math.max(0, n(row.virtualTotalCostR, 0)) + Math.max(0, n(row.shadowTotalCostR, 0));
+  if (virtualShadowCost > 0) return virtualShadowCost;
+
+  if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
+
+  if (hasValue(row.totalCostR)) return Math.max(0, n(row.totalCostR, 0));
+  if (hasValue(row.totalNetCostR)) return Math.max(0, n(row.totalNetCostR, 0));
+
+  for (const key of ['avgCostR', 'costR', 'netCostR', 'estimatedCostR']) {
+    if (hasValue(row[key]) && n(row[key], 0) > 0) {
+      return Math.max(0, n(row[key], 0)) * completed;
+    }
+  }
+
+  return 0;
+}
+
+function runtimeAvgCostR(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  return completed > 0 ? runtimeTotalCostR(row) / completed : 0;
+}
+
+function runtimeDirectSLCount(row = {}) {
+  const recent = aggregateRuntimeRecentOutcomes(row);
+
+  return Math.max(
+    0,
+    n(row.virtualDirectSLCount, 0) + n(row.shadowDirectSLCount, 0),
+    n(row.directSLCount, 0),
+    recent.directSLCount
+  );
+}
+
+function runtimeDirectSLPct(row = {}) {
+  if (hasValue(row.directSLPct)) {
+    const pctValue = n(row.directSLPct, 0);
+    return pctValue > 1 ? clamp(pctValue / 100, 0, 1) : clamp(pctValue, 0, 1);
+  }
+
+  const completed = runtimeCompletedSample(row);
+  return completed > 0 ? clamp(runtimeDirectSLCount(row) / completed, 0, 1) : 0;
+}
+
+function runtimeProfitFactor(row = {}) {
+  const recent = aggregateRuntimeRecentOutcomes(row);
+
+  const winR = Math.max(
+    n(row.virtualWinR, 0) + n(row.shadowWinR, 0),
+    n(row.virtualGrossWinR, 0) + n(row.shadowGrossWinR, 0),
+    n(row.netWinR, 0),
+    n(row.totalWinR, 0),
+    n(row.grossWinR, 0),
+    recent.grossWinR,
+    0
+  );
+
+  const lossR = Math.max(
+    Math.abs(n(row.virtualLossR, 0) + n(row.shadowLossR, 0)),
+    Math.abs(n(row.virtualGrossLossR, 0) + n(row.shadowGrossLossR, 0)),
+    Math.abs(n(row.netLossR, 0)),
+    Math.abs(n(row.totalLossR, 0)),
+    Math.abs(n(row.grossLossR, 0)),
+    recent.grossLossR,
+    0
+  );
+
+  if (winR > 0 || lossR > 0) {
+    if (lossR <= 0) return 99;
+    return winR / lossR;
+  }
+
+  const explicit = n(row.netProfitFactor ?? row.profitFactor ?? row.pf, NaN);
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
+
+  return 0;
+}
+
+function runtimeCurrentFitLabel(row = {}) {
+  const directLabel = upper(row.currentFit || row.currentFitLabel || row.entryCurrentFit || '');
+  if (directLabel) {
+    if (directLabel.includes('MISFIT')) return 'MISFIT';
+    if (directLabel.includes('MATCH')) return directLabel.includes('WEAK') ? 'WEAK_MATCH' : 'MATCH';
+    if (directLabel.includes('FIT')) return directLabel;
+    if (directLabel.includes('OK')) return 'OK';
+    if (directLabel.includes('NEUTRAL')) return 'NEUTRAL';
+  }
+
+  const score = n(row.currentFitScore ?? row.entryCurrentFitScore ?? row.fitScore, 0);
+  if (score <= -20) return 'MISFIT';
+  if (score >= 45) return 'MATCH';
+  if (score >= 18) return 'WEAK_MATCH';
+  return directLabel || 'UNKNOWN';
+}
+
+function policyBlockedGate(row = {}) {
+  const microMicroId = getMicroMicroFamilyId(row);
+  const parsed = parseShortTaxonomyMicroId(microMicroId);
+  const confirmationProfile = upper(row.confirmationProfile || parsed.confirmationProfile || confirmationFromRow(row));
+  const reasons = [];
+
+  if (!microMicroId || !isSelectableMicroMicroId(microMicroId)) {
+    reasons.push('EXACT_MICRO_MICRO_ID_REQUIRED');
+  }
+
+  const side = inferRowTradeSide(row);
+
+  if (side === OPPOSITE_TRADE_SIDE) {
+    reasons.push('INVALID_SIDE_LONG_DISABLED');
+  } else if (side !== TARGET_TRADE_SIDE && side !== 'UNKNOWN') {
+    reasons.push('INVALID_SIDE_NON_SHORT');
+  }
+
+  const hasFullGeometry =
+    hasValue(row.entry ?? row.entryPrice) &&
+    hasValue(row.sl ?? row.initialSl ?? row.stopLoss) &&
+    hasValue(row.tp ?? row.takeProfit);
+
+  if (hasFullGeometry) {
+    const entry = n(row.entry ?? row.entryPrice, 0);
+    const sl = n(row.sl ?? row.initialSl ?? row.stopLoss, 0);
+    const tp = n(row.tp ?? row.takeProfit, 0);
+
+    if (!(entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl)) {
+      reasons.push('INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED');
+    }
+  }
+
+  if (isScannerFingerprintId(row.microFamilyId || row.trueMicroFamilyId || row.learningFamilyId || row.id)) {
+    reasons.push('KNOWN_FORBIDDEN_FAMILY_SCANNER_FINGERPRINT');
+  }
+
+  if (isExecutionFingerprintId(row.learningMicroFamilyId || row.microFamilyId || row.id)) {
+    reasons.push('KNOWN_FORBIDDEN_FAMILY_EXECUTION_FINGERPRINT');
+  }
+
+  if (BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE && confirmationProfile === 'E_WEAK_CONTRA') {
+    reasons.push('E_WEAK_CONTRA_POLICY_BLOCK');
+  }
+
+  if (row.policyBlocked === true && row.policyBlockedReason) {
+    const inherited = upper(row.policyBlockedReason);
+
+    if (
+      inherited.includes('KNOWN_FORBIDDEN_FAMILY') &&
+      confirmationProfile !== 'E_WEAK_CONTRA' &&
+      !isScannerFingerprintId(microMicroId) &&
+      !isExecutionFingerprintId(microMicroId)
+    ) {
+      // Oude brede bug bewust genegeerd.
+    } else {
+      reasons.push(row.policyBlockedReason);
+    }
+  }
+
+  return {
+    version: 'SHORT_POLICY_BLOCK_GATE_V5_SYSTEM_RULES_ONLY_GEOMETRY_ONLY_WHEN_FULL',
+    blocked: reasons.length > 0,
+    policyBlocked: reasons.length > 0,
+    reasons,
+    reason: reasons[0] || null,
+    systemRules: [
+      'E_WEAK_CONTRA',
+      'INVALID_SIDE',
+      'INVALID_GEOMETRY_ONLY_WHEN_FULL_ENTRY_SL_TP',
+      'NON_SHORT',
+      'KNOWN_FORBIDDEN_FAMILY'
+    ],
+    currentFitPolicyBlockDisabled: true,
+    geometryCheckedOnlyWhenFullFieldsPresent: true
+  };
+}
+
+function exactMicroMicroEmpiricalVeto(row = {}) {
+  const microMicroId = getMicroMicroFamilyId(row);
+  const lcb95AvgR = runtimeLcb95AvgR(row);
+  const completed = runtimeCompletedSample(row);
+  const exactMicroMicro =
+    Boolean(microMicroId) &&
+    isSelectableMicroMicroId(microMicroId) &&
+    inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
+
+  const explicitReason = upper(row.empiricalVetoReason);
+  const explicitVeto =
+    row.empiricalVeto === true &&
+    (!explicitReason || explicitReason === 'EXACT_MICRO_MICRO_LCB95_NEGATIVE');
+
+  const triggered =
+    exactMicroMicro &&
+    completed >= MIN_EMPIRICAL_VETO_COMPLETED &&
+    Number.isFinite(Number(lcb95AvgR)) &&
+    Number(lcb95AvgR) < 0;
+
+  return {
+    version: EMPIRICAL_VETO_VERSION,
+    triggered: triggered || explicitVeto,
+    empiricalVeto: triggered || explicitVeto,
+    empiricalVetoReason: triggered || explicitVeto ? 'EXACT_MICRO_MICRO_LCB95_NEGATIVE' : null,
+    empiricalVetoUsesLcb95: true,
+    empiricalVetoUsesRawAvgR: false,
+    empiricalVetoBlocksParentFallbackRescue: true,
+    shrinkageCannotOverrideVeto: true,
+    id: microMicroId || null,
+    microMicroFamilyId: microMicroId || null,
+    completed,
+    minCompleted: MIN_EMPIRICAL_VETO_COMPLETED,
+    lcb95AvgR,
+    threshold: 0
+  };
+}
+
+function proofTierFromRuntimeStatus(status, marketResolution = null) {
+  if (status === MICRO_MICRO_STATUS_POLICY_BLOCKED) return PROOF_TIER_POLICY_BLOCKED;
+  if (status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) return PROOF_TIER_EMPIRICAL_VETO;
+  if (status === MICRO_MICRO_STATUS_OBSERVING) return PROOF_TIER_OBSERVATION_ONLY;
+  if (status === MICRO_MICRO_STATUS_REJECTED) return PROOF_TIER_OBSERVATION_ONLY;
+  if (status === MICRO_MICRO_STATUS_PASSED) {
+    return marketResolution && marketResolution !== 'lifetime'
+      ? PROOF_TIER_MICRO_MICRO_MARKET_PROOF
+      : PROOF_TIER_MICRO_MICRO_LIFETIME_PROOF;
+  }
+
+  return PROOF_TIER_OBSERVATION_ONLY;
+}
+
+function maxAllowedRiskBandFromProof(proofTier) {
+  if (proofTier === PROOF_TIER_MICRO_MICRO_MARKET_PROOF) return MAX_ALLOWED_RISK_BAND_HIGH;
+  if (proofTier === PROOF_TIER_MICRO_MICRO_LIFETIME_PROOF) return MAX_ALLOWED_RISK_BAND_LOW;
+  return MAX_ALLOWED_RISK_BAND_ZERO;
+}
+
+function microMicroRuntimeGate(row = {}) {
+  const microMicroId = getMicroMicroFamilyId(row);
+  const completed = runtimeCompletedSample(row);
+  const observed = runtimeObservationSample(row);
+  const avg = runtimeAvgR(row);
+  const lcb95AvgR = runtimeLcb95AvgR(row);
+  const total = runtimeTotalR(row);
+  const pf = runtimeProfitFactor(row);
+  const cost = runtimeAvgCostR(row);
+  const dsl = runtimeDirectSLPct(row);
+  const fit = runtimeCurrentFitLabel(row);
+
+  const policyGate = policyBlockedGate(row);
+  const empiricalVetoGate = exactMicroMicroEmpiricalVeto(row);
+  const edgeReasons = [];
+
+  if (!(lcb95AvgR > MIN_DISCORD_ACTIVATION_LCB95_AVG_R)) edgeReasons.push('LCB95_AVG_R_NOT_POSITIVE');
+  if (!(avg > MIN_DISCORD_ACTIVATION_AVG_R)) edgeReasons.push('AVG_R_NET_NOT_POSITIVE');
+  if (!(total > MIN_DISCORD_ACTIVATION_TOTAL_R)) edgeReasons.push('TOTAL_R_NET_NOT_POSITIVE');
+  if (!(pf > MIN_DISCORD_ACTIVATION_PROFIT_FACTOR)) edgeReasons.push('PROFIT_FACTOR_NOT_ABOVE_1');
+  if (cost > MAX_DISCORD_ACTIVATION_AVG_COST_R) edgeReasons.push('AVG_COST_R_TOO_HIGH');
+  if (dsl > MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT) edgeReasons.push('DIRECT_SL_PCT_TOO_HIGH');
+
+  let status = MICRO_MICRO_STATUS_OBSERVING;
+  let reasons = [];
+
+  if (policyGate.blocked) {
+    status = MICRO_MICRO_STATUS_POLICY_BLOCKED;
+    reasons = policyGate.reasons;
+  } else if (empiricalVetoGate.triggered) {
+    status = MICRO_MICRO_STATUS_EMPIRICAL_VETO;
+    reasons = [empiricalVetoGate.empiricalVetoReason];
+  } else if (completed < MIN_DISCORD_ACTIVATION_COMPLETED) {
+    status = MICRO_MICRO_STATUS_OBSERVING;
+    reasons = [`COMPLETED_BELOW_${MIN_DISCORD_ACTIVATION_COMPLETED}`];
+  } else if (edgeReasons.length > 0) {
+    status = MICRO_MICRO_STATUS_REJECTED;
+    reasons = edgeReasons;
+  } else {
+    status = MICRO_MICRO_STATUS_PASSED;
+    reasons = ['MICRO_MICRO_RUNTIME_GATE_PASSED'];
+  }
+
+  const passed = status === MICRO_MICRO_STATUS_PASSED;
+  const observing = status === MICRO_MICRO_STATUS_OBSERVING;
+  const rejected = status === MICRO_MICRO_STATUS_REJECTED;
+  const empiricalVeto = status === MICRO_MICRO_STATUS_EMPIRICAL_VETO;
+  const policyBlocked = status === MICRO_MICRO_STATUS_POLICY_BLOCKED;
+
+  const proofTier = proofTierFromRuntimeStatus(status, row.marketResolution || null);
+  const maxAllowedRiskBand = maxAllowedRiskBandFromProof(proofTier);
+
+  return {
+    version: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    status,
+    passed,
+    observing,
+    rejected,
+    empiricalVeto,
+    policyBlocked,
+
+    eligible: passed,
+    discordEligible: passed,
+    discordActivationEligible: passed,
+    discordRuntimeActivationGatePassed: passed,
+
+    virtualLearningAllowed: observing || passed,
+    virtualObservationAllowed: observing || passed,
+    virtualEntryAllowed: observing || passed,
+    blocksNewVirtualEntry: rejected || empiricalVeto || policyBlocked,
+    blocksLiveRiskEntry: rejected || empiricalVeto || policyBlocked,
+    blocksDiscordTradeReady: !passed,
+
+    reason: passed ? 'MICRO_MICRO_RUNTIME_GATE_PASSED' : reasons[0],
+    reasons,
+    policyReasons: policyGate.reasons,
+    edgeReasons,
+
+    id: microMicroId || null,
+    microMicroFamilyId: microMicroId || null,
+    learningFamilyId: microMicroId || null,
+    completed: round(completed, 4),
+    observed: round(observed, 4),
+    avgR: round(avg, 4),
+    lcb95AvgR: round(lcb95AvgR, 6),
+    avgRLCB95: round(lcb95AvgR, 6),
+    totalR: round(total, 4),
+    profitFactor: round(pf, 4),
+    avgCostR: round(cost, 4),
+    directSLPct: round(dsl, 4),
+    currentFit: fit,
+    confirmationProfile: row.confirmationProfile || parseShortTaxonomyMicroId(microMicroId).confirmationProfile || null,
+    statusRank: MICRO_MICRO_STATUS_RANK[status] ?? 99,
+
+    policyGate,
+    empiricalVetoGate,
+    empiricalVetoReason: empiricalVeto ? empiricalVetoGate.empiricalVetoReason : null,
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+
+    proofTier,
+    maxAllowedRiskBand,
+    thresholds: {
+      minCompleted: MIN_DISCORD_ACTIVATION_COMPLETED,
+      minLcb95AvgR: MIN_DISCORD_ACTIVATION_LCB95_AVG_R,
+      minAvgR: MIN_DISCORD_ACTIVATION_AVG_R,
+      minTotalR: MIN_DISCORD_ACTIVATION_TOTAL_R,
+      minProfitFactor: MIN_DISCORD_ACTIVATION_PROFIT_FACTOR,
+      maxAvgCostR: MAX_DISCORD_ACTIVATION_AVG_COST_R,
+      maxDirectSLPct: MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT,
+      empiricalVetoMinCompleted: MIN_EMPIRICAL_VETO_COMPLETED
+    }
+  };
+}
+
+function runtimeDiscordActivationGate(row = {}) {
+  const gate = microMicroRuntimeGate(row);
+
+  return {
+    ...gate,
+    version: DISCORD_ACTIVATION_GATE_VERSION,
+    runtimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    eligible: gate.status === MICRO_MICRO_STATUS_PASSED,
+    blocked: gate.status !== MICRO_MICRO_STATUS_PASSED,
+    reason: gate.status === MICRO_MICRO_STATUS_PASSED
+      ? 'DISCORD_RUNTIME_NET_EDGE_GATE_PASSED'
+      : gate.reason,
+    discordEligible: gate.status === MICRO_MICRO_STATUS_PASSED,
+    discordActivationEligible: gate.status === MICRO_MICRO_STATUS_PASSED,
+    discordRuntimeActivationGatePassed: gate.status === MICRO_MICRO_STATUS_PASSED
+  };
+}
+
+function compareBestMicroMicroRows(a = {}, b = {}) {
+  const gateA = a?.microMicroRuntimeGate || microMicroRuntimeGate(a);
+  const gateB = b?.microMicroRuntimeGate || microMicroRuntimeGate(b);
+  const statusRankA = MICRO_MICRO_STATUS_RANK[gateA.status] ?? 99;
+  const statusRankB = MICRO_MICRO_STATUS_RANK[gateB.status] ?? 99;
+  if (statusRankA !== statusRankB) return statusRankA - statusRankB;
+
+  return (
+    n(gateB.lcb95AvgR, 0) - n(gateA.lcb95AvgR, 0) ||
+    n(gateB.avgR, 0) - n(gateA.avgR, 0) ||
+    n(gateB.totalR, 0) - n(gateA.totalR, 0) ||
+    n(gateB.profitFactor, 0) - n(gateA.profitFactor, 0) ||
+    n(gateB.completed, 0) - n(gateA.completed, 0) ||
+    n(gateB.observed, 0) - n(gateA.observed, 0) ||
+    String(gateA.microMicroFamilyId || '').localeCompare(String(gateB.microMicroFamilyId || ''))
+  );
+}
+
+function validShortRiskShape(row = {}) {
+  const entry = n(row.entry ?? row.entryPrice, 0);
+  const sl = n(row.sl ?? row.initialSl ?? row.stopLoss, 0);
+  const tp = n(row.tp ?? row.takeProfit, 0);
+  return entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl;
+}
+
+function hasValidRiskShape(row = {}) {
+  const rr = n(row.rr, 0);
+
+  if (row.learningOnly === true) return false;
+  if (row.liveRiskValid === false) return false;
+  if (inferRowTradeSide(row) === OPPOSITE_TRADE_SIDE) return false;
+  if (rr <= 0) return false;
+
+  return validShortRiskShape(row);
+}
+
+function validateVirtualEntry(row = {}) {
+  const tradeSide = inferRowTradeSide(row);
+  const trueMicroFamilyId = getTrueMicroFamilyId(row);
+  const microMicroFamilyId = getMicroMicroFamilyId(row);
+
+  if (tradeSide === OPPOSITE_TRADE_SIDE) {
+    return { ok: false, reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM', tradeSide };
+  }
+
+  if (!trueMicroFamilyId || !isSelectableTrueMicroId(trueMicroFamilyId)) {
+    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_75_CHILD_TRUE_MICRO_FAMILY' };
+  }
+
+  if (!microMicroFamilyId || !isSelectableMicroMicroId(microMicroFamilyId)) {
+    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_MICRO_MICRO_FAMILY_ID' };
+  }
+
+  const runtimeGate = microMicroRuntimeGate(row);
+
+  if (runtimeGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) {
+    return {
+      ok: false,
+      reason: runtimeGate.reason || 'MICRO_MICRO_POLICY_BLOCKED',
+      microMicroRuntimeGate: runtimeGate,
+      microMicroRuntimeGateStatus: runtimeGate.status,
+      policyBlocked: true,
+      virtualLearningAllowed: false,
+      virtualEntryAllowed: false
+    };
+  }
+
+  if (runtimeGate.status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) {
+    return {
+      ok: false,
+      reason: runtimeGate.reason || 'EXACT_MICRO_MICRO_EMPIRICAL_VETO',
+      microMicroRuntimeGate: runtimeGate,
+      microMicroRuntimeGateStatus: runtimeGate.status,
+      empiricalVeto: true,
+      empiricalVetoReason: runtimeGate.empiricalVetoReason || 'EXACT_MICRO_MICRO_LCB95_NEGATIVE',
+      empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+      virtualLearningAllowed: false,
+      virtualEntryAllowed: false
+    };
+  }
+
+  if (runtimeGate.status === MICRO_MICRO_STATUS_REJECTED) {
+    return {
+      ok: false,
+      reason: runtimeGate.reason || 'MICRO_MICRO_REJECTED_BAD_NET_EDGE',
+      microMicroRuntimeGate: runtimeGate,
+      microMicroRuntimeGateStatus: runtimeGate.status,
+      virtualLearningAllowed: false,
+      virtualEntryAllowed: false
+    };
+  }
+
+  if (row.weakContraRejected === true || row.blockVirtualEntry === true) {
+    return {
+      ok: false,
+      reason: row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'E_WEAK_CONTRA_ENTRY_GATE_REJECTED',
+      weakContraEntryGate: row.weakContraEntryGate || null,
+      weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
+      microMicroRuntimeGate: runtimeGate,
+      microMicroRuntimeGateStatus: runtimeGate.status
+    };
+  }
+
+  if (!hasValidRiskShape(row)) {
+    return {
+      ok: false,
+      reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
+      microMicroRuntimeGate: runtimeGate,
+      microMicroRuntimeGateStatus: runtimeGate.status
+    };
+  }
+
+  if (n(row.estimatedCostR, 0) > tradeConfig().hardMaxEstimatedCostR) {
+    return {
+      ok: false,
+      reason: 'SHORT_ESTIMATED_COST_R_TOO_HIGH',
+      estimatedCostR: n(row.estimatedCostR, 0),
+      hardMaxEstimatedCostR: tradeConfig().hardMaxEstimatedCostR,
+      microMicroRuntimeGate: runtimeGate,
+      microMicroRuntimeGateStatus: runtimeGate.status
+    };
+  }
+
+  return {
+    ok: true,
+    reason: runtimeGate.status === MICRO_MICRO_STATUS_OBSERVING
+      ? 'SHORT_VIRTUAL_LEARNING_OBSERVING_MICRO_MICRO'
+      : 'SHORT_VIRTUAL_LEARNING_PASSED_MICRO_MICRO',
+    rr: n(row.rr, 0),
+    riskPct: n(row.riskPct, 0),
+    rewardPct: n(row.rewardPct, 0),
+    estimatedCostR: n(row.estimatedCostR, 0),
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    weakContraEntryGate: row.weakContraEntryGate || null,
+    weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
+    microMicroRuntimeGate: runtimeGate,
+    microMicroRuntimeGateStatus: runtimeGate.status,
+    virtualLearningAllowed: true,
+    virtualEntryAllowed: true,
+    discordEligible: runtimeGate.status === MICRO_MICRO_STATUS_PASSED,
+    empiricalVeto: false,
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    proofTier: runtimeGate.proofTier,
+    maxAllowedRiskBand: runtimeGate.maxAllowedRiskBand
+  };
+}
+
+function hasFullSnapshotShape(value) {
+  return Boolean(value && typeof value === 'object' && Array.isArray(value.candidates));
+}
+
+function snapshotCreatedAt(snapshot = {}) {
+  return normalizeTimestampMs(snapshot.createdAt || snapshot.completedAt || snapshot.ts || snapshot.scannerTs, 0);
+}
+
+function extractSnapshotId(latest) {
+  if (!latest) return null;
+  if (typeof latest === 'string') return latest;
+
+  if (typeof latest === 'object') {
+    return latest.snapshotId || latest.id || latest.latestSnapshotId || latest.scanId || null;
+  }
+
+  return null;
+}
+
+function countTargetCandidates(snapshot = {}) {
+  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
+  return rows.filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE).length;
+}
+
+function countOppositeCandidates(snapshot = {}) {
+  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
+  return rows.filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE).length;
+}
+
+function buildSnapshotWeather(snapshot = {}) {
+  return buildConfirmedWeatherSnapshot(snapshot, snapshot.currentMarketUniverse || {}, {
+    sourceKey: snapshot.shortKeys?.marketWeather?.[0] || snapshot.currentMarketWeatherSourceKey || null,
+    sourceReadFrom: snapshot.currentMarketWeatherReadFrom || snapshot.selectedSnapshotSource || null
+  });
+}
+
+function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
+  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
+  const snapshotWeather = buildSnapshotWeather(snapshot);
+
+  const targetRows = rows
+    .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE)
+    .map((candidate) => attachEntryMarketWeather({
+      ...candidate,
+      ...scannerMetadataFrom(candidate),
+      ...sideFlags(),
+      ...isolationFlags(),
+      ...virtualFlags(candidate)
+    }, snapshotWeather));
+
+  const blockedNonShortCandidates = rows
+    .filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE)
+    .slice(0, 20)
+    .map((candidate) => waitAction(
+      normalizeCandidate(candidate),
+      'LONG_DISABLED_SHORT_ONLY_SYSTEM',
+      {
+        skippedBeforeAnalyze: true,
+        skippedBeforeLiveFetch: true,
+        detectedScannerSide: inferRowTradeSide(candidate)
+      }
+    ));
+
+  return {
+    ...snapshot,
+    snapshotId: extractSnapshotId(snapshot),
+    createdAt: snapshotCreatedAt(snapshot),
+    selectedSnapshotSource: meta.source || null,
+    selectedSnapshotReason: meta.reason || null,
+    selectedTargetCandidateCount: targetRows.length,
+    selectedShortCandidateCount: targetRows.length,
+    selectedOppositeCandidateCount: countOppositeCandidates(snapshot),
+    selectedLongCandidateCount: countOppositeCandidates(snapshot),
+    blockedNonShortCandidates,
+    blockedNonShortCandidatesCount: blockedNonShortCandidates.length,
+    ...sideFlags(),
+    ...isolationFlags(),
+    ...virtualFlags(),
+    ...buildResolvedEntryWeatherFields(resolveMarketWeatherFromObjects(snapshotWeather), snapshot, snapshotWeather),
+    candidates: targetRows,
+    candidatesCount: targetRows.length,
+    shortCandidatesCount: targetRows.length,
+    longCandidatesCount: 0,
+    topSymbols: targetRows.slice(0, 20).map((row) => row.symbol).filter(Boolean)
+  };
+}
+
+function latestScanKeys() {
+  return uniqueStrings([
+    SHORT_KEYS.scan.latest,
+    `${SHORT_KEY_PREFIX}SCAN:LATEST`,
+    `${SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
+    `${SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
+    'SCAN:LATEST',
+    'SCAN:LATEST_FULL_SNAPSHOT'
+  ]);
+}
+
+function snapshotKeysForId(id) {
+  if (!id) return [];
+
+  return uniqueStrings([
+    SHORT_KEYS.scan.snapshot(id),
+    `${SHORT_KEY_PREFIX}SCAN:SNAPSHOT:${id}`,
+    `${SHORT_KEY_PREFIX}SCAN:FULL:${id}`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCAN:SNAPSHOT:${id}`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:${id}`,
+    `SCAN:SNAPSHOT:${id}`
+  ]);
+}
+
+async function readSnapshotCandidate(redis, key, label, timeoutMs = 200) {
+  const value = await withTimeout(
+    getJsonSafe(redis, key, null),
+    timeoutMs,
+    `SNAPSHOT_LATEST_READ_TIMEOUT:${label}:${key}`
+  );
+
+  if (isTimeoutResult(value) || !value) return null;
+
+  if (hasFullSnapshotShape(value)) {
+    return {
+      key,
+      label,
+      snapshot: value,
+      snapshotId: extractSnapshotId(value),
+      targetCount: countTargetCandidates(value),
+      oppositeCount: countOppositeCandidates(value),
+      createdAt: snapshotCreatedAt(value),
+      source: `${label}:${key}`,
+      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
+    };
+  }
+
+  const snapshotId = extractSnapshotId(value);
+  if (!snapshotId) return null;
+
+  for (const snapshotKey of snapshotKeysForId(snapshotId)) {
+    const byId = await withTimeout(
+      getJsonSafe(redis, snapshotKey, null),
+      timeoutMs,
+      `SNAPSHOT_BY_ID_READ_TIMEOUT:${label}:${snapshotKey}`
+    );
+
+    if (isTimeoutResult(byId) || !hasFullSnapshotShape(byId)) continue;
+
+    return {
+      key: snapshotKey,
+      latestPointerKey: key,
+      label,
+      snapshot: byId,
+      snapshotId: extractSnapshotId(byId) || snapshotId,
+      targetCount: countTargetCandidates(byId),
+      oppositeCount: countOppositeCandidates(byId),
+      createdAt: snapshotCreatedAt(byId),
+      source: `${label}:${snapshotKey}`,
+      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
+    };
+  }
+
+  return null;
+}
+
+async function getLatestSnapshot(deadline, cfg) {
+  const stores = [
+    { redis: safeGetVolatileRedis(), label: 'VOLATILE' },
+    { redis: safeGetDurableRedis(), label: 'DURABLE' }
+  ];
+
+  const candidates = [];
+  const perReadTimeout = Math.max(80, Math.min(220, Math.floor(cfg.snapshotTimeoutMs / 4)));
+
+  for (const store of stores) {
+    if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) break;
+
+    for (const key of latestScanKeys()) {
+      if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) break;
+
+      const candidate = await readSnapshotCandidate(store.redis, key, store.label, perReadTimeout);
+      if (candidate?.snapshot && candidate.targetCount > 0) candidates.push(candidate);
+    }
+  }
+
+  const uniqueBySnapshot = new Map();
+
+  for (const candidate of candidates) {
+    const id = candidate.snapshotId || extractSnapshotId(candidate.snapshot) || candidate.key;
+    const current = uniqueBySnapshot.get(id);
+
+    if (!current || candidate.createdAt > current.createdAt) {
+      uniqueBySnapshot.set(id, candidate);
+    }
+  }
+
+  const best = [...uniqueBySnapshot.values()]
+    .filter((row) => row.targetCount > 0)
+    .sort((a, b) => b.createdAt - a.createdAt)[0] || null;
+
+  if (!best?.snapshot) return null;
+
+  return normalizeSelectedSnapshot(best.snapshot, {
+    source: best.source,
+    reason: best.reason || 'NEWEST_SHORT_SCANNER_SNAPSHOT_WITH_CANDIDATES'
+  });
+}
+
+function priceFromSnapshotRow(row = {}) {
+  return n(row.currentPrice ?? row.markPrice ?? row.lastPrice ?? row.price ?? row.close ?? row.entry, 0);
+}
+
+function buildSnapshotPriceHints(snapshot = {}) {
+  const hints = new Map();
+  const rows = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
+
+  for (const row of rows) {
+    const price = priceFromSnapshotRow(row);
+    if (price <= 0) continue;
+
+    for (const key of [
+      ...symbolTokensFromAnySymbol(row.symbol),
+      ...symbolTokensFromAnySymbol(row.baseSymbol),
+      ...symbolTokensFromAnySymbol(row.contractSymbol)
+    ]) {
+      if (key && !hints.has(key)) hints.set(key, price);
+    }
+  }
+
+  return hints;
+}
+
+function priceHintForSymbol(symbol, priceHints = new Map()) {
+  for (const key of symbolTokensFromAnySymbol(symbol)) {
+    const value = n(priceHints.get(key), 0);
+    if (value > 0) return value;
+  }
+
+  return 0;
+}
+
+function normalizeBitgetSymbol(symbol = '') {
+  const contract = normalizeContractSymbolSafe(symbol);
+  const base = normalizeBaseSymbolSafe(symbol || contract);
+  const raw = String(contract || symbol || base || '').trim().toUpperCase();
+
+  if (!raw) return '';
+
+  const cleaned = raw
+    .replace(/[^A-Z0-9]/g, '')
+    .replace(/USDTM$/u, 'USDT')
+    .replace(/PERP$/u, '')
+    .replace(/SWAP$/u, '');
+
+  if (cleaned.endsWith('USDT')) return cleaned;
+
+  return `${base || cleaned}USDT`;
+}
+
+function livePriceCacheKey(symbol = '') {
+  return normalizeBitgetSymbol(symbol);
+}
+
+function getCachedLivePrice(symbol = '') {
+  const key = livePriceCacheKey(symbol);
+  if (!key) return 0;
+
+  const cached = livePriceCache.get(key);
+  if (!cached) return 0;
+
+  if (now() - n(cached.ts, 0) > LIVE_PRICE_CACHE_TTL_MS) {
+    livePriceCache.delete(key);
+    return 0;
+  }
+
+  return n(cached.price, 0);
+}
+
+function setCachedLivePrice(symbol = '', price = 0) {
+  const key = livePriceCacheKey(symbol);
+  const value = n(price, 0);
+
+  if (!key || value <= 0) return;
+
+  livePriceCache.set(key, { price: value, ts: now() });
+}
+
+async function fetchBitgetTickerPrice(symbol = '') {
+  const bitgetSymbol = normalizeBitgetSymbol(symbol);
+  if (!bitgetSymbol) return 0;
+
+  const cached = getCachedLivePrice(bitgetSymbol);
+  if (cached > 0) return cached;
+
+  const url = `${BITGET_BASE_URL}/api/v2/mix/market/ticker?symbol=${encodeURIComponent(bitgetSymbol)}&productType=${encodeURIComponent(BITGET_PRODUCT_TYPE)}`;
+  const response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
+
+  if (!response.ok) return 0;
+
+  const json = await response.json().catch(() => null);
+  const data = Array.isArray(json?.data) ? json.data[0] : json?.data;
+  const price = n(data?.lastPr ?? data?.last ?? data?.markPrice ?? data?.indexPrice ?? data?.bidPr ?? data?.askPr, 0);
+
+  if (price > 0) {
+    setCachedLivePrice(bitgetSymbol, price);
+    return price;
+  }
+
+  return 0;
+}
+
+async function fetchMidPriceFast(symbol, priceHints = new Map()) {
+  const cfg = tradeConfig();
+
+  if (cfg.monitorLivePriceFetchEnabled) {
+    const liveResult = await withTimeout(
+      fetchBitgetTickerPrice(symbol).catch(() => 0),
+      cfg.monitorPriceFetchTimeoutMs,
+      'LIVE_PRICE_FETCH_TIMEOUT'
+    );
+
+    if (!isTimeoutResult(liveResult)) {
+      const livePrice = n(liveResult, 0);
+      if (livePrice > 0) return livePrice;
+    }
+  }
+
+  const hinted = priceHintForSymbol(symbol, priceHints);
+  if (hinted > 0) return hinted;
+
+  return 0;
+}
+
+function buildOpenSymbolSet(openPositions = []) {
+  const set = new Set();
+
+  for (const position of Array.isArray(openPositions) ? openPositions : []) {
+    for (const key of rowSymbolKeys(position)) {
+      if (key) set.add(key);
+    }
+  }
+
+  return set;
+}
+
+function hasOpenSymbol(openSymbolSet, row = {}) {
+  for (const key of rowSymbolKeys(row)) {
+    if (openSymbolSet.has(key)) return true;
+  }
+
+  return false;
+}
+
+function rememberOpenSymbol(openSymbolSet, row = {}) {
+  for (const key of rowSymbolKeys(row)) {
+    if (key) openSymbolSet.add(key);
+  }
+}
+
+async function loadOpenPositionsFast(cfg, runtimeWarnings, deadline) {
+  if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) {
+    runtimeWarnings.push('GET_OPEN_POSITIONS_SKIPPED_DEADLINE_NEAR');
+    return [];
+  }
+
+  if (typeof PositionEngine.getOpenPositions !== 'function') {
+    runtimeWarnings.push('GET_OPEN_POSITIONS_FUNCTION_MISSING_USING_EMPTY_SET');
+    return [];
+  }
+
+  const result = await withDeadline(
+    () => PositionEngine.getOpenPositions({
+      tradeSide: TARGET_TRADE_SIDE,
+      side: TARGET_DASHBOARD_SIDE,
+      namespace: SHORT_NAMESPACE,
+      keyPrefix: SHORT_KEY_PREFIX,
+      virtualOnly: true,
+      requireFullRows: true,
+      includeKeyOnly: false,
+      monitorMode: true,
+      limit: cfg.openPositionMonitorLimit,
+      hydrateLimit: cfg.openPositionMonitorLimit,
+      openPositionLimit: cfg.openPositionMonitorLimit,
+      maxOpenPositionsToRead: cfg.openPositionMonitorLimit,
+      openPositionHydrateLimit: cfg.openPositionMonitorLimit,
+      openPositionReadTimeoutMs: cfg.openPositionLoadTimeoutMs,
+      openPositionKeysTimeoutMs: cfg.openPositionLoadTimeoutMs
+    }).catch((error) => ({
+      __openPositionError: true,
+      error: error?.message || String(error)
+    })),
+    {
+      deadline,
+      timeoutMs: cfg.openPositionLoadTimeoutMs,
+      label: 'GET_OPEN_POSITIONS_TIMEOUT',
+      fallback: { __timeout: true }
+    }
+  );
+
+  if (isTimeoutResult(result) || result?.__timeout) {
+    runtimeWarnings.push('GET_OPEN_POSITIONS_TIMEOUT_USING_EMPTY_SET_FOR_ENTRY_BUDGET');
+    return [];
+  }
+
+  if (result?.__openPositionError) {
+    runtimeWarnings.push(`GET_OPEN_POSITIONS_ERROR_USING_EMPTY_SET:${result.error}`);
+    return [];
+  }
+
+  return Array.isArray(result) ? result : [];
+}
+
+async function monitorOpenPositionsSafe({
+  cfg,
+  priceHints,
+  runtimeWarnings,
+  deadline
+}) {
+  if (!cfg.monitorOpenPositionsEnabled) {
+    runtimeWarnings.push('MONITOR_OPEN_POSITIONS_DISABLED_BY_CONFIG');
+    return [];
+  }
+
+  if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 500)) {
+    runtimeWarnings.push('MONITOR_OPEN_POSITIONS_SKIPPED_DEADLINE_NEAR');
+    return [];
+  }
+
+  if (typeof PositionEngine.monitorOpenPositions !== 'function') {
+    runtimeWarnings.push('MONITOR_OPEN_POSITIONS_FUNCTION_MISSING_CONTINUING_TO_ENTRY_LOOP');
+    return [];
+  }
+
+  const monitorResult = await withDeadline(
+    () => PositionEngine.monitorOpenPositions({
+      priceFetcher: async (symbol) => fetchMidPriceFast(symbol, priceHints),
+      tradeSide: TARGET_TRADE_SIDE,
+      side: TARGET_DASHBOARD_SIDE,
+      namespace: SHORT_NAMESPACE,
+      keyPrefix: SHORT_KEY_PREFIX,
+      weekKey: PERSISTENT_LEARNING_KEY,
+      persistentLearningKey: PERSISTENT_LEARNING_KEY,
+      virtualOnly: true,
+      realOrdersDisabled: true,
+      bitgetOrdersDisabled: true,
+      exchangeCallsDisabled: true,
+
+      monitorTimeoutMs: cfg.monitorTimeoutMs,
+      timeoutMs: cfg.monitorTimeoutMs,
+      maxRuntimeMs: cfg.monitorTimeoutMs,
+      monitorBatchSize: cfg.monitorBatchSize,
+      openPositionMonitorLimit: cfg.openPositionMonitorLimit,
+      maxOpenPositionsToMonitor: cfg.openPositionMonitorLimit,
+      openPositionLimit: cfg.openPositionMonitorLimit,
+      maxOpenPositionsToRead: cfg.openPositionMonitorLimit,
+      hydrateLimit: cfg.openPositionMonitorLimit,
+      openPositionHydrateLimit: cfg.openPositionMonitorLimit,
+
+      monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+      priceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+      monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+      monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
+
+      positionTimeStopMin: cfg.positionTimeStopMin,
+      hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
+      closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
+      persistNoPriceFailures: false,
+
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
+    }).catch((error) => ({
+      __monitorError: true,
+      error: error?.message || String(error)
+    })),
+    {
+      deadline,
+      timeoutMs: cfg.monitorTimeoutMs,
+      reserveMs: cfg.hardReturnReserveMs + 400,
+      label: 'MONITOR_OPEN_POSITIONS_TIMEOUT',
+      fallback: { __timeout: true }
+    }
+  );
+
+  if (isTimeoutResult(monitorResult) || monitorResult?.__timeout) {
+    runtimeWarnings.push('MONITOR_OPEN_POSITIONS_TIMEOUT_CONTINUING_TO_ENTRY_LOOP');
+    return [];
+  }
+
+  if (monitorResult?.__monitorError) {
+    runtimeWarnings.push(`MONITOR_OPEN_POSITIONS_ERROR_CONTINUING_TO_ENTRY_LOOP:${monitorResult.error}`);
+    return [];
+  }
+
+  if (Array.isArray(monitorResult)) return monitorResult;
+  if (Array.isArray(monitorResult?.exits)) return monitorResult.exits;
+  if (Array.isArray(monitorResult?.closed)) return monitorResult.closed;
+  return [];
+}
+
+function fallbackBuildOpenPositionFromEntry(entry = {}) {
+  const openedAt = now();
+
+  return {
+    ...entry,
+    id: entry.id || randomIdSafe('short_virtual_position'),
+    positionId: entry.positionId || randomIdSafe('short_pos'),
+    openedAt: entry.openedAt || openedAt,
+    createdAt: entry.createdAt || openedAt,
+    status: 'OPEN',
+    source: 'VIRTUAL',
+    outcomeSource: 'VIRTUAL',
+    virtualOnly: true,
+    virtualTracked: true,
+    realTrade: false,
+    realOrder: false,
+    exchangeOrder: false,
+    bitgetOrderPlaced: false,
+    ...sideFlags(),
+    ...isolationFlags(),
+    ...virtualFlags(entry),
+    ...attachEntryMarketWeather(entry, entry)
+  };
+}
+
+async function saveVirtualPositionFast(entry, cfg, deadline) {
+  if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 400)) {
+    return { ok: false, reason: 'SAVE_OPEN_POSITION_SKIPPED_DEADLINE_NEAR' };
+  }
+
+  if (typeof PositionEngine.saveOpenPosition !== 'function') {
+    return { ok: false, reason: 'SAVE_OPEN_POSITION_FUNCTION_MISSING' };
+  }
+
+  const position = typeof PositionEngine.buildOpenPositionFromEntry === 'function'
+    ? PositionEngine.buildOpenPositionFromEntry(entry)
+    : fallbackBuildOpenPositionFromEntry(entry);
+
+  const result = await withDeadline(
+    () => PositionEngine.saveOpenPosition({
+      ...position,
+      ...entry,
+      ...learningIdentityFields(entry),
+      ...marketWeatherFieldsFromRow(entry),
+      ...isolationFlags(),
+      ...sideFlags(),
+      ...virtualFlags(entry)
+    }).then((saved) => ({ ok: true, position: saved || { ...position, ...entry } })),
+    {
+      deadline,
+      timeoutMs: cfg.savePositionTimeoutMs,
+      reserveMs: cfg.hardReturnReserveMs + 300,
+      label: 'SAVE_OPEN_POSITION_TIMEOUT',
+      fallback: { ok: false, reason: 'SAVE_OPEN_POSITION_TIMEOUT' }
+    }
+  );
+
+  return result?.ok ? result : { ok: false, reason: result?.reason || 'SAVE_OPEN_POSITION_FAILED' };
 }
 
 function playbookFreshness(row = {}, currentMarketWeatherKey = UNKNOWN_MARKET_WEATHER_KEY) {
@@ -4349,17 +4884,79 @@ function deriveSignalAfterRisk({
 }
 
 function extractRotationRows(activeRotation = {}) {
+  const normalized = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
+
   return [
-    ...(Array.isArray(activeRotation?.microFamilies) ? activeRotation.microFamilies : []),
-    ...(Array.isArray(activeRotation?.rows) ? activeRotation.rows : []),
-    ...(Array.isArray(activeRotation?.activeRows) ? activeRotation.activeRows : []),
-    ...(Array.isArray(activeRotation?.selectedRows) ? activeRotation.selectedRows : []),
-    ...(Array.isArray(activeRotation?.candidates) ? activeRotation.candidates : [])
+    ...(Array.isArray(normalized?.microFamilies) ? normalized.microFamilies : []),
+    ...(Array.isArray(normalized?.rows) ? normalized.rows : []),
+    ...(Array.isArray(normalized?.activeRows) ? normalized.activeRows : []),
+    ...(Array.isArray(normalized?.selectedRows) ? normalized.selectedRows : []),
+    ...(Array.isArray(normalized?.candidates) ? normalized.candidates : [])
   ];
 }
 
+async function getActiveRotationSafe(cfg, marketContext, runtimeWarnings, deadline) {
+  if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) {
+    runtimeWarnings.push('ACTIVE_ROTATION_SKIPPED_DEADLINE_NEAR_DISCORD_SELECTION_EMPTY');
+    return null;
+  }
+
+  if (typeof RotationEngine.getActiveRotation !== 'function') {
+    runtimeWarnings.push('GET_ACTIVE_ROTATION_FUNCTION_MISSING_DISCORD_SELECTION_EMPTY');
+    return null;
+  }
+
+  const activeRotationResult = await withDeadline(
+    () => RotationEngine.getActiveRotation({
+      weekKey: PERSISTENT_LEARNING_KEY,
+      persistentLearningKey: PERSISTENT_LEARNING_KEY,
+      targetTradeSide: TARGET_TRADE_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+      side: TARGET_DASHBOARD_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+      namespace: SHORT_NAMESPACE,
+      keyPrefix: SHORT_KEY_PREFIX,
+      redisNamespace: SHORT_NAMESPACE,
+      redisKeyPrefix: SHORT_KEY_PREFIX,
+      shortOnly: true,
+      longDisabled: true,
+      exactTrueMicroOnly: true,
+      selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
+      trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+      microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+      trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+      learningGranularity: CHILD75_LEARNING_GRANULARITY,
+      child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
+      parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+      microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+      microMicroVersion: MICRO_MICRO_VERSION,
+      discordActivationRequiresNetEdge: true,
+      discordActivationRequiresWeatherPlaybook: true,
+      discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+      currentMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
+      confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
+      marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION
+    }).catch(() => null),
+    {
+      deadline,
+      timeoutMs: cfg.rotationTimeoutMs,
+      label: 'ACTIVE_ROTATION_TIMEOUT',
+      fallback: null
+    }
+  );
+
+  if (!activeRotationResult) {
+    runtimeWarnings.push('ACTIVE_ROTATION_EMPTY_OR_TIMEOUT_DISCORD_SELECTION_EMPTY');
+  }
+
+  return activeRotationResult;
+}
+
 function buildSelectedAlertContext(activeRotation, marketContext = {}) {
-  const rawRows = extractRotationRows(activeRotation);
+  const normalizedRotation = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
+  const rawRows = extractRotationRows(normalizedRotation);
   const currentMarketWeatherKey = marketContext?.confirmedMarketWeatherKey || marketContext?.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY;
   const allRowsByLearningId = new Map();
 
@@ -4384,7 +4981,6 @@ function buildSelectedAlertContext(activeRotation, marketContext = {}) {
     allRowsByLearningId.set(microMicroId, {
       ...row,
       ...normalized,
-      ...attachEntryMarketWeather(row, marketContext),
       id: microMicroId,
       key: microMicroId,
       microFamilyId: microMicroId,
@@ -4408,19 +5004,19 @@ function buildSelectedAlertContext(activeRotation, marketContext = {}) {
   }
 
   const configuredMicroMicroFamilyIds = uniqueStrings([
-    activeRotation?.microMicroFamilyIds || [],
-    activeRotation?.activeMicroMicroFamilyIds || [],
-    activeRotation?.trueMicroMicroFamilyIds || [],
-    activeRotation?.activeTrueMicroMicroFamilyIds || [],
-    activeRotation?.exactMicroMicroFamilyIds || [],
-    activeRotation?.activeExactMicroMicroFamilyIds || [],
-    activeRotation?.selectedMicroMicroFamilyIds || [],
-    activeRotation?.selectedTrueMicroMicroFamilyIds || [],
-    activeRotation?.selectedExactMicroMicroFamilyIds || [],
-    activeRotation?.microFamilyIds || [],
-    activeRotation?.activeMicroFamilyIds || [],
-    activeRotation?.trueMicroFamilyIds || [],
-    activeRotation?.ids || [],
+    normalizedRotation?.microMicroFamilyIds || [],
+    normalizedRotation?.activeMicroMicroFamilyIds || [],
+    normalizedRotation?.trueMicroMicroFamilyIds || [],
+    normalizedRotation?.activeTrueMicroMicroFamilyIds || [],
+    normalizedRotation?.exactMicroMicroFamilyIds || [],
+    normalizedRotation?.activeExactMicroMicroFamilyIds || [],
+    normalizedRotation?.selectedMicroMicroFamilyIds || [],
+    normalizedRotation?.selectedTrueMicroMicroFamilyIds || [],
+    normalizedRotation?.selectedExactMicroMicroFamilyIds || [],
+    normalizedRotation?.microFamilyIds || [],
+    normalizedRotation?.activeMicroFamilyIds || [],
+    normalizedRotation?.trueMicroFamilyIds || [],
+    normalizedRotation?.ids || [],
     rawRows.map(getMicroMicroFamilyId)
   ])
     .map((id) => cleanLearningFamilyId(id, {}))
@@ -4486,8 +5082,8 @@ function buildSelectedAlertContext(activeRotation, marketContext = {}) {
     ));
 
   return {
-    rotationId: activeRotation?.rotationId || activeRotation?.id || null,
-    selectedRotation: activeRotation || null,
+    rotationId: normalizedRotation?.rotationId || normalizedRotation?.id || null,
+    selectedRotation: normalizedRotation || null,
 
     currentMarketWeatherKey,
     currentMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
@@ -4616,32 +5212,6 @@ function getSelectedWeeklyStats(alertContext, microMicroFamilyId) {
   return alertContext.rowByLearningId.get(microMicroFamilyId) ||
     alertContext.allRowsByLearningId.get(microMicroFamilyId) ||
     null;
-}
-
-function buildOpenSymbolSet(openPositions = []) {
-  const set = new Set();
-
-  for (const position of Array.isArray(openPositions) ? openPositions : []) {
-    for (const key of rowSymbolKeys(position)) {
-      if (key) set.add(key);
-    }
-  }
-
-  return set;
-}
-
-function hasOpenSymbol(openSymbolSet, row = {}) {
-  for (const key of rowSymbolKeys(row)) {
-    if (openSymbolSet.has(key)) return true;
-  }
-
-  return false;
-}
-
-function rememberOpenSymbol(openSymbolSet, row = {}) {
-  for (const key of rowSymbolKeys(row)) {
-    if (key) openSymbolSet.add(key);
-  }
 }
 
 function buildRiskAndSignalDecision({
@@ -4998,7 +5568,29 @@ function buildDiscordEntryAlertPayload(entry = {}) {
   };
 }
 
-async function maybeSendDiscordEntryAlert(entry = {}, cfg = tradeConfig()) {
+async function maybeSendDiscordEntryAlert(entry = {}, cfg = tradeConfig(), deadline = null) {
+  if (!cfg.discordSendEnabled) {
+    return {
+      sent: false,
+      skipped: true,
+      queued: false,
+      awaited: false,
+      fireAndForget: false,
+      reason: 'DISCORD_SEND_DISABLED_BY_CONFIG'
+    };
+  }
+
+  if (deadline && deadlineExceeded(deadline, cfg.hardReturnReserveMs + 400)) {
+    return {
+      sent: false,
+      skipped: true,
+      queued: false,
+      awaited: false,
+      fireAndForget: false,
+      reason: 'DISCORD_SKIPPED_DEADLINE_NEAR'
+    };
+  }
+
   if (!entry.discordAlertEligible || entry.signalType !== SIGNAL_TYPE_TRADE_READY) {
     return {
       sent: false,
@@ -5081,8 +5673,11 @@ async function maybeSendDiscordEntryAlert(entry = {}, cfg = tradeConfig()) {
       discordActivationGate: runtimeGate,
       discordRuntimeActivationGatePassed: true,
       discordActivationEligible: true
+    })).catch((error) => ({
+      ok: false,
+      error: error?.message || String(error)
     })),
-    Math.min(Math.max(cfg.savePositionTimeoutMs || DEFAULT_SAVE_POSITION_TIMEOUT_MS, 500), 2500),
+    cfg.discordTimeoutMs,
     'DISCORD_ENTRY_ALERT_TIMEOUT'
   );
 
@@ -5266,6 +5861,202 @@ function topReasonCounts(actions = [], limit = 12) {
     .map(([reason, count]) => ({ reason, count }));
 }
 
+function mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw = [], liveRows = []) {
+  const liveBySymbol = new Map();
+
+  for (const row of liveRows) {
+    const key = symbolKey(row.symbol || row.baseSymbol || row.contractSymbol);
+    if (key && !liveBySymbol.has(key)) liveBySymbol.set(key, row);
+  }
+
+  const raw = Array.isArray(analyzedRowsRaw) && analyzedRowsRaw.length ? analyzedRowsRaw : liveRows;
+
+  return raw.map((row) => {
+    const key = symbolKey(row.symbol || row.baseSymbol || row.contractSymbol);
+    const live = liveBySymbol.get(key) || {};
+    return { ...live, ...row };
+  });
+}
+
+function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
+  return mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw, liveRows)
+    .filter(Boolean)
+    .filter(isTargetRow)
+    .map((row) => {
+      const withWeather = attachEntryMarketWeather(row, marketContext);
+      const exactRow = normalizeExactTrueMicroRow(withWeather, marketContext);
+      const contextualRow = attachCurrentFitContext({
+        ...exactRow,
+        ...scannerMetadataFrom(row, exactRow),
+        ...sideFlags(),
+        ...virtualFlags(row),
+        ...isolationFlags()
+      }, marketContext);
+
+      const riskRow = applyAdaptiveShortRisk(
+        normalizeExactTrueMicroRow(contextualRow, marketContext),
+        'ADAPTIVE_SHORT_RR_AFTER_ANALYZE_OR_FALLBACK_EXACT_75'
+      );
+
+      const weakContraEntryGate = buildWeakContraEntryGate(riskRow, marketContext);
+
+      return {
+        ...riskRow,
+        ...learningIdentityFields(riskRow),
+        ...attachEntryMarketWeather(contextualRow, marketContext),
+        weakContraEntryGate,
+        weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+        weakContraEntryAllowed: weakContraEntryGate.allowed,
+        weakContraRejected: weakContraEntryGate.rejected,
+        weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null,
+        blockVirtualEntry: weakContraEntryGate.rejected,
+        virtualObservationAllowed: true,
+        tradeCandidateAllowed: !weakContraEntryGate.rejected
+      };
+    })
+    .filter((row) => Boolean(getTrueMicroFamilyId(row)))
+    .filter((row) => Boolean(getMicroMicroFamilyId(row)));
+}
+
+async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarnings, deadline) {
+  if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 500)) {
+    runtimeWarnings.push('ANALYZE_SKIPPED_DEADLINE_NEAR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+    return {
+      rows: liveRows,
+      analyzeError: 'ANALYZE_SKIPPED_DEADLINE_NEAR',
+      analyzeFallbackUsed: true
+    };
+  }
+
+  if (typeof AnalyzeEngine.analyzeCandidatesBatch !== 'function') {
+    runtimeWarnings.push('ANALYZE_CANDIDATES_FUNCTION_MISSING_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+    return {
+      rows: liveRows,
+      analyzeError: 'ANALYZE_CANDIDATES_FUNCTION_MISSING',
+      analyzeFallbackUsed: true
+    };
+  }
+
+  try {
+    const analyzeResult = await withDeadline(
+      () => AnalyzeEngine.analyzeCandidatesBatch(liveRows, options),
+      {
+        deadline,
+        timeoutMs: cfg.analyzeTimeoutMs,
+        reserveMs: cfg.hardReturnReserveMs + 500,
+        label: 'ANALYZE_CANDIDATES_TIMEOUT',
+        fallback: { __timeout: true }
+      }
+    );
+
+    if (isTimeoutResult(analyzeResult) || analyzeResult?.__timeout) {
+      runtimeWarnings.push('ANALYZE_CANDIDATES_TIMEOUT_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+      return {
+        rows: liveRows,
+        analyzeError: 'ANALYZE_CANDIDATES_TIMEOUT',
+        analyzeFallbackUsed: true
+      };
+    }
+
+    const rows = Array.isArray(analyzeResult) ? analyzeResult : [];
+
+    if (!rows.length) {
+      runtimeWarnings.push('ANALYZE_RETURNED_EMPTY_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+      return {
+        rows: liveRows,
+        analyzeError: null,
+        analyzeFallbackUsed: true
+      };
+    }
+
+    return {
+      rows,
+      analyzeError: null,
+      analyzeFallbackUsed: false
+    };
+  } catch (error) {
+    const message = error?.message || String(error);
+    runtimeWarnings.push(`ANALYZE_CANDIDATES_ERROR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS:${message}`);
+
+    return {
+      rows: liveRows,
+      analyzeError: message,
+      analyzeFallbackUsed: true
+    };
+  }
+}
+
+function snapshotAlreadyProcessedEnough(lastProcessed = {}) {
+  if (!lastProcessed || typeof lastProcessed !== 'object') return false;
+
+  return Boolean(
+    n(lastProcessed.analyzedMicroMicroRows, 0) > 0 ||
+      n(lastProcessed.virtualCreatedRows, 0) > 0 ||
+      n(lastProcessed.entryRows, 0) > 0 ||
+      n(lastProcessed.virtualExitRows, 0) > 0
+  );
+}
+
+function playbookChangeWarning(previous = {}, marketContext = {}) {
+  const previousKey = previous?.confirmedMarketWeatherKey || previous?.currentEntryMarketWeatherKey || null;
+  const currentKey = marketContext?.confirmedMarketWeatherKey || marketContext?.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY;
+
+  const previousParsed = parseKnownMarketWeatherKey(previousKey);
+  const currentParsed = parseKnownMarketWeatherKey(currentKey);
+
+  if (!previousKey || previousParsed.key === currentParsed.key) {
+    return {
+      changed: false,
+      previousKey: previousParsed.key,
+      currentKey: currentParsed.key,
+      reason: 'CONFIRMED_MARKET_WEATHER_UNCHANGED'
+    };
+  }
+
+  if (previousParsed.key === UNKNOWN_MARKET_WEATHER_KEY || currentParsed.key === UNKNOWN_MARKET_WEATHER_KEY) {
+    return {
+      changed: false,
+      previousKey: previousParsed.key,
+      currentKey: currentParsed.key,
+      reason: 'CONFIRMED_MARKET_WEATHER_UNKNOWN_CHANGE_IGNORED'
+    };
+  }
+
+  return {
+    changed: true,
+    previousKey: previousParsed.key,
+    currentKey: currentParsed.key,
+    reason: 'CONFIRMED_MARKET_WEATHER_CHANGED_REFRESH_PLAYBOOK_NOW'
+  };
+}
+
+function buildVirtualEntryResultCounters() {
+  return {
+    entryRows: 0,
+    waitRows: 0,
+    virtualCreatedRows: 0,
+    virtualSkippedRows: 0,
+    virtualFailedRows: 0,
+    skippedByExistingSymbol: 0,
+    discordAlertEligibleRows: 0,
+    discordAlertsQueued: 0,
+    discordAlertsSent: 0,
+    discordAlertsFailed: 0,
+    discordAlertsSkippedNoSelectedMicro: 0,
+    discordAlertsSkippedCurrentFit: 0,
+    discordAlertsSkippedRuntimeGate: 0,
+    selectedMicroMicroMatchRows: 0,
+    unselectedMicroEntryRows: 0,
+    entryLoopAttempts: 0,
+    tradeReadyRows: 0,
+    watchRows: 0,
+    observeRows: 0,
+    playbookMissingRows: 0,
+    marketWeatherUnknownRows: 0,
+    entryLoopRuntimeBreak: false
+  };
+}
+
 function inferPrimaryBottleneck({
   candidates,
   processed,
@@ -5337,7 +6128,7 @@ function buildQualityAudit({
   const analyzedRowsRawCount = analyzedRowsRaw.length;
   const analyzedRowsCount = analyzedRows.length;
   const virtualExitRows = virtualExits.length;
-  const monitorTimeout = runtimeWarnings.includes('MONITOR_OPEN_POSITIONS_TIMEOUT_CONTINUING_TO_ENTRY_LOOP');
+  const monitorTimeout = runtimeWarnings.some((warning) => String(warning).includes('MONITOR_OPEN_POSITIONS_TIMEOUT'));
 
   const primaryBottleneck = inferPrimaryBottleneck({
     candidates: candidateCount,
@@ -5390,7 +6181,7 @@ function buildQualityAudit({
     policyBlockedRules: [
       'E_WEAK_CONTRA',
       'INVALID_SIDE',
-      'INVALID_GEOMETRY',
+      'INVALID_GEOMETRY_ONLY_WHEN_FULL_ENTRY_SL_TP',
       'NON_SHORT',
       'KNOWN_FORBIDDEN_FAMILY'
     ],
@@ -5498,7 +6289,7 @@ function buildQualityAudit({
     runtimeWarnings,
     primaryBottleneck,
     topWaitReasons: topReasonCounts(actions, 12),
-    measurementPrinciple: 'Weather capture live; selector/sizing/FDR observe; Discord trade-ready only when validated.'
+    measurementPrinciple: 'Deadline-safe route; no default Redis key scan; route limits are honored.'
   };
 }
 
@@ -5579,6 +6370,7 @@ function shouldMarkSnapshotProcessed(result = {}) {
   if (result.reason === 'NO_SHORT_SCANNER_SNAPSHOT') return false;
   if (result.reason === 'SNAPSHOT_TOO_STALE') return false;
   if (result.reason === 'SNAPSHOT_ALREADY_PROCESSED') return false;
+  if (result.reason === 'DEADLINE_REACHED_BEFORE_ENTRY_LOOP') return false;
 
   return Boolean(
     n(result.analyzedMicroMicroRows, 0) > 0 ||
@@ -5589,6 +6381,7 @@ function shouldMarkSnapshotProcessed(result = {}) {
 }
 
 async function saveRunMeta(result) {
+  const cfg = tradeConfig();
   const durableRedis = safeGetDurableRedis();
   const completedAt = now();
 
@@ -5599,7 +6392,7 @@ async function saveRunMeta(result) {
       : [];
 
   const finalResult = {
-    ok: true,
+    ok: result.ok !== false,
     ...result,
     tradeSystemVersion: TRADE_SYSTEM_VERSION,
     entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
@@ -5625,69 +6418,103 @@ async function saveRunMeta(result) {
     completedAt,
     durationMs: completedAt - n(result.startedAt, completedAt),
     actionCounts: result.actionCounts || buildRunActionCounts(result.actions || [], virtualExits),
-    rawResultOk: true,
+    rawResultOk: result.ok !== false,
     persistedAt: completedAt,
     persistedBy: 'src/trade/tradeSystem.js',
     persistedNamespace: SHORT_NAMESPACE,
-    shouldMarkSnapshotProcessed: shouldMarkSnapshotProcessed(result)
+    shouldMarkSnapshotProcessed: shouldMarkSnapshotProcessed(result),
+    deadlineSafe: true,
+    routeLimitsHonored: true
   };
 
-  await setJsonSafe(durableRedis, SHORT_KEYS.trade.runMeta, compactRunForRedis(finalResult));
+  const runMetaSaved = await setJsonWithTimeout(
+    durableRedis,
+    SHORT_KEYS.trade.runMeta,
+    compactRunForRedis(finalResult),
+    cfg.redisWriteTimeoutMs,
+    'SAVE_RUN_META_TIMEOUT'
+  );
+
+  const persistenceWarnings = [];
+
+  if (!runMetaSaved) persistenceWarnings.push('SAVE_RUN_META_TIMEOUT_OR_FAILED');
 
   if (finalResult.currentEntryMarketWeatherKey) {
-    await setJsonSafe(durableRedis, SHORT_KEYS.trade.lastConfirmedWeatherKey, {
-      currentEntryMarketWeatherKey: finalResult.currentEntryMarketWeatherKey,
-      confirmedMarketWeatherKey: finalResult.confirmedMarketWeatherKey || finalResult.currentEntryMarketWeatherKey,
-      currentEntryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-      updatedAt: completedAt,
-      runId: finalResult.runId || null,
-      playbookRefreshRule: 'REFRESH_IMMEDIATELY_ON_CONFIRMED_MARKET_WEATHER_CHANGE',
-      playbookMaxAgeMin: PLAYBOOK_MAX_AGE_MIN,
-      marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION
-    });
+    const weatherSaved = await setJsonWithTimeout(
+      durableRedis,
+      SHORT_KEYS.trade.lastConfirmedWeatherKey,
+      {
+        currentEntryMarketWeatherKey: finalResult.currentEntryMarketWeatherKey,
+        confirmedMarketWeatherKey: finalResult.confirmedMarketWeatherKey || finalResult.currentEntryMarketWeatherKey,
+        currentEntryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+        updatedAt: completedAt,
+        runId: finalResult.runId || null,
+        playbookRefreshRule: 'REFRESH_IMMEDIATELY_ON_CONFIRMED_MARKET_WEATHER_CHANGE',
+        playbookMaxAgeMin: PLAYBOOK_MAX_AGE_MIN,
+        marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION
+      },
+      cfg.redisWriteTimeoutMs,
+      'SAVE_LAST_CONFIRMED_WEATHER_TIMEOUT'
+    );
+
+    if (!weatherSaved) persistenceWarnings.push('SAVE_LAST_CONFIRMED_WEATHER_TIMEOUT_OR_FAILED');
   }
 
   if (finalResult.snapshotId && finalResult.shouldMarkSnapshotProcessed) {
-    await setJsonSafe(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, {
-      snapshotId: finalResult.snapshotId,
-      runId: finalResult.runId || null,
-      processedAt: completedAt,
-      snapshotCreatedAt: finalResult.snapshotCreatedAt || null,
-      selectedSnapshotSource: finalResult.selectedSnapshotSource || null,
-      selectedTargetCandidateCount: finalResult.selectedTargetCandidateCount || 0,
-      entryRows: finalResult.entryRows || 0,
-      waitRows: finalResult.waitRows || 0,
-      analyzedRows: finalResult.analyzedRows || 0,
-      analyzedMicroMicroRows: finalResult.analyzedMicroMicroRows || 0,
-      weakContraRejectedRows: finalResult.weakContraRejectedRows || 0,
-      virtualCreatedRows: finalResult.virtualCreatedRows || 0,
-      virtualExitRows: finalResult.virtualExitRows || 0,
-      discordAlertsSent: finalResult.discordAlertsSent || 0,
-      discordAlertsFailed: finalResult.discordAlertsFailed || 0,
-      selectedMicroMicroMatchRows: finalResult.selectedMicroMicroMatchRows || 0,
-      discordRuntimeGateBlockedRows: finalResult.discordRuntimeGateBlockedRows || 0,
-      activeRuntimeBlockedSelectionRows: finalResult.activeRuntimeBlockedSelectionRows || 0,
-      currentEntryMarketWeatherKey: finalResult.currentEntryMarketWeatherKey || null,
-      confirmedMarketWeatherKey: finalResult.confirmedMarketWeatherKey || null,
-      reason: finalResult.reason || null,
-      runtimeWarnings: Array.isArray(finalResult.runtimeWarnings) ? finalResult.runtimeWarnings : [],
-      compactedForRedis: true,
-      tradeSystemVersion: TRADE_SYSTEM_VERSION,
-      riskPlanVersion: SHORT_RISK_PLAN_VERSION,
-      rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
-      microMicroVersion: MICRO_MICRO_VERSION,
-      weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
-      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
-      discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-      discordActivationRequiresNetEdge: true,
-      discordActivationRequiresWeatherPlaybook: true,
-      ...sideFlags(),
-      ...virtualFlags(),
-      ...isolationFlags()
-    });
+    const lastProcessedSaved = await setJsonWithTimeout(
+      durableRedis,
+      SHORT_KEYS.trade.lastProcessedSnapshot,
+      {
+        snapshotId: finalResult.snapshotId,
+        runId: finalResult.runId || null,
+        processedAt: completedAt,
+        snapshotCreatedAt: finalResult.snapshotCreatedAt || null,
+        selectedSnapshotSource: finalResult.selectedSnapshotSource || null,
+        selectedTargetCandidateCount: finalResult.selectedTargetCandidateCount || 0,
+        entryRows: finalResult.entryRows || 0,
+        waitRows: finalResult.waitRows || 0,
+        analyzedRows: finalResult.analyzedRows || 0,
+        analyzedMicroMicroRows: finalResult.analyzedMicroMicroRows || 0,
+        weakContraRejectedRows: finalResult.weakContraRejectedRows || 0,
+        virtualCreatedRows: finalResult.virtualCreatedRows || 0,
+        virtualExitRows: finalResult.virtualExitRows || 0,
+        discordAlertsSent: finalResult.discordAlertsSent || 0,
+        discordAlertsFailed: finalResult.discordAlertsFailed || 0,
+        selectedMicroMicroMatchRows: finalResult.selectedMicroMicroMatchRows || 0,
+        discordRuntimeGateBlockedRows: finalResult.discordRuntimeGateBlockedRows || 0,
+        activeRuntimeBlockedSelectionRows: finalResult.activeRuntimeBlockedSelectionRows || 0,
+        currentEntryMarketWeatherKey: finalResult.currentEntryMarketWeatherKey || null,
+        confirmedMarketWeatherKey: finalResult.confirmedMarketWeatherKey || null,
+        reason: finalResult.reason || null,
+        runtimeWarnings: Array.isArray(finalResult.runtimeWarnings) ? finalResult.runtimeWarnings : [],
+        compactedForRedis: true,
+        tradeSystemVersion: TRADE_SYSTEM_VERSION,
+        riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+        rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+        microMicroVersion: MICRO_MICRO_VERSION,
+        weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+        hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+        discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+        discordActivationRequiresNetEdge: true,
+        discordActivationRequiresWeatherPlaybook: true,
+        deadlineSafe: true,
+        routeLimitsHonored: true,
+        ...sideFlags(),
+        ...virtualFlags(),
+        ...isolationFlags()
+      },
+      cfg.redisWriteTimeoutMs,
+      'SAVE_LAST_PROCESSED_SNAPSHOT_TIMEOUT'
+    );
+
+    if (!lastProcessedSaved) persistenceWarnings.push('SAVE_LAST_PROCESSED_SNAPSHOT_TIMEOUT_OR_FAILED');
   }
 
-  return finalResult;
+  return {
+    ...finalResult,
+    persistenceWarnings,
+    runMetaSaved
+  };
 }
 
 function baseEarlyReturnPayload({
@@ -5734,7 +6561,7 @@ function baseEarlyReturnPayload({
     actionCounts: buildRunActionCounts(actions, virtualExits),
 
     marketContext,
-    currentMarketWeather: marketContext?.source || null,
+    currentMarketWeather: compactMarketWeather(marketContext?.source || null),
     currentMarketUniverse: null,
     marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
     marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
@@ -5761,6 +6588,11 @@ function baseEarlyReturnPayload({
       ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
       : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
 
+    maxRuntimeMs: cfg.maxRuntimeMs,
+    hardReturnReserveMs: cfg.hardReturnReserveMs,
+    deadlineSafe: true,
+    routeLimitsHonored: true,
+
     riskPlanVersion: SHORT_RISK_PLAN_VERSION,
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
     microMicroVersion: MICRO_MICRO_VERSION,
@@ -5777,745 +6609,31 @@ function baseEarlyReturnPayload({
   };
 }
 
-function hasFullSnapshotShape(value) {
-  return Boolean(value && typeof value === 'object' && Array.isArray(value.candidates));
-}
-
-function snapshotCreatedAt(snapshot = {}) {
-  return normalizeTimestampMs(snapshot.createdAt || snapshot.completedAt || snapshot.ts || snapshot.scannerTs, 0);
-}
-
-function extractSnapshotId(latest) {
-  if (!latest) return null;
-  if (typeof latest === 'string') return latest;
-
-  if (typeof latest === 'object') {
-    return latest.snapshotId || latest.id || latest.latestSnapshotId || latest.scanId || null;
-  }
-
-  return null;
-}
-
-function countTargetCandidates(snapshot = {}) {
-  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
-  return rows.filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE).length;
-}
-
-function countOppositeCandidates(snapshot = {}) {
-  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
-  return rows.filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE).length;
-}
-
-async function safeGetSnapshotJson(redis, key, fallback = null) {
-  return getJsonSafe(redis, key, fallback);
-}
-
-function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
-  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
-
-  const snapshotWeather = buildConfirmedWeatherSnapshot(snapshot, snapshot.currentMarketUniverse || {}, {
-    sourceKey: snapshot.shortKeys?.marketWeather?.[0] || snapshot.currentMarketWeatherSourceKey || null,
-    sourceReadFrom: snapshot.currentMarketWeatherReadFrom || snapshot.selectedSnapshotSource || null
-  });
-
-  const targetRows = rows
-    .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE)
-    .map((candidate) => attachEntryMarketWeather({
-      ...candidate,
-      ...scannerMetadataFrom(candidate),
-      ...sideFlags(),
-      ...isolationFlags(),
-      ...virtualFlags(candidate)
-    }, snapshotWeather));
-
-  const blockedNonShortCandidates = rows
-    .filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE)
-    .slice(0, 50)
-    .map((candidate) => waitAction(
-      normalizeCandidate(candidate),
-      'LONG_DISABLED_SHORT_ONLY_SYSTEM',
-      {
-        skippedBeforeAnalyze: true,
-        skippedBeforeLiveFetch: true,
-        detectedScannerSide: inferRowTradeSide(candidate)
-      }
-    ));
+function compactActionForResponse(row = {}) {
+  if (!row || typeof row !== 'object') return row;
 
   return {
-    ...snapshot,
-    snapshotId: extractSnapshotId(snapshot),
-    createdAt: snapshotCreatedAt(snapshot),
-    selectedSnapshotSource: meta.source || null,
-    selectedSnapshotReason: meta.reason || null,
-    selectedTargetCandidateCount: targetRows.length,
-    selectedShortCandidateCount: targetRows.length,
-    selectedOppositeCandidateCount: countOppositeCandidates(snapshot),
-    selectedLongCandidateCount: countOppositeCandidates(snapshot),
-    blockedNonShortCandidates,
-    blockedNonShortCandidatesCount: blockedNonShortCandidates.length,
-    ...sideFlags(),
-    ...isolationFlags(),
-    ...virtualFlags(),
-    ...buildResolvedEntryWeatherFields(resolveMarketWeatherFromObjects(snapshotWeather), snapshot, snapshotWeather),
-    candidates: targetRows,
-    candidatesCount: targetRows.length,
-    shortCandidatesCount: targetRows.length,
-    longCandidatesCount: 0,
-    topSymbols: targetRows.slice(0, 20).map((row) => row.symbol).filter(Boolean)
+    action: row.action || row.type || null,
+    reason: row.reason || row.liveEntryBlockedReason || null,
+    symbol: row.symbol || row.baseSymbol || null,
+    contractSymbol: row.contractSymbol || null,
+    microFamilyId: row.microFamilyId || row.trueMicroFamilyId || null,
+    microMicroFamilyId: row.microMicroFamilyId || row.trueMicroMicroFamilyId || row.exactMicroMicroFamilyId || null,
+    entry: row.entry ?? row.entryPrice ?? null,
+    sl: row.sl ?? row.initialSl ?? row.stopLoss ?? null,
+    tp: row.tp ?? row.takeProfit ?? null,
+    rr: row.rr ?? null,
+    riskPct: row.riskPct ?? null,
+    rewardPct: row.rewardPct ?? null,
+    signalType: row.signalType || null,
+    riskFractionForEntry: row.riskFractionForEntry ?? 0,
+    microMicroRuntimeGateStatus: row.microMicroRuntimeGateStatus || row.microMicroRuntimeGate?.status || null,
+    entryMarketWeatherKey: row.entryMarketWeatherKey || null,
+    confirmedMarketWeatherKey: row.confirmedMarketWeatherKey || null,
+    currentFit: row.currentFit || row.entryCurrentFit || null,
+    discordAlertEligible: Boolean(row.discordAlertEligible),
+    discordAlertReason: row.discordAlertReason || null
   };
-}
-
-function latestScanKeys() {
-  return uniqueStrings([
-    SHORT_KEYS.scan.latest,
-    `${SHORT_KEY_PREFIX}SCAN:LATEST`,
-    `${SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
-    `${SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
-    'SCAN:LATEST',
-    'SCAN:LATEST_FULL_SNAPSHOT'
-  ]);
-}
-
-function snapshotKeysForId(id) {
-  if (!id) return [];
-
-  return uniqueStrings([
-    SHORT_KEYS.scan.snapshot(id),
-    `${SHORT_KEY_PREFIX}SCAN:SNAPSHOT:${id}`,
-    `${SHORT_KEY_PREFIX}SCAN:FULL:${id}`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:SNAPSHOT:${id}`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:${id}`,
-    `SCAN:SNAPSHOT:${id}`
-  ]);
-}
-
-async function readSnapshotCandidate(redis, key, label) {
-  const value = await safeGetSnapshotJson(redis, key, null);
-
-  if (!value) return null;
-
-  if (hasFullSnapshotShape(value)) {
-    return {
-      key,
-      label,
-      snapshot: value,
-      snapshotId: extractSnapshotId(value),
-      targetCount: countTargetCandidates(value),
-      oppositeCount: countOppositeCandidates(value),
-      createdAt: snapshotCreatedAt(value),
-      source: `${label}:${key}`,
-      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
-    };
-  }
-
-  const snapshotId = extractSnapshotId(value);
-  if (!snapshotId) return null;
-
-  for (const snapshotKey of snapshotKeysForId(snapshotId)) {
-    const byId = await safeGetSnapshotJson(redis, snapshotKey, null);
-
-    if (!hasFullSnapshotShape(byId)) continue;
-
-    return {
-      key: snapshotKey,
-      latestPointerKey: key,
-      label,
-      snapshot: byId,
-      snapshotId: extractSnapshotId(byId) || snapshotId,
-      targetCount: countTargetCandidates(byId),
-      oppositeCount: countOppositeCandidates(byId),
-      createdAt: snapshotCreatedAt(byId),
-      source: `${label}:${snapshotKey}`,
-      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
-    };
-  }
-
-  return null;
-}
-
-async function loadRecentTargetSnapshotsFromRedis(redis, label, limit = 12) {
-  const patterns = uniqueStrings([
-    `${SHORT_KEY_PREFIX}SCAN:SNAPSHOT:*`,
-    `${SHORT_KEY_PREFIX}SCAN:FULL:*`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:SNAPSHOT:*`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:*`,
-    'SCAN:SNAPSHOT:*'
-  ]);
-
-  const keys = uniqueStrings(
-    (await Promise.all(patterns.map((pattern) => getKeysSafe(redis, pattern, limit)))).flat()
-  ).slice(0, Math.max(1, limit * patterns.length));
-
-  if (!keys.length) return [];
-
-  const rows = await Promise.all(
-    keys.map(async (key) => {
-      const snapshot = await safeGetSnapshotJson(redis, key, null);
-      if (!hasFullSnapshotShape(snapshot)) return null;
-
-      return {
-        key,
-        label,
-        snapshot,
-        snapshotId: extractSnapshotId(snapshot),
-        targetCount: countTargetCandidates(snapshot),
-        oppositeCount: countOppositeCandidates(snapshot),
-        createdAt: snapshotCreatedAt(snapshot),
-        source: `${label}:${key}`,
-        reason: 'RECENT_SHORT_SCANNER_SNAPSHOT_SEARCH'
-      };
-    })
-  );
-
-  return rows
-    .filter(Boolean)
-    .filter((row) => row.targetCount > 0)
-    .sort((a, b) => b.createdAt - a.createdAt);
-}
-
-async function getLatestSnapshot() {
-  const stores = [
-    { redis: safeGetVolatileRedis(), label: 'VOLATILE' },
-    { redis: safeGetDurableRedis(), label: 'DURABLE' }
-  ];
-
-  const candidates = [];
-
-  for (const store of stores) {
-    for (const key of latestScanKeys()) {
-      const candidate = await readSnapshotCandidate(store.redis, key, store.label);
-      if (candidate?.snapshot && candidate.targetCount > 0) candidates.push(candidate);
-    }
-  }
-
-  for (const store of stores) {
-    candidates.push(...await loadRecentTargetSnapshotsFromRedis(store.redis, store.label, 12));
-  }
-
-  const uniqueBySnapshot = new Map();
-
-  for (const candidate of candidates) {
-    const id = candidate.snapshotId || extractSnapshotId(candidate.snapshot) || candidate.key;
-    const current = uniqueBySnapshot.get(id);
-
-    if (!current || candidate.createdAt > current.createdAt) {
-      uniqueBySnapshot.set(id, candidate);
-    }
-  }
-
-  const best = [...uniqueBySnapshot.values()]
-    .filter((row) => row.targetCount > 0)
-    .sort((a, b) => b.createdAt - a.createdAt)[0] || null;
-
-  if (!best?.snapshot) return null;
-
-  return normalizeSelectedSnapshot(best.snapshot, {
-    source: best.source,
-    reason: best.reason || 'NEWEST_SHORT_SCANNER_SNAPSHOT_WITH_CANDIDATES'
-  });
-}
-
-function priceFromSnapshotRow(row = {}) {
-  return n(row.currentPrice ?? row.markPrice ?? row.lastPrice ?? row.price ?? row.close ?? row.entry, 0);
-}
-
-function buildSnapshotPriceHints(snapshot = {}) {
-  const hints = new Map();
-  const rows = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
-
-  for (const row of rows) {
-    const price = priceFromSnapshotRow(row);
-    if (price <= 0) continue;
-
-    for (const key of [
-      ...symbolTokensFromAnySymbol(row.symbol),
-      ...symbolTokensFromAnySymbol(row.baseSymbol),
-      ...symbolTokensFromAnySymbol(row.contractSymbol)
-    ]) {
-      if (key && !hints.has(key)) hints.set(key, price);
-    }
-  }
-
-  return hints;
-}
-
-function priceHintForSymbol(symbol, priceHints = new Map()) {
-  for (const key of symbolTokensFromAnySymbol(symbol)) {
-    const value = n(priceHints.get(key), 0);
-    if (value > 0) return value;
-  }
-
-  return 0;
-}
-
-function normalizeBitgetSymbol(symbol = '') {
-  const contract = normalizeContractSymbolSafe(symbol);
-  const base = normalizeBaseSymbolSafe(symbol || contract);
-  const raw = String(contract || symbol || base || '').trim().toUpperCase();
-
-  if (!raw) return '';
-
-  const cleaned = raw
-    .replace(/[^A-Z0-9]/g, '')
-    .replace(/USDTM$/u, 'USDT')
-    .replace(/PERP$/u, '')
-    .replace(/SWAP$/u, '');
-
-  if (cleaned.endsWith('USDT')) return cleaned;
-
-  return `${base || cleaned}USDT`;
-}
-
-function livePriceCacheKey(symbol = '') {
-  return normalizeBitgetSymbol(symbol);
-}
-
-function getCachedLivePrice(symbol = '') {
-  const key = livePriceCacheKey(symbol);
-  if (!key) return 0;
-
-  const cached = livePriceCache.get(key);
-  if (!cached) return 0;
-
-  if (now() - n(cached.ts, 0) > LIVE_PRICE_CACHE_TTL_MS) {
-    livePriceCache.delete(key);
-    return 0;
-  }
-
-  return n(cached.price, 0);
-}
-
-function setCachedLivePrice(symbol = '', price = 0) {
-  const key = livePriceCacheKey(symbol);
-  const value = n(price, 0);
-
-  if (!key || value <= 0) return;
-
-  livePriceCache.set(key, { price: value, ts: now() });
-}
-
-async function fetchBitgetTickerPrice(symbol = '') {
-  const bitgetSymbol = normalizeBitgetSymbol(symbol);
-  if (!bitgetSymbol) return 0;
-
-  const cached = getCachedLivePrice(bitgetSymbol);
-  if (cached > 0) return cached;
-
-  const url = `${BITGET_BASE_URL}/api/v2/mix/market/ticker?symbol=${encodeURIComponent(bitgetSymbol)}&productType=${encodeURIComponent(BITGET_PRODUCT_TYPE)}`;
-  const response = await fetch(url, { method: 'GET', headers: { accept: 'application/json' } });
-
-  if (!response.ok) return 0;
-
-  const json = await response.json().catch(() => null);
-  const data = Array.isArray(json?.data) ? json.data[0] : json?.data;
-  const price = n(data?.lastPr ?? data?.last ?? data?.markPrice ?? data?.indexPrice ?? data?.bidPr ?? data?.askPr, 0);
-
-  if (price > 0) {
-    setCachedLivePrice(bitgetSymbol, price);
-    return price;
-  }
-
-  return 0;
-}
-
-async function fetchMidPriceFast(symbol, priceHints = new Map()) {
-  const cfg = tradeConfig();
-
-  if (cfg.monitorLivePriceFetchEnabled) {
-    const liveResult = await withTimeout(
-      fetchBitgetTickerPrice(symbol).catch(() => 0),
-      cfg.monitorPriceFetchTimeoutMs,
-      'LIVE_PRICE_FETCH_TIMEOUT'
-    );
-
-    if (!isTimeoutResult(liveResult)) {
-      const livePrice = n(liveResult, 0);
-      if (livePrice > 0) return livePrice;
-    }
-  }
-
-  const hinted = priceHintForSymbol(symbol, priceHints);
-  if (hinted > 0) return hinted;
-
-  return 0;
-}
-
-function mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw = [], liveRows = []) {
-  const liveBySymbol = new Map();
-
-  for (const row of liveRows) {
-    const key = symbolKey(row.symbol || row.baseSymbol || row.contractSymbol);
-    if (key && !liveBySymbol.has(key)) liveBySymbol.set(key, row);
-  }
-
-  const raw = Array.isArray(analyzedRowsRaw) && analyzedRowsRaw.length ? analyzedRowsRaw : liveRows;
-
-  return raw.map((row) => {
-    const key = symbolKey(row.symbol || row.baseSymbol || row.contractSymbol);
-    const live = liveBySymbol.get(key) || {};
-    return { ...live, ...row };
-  });
-}
-
-function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
-  return mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw, liveRows)
-    .filter(Boolean)
-    .filter(isTargetRow)
-    .map((row) => {
-      const withWeather = attachEntryMarketWeather(row, marketContext);
-      const exactRow = normalizeExactTrueMicroRow(withWeather, marketContext);
-      const contextualRow = attachCurrentFitContext({
-        ...exactRow,
-        ...scannerMetadataFrom(row, exactRow),
-        ...sideFlags(),
-        ...virtualFlags(row),
-        ...isolationFlags()
-      }, marketContext);
-
-      const riskRow = applyAdaptiveShortRisk(
-        normalizeExactTrueMicroRow(contextualRow, marketContext),
-        'ADAPTIVE_SHORT_RR_AFTER_ANALYZE_OR_FALLBACK_EXACT_75'
-      );
-
-      const weakContraEntryGate = buildWeakContraEntryGate(riskRow, marketContext);
-
-      return {
-        ...riskRow,
-        ...learningIdentityFields(riskRow),
-        ...attachEntryMarketWeather(contextualRow, marketContext),
-        weakContraEntryGate,
-        weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
-        weakContraEntryAllowed: weakContraEntryGate.allowed,
-        weakContraRejected: weakContraEntryGate.rejected,
-        weakContraRejectReason: weakContraEntryGate.rejected ? weakContraEntryGate.reason : null,
-        blockVirtualEntry: weakContraEntryGate.rejected,
-        virtualObservationAllowed: true,
-        tradeCandidateAllowed: !weakContraEntryGate.rejected
-      };
-    })
-    .filter((row) => Boolean(getTrueMicroFamilyId(row)))
-    .filter((row) => Boolean(getMicroMicroFamilyId(row)));
-}
-
-async function loadOpenPositionsFast(cfg, runtimeWarnings) {
-  if (typeof PositionEngine.getOpenPositions !== 'function') {
-    runtimeWarnings.push('GET_OPEN_POSITIONS_FUNCTION_MISSING_USING_EMPTY_SET');
-    return [];
-  }
-
-  const result = await withTimeout(
-    PositionEngine.getOpenPositions({
-      tradeSide: TARGET_TRADE_SIDE,
-      side: TARGET_DASHBOARD_SIDE,
-      namespace: SHORT_NAMESPACE,
-      keyPrefix: SHORT_KEY_PREFIX,
-      virtualOnly: true,
-      requireFullRows: true,
-      includeKeyOnly: false,
-      monitorMode: true,
-      limit: cfg.openPositionMonitorLimit,
-      hydrateLimit: cfg.openPositionMonitorLimit,
-      openPositionLimit: cfg.openPositionMonitorLimit,
-      maxOpenPositionsToRead: cfg.openPositionMonitorLimit,
-      openPositionHydrateLimit: cfg.openPositionMonitorLimit,
-      openPositionReadTimeoutMs: cfg.openPositionLoadTimeoutMs,
-      openPositionKeysTimeoutMs: cfg.openPositionLoadTimeoutMs
-    }).catch((error) => ({
-      __openPositionError: true,
-      error: error?.message || String(error)
-    })),
-    cfg.openPositionLoadTimeoutMs,
-    'GET_OPEN_POSITIONS_TIMEOUT'
-  );
-
-  if (isTimeoutResult(result)) {
-    runtimeWarnings.push('GET_OPEN_POSITIONS_TIMEOUT_USING_EMPTY_SET_FOR_ENTRY_BUDGET');
-    return [];
-  }
-
-  if (result?.__openPositionError) {
-    runtimeWarnings.push(`GET_OPEN_POSITIONS_ERROR_USING_EMPTY_SET:${result.error}`);
-    return [];
-  }
-
-  return Array.isArray(result) ? result : [];
-}
-
-function fallbackBuildOpenPositionFromEntry(entry = {}) {
-  const openedAt = now();
-
-  return {
-    ...entry,
-    id: entry.id || randomIdSafe('short_virtual_position'),
-    positionId: entry.positionId || randomIdSafe('short_pos'),
-    openedAt: entry.openedAt || openedAt,
-    createdAt: entry.createdAt || openedAt,
-    status: 'OPEN',
-    source: 'VIRTUAL',
-    outcomeSource: 'VIRTUAL',
-    virtualOnly: true,
-    virtualTracked: true,
-    realTrade: false,
-    realOrder: false,
-    exchangeOrder: false,
-    bitgetOrderPlaced: false,
-    ...sideFlags(),
-    ...isolationFlags(),
-    ...virtualFlags(entry),
-    ...attachEntryMarketWeather(entry, entry)
-  };
-}
-
-async function saveVirtualPositionFast(entry, cfg) {
-  if (typeof PositionEngine.saveOpenPosition !== 'function') {
-    return { ok: false, reason: 'SAVE_OPEN_POSITION_FUNCTION_MISSING' };
-  }
-
-  const position = typeof PositionEngine.buildOpenPositionFromEntry === 'function'
-    ? PositionEngine.buildOpenPositionFromEntry(entry)
-    : fallbackBuildOpenPositionFromEntry(entry);
-
-  const result = await withTimeout(
-    PositionEngine.saveOpenPosition({
-      ...position,
-      ...entry,
-      ...learningIdentityFields(entry),
-      ...marketWeatherFieldsFromRow(entry),
-      ...isolationFlags(),
-      ...sideFlags(),
-      ...virtualFlags(entry)
-    }).then((saved) => ({ ok: true, position: saved || { ...position, ...entry } })),
-    cfg.savePositionTimeoutMs,
-    'SAVE_OPEN_POSITION_TIMEOUT'
-  );
-
-  if (isTimeoutResult(result)) {
-    return { ok: false, reason: 'SAVE_OPEN_POSITION_TIMEOUT' };
-  }
-
-  return result?.ok ? result : { ok: false, reason: 'SAVE_OPEN_POSITION_FAILED' };
-}
-
-async function monitorOpenPositionsSafe({
-  cfg,
-  priceHints,
-  runtimeWarnings
-}) {
-  if (typeof PositionEngine.monitorOpenPositions !== 'function') {
-    runtimeWarnings.push('MONITOR_OPEN_POSITIONS_FUNCTION_MISSING_CONTINUING_TO_ENTRY_LOOP');
-    return [];
-  }
-
-  const monitorResult = await withTimeout(
-    PositionEngine.monitorOpenPositions({
-      priceFetcher: async (symbol) => fetchMidPriceFast(symbol, priceHints),
-      tradeSide: TARGET_TRADE_SIDE,
-      side: TARGET_DASHBOARD_SIDE,
-      namespace: SHORT_NAMESPACE,
-      keyPrefix: SHORT_KEY_PREFIX,
-      weekKey: PERSISTENT_LEARNING_KEY,
-      persistentLearningKey: PERSISTENT_LEARNING_KEY,
-      virtualOnly: true,
-      realOrdersDisabled: true,
-      bitgetOrdersDisabled: true,
-      exchangeCallsDisabled: true,
-
-      monitorTimeoutMs: cfg.monitorTimeoutMs,
-      timeoutMs: cfg.monitorTimeoutMs,
-      maxRuntimeMs: cfg.monitorTimeoutMs,
-      monitorBatchSize: cfg.monitorBatchSize,
-      openPositionMonitorLimit: cfg.openPositionMonitorLimit,
-      maxOpenPositionsToMonitor: cfg.openPositionMonitorLimit,
-      openPositionLimit: cfg.openPositionMonitorLimit,
-      maxOpenPositionsToRead: cfg.openPositionMonitorLimit,
-      hydrateLimit: cfg.openPositionMonitorLimit,
-      openPositionHydrateLimit: cfg.openPositionMonitorLimit,
-
-      monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
-      priceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
-      monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
-      monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
-
-      positionTimeStopMin: cfg.positionTimeStopMin,
-      hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
-      closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
-      persistNoPriceFailures: false,
-
-      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
-    }).catch((error) => ({
-      __monitorError: true,
-      error: error?.message || String(error)
-    })),
-    cfg.monitorTimeoutMs,
-    'MONITOR_OPEN_POSITIONS_TIMEOUT'
-  );
-
-  if (isTimeoutResult(monitorResult)) {
-    runtimeWarnings.push('MONITOR_OPEN_POSITIONS_TIMEOUT_CONTINUING_TO_ENTRY_LOOP');
-    return [];
-  }
-
-  if (monitorResult?.__monitorError) {
-    runtimeWarnings.push(`MONITOR_OPEN_POSITIONS_ERROR_CONTINUING_TO_ENTRY_LOOP:${monitorResult.error}`);
-    return [];
-  }
-
-  if (Array.isArray(monitorResult)) return monitorResult;
-  if (Array.isArray(monitorResult?.exits)) return monitorResult.exits;
-  if (Array.isArray(monitorResult?.closed)) return monitorResult.closed;
-  return [];
-}
-
-function snapshotAlreadyProcessedEnough(lastProcessed = {}) {
-  if (!lastProcessed || typeof lastProcessed !== 'object') return false;
-
-  return Boolean(
-    n(lastProcessed.analyzedMicroMicroRows, 0) > 0 ||
-      n(lastProcessed.virtualCreatedRows, 0) > 0 ||
-      n(lastProcessed.entryRows, 0) > 0 ||
-      n(lastProcessed.virtualExitRows, 0) > 0
-  );
-}
-
-function playbookChangeWarning(previous = {}, marketContext = {}) {
-  const previousKey = previous?.confirmedMarketWeatherKey || previous?.currentEntryMarketWeatherKey || null;
-  const currentKey = marketContext?.confirmedMarketWeatherKey || marketContext?.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY;
-
-  const previousParsed = parseKnownMarketWeatherKey(previousKey);
-  const currentParsed = parseKnownMarketWeatherKey(currentKey);
-
-  if (!previousKey || previousParsed.key === currentParsed.key) {
-    return {
-      changed: false,
-      previousKey: previousParsed.key,
-      currentKey: currentParsed.key,
-      reason: 'CONFIRMED_MARKET_WEATHER_UNCHANGED'
-    };
-  }
-
-  if (previousParsed.key === UNKNOWN_MARKET_WEATHER_KEY || currentParsed.key === UNKNOWN_MARKET_WEATHER_KEY) {
-    return {
-      changed: false,
-      previousKey: previousParsed.key,
-      currentKey: currentParsed.key,
-      reason: 'CONFIRMED_MARKET_WEATHER_UNKNOWN_CHANGE_IGNORED'
-    };
-  }
-
-  return {
-    changed: true,
-    previousKey: previousParsed.key,
-    currentKey: currentParsed.key,
-    reason: 'CONFIRMED_MARKET_WEATHER_CHANGED_REFRESH_PLAYBOOK_NOW'
-  };
-}
-
-async function getActiveRotationSafe(cfg, marketContext, runtimeWarnings) {
-  if (typeof RotationEngine.getActiveRotation !== 'function') {
-    runtimeWarnings.push('GET_ACTIVE_ROTATION_FUNCTION_MISSING_DISCORD_SELECTION_EMPTY');
-    return null;
-  }
-
-  const activeRotationResult = await withTimeout(
-    RotationEngine.getActiveRotation({
-      weekKey: PERSISTENT_LEARNING_KEY,
-      persistentLearningKey: PERSISTENT_LEARNING_KEY,
-      targetTradeSide: TARGET_TRADE_SIDE,
-      tradeSide: TARGET_TRADE_SIDE,
-      side: TARGET_DASHBOARD_SIDE,
-      dashboardSide: TARGET_DASHBOARD_SIDE,
-      namespace: SHORT_NAMESPACE,
-      keyPrefix: SHORT_KEY_PREFIX,
-      redisNamespace: SHORT_NAMESPACE,
-      redisKeyPrefix: SHORT_KEY_PREFIX,
-      shortOnly: true,
-      longDisabled: true,
-      exactTrueMicroOnly: true,
-      selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
-      trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-      childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-      parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-      microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-      trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
-      learningGranularity: CHILD75_LEARNING_GRANULARITY,
-      child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
-      parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-      microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-      microMicroVersion: MICRO_MICRO_VERSION,
-      discordActivationRequiresNetEdge: true,
-      discordActivationRequiresWeatherPlaybook: true,
-      discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-      currentMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
-      confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
-      marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION
-    }).catch(() => null),
-    cfg.rotationTimeoutMs,
-    'ACTIVE_ROTATION_TIMEOUT'
-  );
-
-  if (isTimeoutResult(activeRotationResult)) {
-    runtimeWarnings.push('ACTIVE_ROTATION_TIMEOUT_DISCORD_SELECTION_EMPTY');
-    return null;
-  }
-
-  return activeRotationResult;
-}
-
-async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarnings) {
-  if (typeof AnalyzeEngine.analyzeCandidatesBatch !== 'function') {
-    runtimeWarnings.push('ANALYZE_CANDIDATES_FUNCTION_MISSING_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
-    return {
-      rows: liveRows,
-      analyzeError: 'ANALYZE_CANDIDATES_FUNCTION_MISSING',
-      analyzeFallbackUsed: true
-    };
-  }
-
-  try {
-    const analyzeResult = await withTimeout(
-      AnalyzeEngine.analyzeCandidatesBatch(liveRows, options),
-      cfg.analyzeTimeoutMs,
-      'ANALYZE_CANDIDATES_TIMEOUT'
-    );
-
-    if (isTimeoutResult(analyzeResult)) {
-      runtimeWarnings.push('ANALYZE_CANDIDATES_TIMEOUT_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
-      return {
-        rows: liveRows,
-        analyzeError: 'ANALYZE_CANDIDATES_TIMEOUT',
-        analyzeFallbackUsed: true
-      };
-    }
-
-    const rows = Array.isArray(analyzeResult) ? analyzeResult : [];
-
-    if (!rows.length) {
-      runtimeWarnings.push('ANALYZE_RETURNED_EMPTY_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
-      return {
-        rows: liveRows,
-        analyzeError: null,
-        analyzeFallbackUsed: true
-      };
-    }
-
-    return {
-      rows,
-      analyzeError: null,
-      analyzeFallbackUsed: false
-    };
-  } catch (error) {
-    const message = error?.message || String(error);
-    runtimeWarnings.push(`ANALYZE_CANDIDATES_ERROR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS:${message}`);
-
-    return {
-      rows: liveRows,
-      analyzeError: message,
-      analyzeFallbackUsed: true
-    };
-  }
 }
 
 export async function runTradeSystem(options = {}) {
@@ -6528,67 +6646,45 @@ export async function runTradeSystem(options = {}) {
     const durableRedis = safeGetDurableRedis();
     const runId = randomIdSafe('trade_run_short');
     const startedAt = now();
-    const runtimeWarnings = [];
+    const deadline = createDeadline(startedAt, cfg);
+
+    const runtimeWarnings = [
+      'DEADLINE_SAFE_TRADE_SYSTEM_ACTIVE',
+      'ROUTE_OPTIONS_HONORED_FOR_MONITOR_LIMITS',
+      'DEFAULT_REDIS_KEY_SCAN_DISABLED'
+    ];
+
     const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
     const monitorOnly = Boolean(options.monitorOnly);
 
-    const marketContextResult = await withTimeout(
-      loadMarketContext().catch(() => ({
-        ok: false,
-        source: {},
-        universe: {},
-        entryMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
-        confirmedMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
-        entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-        confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-        entryMarketWeatherRegime: 'UNKNOWN',
-        entryMarketWeatherTrendSide: 'UNKNOWN',
-        confirmedMarketWeatherRegime: 'UNKNOWN',
-        confirmedMarketWeatherTrendSide: 'UNKNOWN',
-        regime: 'UNKNOWN',
-        trendSide: 'UNKNOWN',
-        weatherTrendSide: 'UNKNOWN',
-        ageSec: null,
-        stale: true,
-        freshConfirmed: false,
-        freshConfirmedReason: 'MARKET_CONTEXT_LOAD_FAILED'
-      })),
-      cfg.marketContextTimeoutMs,
-      'MARKET_CONTEXT_TIMEOUT'
+    const marketContext = await withDeadline(
+      () => loadMarketContext().catch(() => fallbackMarketContext('MARKET_CONTEXT_LOAD_FAILED')),
+      {
+        deadline,
+        timeoutMs: cfg.marketContextTimeoutMs,
+        label: 'MARKET_CONTEXT_TIMEOUT',
+        fallback: () => fallbackMarketContext('MARKET_CONTEXT_TIMEOUT')
+      }
     );
 
-    const marketContext = isTimeoutResult(marketContextResult)
-      ? {
-          ok: false,
-          source: {},
-          universe: {},
-          entryMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
-          confirmedMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
-          entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-          confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-          entryMarketWeatherRegime: 'UNKNOWN',
-          entryMarketWeatherTrendSide: 'UNKNOWN',
-          confirmedMarketWeatherRegime: 'UNKNOWN',
-          confirmedMarketWeatherTrendSide: 'UNKNOWN',
-          regime: 'UNKNOWN',
-          trendSide: 'UNKNOWN',
-          weatherTrendSide: 'UNKNOWN',
-          ageSec: null,
-          stale: true,
-          freshConfirmed: false,
-          freshConfirmedReason: 'MARKET_CONTEXT_TIMEOUT'
-        }
-      : marketContextResult;
-
-    if (isTimeoutResult(marketContextResult)) {
-      runtimeWarnings.push('MARKET_CONTEXT_TIMEOUT_USING_UNKNOWN_CONTEXT');
+    if (!marketContext?.ok) {
+      runtimeWarnings.push(marketContext?.freshConfirmedReason || 'MARKET_CONTEXT_UNAVAILABLE');
     }
 
     if (isUnknownMarketWeatherKey(marketContext.confirmedMarketWeatherKey)) {
       runtimeWarnings.push('CONFIRMED_MARKET_WEATHER_UNKNOWN_TRADE_READY_DISABLED');
     }
 
-    const previousWeather = await getJsonSafe(durableRedis, SHORT_KEYS.trade.lastConfirmedWeatherKey, null);
+    const previousWeather = await withDeadline(
+      () => getJsonSafe(durableRedis, SHORT_KEYS.trade.lastConfirmedWeatherKey, null),
+      {
+        deadline,
+        timeoutMs: 250,
+        label: 'READ_PREVIOUS_WEATHER_TIMEOUT',
+        fallback: null
+      }
+    );
+
     const weatherChange = playbookChangeWarning(previousWeather, marketContext);
 
     if (weatherChange.changed) {
@@ -6596,21 +6692,64 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push('PLAYBOOK_REFRESH_REQUIRED_FOR_CONFIRMED_WEATHER');
     }
 
-    const snapshot = await getLatestSnapshot();
+    const snapshot = await withDeadline(
+      () => getLatestSnapshot(deadline, cfg),
+      {
+        deadline,
+        timeoutMs: cfg.snapshotTimeoutMs,
+        label: 'GET_LATEST_SNAPSHOT_TIMEOUT',
+        fallback: null
+      }
+    );
+
     const priceHints = buildSnapshotPriceHints(snapshot);
 
-    const virtualExits = await monitorOpenPositionsSafe({
-      cfg,
-      priceHints,
-      runtimeWarnings
-    });
+    const lastProcessed = await withDeadline(
+      () => getJsonSafe(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, null),
+      {
+        deadline,
+        timeoutMs: 250,
+        label: 'READ_LAST_PROCESSED_TIMEOUT',
+        fallback: null
+      }
+    );
+
+    const sameSnapshot =
+      Boolean(snapshot?.snapshotId) &&
+      Boolean(lastProcessed?.snapshotId) &&
+      lastProcessed.snapshotId === snapshot.snapshotId;
+
+    const sameSnapshotCompletedEnough = sameSnapshot && snapshotAlreadyProcessedEnough(lastProcessed);
+
+    let virtualExits = [];
+    let shadowExits = [];
+    const realExits = [];
+
+    const skipMonitorBecauseSameSnapshot =
+      sameSnapshot &&
+      sameSnapshotCompletedEnough &&
+      !forceProcessSnapshot &&
+      !weatherChange.changed &&
+      cfg.skipMonitorWhenSameSnapshotProcessed &&
+      !monitorOnly;
+
+    if (skipMonitorBecauseSameSnapshot) {
+      runtimeWarnings.push('MONITOR_SKIPPED_SAME_SNAPSHOT_ALREADY_PROCESSED');
+    } else if (!deadlineExceeded(deadline, cfg.hardReturnReserveMs + 700)) {
+      virtualExits = await monitorOpenPositionsSafe({
+        cfg,
+        priceHints,
+        runtimeWarnings,
+        deadline
+      });
+      shadowExits = virtualExits;
+    } else {
+      runtimeWarnings.push('MONITOR_SKIPPED_DEADLINE_NEAR_BEFORE_MONITOR_PHASE');
+    }
 
     if (virtualExits.length > 0) {
       runtimeWarnings.push(`VIRTUAL_EXITS_RECORDED_THIS_RUN:${virtualExits.length}`);
     }
-
-    const shadowExits = virtualExits;
-    const realExits = [];
 
     if (monitorOnly) {
       return saveRunMeta(baseEarlyReturnPayload({
@@ -6658,7 +6797,9 @@ export async function runTradeSystem(options = {}) {
       }));
     }
 
-    const snapshotAgeSec = (now() - n(snapshot.createdAt, 0)) / 1000;
+    const snapshotAgeSec = snapshot.createdAt > 0
+      ? (now() - n(snapshot.createdAt, 0)) / 1000
+      : 0;
 
     if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
       const actions = Array.isArray(snapshot.blockedNonShortCandidates)
@@ -6686,10 +6827,6 @@ export async function runTradeSystem(options = {}) {
       }));
     }
 
-    const lastProcessed = await getJsonSafe(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, null);
-    const sameSnapshot = lastProcessed?.snapshotId === snapshot.snapshotId;
-    const sameSnapshotCompletedEnough = sameSnapshot && snapshotAlreadyProcessedEnough(lastProcessed);
-
     if (sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && !weatherChange.changed) {
       const actions = Array.isArray(snapshot.blockedNonShortCandidates)
         ? snapshot.blockedNonShortCandidates
@@ -6712,20 +6849,38 @@ export async function runTradeSystem(options = {}) {
           lastProcessedSnapshotId: lastProcessed?.snapshotId || null,
           lastProcessedAnalyzedMicroMicroRows: lastProcessed?.analyzedMicroMicroRows || 0,
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length
+          shadowExitRows: shadowExits.length,
+          sameSnapshotFastReturn: true
         }
       }));
     }
 
-    if (sameSnapshot && !sameSnapshotCompletedEnough && !forceProcessSnapshot) {
-      runtimeWarnings.push('SAME_SNAPSHOT_REPROCESSED_BECAUSE_PREVIOUS_RUN_HAD_NO_MICRO_MICRO_OUTPUT');
+    if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 1000)) {
+      return saveRunMeta(baseEarlyReturnPayload({
+        runId,
+        startedAt,
+        snapshot,
+        actions: [],
+        realExits,
+        virtualExits,
+        shadowExits,
+        reason: 'DEADLINE_REACHED_BEFORE_ENTRY_LOOP',
+        runtimeWarnings: [
+          ...runtimeWarnings,
+          'DEADLINE_REACHED_BEFORE_ENTRY_LOOP_RETURNING_EARLY'
+        ],
+        marketContext,
+        processScannerSnapshot: false,
+        priceHints,
+        extra: {
+          virtualExitRows: virtualExits.length,
+          shadowExitRows: shadowExits.length,
+          deadlineReached: true
+        }
+      }));
     }
 
-    if (sameSnapshot && weatherChange.changed && !forceProcessSnapshot) {
-      runtimeWarnings.push('SAME_SNAPSHOT_REPROCESSED_BECAUSE_CONFIRMED_MARKET_WEATHER_CHANGED');
-    }
-
-    const activeRotation = await getActiveRotationSafe(cfg, marketContext, runtimeWarnings);
+    const activeRotation = await getActiveRotationSafe(cfg, marketContext, runtimeWarnings, deadline);
     const alertContext = buildSelectedAlertContext(activeRotation, marketContext);
 
     if (alertContext.activeSelectionRuntimeFiltered) {
@@ -6757,11 +6912,16 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push(`SHORT_CANDIDATES_CAPPED_FOR_ENTRY_BUDGET:${cappedCandidateCount}`);
     }
 
-    const processed = await mapConcurrentSafe(
-      candidates,
-      cfg.dataConcurrency,
-      (candidate) => safeProcessCandidate(candidate, marketContext)
-    );
+    const processed = [];
+
+    for (const candidate of candidates) {
+      if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 1200)) {
+        runtimeWarnings.push(`CANDIDATE_LOOP_STOPPED_DEADLINE_NEAR:${processed.length}/${candidates.length}`);
+        break;
+      }
+
+      processed.push(await safeProcessCandidate(candidate, marketContext));
+    }
 
     const candidateTimeoutRows = processed.filter((row) => row?.timedOut).length;
 
@@ -6792,13 +6952,6 @@ export async function runTradeSystem(options = {}) {
     const standardizedLearningRiskRows = liveRows.filter((row) => row.standardizedLearningRisk).length;
     const learningOnlyRows = liveRows.filter((row) => row.learningOnly).length;
     const riskValidRows = liveRows.filter(hasValidRiskShape).length;
-
-    const weatherCapture = buildEntryMarketWeatherSnapshotSafe({
-      entryMarketWeatherKey: marketContext.entryMarketWeatherKey,
-      entryMarketWeatherRegime: marketContext.entryMarketWeatherRegime,
-      entryMarketWeatherTrendSide: marketContext.entryMarketWeatherTrendSide,
-      entryMarketWeatherRaw: marketContext.entryMarketWeatherRaw
-    }, now());
 
     const analyzeResult = await analyzeCandidatesBatchSafe(
       liveRows,
@@ -6869,7 +7022,6 @@ export async function runTradeSystem(options = {}) {
         parentSelectionAllowed: false,
         micro75SelectionAllowed: false,
         microMicroSelectionAllowed: true,
-        fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED_THEN_MICRO_75_UNTIL_MM_MIN_COMPLETED',
 
         currentMarketWeather: marketContext.source || null,
         currentMarketUniverse: marketContext.universe || null,
@@ -6881,7 +7033,13 @@ export async function runTradeSystem(options = {}) {
         marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
         marketWeatherCaptureEnabled: true,
 
-        ...weatherCapture,
+        entryMarketWeatherKey: marketContext.entryMarketWeatherKey,
+        entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+        entryMarketWeatherRegime: marketContext.entryMarketWeatherRegime,
+        entryMarketWeatherTrendSide: marketContext.entryMarketWeatherTrendSide,
+        entryMarketWeatherCapturedAt: now(),
+        entryMarketWeatherImmutable: true,
+        entryMarketWeatherNeverRecomputedAtExit: true,
 
         currentRegime: marketContext.regime,
         currentTrendSide: marketContext.trendSide,
@@ -6907,10 +7065,12 @@ export async function runTradeSystem(options = {}) {
         hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
         discordActivationRequiresNetEdge: true,
         discordActivationRequiresWeatherPlaybook: true,
-        discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION
+        discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+        deadlineSafeAnalyze: true
       },
       cfg,
-      runtimeWarnings
+      runtimeWarnings,
+      deadline
     );
 
     const analyzedRowsRaw = analyzeResult.rows;
@@ -6927,42 +7087,25 @@ export async function runTradeSystem(options = {}) {
     const weakContraRejectedRows = analyzedRows.filter((row) => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
     const weakContraAllowedRows = analyzedRows.filter((row) => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length;
 
-    const openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings);
+    const openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline);
     const openSymbolSet = buildOpenSymbolSet(openPositions);
     const openPositionCountBeforeEntries = openPositions.length;
     const actions = [...earlyActions];
-
-    let entryRows = 0;
-    let waitRows = earlyActions.length;
-    let virtualCreatedRows = 0;
-    let virtualSkippedRows = 0;
-    let virtualFailedRows = 0;
-    let skippedByExistingSymbol = 0;
-    let discordAlertEligibleRows = 0;
-    let discordAlertsQueued = 0;
-    let discordAlertsSent = 0;
-    let discordAlertsFailed = 0;
-    let discordAlertsSkippedNoSelectedMicro = 0;
-    let discordAlertsSkippedCurrentFit = 0;
-    let discordAlertsSkippedRuntimeGate = 0;
-    let selectedMicroMicroMatchRows = 0;
-    let unselectedMicroEntryRows = 0;
-    let entryLoopAttempts = 0;
-    let entryLoopRuntimeBreak = false;
-    let tradeReadyRows = 0;
-    let watchRows = 0;
-    let observeRows = 0;
-    let playbookMissingRows = 0;
-    let marketWeatherUnknownRows = 0;
+    const counters = buildVirtualEntryResultCounters();
 
     for (const rawRow of analyzedRows) {
-      entryLoopAttempts += 1;
+      counters.entryLoopAttempts += 1;
 
-      const minimumAttemptsStillRequired = entryLoopAttempts <= cfg.minEntryLoopAttempts;
+      const minimumAttemptsStillRequired = counters.entryLoopAttempts <= cfg.minEntryLoopAttempts;
 
-      if (!minimumAttemptsStillRequired && runtimeExceeded(startedAt, cfg, cfg.entryLoopReserveMs)) {
-        runtimeWarnings.push(`MAX_RUNTIME_REACHED_ENTRY_LOOP_STOPPED_AFTER_MIN_ATTEMPTS:${entryLoopAttempts - 1}`);
-        entryLoopRuntimeBreak = true;
+      if (!minimumAttemptsStillRequired && deadlineExceeded(deadline, cfg.entryLoopReserveMs)) {
+        runtimeWarnings.push(`MAX_RUNTIME_REACHED_ENTRY_LOOP_STOPPED_AFTER_ATTEMPTS:${counters.entryLoopAttempts - 1}`);
+        counters.entryLoopRuntimeBreak = true;
+        break;
+      }
+
+      if (cfg.maxEntriesPerRun <= counters.virtualCreatedRows) {
+        runtimeWarnings.push(`MAX_ENTRIES_PER_RUN_REACHED:${cfg.maxEntriesPerRun}`);
         break;
       }
 
@@ -6979,8 +7122,8 @@ export async function runTradeSystem(options = {}) {
       const runtimeStatusGate = virtualGate.microMicroRuntimeGate || microMicroRuntimeGate(row);
 
       if (!virtualGate.ok) {
-        waitRows += 1;
-        virtualSkippedRows += 1;
+        counters.waitRows += 1;
+        counters.virtualSkippedRows += 1;
 
         actions.push({
           ...row,
@@ -6988,7 +7131,6 @@ export async function runTradeSystem(options = {}) {
           reason: virtualGate.reason,
           selectedRotationId: alertContext.rotationId,
           activeRotationId: alertContext.rotationId,
-          activeParentTrueMicroFamilyId: getParentTrueMicroFamilyId(row) || null,
           microMicroFamilyId: microMicroFamilyId || null,
           trueMicroMicroFamilyId: microMicroFamilyId || null,
           exactMicroMicroFamilyId: microMicroFamilyId || null,
@@ -7001,7 +7143,6 @@ export async function runTradeSystem(options = {}) {
           liveEligible: false,
           discordActivationEligible: false,
           discordRuntimeActivationGatePassed: false,
-          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           microMicroRuntimeGate: runtimeStatusGate,
           microMicroRuntimeGateStatus: runtimeStatusGate.status,
           microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
@@ -7025,9 +7166,9 @@ export async function runTradeSystem(options = {}) {
       }
 
       if (hasOpenSymbol(openSymbolSet, row)) {
-        waitRows += 1;
-        virtualSkippedRows += 1;
-        skippedByExistingSymbol += 1;
+        counters.waitRows += 1;
+        counters.virtualSkippedRows += 1;
+        counters.skippedByExistingSymbol += 1;
 
         actions.push({
           ...row,
@@ -7080,31 +7221,31 @@ export async function runTradeSystem(options = {}) {
         sizing
       });
 
-      if (riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY) tradeReadyRows += 1;
-      if (riskAndSignal.signalType === SIGNAL_TYPE_WATCH_ONLY) watchRows += 1;
-      if (riskAndSignal.signalType === SIGNAL_TYPE_OBSERVE_ONLY) observeRows += 1;
-      if (riskAndSignal.reason === 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER') playbookMissingRows += 1;
-      if (riskAndSignal.reason === 'MARKET_WEATHER_UNKNOWN') marketWeatherUnknownRows += 1;
+      if (riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY) counters.tradeReadyRows += 1;
+      if (riskAndSignal.signalType === SIGNAL_TYPE_WATCH_ONLY) counters.watchRows += 1;
+      if (riskAndSignal.signalType === SIGNAL_TYPE_OBSERVE_ONLY) counters.observeRows += 1;
+      if (riskAndSignal.reason === 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER') counters.playbookMissingRows += 1;
+      if (riskAndSignal.reason === 'MARKET_WEATHER_UNKNOWN') counters.marketWeatherUnknownRows += 1;
 
       if (selectedAlertMatch.ok && selectedAlertMatch.granularity === LAYER_MICRO_MICRO) {
-        selectedMicroMicroMatchRows += 1;
+        counters.selectedMicroMicroMatchRows += 1;
       } else {
-        discordAlertsSkippedNoSelectedMicro += 1;
-        unselectedMicroEntryRows += 1;
+        counters.discordAlertsSkippedNoSelectedMicro += 1;
+        counters.unselectedMicroEntryRows += 1;
       }
 
       if (selectedAlertMatch.ok && runtimeGate.eligible !== true) {
-        discordAlertsSkippedRuntimeGate += 1;
+        counters.discordAlertsSkippedRuntimeGate += 1;
       }
 
       if (selectedAlertMatch.ok && runtimeGate.eligible === true && !currentFitGate.ok) {
-        discordAlertsSkippedCurrentFit += 1;
+        counters.discordAlertsSkippedCurrentFit += 1;
       }
 
       const discordAlertEligible = riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY;
 
       if (discordAlertEligible) {
-        discordAlertEligibleRows += 1;
+        counters.discordAlertEligibleRows += 1;
       }
 
       const entry = buildVirtualEntryAction({
@@ -7125,7 +7266,7 @@ export async function runTradeSystem(options = {}) {
       });
 
       try {
-        const saveResult = await saveVirtualPositionFast(entry, cfg);
+        const saveResult = await saveVirtualPositionFast(entry, cfg, deadline);
 
         if (!saveResult.ok) {
           throw new Error(saveResult.reason || 'SAVE_OPEN_POSITION_FAILED');
@@ -7133,14 +7274,14 @@ export async function runTradeSystem(options = {}) {
 
         rememberOpenSymbol(openSymbolSet, entry);
         openPositions.push(saveResult.position || entry);
-        entryRows += 1;
-        virtualCreatedRows += 1;
+        counters.entryRows += 1;
+        counters.virtualCreatedRows += 1;
 
-        const discordResult = await maybeSendDiscordEntryAlert(entry, cfg);
+        const discordResult = await maybeSendDiscordEntryAlert(entry, cfg, deadline);
 
-        if (discordResult.queued) discordAlertsQueued += 1;
-        if (discordResult.sent) discordAlertsSent += 1;
-        if (discordResult.failed) discordAlertsFailed += 1;
+        if (discordResult.queued) counters.discordAlertsQueued += 1;
+        if (discordResult.sent) counters.discordAlertsSent += 1;
+        if (discordResult.failed) counters.discordAlertsFailed += 1;
 
         actions.push({
           ...entry,
@@ -7152,8 +7293,8 @@ export async function runTradeSystem(options = {}) {
           ...isolationFlags()
         });
       } catch (error) {
-        waitRows += 1;
-        virtualFailedRows += 1;
+        counters.waitRows += 1;
+        counters.virtualFailedRows += 1;
 
         actions.push({
           ...row,
@@ -7180,8 +7321,8 @@ export async function runTradeSystem(options = {}) {
       }
     }
 
-    if (entryLoopAttempts > 0 && !entryLoopRuntimeBreak) {
-      runtimeWarnings.push(`ENTRY_LOOP_COMPLETED_ATTEMPTS:${entryLoopAttempts}`);
+    if (counters.entryLoopAttempts > 0 && !counters.entryLoopRuntimeBreak) {
+      runtimeWarnings.push(`ENTRY_LOOP_COMPLETED_ATTEMPTS:${counters.entryLoopAttempts}`);
     }
 
     const actionCountMap = buildRunActionCounts(actions, virtualExits);
@@ -7203,21 +7344,21 @@ export async function runTradeSystem(options = {}) {
         fallbackExact75Rows,
         weakContraRejectedRows,
         weakContraAllowedRows,
-        entryRows,
-        virtualCreatedRows,
-        waitRows,
-        skippedByExistingSymbol,
-        selectedAlertMicroMicroMatches: selectedMicroMicroMatchRows,
-        discordCurrentFitBlockedRows: discordAlertsSkippedCurrentFit,
-        discordRuntimeGateBlockedRows: discordAlertsSkippedRuntimeGate,
+        entryRows: counters.entryRows,
+        virtualCreatedRows: counters.virtualCreatedRows,
+        waitRows: counters.waitRows,
+        skippedByExistingSymbol: counters.skippedByExistingSymbol,
+        selectedAlertMicroMicroMatches: counters.selectedMicroMicroMatchRows,
+        discordCurrentFitBlockedRows: counters.discordAlertsSkippedCurrentFit,
+        discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
         activeRuntimeBlockedSelectionRows: alertContext.rejectedSelectedMicroMicroCount || 0,
         empiricalVetoRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
         policyBlockedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
-        marketWeatherUnknownRows,
-        playbookMissingRows,
-        tradeReadyRows,
-        watchRows,
-        observeRows
+        marketWeatherUnknownRows: counters.marketWeatherUnknownRows,
+        playbookMissingRows: counters.playbookMissingRows,
+        tradeReadyRows: counters.tradeReadyRows,
+        watchRows: counters.watchRows,
+        observeRows: counters.observeRows
       },
       openPositionCountBeforeEntries,
       openPositionCountAfterEntries: openPositions.length,
@@ -7267,6 +7408,7 @@ export async function runTradeSystem(options = {}) {
       maxCandidatesPerSnapshot: cfg.maxCandidatesPerSnapshot,
       analyzeMaxCandidatesPerSnapshot: cfg.analyzeMaxCandidatesPerSnapshot,
       hardMaxCandidatesPerSnapshot: cfg.hardMaxCandidatesPerSnapshot,
+      maxEntriesPerRun: cfg.maxEntriesPerRun,
       dataConcurrency: cfg.dataConcurrency,
       candidateTimeoutMs: cfg.candidateTimeoutMs,
       analyzeTimeoutMs: cfg.analyzeTimeoutMs,
@@ -7279,7 +7421,10 @@ export async function runTradeSystem(options = {}) {
       minEntryLoopAttempts: cfg.minEntryLoopAttempts,
       entryLoopReserveMs: cfg.entryLoopReserveMs,
       marketContextTimeoutMs: cfg.marketContextTimeoutMs,
+      snapshotTimeoutMs: cfg.snapshotTimeoutMs,
       maxRuntimeMs: cfg.maxRuntimeMs,
+      hardReturnReserveMs: cfg.hardReturnReserveMs,
+      remainingMsAtReturn: remainingMs(deadline, 0),
 
       ...sideFlags(),
       ...virtualFlags(),
@@ -7354,16 +7499,16 @@ export async function runTradeSystem(options = {}) {
       analyzeFallbackUsed,
       analyzeWeekKey: PERSISTENT_LEARNING_KEY,
 
-      entryRows,
-      waitRows,
-      virtualCreatedRows,
-      virtualSkippedRows,
-      virtualFailedRows,
-      skippedByExistingSymbol,
+      entryRows: counters.entryRows,
+      waitRows: counters.waitRows,
+      virtualCreatedRows: counters.virtualCreatedRows,
+      virtualSkippedRows: counters.virtualSkippedRows,
+      virtualFailedRows: counters.virtualFailedRows,
+      skippedByExistingSymbol: counters.skippedByExistingSymbol,
 
-      shadowCreatedRows: virtualCreatedRows,
-      shadowSkippedRows: virtualSkippedRows,
-      shadowFailedRows: virtualFailedRows,
+      shadowCreatedRows: counters.virtualCreatedRows,
+      shadowSkippedRows: counters.virtualSkippedRows,
+      shadowFailedRows: counters.virtualFailedRows,
       shadowDisabled: false,
 
       virtualExits,
@@ -7373,33 +7518,33 @@ export async function runTradeSystem(options = {}) {
       shadowExitRows: shadowExits.length,
       realExitRows: 0,
 
-      discordAlertEligibleRows,
-      discordAlertsQueued,
-      discordAlertsSent,
-      discordAlertsFailed,
-      discordAlertsSkippedNoSelectedMicro,
-      discordAlertsSkippedCurrentFit,
-      discordAlertsSkippedRuntimeGate,
-      discordRuntimeGateBlockedRows: discordAlertsSkippedRuntimeGate,
+      discordAlertEligibleRows: counters.discordAlertEligibleRows,
+      discordAlertsQueued: counters.discordAlertsQueued,
+      discordAlertsSent: counters.discordAlertsSent,
+      discordAlertsFailed: counters.discordAlertsFailed,
+      discordAlertsSkippedNoSelectedMicro: counters.discordAlertsSkippedNoSelectedMicro,
+      discordAlertsSkippedCurrentFit: counters.discordAlertsSkippedCurrentFit,
+      discordAlertsSkippedRuntimeGate: counters.discordAlertsSkippedRuntimeGate,
+      discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
 
-      selectedMicroMatchRows: selectedMicroMicroMatchRows,
-      selectedAlertMicroMatches: selectedMicroMicroMatchRows,
-      selectedMicroMicroMatchRows,
-      selectedAlertMicroMicroMatches: selectedMicroMicroMatchRows,
+      selectedMicroMatchRows: counters.selectedMicroMicroMatchRows,
+      selectedAlertMicroMatches: counters.selectedMicroMicroMatchRows,
+      selectedMicroMicroMatchRows: counters.selectedMicroMicroMatchRows,
+      selectedAlertMicroMicroMatches: counters.selectedMicroMicroMatchRows,
       selected75ChildMatchRows: 0,
       selectedAlert75ChildMatches: 0,
-      unselectedMicroEntryRows,
+      unselectedMicroEntryRows: counters.unselectedMicroEntryRows,
 
-      tradeReadyRows,
-      watchRows,
-      observeRows,
-      marketWeatherUnknownRows,
-      playbookMissingRows,
+      tradeReadyRows: counters.tradeReadyRows,
+      watchRows: counters.watchRows,
+      observeRows: counters.observeRows,
+      marketWeatherUnknownRows: counters.marketWeatherUnknownRows,
+      playbookMissingRows: counters.playbookMissingRows,
 
       openPositionCountBeforeEntries,
       openPositionCountAfterEntries: openPositions.length,
-      entryLoopAttempts,
-      entryLoopRuntimeBreak,
+      entryLoopAttempts: counters.entryLoopAttempts,
+      entryLoopRuntimeBreak: counters.entryLoopRuntimeBreak,
 
       actions,
       virtualActions: actions,
@@ -7509,7 +7654,18 @@ export async function runTradeSystem(options = {}) {
       microMicroPassedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED).length,
       microMicroRejectedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_REJECTED).length,
       microMicroEmpiricalVetoRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
-      microMicroPolicyBlockedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length
+      microMicroPolicyBlockedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
+
+      deadlineSafe: true,
+      routeLimitsHonored: true,
+      defaultRedisKeyScanDisabled: true,
+
+      entryRowsList: bool(options.details || options.debug || options.full, false)
+        ? actions.filter((row) => row.action === 'VIRTUAL_ENTRY').map(compactActionForResponse)
+        : [],
+      waitRowsList: bool(options.details || options.debug || options.full, false)
+        ? actions.filter((row) => row.action === 'WAIT').map(compactActionForResponse)
+        : []
     };
 
     return saveRunMeta(baseResult);
@@ -7533,10 +7689,15 @@ export async function runTradeSystem(options = {}) {
       virtualExitRows: 0,
       shadowExitRows: 0,
       realExitRows: 0,
-      runtimeWarnings: ['TRADE_SYSTEM_DEGRADED_RESPONSE_INSTEAD_OF_THROWING_500'],
+      runtimeWarnings: [
+        'TRADE_SYSTEM_DEGRADED_RESPONSE_INSTEAD_OF_THROWING_500',
+        'DEADLINE_SAFE_ERROR_RESPONSE'
+      ],
       currentEntryMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
       confirmedMarketWeatherKey: UNKNOWN_MARKET_WEATHER_KEY,
       marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+      deadlineSafe: true,
+      routeLimitsHonored: true,
       ...sideFlags(),
       ...virtualFlags(),
       ...isolationFlags()
