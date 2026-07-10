@@ -27,10 +27,8 @@ const MICRO_MICRO_SCHEMA = 'FIXED_TAXONOMY_MICRO_MICRO_V1';
 const TRUE_MICRO_MICRO_SCHEMA = MICRO_MICRO_SCHEMA;
 
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
-const CHILD75_LEARNING_GRANULARITY =
-  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const MICRO_MICRO_LEARNING_GRANULARITY =
-  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
+const CHILD75_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+const MICRO_MICRO_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const MICRO_MICRO_SUFFIX = 'MM';
 const MICRO_MICRO_HASH_LEN = 10;
@@ -44,53 +42,36 @@ const SELECTION_PARENT_CONTEXT = 'PARENT_15_CONTEXT_ONLY';
 const SELECTION_75_CHILD_CONTEXT = 'MICRO_75_CONTEXT_ONLY';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
-const TRADE_SYSTEM_VERSION =
-  'SHORT_TRADE_SYSTEM_V5_LAZY_IMPORT_DIRECT_SELECTION_CHUNKED_DEADLINE_SAFE';
-const SNAPSHOT_CHUNK_VERSION =
-  'SHORT_SNAPSHOT_CHUNK_CURSOR_V1_MAX_THREE_PER_RUN';
-const DIRECT_SELECTION_READER_VERSION =
-  'SHORT_DIRECT_MANUAL_SELECTION_READER_V1_NO_ROTATION_ENGINE';
+const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_V5_LAZY_IMPORT_DIRECT_SELECTION_CHUNKED_DEADLINE_SAFE';
+const SNAPSHOT_CHUNK_VERSION = 'SHORT_SNAPSHOT_CHUNK_CURSOR_V1_MAX_THREE_PER_RUN';
+const DIRECT_SELECTION_READER_VERSION = 'SHORT_DIRECT_MANUAL_SELECTION_READER_V1_NO_ROTATION_ENGINE';
 
-const ENTRY_RELAXATION_PROFILE =
-  'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_WEATHER_CAPTURE_V5_DEADLINE_SAFE';
-const QUALITY_MEASUREMENT_PROFILE =
-  'SHORT_MICRO_MICRO_SELECTOR_SAFE_PHASES_V4_DEADLINE_SAFE';
+const ENTRY_RELAXATION_PROFILE = 'SHORT_SCANNER_WIDE_VIRTUAL_LEARNING_WEATHER_CAPTURE_V5_DEADLINE_SAFE';
+const QUALITY_MEASUREMENT_PROFILE = 'SHORT_MICRO_MICRO_SELECTOR_SAFE_PHASES_V4_DEADLINE_SAFE';
 
-const MICRO_MICRO_VERSION =
-  'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V6_DEADLINE_SAFE';
+const MICRO_MICRO_VERSION = 'SHORT_PARENT_15_MICRO_75_MICRO_MICRO_ONLY_SELECTION_V6_DEADLINE_SAFE';
 
-const SHORT_RISK_PLAN_VERSION =
-  'SHORT_ADAPTIVE_RR_TP_SL_V5_DEADLINE_SAFE';
+const SHORT_RISK_PLAN_VERSION = 'SHORT_ADAPTIVE_RR_TP_SL_V5_DEADLINE_SAFE';
 
-const RR_SHADOW_GRID_VERSION =
-  'SHORT_RR_SHADOW_GRID_V5_DEADLINE_SAFE';
+const RR_SHADOW_GRID_VERSION = 'SHORT_RR_SHADOW_GRID_V5_DEADLINE_SAFE';
 
-const MICRO_MICRO_RUNTIME_GATE_VERSION =
-  'SHORT_MM_RUNTIME_STATUS_GATE_V5_DEADLINE_SAFE';
+const MICRO_MICRO_RUNTIME_GATE_VERSION = 'SHORT_MM_RUNTIME_STATUS_GATE_V5_DEADLINE_SAFE';
 
-const DISCORD_ACTIVATION_GATE_VERSION =
-  'SHORT_MM_DISCORD_ACTIVATION_GATE_V8_DEADLINE_SAFE';
+const DISCORD_ACTIVATION_GATE_VERSION = 'SHORT_MM_DISCORD_ACTIVATION_GATE_V8_DEADLINE_SAFE';
 
-const MARKET_WEATHER_FEATURE_FLAGS_VERSION =
-  'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V3_TRADE_SYSTEM_DEADLINE_SAFE';
+const MARKET_WEATHER_FEATURE_FLAGS_VERSION = 'SHORT_MARKET_WEATHER_FEATURE_FLAGS_V3_TRADE_SYSTEM_DEADLINE_SAFE';
 
-const MARKET_WEATHER_SIGNAL_DECISION_VERSION =
-  'SHORT_MARKET_WEATHER_SIGNAL_DECISION_V4_DEADLINE_SAFE';
+const MARKET_WEATHER_SIGNAL_DECISION_VERSION = 'SHORT_MARKET_WEATHER_SIGNAL_DECISION_V4_DEADLINE_SAFE';
 
-const MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION =
-  'SHORT_MARKET_WEATHER_PLAYBOOK_FRESHNESS_V3_DEADLINE_SAFE';
+const MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION = 'SHORT_MARKET_WEATHER_PLAYBOOK_FRESHNESS_V3_DEADLINE_SAFE';
 
-const EMPIRICAL_VETO_VERSION =
-  'SHORT_EXACT_MM_EMPIRICAL_VETO_LCB95_V3_DEADLINE_SAFE';
+const EMPIRICAL_VETO_VERSION = 'SHORT_EXACT_MM_EMPIRICAL_VETO_LCB95_V3_DEADLINE_SAFE';
 
-const POSITION_SIZING_PROOF_INPUT_VERSION =
-  'SHORT_POSITION_SIZING_PROOF_INPUT_V4_DEADLINE_SAFE';
+const POSITION_SIZING_PROOF_INPUT_VERSION = 'SHORT_POSITION_SIZING_PROOF_INPUT_V4_DEADLINE_SAFE';
 
-const WEAK_CONTRA_ENTRY_GATE_VERSION =
-  'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V5_POLICY_ONLY_DEADLINE_SAFE';
+const WEAK_CONTRA_ENTRY_GATE_VERSION = 'SHORT_E_WEAK_CONTRA_STRICT_ENTRY_GATE_V5_POLICY_ONLY_DEADLINE_SAFE';
 
-const HARD_TIME_STOP_CLEANUP_VERSION =
-  'SHORT_TRADE_SYSTEM_MONITOR_HARD_TIME_STOP_PRE_PRICE_V3_DEADLINE_SAFE';
+const HARD_TIME_STOP_CLEANUP_VERSION = 'SHORT_TRADE_SYSTEM_MONITOR_HARD_TIME_STOP_PRE_PRICE_V3_DEADLINE_SAFE';
 
 const SIGNAL_TYPE_TRADE_READY = 'TRADE_READY';
 const SIGNAL_TYPE_WATCH_ONLY = 'WATCH_ONLY';
@@ -176,15 +157,22 @@ const DEFAULT_ANALYZE_IMPORT_TIMEOUT_MS = 600;
 const DEFAULT_POSITION_IMPORT_TIMEOUT_MS = 600;
 const DEFAULT_DISCORD_IMPORT_TIMEOUT_MS = 450;
 const DEFAULT_SIZING_IMPORT_TIMEOUT_MS = 350;
-const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 650;
-const DEFAULT_MONITOR_TIMEOUT_MS = 1_700;
+
+// Verhoogde timeouts voor monitor en load
+const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 2_000;
+const DEFAULT_MONITOR_TIMEOUT_MS = 5_000;
 const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 250;
 const DEFAULT_MONITOR_BATCH_SIZE = 10;
 const DEFAULT_OPEN_POSITION_MONITOR_LIMIT = 20;
-const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 600;
+const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 1_000;
 const DEFAULT_REDIS_WRITE_TIMEOUT_MS = 500;
 const DEFAULT_DISCORD_TIMEOUT_MS = 650;
 const DEFAULT_REDIS_READ_TIMEOUT_MS = 160;
+
+// Nieuwe defaults voor analyse en entry
+const DEFAULT_ANALYZE_MAX_CANDIDATES_PER_SNAPSHOT = 30;
+const DEFAULT_CANDIDATE_TIMEOUT_MS = 600;
+const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 2;
 
 const DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT = true;
 const DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH = true;
@@ -194,19 +182,15 @@ const BITGET_BASE_URL = 'https://api.bitget.com';
 const BITGET_PRODUCT_TYPE = 'USDT-FUTURES';
 const LIVE_PRICE_CACHE_TTL_MS = 2500;
 
-const SHORT_MARKET_WEATHER_KEY_VERSION =
-  MarketKeyModule.MARKET_WEATHER_KEY_VERSION ||
-  'SHORT_MARKET_WEATHER_KEY_V1';
+const SHORT_MARKET_WEATHER_KEY_VERSION = MarketKeyModule.MARKET_WEATHER_KEY_VERSION || 'SHORT_MARKET_WEATHER_KEY_V1';
 
-const PLAYBOOK_MAX_AGE_MIN =
-  Number.isFinite(Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN))
-    ? Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN)
-    : 240;
+const PLAYBOOK_MAX_AGE_MIN = Number.isFinite(Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN))
+  ? Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN)
+  : 240;
 
-const UNKNOWN_MARKET_WEATHER_KEY =
-  MarketKeyModule.UNKNOWN_MARKET_WEATHER_KEY ||
-  'UNKNOWN|UNKNOWN';
+const UNKNOWN_MARKET_WEATHER_KEY = MarketKeyModule.UNKNOWN_MARKET_WEATHER_KEY || 'UNKNOWN|UNKNOWN';
 
+// Uitgebreide market weather keys
 const MARKET_WEATHER_LATEST_KEYS = Object.freeze([
   `${SHORT_KEY_PREFIX}MARKET:WEATHER:CONFIRMED`,
   `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`,
@@ -723,32 +707,32 @@ async function setJsonWithTimeout(redis, key, value, timeoutMs, label) {
   return !isTimeoutResult(result) && result === true;
 }
 
+// Verbeterde readJsonFromAnyRedis: beperkte parallelle reads, geen lange seriële loops
 async function readJsonFromAnyRedis(keys = [], fallback = null, timeoutMs = 500) {
+  const keyList = uniqueStrings(keys).filter(Boolean);
+  if (keyList.length === 0) return { value: fallback, source: null, key: null };
+
   const volatileRedis = safeGetVolatileRedis();
   const durableRedis = safeGetDurableRedis();
-  const keyList = uniqueStrings(keys).filter(Boolean);
 
-  for (const key of keyList) {
-    const result = await withTimeout(
-      getJsonSafe(volatileRedis, key, null),
-      timeoutMs,
-      `VOLATILE_GET_TIMEOUT:${key}`
+  // Maximaal 3 prioriteitskeys tegelijk proberen
+  const maxKeysToTry = 3;
+  const priorityKeys = keyList.slice(0, maxKeysToTry);
+
+  const redisClients = [volatileRedis, durableRedis].filter(Boolean);
+
+  for (const redis of redisClients) {
+    if (!redis) continue;
+    const results = await Promise.allSettled(
+      priorityKeys.map(key =>
+        withTimeout(getJsonSafe(redis, key, null), timeoutMs, `GET_TIMEOUT:${key}`)
+      )
     );
-
-    if (!isTimeoutResult(result) && result) {
-      return { value: result, source: `VOLATILE:${key}`, key };
-    }
-  }
-
-  for (const key of keyList) {
-    const result = await withTimeout(
-      getJsonSafe(durableRedis, key, null),
-      timeoutMs,
-      `DURABLE_GET_TIMEOUT:${key}`
-    );
-
-    if (!isTimeoutResult(result) && result) {
-      return { value: result, source: `DURABLE:${key}`, key };
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === 'fulfilled' && !isTimeoutResult(result.value) && result.value) {
+        return { value: result.value, source: `REDIS:${priorityKeys[i]}`, key: priorityKeys[i] };
+      }
     }
   }
 
@@ -1195,14 +1179,14 @@ function tradeConfig() {
       first(options.openPositionLoadTimeoutMs, CONFIG.short?.trade?.openPositionLoadTimeoutMs, CONFIG.trade?.openPositionLoadTimeoutMs),
       DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS,
       150,
-      2000
+      4000
     ),
 
     savePositionTimeoutMs: int(
       first(options.savePositionTimeoutMs, CONFIG.short?.trade?.savePositionTimeoutMs, CONFIG.trade?.savePositionTimeoutMs),
       DEFAULT_SAVE_POSITION_TIMEOUT_MS,
       150,
-      1500
+      2000
     ),
 
     redisWriteTimeoutMs: int(
@@ -1285,7 +1269,36 @@ function tradeConfig() {
       options.monitorCandleRangeEnabled,
       CONFIG.short?.trade?.monitorCandleRangeEnabled,
       CONFIG.trade?.monitorCandleRangeEnabled
-    ), DEFAULT_MONITOR_CANDLE_RANGE_ENABLED)
+    ), DEFAULT_MONITOR_CANDLE_RANGE_ENABLED),
+
+    // Nieuwe velden
+    analyzeMaxCandidatesPerSnapshot: int(
+      first(
+        options.analyzeMaxCandidatesPerSnapshot,
+        CONFIG.short?.trade?.analyzeMaxCandidatesPerSnapshot
+      ),
+      DEFAULT_ANALYZE_MAX_CANDIDATES_PER_SNAPSHOT,
+      1,
+      200
+    ),
+    candidateTimeoutMs: int(
+      first(
+        options.candidateTimeoutMs,
+        CONFIG.short?.trade?.candidateTimeoutMs
+      ),
+      DEFAULT_CANDIDATE_TIMEOUT_MS,
+      100,
+      2000
+    ),
+    minEntryLoopAttempts: int(
+      first(
+        options.minEntryLoopAttempts,
+        CONFIG.short?.trade?.minEntryLoopAttempts
+      ),
+      DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS,
+      0,
+      20
+    )
   };
 }
 
@@ -1557,10 +1570,8 @@ function resolveMarketWeatherFromObjects(...objects) {
       source.currentTrendSide,
       source.trendSide,
       source.marketTrendSide,
-      source.market?.trendSide,
-      source.marketSide,
-      source.side,
-      source.direction
+      source.market?.trendSide
+      // verwijder side en direction om valse afleiding te voorkomen
     );
 
     const parsed = parseKnownMarketWeatherKey(buildWeatherKeySafe(regime, trendSide));
@@ -1605,6 +1616,7 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
 
   const parsed = parseKnownMarketWeatherKey(resolved.key);
 
+  // Alleen entryMarketWeather* invullen; current/confirmed niet overschrijven
   return {
     entryMarketWeatherKey: parsed.key,
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
@@ -1624,27 +1636,7 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
       : Object.keys(resolved.source || {}).slice(0, 80),
     entryMarketWeatherImmutable: true,
     entryMarketWeatherNeverRecomputedAtExit: true,
-    entryMarketWeatherIsUnknown: !parsed.known,
-
-    currentMarketWeatherKey: parsed.key,
-    currentMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    currentMarketWeatherRegime: parsed.regime,
-    currentMarketWeatherTrendSide: parsed.trendSide,
-    currentMarketWeatherKnown: parsed.known,
-
-    confirmedMarketWeatherKey: parsed.key,
-    confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    confirmedMarketWeatherRegime: parsed.regime,
-    confirmedMarketWeatherTrendSide: parsed.trendSide,
-    confirmedMarketWeatherKnown: parsed.known,
-
-    candidateMarketWeatherKey: parsed.key,
-    candidateMarketWeatherRegime: parsed.regime,
-    candidateMarketWeatherTrendSide: parsed.trendSide,
-
-    marketWeatherCaptureSource: resolved.sourceReason || 'UNKNOWN',
-    marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    marketWeatherFeatureFlags: marketWeatherFeatureFlags()
+    entryMarketWeatherIsUnknown: !parsed.known
   };
 }
 
@@ -2714,11 +2706,7 @@ function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
     confirmedMarketWeatherAt: confirmedAt,
     confirmedAt,
 
-    currentMarketWeatherKey: parsed.key,
-    currentMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    currentMarketWeatherRegime: parsed.regime,
-    currentMarketWeatherTrendSide: parsed.trendSide,
-
+    // Alleen entryMarketWeather invullen; current/confirmed niet overschrijven
     entryMarketWeatherKey: parsed.key,
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     entryMarketWeatherRegime: parsed.regime,
@@ -3697,15 +3685,12 @@ function aggregateRuntimeRecentOutcomes(row = {}) {
 
 function runtimeCompletedSample(row = {}) {
   const recent = aggregateRuntimeRecentOutcomes(row);
+  // Gebruik max i.p.v. som om dubbeltelling te voorkomen
+  const virtual = n(row.virtualCompleted, 0);
+  const shadow = n(row.shadowCompleted, 0);
+  const completed = Math.max(virtual, shadow, n(row.completed, 0), n(row.outcomeSample, 0), n(row.closed, 0), recent.completed);
 
-  return Math.max(
-    0,
-    n(row.virtualCompleted, 0) + n(row.shadowCompleted, 0),
-    n(row.completed, 0),
-    n(row.outcomeSample, 0),
-    n(row.closed, 0),
-    recent.completed
-  );
+  return Math.max(0, completed);
 }
 
 function runtimeObservationSample(row = {}) {
@@ -3720,13 +3705,22 @@ function runtimeObservationSample(row = {}) {
 
 function runtimeTotalR(row = {}) {
   const completed = runtimeCompletedSample(row);
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
   if (completed <= 0) return 0;
 
-  const virtualShadowTotal = n(row.virtualTotalR, 0) + n(row.shadowTotalR, 0);
-  if (virtualShadowTotal !== 0) return virtualShadowTotal;
+  // Voorkeur voor netRStats
+  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
+  if (netRStats && typeof netRStats === 'object') {
+    const total = n(netRStats.totalR, NaN);
+    if (Number.isFinite(total)) return total;
+  }
 
+  const virtual = n(row.virtualTotalR, 0);
+  const shadow = n(row.shadowTotalR, 0);
+  const total = Math.max(virtual, shadow);
+
+  if (total !== 0) return total;
+
+  const recent = aggregateRuntimeRecentOutcomes(row);
   if (recent.completed > 0) return recent.totalR;
 
   return n(
@@ -3742,6 +3736,12 @@ function runtimeTotalR(row = {}) {
 function runtimeAvgR(row = {}) {
   const completed = runtimeCompletedSample(row);
   if (completed <= 0) return 0;
+
+  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
+  if (netRStats && typeof netRStats === 'object') {
+    const avg = n(netRStats.avgR, NaN);
+    if (Number.isFinite(avg)) return avg;
+  }
 
   if (hasValue(row.avgNetR)) return n(row.avgNetR, 0);
   if (hasValue(row.netAvgR)) return n(row.netAvgR, 0);
@@ -3770,6 +3770,12 @@ function runtimeStdDevR(row = {}) {
 }
 
 function runtimeLcb95AvgR(row = {}) {
+  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
+  if (netRStats && typeof netRStats === 'object') {
+    const lcb = n(netRStats.lcb95AvgR, NaN);
+    if (Number.isFinite(lcb)) return lcb;
+  }
+
   const value = first(
     row.microMicroLcb95AvgR,
     row.microMicroLCB95AvgR,
@@ -3801,13 +3807,21 @@ function runtimeLcb95AvgR(row = {}) {
 
 function runtimeTotalCostR(row = {}) {
   const completed = runtimeCompletedSample(row);
-  const recent = aggregateRuntimeRecentOutcomes(row);
-
   if (completed <= 0) return 0;
 
-  const virtualShadowCost = Math.max(0, n(row.virtualTotalCostR, 0)) + Math.max(0, n(row.shadowTotalCostR, 0));
-  if (virtualShadowCost > 0) return virtualShadowCost;
+  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
+  if (netRStats && typeof netRStats === 'object') {
+    const totalCost = n(netRStats.totalCostR, NaN);
+    if (Number.isFinite(totalCost)) return Math.max(0, totalCost);
+  }
 
+  const virtual = Math.max(0, n(row.virtualTotalCostR, 0));
+  const shadow = Math.max(0, n(row.shadowTotalCostR, 0));
+  const cost = Math.max(virtual, shadow);
+
+  if (cost > 0) return cost;
+
+  const recent = aggregateRuntimeRecentOutcomes(row);
   if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
 
   if (hasValue(row.totalCostR)) return Math.max(0, n(row.totalCostR, 0));
@@ -3829,13 +3843,11 @@ function runtimeAvgCostR(row = {}) {
 
 function runtimeDirectSLCount(row = {}) {
   const recent = aggregateRuntimeRecentOutcomes(row);
+  const virtual = n(row.virtualDirectSLCount, 0);
+  const shadow = n(row.shadowDirectSLCount, 0);
+  const direct = Math.max(virtual, shadow, n(row.directSLCount, 0), recent.directSLCount);
 
-  return Math.max(
-    0,
-    n(row.virtualDirectSLCount, 0) + n(row.shadowDirectSLCount, 0),
-    n(row.directSLCount, 0),
-    recent.directSLCount
-  );
+  return Math.max(0, direct);
 }
 
 function runtimeDirectSLPct(row = {}) {
@@ -3851,25 +3863,18 @@ function runtimeDirectSLPct(row = {}) {
 function runtimeProfitFactor(row = {}) {
   const recent = aggregateRuntimeRecentOutcomes(row);
 
-  const winR = Math.max(
-    n(row.virtualWinR, 0) + n(row.shadowWinR, 0),
-    n(row.virtualGrossWinR, 0) + n(row.shadowGrossWinR, 0),
-    n(row.netWinR, 0),
-    n(row.totalWinR, 0),
-    n(row.grossWinR, 0),
-    recent.grossWinR,
-    0
-  );
+  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
+  if (netRStats && typeof netRStats === 'object') {
+    const pf = n(netRStats.profitFactor, NaN);
+    if (Number.isFinite(pf)) return Math.max(0, pf);
+  }
 
-  const lossR = Math.max(
-    Math.abs(n(row.virtualLossR, 0) + n(row.shadowLossR, 0)),
-    Math.abs(n(row.virtualGrossLossR, 0) + n(row.shadowGrossLossR, 0)),
-    Math.abs(n(row.netLossR, 0)),
-    Math.abs(n(row.totalLossR, 0)),
-    Math.abs(n(row.grossLossR, 0)),
-    recent.grossLossR,
-    0
-  );
+  const virtualWin = n(row.virtualGrossWinR, 0);
+  const virtualLoss = n(row.virtualGrossLossR, 0);
+  const shadowWin = n(row.shadowGrossWinR, 0);
+  const shadowLoss = n(row.shadowGrossLossR, 0);
+  const winR = Math.max(virtualWin, shadowWin, n(row.grossWinR, 0), recent.grossWinR, 0);
+  const lossR = Math.max(Math.abs(virtualLoss), Math.abs(shadowLoss), Math.abs(n(row.grossLossR, 0)), recent.grossLossR, 0);
 
   if (winR > 0 || lossR > 0) {
     if (lossR <= 0) return 99;
@@ -4328,8 +4333,20 @@ function validateVirtualEntry(row = {}) {
   };
 }
 
+// Helper om candidates uit een snapshot te extraheren, ook bij geneste structuren
+function extractCandidatesFromSnapshot(snapshot = {}) {
+  if (Array.isArray(snapshot.candidates)) return snapshot.candidates;
+  if (Array.isArray(snapshot.shortCandidates)) return snapshot.shortCandidates;
+  if (Array.isArray(snapshot.snapshot?.candidates)) return snapshot.snapshot.candidates;
+  if (Array.isArray(snapshot.data?.candidates)) return snapshot.data.candidates;
+  if (Array.isArray(snapshot.snapshot?.shortCandidates)) return snapshot.snapshot.shortCandidates;
+  return [];
+}
+
 function hasFullSnapshotShape(value) {
-  return Boolean(value && typeof value === 'object' && Array.isArray(value.candidates));
+  if (!value || typeof value !== 'object') return false;
+  const candidates = extractCandidatesFromSnapshot(value);
+  return Array.isArray(candidates) && candidates.length > 0;
 }
 
 function snapshotCreatedAt(snapshot = {}) {
@@ -4348,12 +4365,12 @@ function extractSnapshotId(latest) {
 }
 
 function countTargetCandidates(snapshot = {}) {
-  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
+  const rows = extractCandidatesFromSnapshot(snapshot);
   return rows.filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE).length;
 }
 
 function countOppositeCandidates(snapshot = {}) {
-  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
+  const rows = extractCandidatesFromSnapshot(snapshot);
   return rows.filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE).length;
 }
 
@@ -4365,7 +4382,7 @@ function buildSnapshotWeather(snapshot = {}) {
 }
 
 function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
-  const rows = Array.isArray(snapshot.candidates) ? snapshot.candidates : [];
+  const rows = extractCandidatesFromSnapshot(snapshot);
   const snapshotWeather = buildSnapshotWeather(snapshot);
 
   const targetRows = rows
@@ -4416,16 +4433,29 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
 }
 
 function latestScanKeys() {
+  // Uitgebreid met scanner-specifieke keys
   return uniqueStrings([
     SHORT_KEYS.scan.latest,
     `${SHORT_KEY_PREFIX}SCAN:LATEST`,
     `${SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
     `${SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
+    `${SHORT_KEY_PREFIX}SCANNER:LATEST`,
+    `${SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:LATEST`,
+    `${SHORT_KEY_PREFIX}SCANNER:CURRENT`,
+    `${SHORT_KEY_PREFIX}SCANNER:FULL:LATEST`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:CURRENT`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:FULL:LATEST`,
     'SCAN:LATEST',
-    'SCAN:LATEST_FULL_SNAPSHOT'
+    'SCAN:LATEST_FULL_SNAPSHOT',
+    'SCANNER:LATEST',
+    'SCANNER:SNAPSHOT:LATEST',
+    'SCANNER:CURRENT',
+    'SCANNER:FULL:LATEST'
   ]);
 }
 
@@ -4436,9 +4466,14 @@ function snapshotKeysForId(id) {
     SHORT_KEYS.scan.snapshot(id),
     `${SHORT_KEY_PREFIX}SCAN:SNAPSHOT:${id}`,
     `${SHORT_KEY_PREFIX}SCAN:FULL:${id}`,
+    `${SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:${id}`,
+    `${SHORT_KEY_PREFIX}SCANNER:FULL:${id}`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:SNAPSHOT:${id}`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:${id}`,
-    `SCAN:SNAPSHOT:${id}`
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:${id}`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:FULL:${id}`,
+    `SCAN:SNAPSHOT:${id}`,
+    `SCANNER:SNAPSHOT:${id}`
   ]);
 }
 
@@ -4543,7 +4578,7 @@ function priceFromSnapshotRow(row = {}) {
 
 function buildSnapshotPriceHints(snapshot = {}) {
   const hints = new Map();
-  const rows = Array.isArray(snapshot?.candidates) ? snapshot.candidates : [];
+  const rows = extractCandidatesFromSnapshot(snapshot);
 
   for (const row of rows) {
     const price = priceFromSnapshotRow(row);
@@ -4831,11 +4866,13 @@ async function loadOpenPositionsFast(cfg, runtimeWarnings, deadline) {
   return Array.isArray(result) ? result : [];
 }
 
+// monitorOpenPositionsSafe aangepast om preloadedPositions door te geven
 async function monitorOpenPositionsSafe({
   cfg,
   priceHints,
   runtimeWarnings,
-  deadline
+  deadline,
+  preloadedPositions = []
 }) {
   const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
   if (!PositionEngine) {
@@ -4871,6 +4908,10 @@ async function monitorOpenPositionsSafe({
       realOrdersDisabled: true,
       bitgetOrdersDisabled: true,
       exchangeCallsDisabled: true,
+
+      preloadedPositions, // nieuw
+      openPositions: preloadedPositions, // alias
+      positions: preloadedPositions,
 
       monitorTimeoutMs: cfg.monitorTimeoutMs,
       timeoutMs: cfg.monitorTimeoutMs,
@@ -6709,13 +6750,11 @@ function compactRunForRedis(result = {}) {
 function shouldMarkSnapshotProcessed(result = {}) {
   if (!result.snapshotId) return false;
   if (result.monitorOnly === true) return false;
-  if (result.snapshotChunkComplete !== true) return false;
-  if (result.analyzeFallbackUsed === true) return false;
-  return Boolean(
-    n(result.analyzedMicroMicroRows, 0) > 0 ||
-    n(result.virtualCreatedRows, 0) > 0 ||
-    n(result.virtualExitRows, 0) > 0
-  );
+  // We markeren als verwerkt zodra we een chunk hebben verwerkt (ook al is de cursor nog niet compleet)
+  if (result.processed && result.processed > 0) return true;
+  // Ook als er entries of exits zijn
+  if (n(result.entryRows, 0) > 0 || n(result.virtualExitRows, 0) > 0) return true;
+  return false;
 }
 
 async function saveRunMeta(result) {
@@ -7059,10 +7098,16 @@ export async function runTradeSystem(options = {}) {
 
     const sameSnapshotCompletedEnough = sameSnapshot && snapshotAlreadyProcessedEnough(lastProcessed);
 
+    // Eerst open posities laden en monitoren, daarna entries
+    let openPositions = [];
     let virtualExits = [];
     let shadowExits = [];
     const realExits = [];
 
+    // 1. Laad open posities
+    openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline);
+
+    // 2. Monitor en sluit verlopen posities (gebruik de geladen posities)
     const skipMonitorBecauseSameSnapshot =
       sameSnapshot &&
       sameSnapshotCompletedEnough &&
@@ -7078,15 +7123,20 @@ export async function runTradeSystem(options = {}) {
         cfg,
         priceHints,
         runtimeWarnings,
-        deadline
+        deadline,
+        preloadedPositions: openPositions // geef de geladen posities mee
       });
       shadowExits = virtualExits;
     } else {
       runtimeWarnings.push('MONITOR_SKIPPED_DEADLINE_NEAR_BEFORE_MONITOR_PHASE');
     }
 
+    // Verwijder gesloten posities uit de set
     if (virtualExits.length > 0) {
       runtimeWarnings.push(`VIRTUAL_EXITS_RECORDED_THIS_RUN:${virtualExits.length}`);
+      // We kunnen de exits uit openPositions filteren als ze een id hebben
+      const exitIds = new Set(virtualExits.map(e => e.positionId || e.id).filter(Boolean));
+      openPositions = openPositions.filter(p => !exitIds.has(p.positionId || p.id));
     }
 
     if (monitorOnly) {
@@ -7311,7 +7361,7 @@ export async function runTradeSystem(options = {}) {
         ...virtualFlags(row),
         ...learningIdentityFields(row)
       }, marketContext))
-      .slice(0, cfg.analyzeMaxCandidatesPerSnapshot);
+      .slice(0, cfg.analyzeMaxCandidatesPerSnapshot); // nu gedefinieerd
 
     const actualLiveRows = liveRows.length;
     const observationOnlyRows = liveRows.filter((row) => row.observationOnly || row.analysisInputOnly).length;
@@ -7453,7 +7503,7 @@ export async function runTradeSystem(options = {}) {
     const weakContraRejectedRows = analyzedRows.filter((row) => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
     const weakContraAllowedRows = analyzedRows.filter((row) => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length;
 
-    const openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline);
+    // openPositions is al geladen, maar we moeten de openSymbolSet opnieuw bouwen (of bijwerken)
     const openSymbolSet = buildOpenSymbolSet(openPositions);
     const openPositionCountBeforeEntries = openPositions.length;
     const actions = [...earlyActions];
@@ -7462,6 +7512,7 @@ export async function runTradeSystem(options = {}) {
     for (const rawRow of analyzedRows) {
       counters.entryLoopAttempts += 1;
 
+      // Gebruik minEntryLoopAttempts
       const minimumAttemptsStillRequired = counters.entryLoopAttempts <= cfg.minEntryLoopAttempts;
 
       if (!minimumAttemptsStillRequired && deadlineExceeded(deadline, cfg.entryLoopReserveMs)) {
