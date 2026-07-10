@@ -4662,6 +4662,7 @@ function latestScanKeys() {
   ]);
 }
 
+// Eerste versie van readSnapshotCandidate (behouden)
 async function readSnapshotCandidate(
   redis,
   key,
@@ -4822,6 +4823,7 @@ async function readSnapshotCandidate(
   return resolved || null;
 }
 
+// Eerste versie van getLatestSnapshot (behouden)
 async function getLatestSnapshot(
   deadline,
   cfg
@@ -4967,6 +4969,7 @@ async function getLatestSnapshot(
   return normalized;
 }
 
+// Eerste versie van buildSnapshotPriceHints (behouden)
 function buildSnapshotPriceHints(
   snapshot = null
 ) {
@@ -5022,6 +5025,7 @@ function buildSnapshotPriceHints(
   return hints;
 }
 
+// snapshotKeysForId blijft staan
 function snapshotKeysForId(id) {
   if (!id) return [];
 
@@ -5040,125 +5044,12 @@ function snapshotKeysForId(id) {
   ]);
 }
 
-async function readSnapshotCandidate(redis, key, label, timeoutMs = 200) {
-  const value = await withTimeout(
-    getJsonSafe(redis, key, null),
-    timeoutMs,
-    `SNAPSHOT_LATEST_READ_TIMEOUT:${label}:${key}`
-  );
-
-  if (isTimeoutResult(value) || !value) return null;
-
-  if (hasFullSnapshotShape(value)) {
-    return {
-      key,
-      label,
-      snapshot: value,
-      snapshotId: extractSnapshotId(value),
-      targetCount: countTargetCandidates(value),
-      oppositeCount: countOppositeCandidates(value),
-      createdAt: snapshotCreatedAt(value),
-      source: `${label}:${key}`,
-      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
-    };
-  }
-
-  const snapshotId = extractSnapshotId(value);
-  if (!snapshotId) return null;
-
-  for (const snapshotKey of snapshotKeysForId(snapshotId)) {
-    const byId = await withTimeout(
-      getJsonSafe(redis, snapshotKey, null),
-      timeoutMs,
-      `SNAPSHOT_BY_ID_READ_TIMEOUT:${label}:${snapshotKey}`
-    );
-
-    if (isTimeoutResult(byId) || !hasFullSnapshotShape(byId)) continue;
-
-    return {
-      key: snapshotKey,
-      latestPointerKey: key,
-      label,
-      snapshot: byId,
-      snapshotId: extractSnapshotId(byId) || snapshotId,
-      targetCount: countTargetCandidates(byId),
-      oppositeCount: countOppositeCandidates(byId),
-      createdAt: snapshotCreatedAt(byId),
-      source: `${label}:${snapshotKey}`,
-      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
-    };
-  }
-
-  return null;
-}
-
-async function getLatestSnapshot(deadline, cfg) {
-  const stores = [
-    { redis: safeGetVolatileRedis(), label: 'VOLATILE' },
-    { redis: safeGetDurableRedis(), label: 'DURABLE' }
-  ];
-
-  const candidates = [];
-  const perReadTimeout = Math.max(80, Math.min(220, Math.floor(cfg.snapshotTimeoutMs / 4)));
-
-  for (const store of stores) {
-    if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) break;
-
-    for (const key of latestScanKeys()) {
-      if (deadlineExceeded(deadline, DEFAULT_PHASE_RESERVE_MS)) break;
-
-      const candidate = await readSnapshotCandidate(store.redis, key, store.label, perReadTimeout);
-      if (candidate?.snapshot && candidate.targetCount > 0) candidates.push(candidate);
-    }
-  }
-
-  const uniqueBySnapshot = new Map();
-
-  for (const candidate of candidates) {
-    const id = candidate.snapshotId || extractSnapshotId(candidate.snapshot) || candidate.key;
-    const current = uniqueBySnapshot.get(id);
-
-    if (!current || candidate.createdAt > current.createdAt) {
-      uniqueBySnapshot.set(id, candidate);
-    }
-  }
-
-  const best = [...uniqueBySnapshot.values()]
-    .filter((row) => row.targetCount > 0)
-    .sort((a, b) => b.createdAt - a.createdAt)[0] || null;
-
-  if (!best?.snapshot) return null;
-
-  return normalizeSelectedSnapshot(best.snapshot, {
-    source: best.source,
-    reason: best.reason || 'NEWEST_SHORT_SCANNER_SNAPSHOT_WITH_CANDIDATES'
-  });
-}
-
+// priceFromSnapshotRow blijft staan
 function priceFromSnapshotRow(row = {}) {
   return n(row.currentPrice ?? row.markPrice ?? row.lastPrice ?? row.price ?? row.close ?? row.entry, 0);
 }
 
-function buildSnapshotPriceHints(snapshot = {}) {
-  const hints = new Map();
-  const rows = extractCandidatesFromSnapshot(snapshot);
-
-  for (const row of rows) {
-    const price = priceFromSnapshotRow(row);
-    if (price <= 0) continue;
-
-    for (const key of [
-      ...symbolTokensFromAnySymbol(row.symbol),
-      ...symbolTokensFromAnySymbol(row.baseSymbol),
-      ...symbolTokensFromAnySymbol(row.contractSymbol)
-    ]) {
-      if (key && !hints.has(key)) hints.set(key, price);
-    }
-  }
-
-  return hints;
-}
-
+// priceHintForSymbol blijft staan
 function priceHintForSymbol(symbol, priceHints = new Map()) {
   for (const key of symbolTokensFromAnySymbol(symbol)) {
     const value = n(priceHints.get(key), 0);
@@ -6933,15 +6824,12 @@ async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarning
   }
 }
 
-function snapshotAlreadyProcessedEnough(lastProcessed = {}) {
-  if (!lastProcessed || typeof lastProcessed !== 'object') return false;
-
-  return Boolean(
-    n(lastProcessed.analyzedMicroMicroRows, 0) > 0 ||
-      n(lastProcessed.virtualCreatedRows, 0) > 0 ||
-      n(lastProcessed.entryRows, 0) > 0 ||
-      n(lastProcessed.virtualExitRows, 0) > 0
-  );
+// Deze functie is verbeterd: markeer alleen als complete snapshot verwerkt is
+function shouldMarkSnapshotProcessed(result = {}) {
+  if (!result.snapshotId) return false;
+  if (result.monitorOnly === true) return false;
+  // Alleen markeren als de hele snapshot verwerkt is (cursor compleet)
+  return result.snapshotChunkComplete === true;
 }
 
 function playbookChangeWarning(previous = {}, marketContext = {}) {
@@ -7310,16 +7198,6 @@ function compactRunForRedis(result = {}) {
   };
 }
 
-function shouldMarkSnapshotProcessed(result = {}) {
-  if (!result.snapshotId) return false;
-  if (result.monitorOnly === true) return false;
-  // We markeren als verwerkt zodra we een chunk hebben verwerkt (ook al is de cursor nog niet compleet)
-  if (result.processed && result.processed > 0) return true;
-  // Ook als er entries of exits zijn
-  if (n(result.entryRows, 0) > 0 || n(result.virtualExitRows, 0) > 0) return true;
-  return false;
-}
-
 async function saveRunMeta(result) {
   const cfg = tradeConfig();
   const durableRedis = safeGetDurableRedis();
@@ -7659,7 +7537,8 @@ export async function runTradeSystem(options = {}) {
       Boolean(lastProcessed?.snapshotId) &&
       lastProcessed.snapshotId === snapshot.snapshotId;
 
-    const sameSnapshotCompletedEnough = sameSnapshot && snapshotAlreadyProcessedEnough(lastProcessed);
+    // Gebruik de verbeterde shouldMarkSnapshotProcessed
+    const sameSnapshotCompletedEnough = sameSnapshot && shouldMarkSnapshotProcessed(lastProcessed);
 
     // Eerst open posities laden en monitoren, daarna entries
     let openPositions = [];
