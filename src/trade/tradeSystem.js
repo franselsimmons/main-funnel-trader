@@ -4333,130 +4333,693 @@ function validateVirtualEntry(row = {}) {
   };
 }
 
-// Helper om candidates uit een snapshot te extraheren, ook bij geneste structuren
-function extractCandidatesFromSnapshot(snapshot = {}) {
-  if (Array.isArray(snapshot.candidates)) return snapshot.candidates;
-  if (Array.isArray(snapshot.shortCandidates)) return snapshot.shortCandidates;
-  if (Array.isArray(snapshot.snapshot?.candidates)) return snapshot.snapshot.candidates;
-  if (Array.isArray(snapshot.data?.candidates)) return snapshot.data.candidates;
-  if (Array.isArray(snapshot.snapshot?.shortCandidates)) return snapshot.snapshot.shortCandidates;
+// =========================================================
+// SNAPSHOT NORMALIZATION — NULL-SAFE + NESTED-SAFE
+// =========================================================
+function isObjectRecord(value) {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value)
+  );
+}
+function snapshotContainers(snapshot = null) {
+  const root = isObjectRecord(snapshot)
+    ? snapshot
+    : {};
+  return [
+    root,
+    root.snapshot,
+    root.scannerSnapshot,
+    root.latestSnapshot,
+    root.currentSnapshot,
+    root.data,
+    root.data?.snapshot,
+    root.data?.scannerSnapshot,
+    root.data?.latestSnapshot,
+    root.payload,
+    root.payload?.snapshot,
+    root.payload?.scannerSnapshot,
+    root.payload?.latestSnapshot,
+    root.result,
+    root.result?.snapshot,
+    root.result?.scannerSnapshot,
+    root.result?.latestSnapshot,
+    root.latest,
+    root.latest?.snapshot,
+    root.value,
+    root.value?.snapshot
+  ].filter(isObjectRecord);
+}
+// Helper om candidates uit een snapshot te extraheren.
+// Werkt ook wanneer snapshot null is of genest is.
+function extractCandidatesFromSnapshot(snapshot = null) {
+  const containers = snapshotContainers(snapshot);
+  for (const source of containers) {
+    const candidateArrays = [
+      source.candidates,
+      source.shortCandidates,
+      source.scannerCandidates,
+      source.tradeCandidates,
+      source.filteredCandidates,
+      source.validCandidates,
+      source.topCandidates
+    ];
+    for (const rows of candidateArrays) {
+      if (Array.isArray(rows)) {
+        return rows.filter(Boolean);
+      }
+    }
+  }
   return [];
 }
-
 function hasFullSnapshotShape(value) {
-  if (!value || typeof value !== 'object') return false;
+  if (!isObjectRecord(value)) return false;
   const candidates = extractCandidatesFromSnapshot(value);
-  return Array.isArray(candidates) && candidates.length > 0;
+  return (
+    Array.isArray(candidates) &&
+    candidates.length > 0
+  );
 }
-
-function snapshotCreatedAt(snapshot = {}) {
-  return normalizeTimestampMs(snapshot.createdAt || snapshot.completedAt || snapshot.ts || snapshot.scannerTs, 0);
-}
-
-function extractSnapshotId(latest) {
-  if (!latest) return null;
-  if (typeof latest === 'string') return latest;
-
-  if (typeof latest === 'object') {
-    return latest.snapshotId || latest.id || latest.latestSnapshotId || latest.scanId || null;
+function snapshotCreatedAt(snapshot = null) {
+  const containers = snapshotContainers(snapshot);
+  for (const source of containers) {
+    const timestamp = normalizeTimestampMs(
+      first(
+        source.createdAt,
+        source.completedAt,
+        source.updatedAt,
+        source.generatedAt,
+        source.scannedAt,
+        source.scanCompletedAt,
+        source.ts,
+        source.timestamp,
+        source.scannerTs
+      ),
+      0
+    );
+    if (timestamp > 0) {
+      return timestamp;
+    }
   }
-
+  return 0;
+}
+function extractSnapshotId(latest = null) {
+  if (
+    typeof latest === 'string' ||
+    typeof latest === 'number'
+  ) {
+    const direct = String(latest).trim();
+    return direct || null;
+  }
+  const containers = snapshotContainers(latest);
+  for (const source of containers) {
+    const id = first(
+      source.snapshotId,
+      source.latestSnapshotId,
+      source.scannerSnapshotId,
+      source.currentSnapshotId,
+      source.scanSnapshotId,
+      source.scanId,
+      source.id
+    );
+    if (
+      id !== undefined &&
+      id !== null &&
+      String(id).trim()
+    ) {
+      return String(id).trim();
+    }
+  }
   return null;
 }
-
-function countTargetCandidates(snapshot = {}) {
+function countTargetCandidates(snapshot = null) {
   const rows = extractCandidatesFromSnapshot(snapshot);
-  return rows.filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE).length;
+  return rows.filter(
+    (candidate) =>
+      inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE
+  ).length;
+}
+function countOppositeCandidates(snapshot = null) {
+  const rows = extractCandidatesFromSnapshot(snapshot);
+  return rows.filter(
+    (candidate) =>
+      inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE
+  ).length;
+}
+function buildSnapshotWeather(snapshot = null) {
+  const root = isObjectRecord(snapshot)
+    ? snapshot
+    : {};
+  const nestedSnapshot = isObjectRecord(root.snapshot)
+    ? root.snapshot
+    : {};
+  const source = {
+    ...root,
+    ...nestedSnapshot
+  };
+  const universe =
+    source.currentMarketUniverse &&
+    typeof source.currentMarketUniverse === 'object'
+      ? source.currentMarketUniverse
+      : {};
+  return buildConfirmedWeatherSnapshot(
+    source,
+    universe,
+    {
+      sourceKey:
+        source.shortKeys?.marketWeather?.[0] ||
+        source.currentMarketWeatherSourceKey ||
+        null,
+      sourceReadFrom:
+        source.currentMarketWeatherReadFrom ||
+        source.selectedSnapshotSource ||
+        null
+    }
+  );
 }
 
-function countOppositeCandidates(snapshot = {}) {
-  const rows = extractCandidatesFromSnapshot(snapshot);
-  return rows.filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE).length;
-}
-
-function buildSnapshotWeather(snapshot = {}) {
-  return buildConfirmedWeatherSnapshot(snapshot, snapshot.currentMarketUniverse || {}, {
-    sourceKey: snapshot.shortKeys?.marketWeather?.[0] || snapshot.currentMarketWeatherSourceKey || null,
-    sourceReadFrom: snapshot.currentMarketWeatherReadFrom || snapshot.selectedSnapshotSource || null
-  });
-}
-
-function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
-  const rows = extractCandidatesFromSnapshot(snapshot);
-  const snapshotWeather = buildSnapshotWeather(snapshot);
-
+function normalizeSelectedSnapshot(snapshot = null, meta = {}) {
+  const root = isObjectRecord(snapshot)
+    ? snapshot
+    : {};
+  const nestedSnapshot = isObjectRecord(root.snapshot)
+    ? root.snapshot
+    : {};
+  /*
+   * Een Redis-key kan een wrapper bevatten:
+   *
+   * {
+   *   snapshotId: "...",
+   *   snapshot: {
+   *     candidates: [...]
+   *   }
+   * }
+   *
+   * Daarom gebruiken we zowel wrapper- als snapshotvelden.
+   */
+  const normalizedSource = {
+    ...root,
+    ...nestedSnapshot
+  };
+  const rows = extractCandidatesFromSnapshot(root);
+  const snapshotWeather = buildSnapshotWeather(
+    normalizedSource
+  );
   const targetRows = rows
-    .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE)
-    .map((candidate) => attachEntryMarketWeather({
-      ...candidate,
-      ...scannerMetadataFrom(candidate),
-      ...sideFlags(),
-      ...isolationFlags(),
-      ...virtualFlags(candidate)
-    }, snapshotWeather));
-
+    .filter(
+      (candidate) =>
+        inferRowTradeSide(candidate) !==
+        OPPOSITE_TRADE_SIDE
+    )
+    .map((candidate) =>
+      attachEntryMarketWeather(
+        {
+          ...candidate,
+          ...scannerMetadataFrom(candidate),
+          ...sideFlags(),
+          ...isolationFlags(),
+          ...virtualFlags(candidate)
+        },
+        snapshotWeather
+      )
+    );
   const blockedNonShortCandidates = rows
-    .filter((candidate) => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE)
+    .filter(
+      (candidate) =>
+        inferRowTradeSide(candidate) ===
+        OPPOSITE_TRADE_SIDE
+    )
     .slice(0, 20)
-    .map((candidate) => waitAction(
-      normalizeCandidate(candidate),
-      'LONG_DISABLED_SHORT_ONLY_SYSTEM',
-      {
-        skippedBeforeAnalyze: true,
-        skippedBeforeLiveFetch: true,
-        detectedScannerSide: inferRowTradeSide(candidate)
-      }
-    ));
-
+    .map((candidate) =>
+      waitAction(
+        normalizeCandidate(candidate),
+        'LONG_DISABLED_SHORT_ONLY_SYSTEM',
+        {
+          skippedBeforeAnalyze: true,
+          skippedBeforeLiveFetch: true,
+          detectedScannerSide:
+            inferRowTradeSide(candidate)
+        }
+      )
+    );
+  const resolvedSnapshotId =
+    extractSnapshotId(root) ||
+    extractSnapshotId(normalizedSource);
+  const resolvedCreatedAt =
+    snapshotCreatedAt(root) ||
+    snapshotCreatedAt(normalizedSource);
   return {
-    ...snapshot,
-    snapshotId: extractSnapshotId(snapshot),
-    createdAt: snapshotCreatedAt(snapshot),
-    selectedSnapshotSource: meta.source || null,
-    selectedSnapshotReason: meta.reason || null,
-    selectedTargetCandidateCount: targetRows.length,
-    selectedShortCandidateCount: targetRows.length,
-    selectedOppositeCandidateCount: countOppositeCandidates(snapshot),
-    selectedLongCandidateCount: countOppositeCandidates(snapshot),
+    ...normalizedSource,
+    snapshotId: resolvedSnapshotId,
+    createdAt: resolvedCreatedAt,
+    selectedSnapshotSource:
+      meta.source ||
+      normalizedSource.selectedSnapshotSource ||
+      null,
+    selectedSnapshotReason:
+      meta.reason ||
+      normalizedSource.selectedSnapshotReason ||
+      null,
+    selectedTargetCandidateCount:
+      targetRows.length,
+    selectedShortCandidateCount:
+      targetRows.length,
+    selectedOppositeCandidateCount:
+      blockedNonShortCandidates.length,
+    selectedLongCandidateCount:
+      blockedNonShortCandidates.length,
     blockedNonShortCandidates,
-    blockedNonShortCandidatesCount: blockedNonShortCandidates.length,
+    blockedNonShortCandidatesCount:
+      blockedNonShortCandidates.length,
     ...sideFlags(),
     ...isolationFlags(),
     ...virtualFlags(),
-    ...buildResolvedEntryWeatherFields(resolveMarketWeatherFromObjects(snapshotWeather), snapshot, snapshotWeather),
+    ...buildResolvedEntryWeatherFields(
+      resolveMarketWeatherFromObjects(
+        snapshotWeather
+      ),
+      normalizedSource,
+      snapshotWeather
+    ),
     candidates: targetRows,
-    candidatesCount: targetRows.length,
-    shortCandidatesCount: targetRows.length,
+    candidatesCount:
+      targetRows.length,
+    shortCandidatesCount:
+      targetRows.length,
     longCandidatesCount: 0,
-    topSymbols: targetRows.slice(0, 20).map((row) => row.symbol).filter(Boolean)
+    topSymbols: targetRows
+      .slice(0, 20)
+      .map((row) => row.symbol)
+      .filter(Boolean),
+    snapshotNormalizedNullSafe: true,
+    snapshotNestedWrapperSupported: true
   };
 }
 
 function latestScanKeys() {
-  // Uitgebreid met scanner-specifieke keys
+  /*
+   * Volgorde is belangrijk.
+   *
+   * Eerst de meest waarschijnlijke SHORT scanner-keys.
+   * Daarna compatibiliteitskeys en Market Universe als
+   * laatste read-only fallback.
+   */
   return uniqueStrings([
     SHORT_KEYS.scan.latest,
     `${SHORT_KEY_PREFIX}SCAN:LATEST`,
+    `${SHORT_KEY_PREFIX}SCANNER:LATEST`,
     `${SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
     `${SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
-    `${SHORT_KEY_PREFIX}SCANNER:LATEST`,
     `${SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:LATEST`,
-    `${SHORT_KEY_PREFIX}SCANNER:CURRENT`,
     `${SHORT_KEY_PREFIX}SCANNER:FULL:LATEST`,
+    `${SHORT_KEY_PREFIX}SCANNER:CURRENT`,
+    /*
+     * Sommige scanner-versies bewaren de nieuwste
+     * volledige kandidatenlijst in Market Universe.
+     * Alleen lezen; TradeSystem schrijft deze key nooit.
+     */
+    `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`,
+    `${SHORT_KEY_PREFIX}MARKET:UNIVERSE`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:LATEST`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST_FULL_SNAPSHOT`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:FULL:LATEST`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:LATEST`,
     `${LEGACY_SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:LATEST`,
-    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:CURRENT`,
     `${LEGACY_SHORT_KEY_PREFIX}SCANNER:FULL:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}SCANNER:CURRENT`,
+    `${LEGACY_SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`,
+    `${LEGACY_SHORT_KEY_PREFIX}MARKET:UNIVERSE`,
     'SCAN:LATEST',
-    'SCAN:LATEST_FULL_SNAPSHOT',
     'SCANNER:LATEST',
+    'SCAN:LATEST_FULL_SNAPSHOT',
+    'SCAN:FULL:LATEST',
     'SCANNER:SNAPSHOT:LATEST',
+    'SCANNER:FULL:LATEST',
     'SCANNER:CURRENT',
-    'SCANNER:FULL:LATEST'
+    'MARKET:UNIVERSE:LATEST',
+    'MARKET:UNIVERSE'
   ]);
+}
+
+async function readSnapshotCandidate(
+  redis,
+  key,
+  label,
+  timeoutMs = 200
+) {
+  if (
+    !redis ||
+    !key
+  ) {
+    return null;
+  }
+  const latestValue = await withTimeout(
+    getJsonSafe(
+      redis,
+      key,
+      null
+    ),
+    timeoutMs,
+    `SNAPSHOT_LATEST_READ_TIMEOUT:${label}:${key}`
+  );
+  if (
+    isTimeoutResult(latestValue) ||
+    latestValue === null ||
+    latestValue === undefined
+  ) {
+    return null;
+  }
+  /*
+   * De latest-key kan direct de volledige snapshot zijn,
+   * of een wrapper met snapshot/data/payload.
+   */
+  if (hasFullSnapshotShape(latestValue)) {
+    const normalized = normalizeSelectedSnapshot(
+      latestValue,
+      {
+        source: `${label}:${key}`,
+        reason:
+          'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
+      }
+    );
+    if (
+      normalized.snapshotId &&
+      normalized.candidates.length > 0
+    ) {
+      return {
+        key,
+        latestPointerKey: key,
+        label,
+        snapshot: latestValue,
+        snapshotId:
+          normalized.snapshotId,
+        targetCount:
+          normalized.candidates.length,
+        oppositeCount:
+          normalized.blockedNonShortCandidatesCount,
+        createdAt:
+          normalized.createdAt,
+        source:
+          `${label}:${key}`,
+        reason:
+          'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
+      };
+    }
+  }
+  /*
+   * Anders behandelen we de waarde als snapshot-pointer.
+   */
+  const snapshotId = extractSnapshotId(
+    latestValue
+  );
+  if (!snapshotId) {
+    return null;
+  }
+  const byIdKeys = snapshotKeysForId(
+    snapshotId
+  ).slice(0, 8);
+  if (byIdKeys.length === 0) {
+    return null;
+  }
+  /*
+   * De oude code las alle snapshot-keys achter elkaar.
+   * Dat kon de volledige snapshotfase opeten.
+   *
+   * Nu worden de beperkte compatibiliteitskeys tegelijk
+   * gelezen en blijft de totale wachttijd begrensd.
+   */
+  const settled = await Promise.allSettled(
+    byIdKeys.map(async (snapshotKey) => {
+      const value = await withTimeout(
+        getJsonSafe(
+          redis,
+          snapshotKey,
+          null
+        ),
+        timeoutMs,
+        `SNAPSHOT_BY_ID_READ_TIMEOUT:${label}:${snapshotKey}`
+      );
+      if (
+        isTimeoutResult(value) ||
+        !hasFullSnapshotShape(value)
+      ) {
+        return null;
+      }
+      const normalized =
+        normalizeSelectedSnapshot(
+          value,
+          {
+            source:
+              `${label}:${snapshotKey}`,
+            reason:
+              'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
+          }
+        );
+      if (
+        normalized.candidates.length <= 0
+      ) {
+        return null;
+      }
+      return {
+        key: snapshotKey,
+        latestPointerKey: key,
+        label,
+        snapshot: value,
+        snapshotId:
+          normalized.snapshotId ||
+          snapshotId,
+        targetCount:
+          normalized.candidates.length,
+        oppositeCount:
+          normalized.blockedNonShortCandidatesCount,
+        createdAt:
+          normalized.createdAt,
+        source:
+          `${label}:${snapshotKey}`,
+        reason:
+          'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
+      };
+    })
+  );
+  const resolved = settled
+    .filter(
+      (result) =>
+        result.status === 'fulfilled' &&
+        result.value &&
+        result.value.snapshot &&
+        result.value.targetCount > 0
+    )
+    .map(
+      (result) =>
+        result.value
+    )
+    .sort(
+      (a, b) =>
+        n(b.createdAt, 0) -
+        n(a.createdAt, 0)
+    )[0];
+  return resolved || null;
+}
+
+async function getLatestSnapshot(
+  deadline,
+  cfg
+) {
+  if (
+    deadlineExceeded(
+      deadline,
+      DEFAULT_PHASE_RESERVE_MS
+    )
+  ) {
+    return null;
+  }
+  const stores = [
+    {
+      redis: safeGetVolatileRedis(),
+      label: 'VOLATILE'
+    },
+    {
+      redis: safeGetDurableRedis(),
+      label: 'DURABLE'
+    }
+  ].filter(
+    (store) =>
+      Boolean(store.redis)
+  );
+  if (stores.length === 0) {
+    return null;
+  }
+  /*
+   * Beperkte snelle fan-out.
+   *
+   * De oude versie deed:
+   * store -> key -> pointer-key
+   * volledig achter elkaar.
+   *
+   * Daardoor kon cfg.snapshotTimeoutMs al voorbij zijn
+   * voordat de geldige scanner-key werd bereikt.
+   */
+  const keys = latestScanKeys()
+    .slice(0, 10);
+  const perReadTimeout = Math.max(
+    90,
+    Math.min(
+      190,
+      Math.floor(
+        cfg.snapshotTimeoutMs / 3
+      )
+    )
+  );
+  const readTasks = [];
+  for (const store of stores) {
+    for (const key of keys) {
+      readTasks.push(
+        readSnapshotCandidate(
+          store.redis,
+          key,
+          store.label,
+          perReadTimeout
+        )
+      );
+    }
+  }
+  const settled = await Promise.allSettled(
+    readTasks
+  );
+  const candidates = settled
+    .filter(
+      (result) =>
+        result.status === 'fulfilled' &&
+        result.value &&
+        result.value.snapshot &&
+        result.value.targetCount > 0
+    )
+    .map(
+      (result) =>
+        result.value
+    );
+  if (candidates.length === 0) {
+    return null;
+  }
+  const uniqueBySnapshot = new Map();
+  for (const candidate of candidates) {
+    const id =
+      candidate.snapshotId ||
+      extractSnapshotId(
+        candidate.snapshot
+      ) ||
+      candidate.key;
+    if (!id) continue;
+    const current =
+      uniqueBySnapshot.get(id);
+    if (
+      !current ||
+      n(candidate.createdAt, 0) >
+      n(current.createdAt, 0)
+    ) {
+      uniqueBySnapshot.set(
+        id,
+        candidate
+      );
+    }
+  }
+  const best = [
+    ...uniqueBySnapshot.values()
+  ]
+    .filter(
+      (row) =>
+        row &&
+        row.snapshot &&
+        row.targetCount > 0
+    )
+    .sort(
+      (a, b) =>
+        n(b.createdAt, 0) -
+        n(a.createdAt, 0)
+    )[0] || null;
+  if (
+    !best ||
+    !best.snapshot
+  ) {
+    return null;
+  }
+  const normalized =
+    normalizeSelectedSnapshot(
+      best.snapshot,
+      {
+        source:
+          best.source,
+        reason:
+          best.reason ||
+          'NEWEST_SHORT_SCANNER_SNAPSHOT_WITH_CANDIDATES'
+      }
+    );
+  if (
+    !normalized.snapshotId ||
+    !Array.isArray(
+      normalized.candidates
+    ) ||
+    normalized.candidates.length === 0
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function buildSnapshotPriceHints(
+  snapshot = null
+) {
+  const hints = new Map();
+  /*
+   * Null is geldig wanneer de snapshot-read tijdelijk
+   * faalt of de snapshotdeadline wordt bereikt.
+   *
+   * In dat geval moet TradeSystem netjes doorgaan naar
+   * NO_SHORT_SCANNER_SNAPSHOT en niet crashen.
+   */
+  const rows =
+    extractCandidatesFromSnapshot(
+      snapshot
+    );
+  for (const row of rows) {
+    if (
+      !row ||
+      typeof row !== 'object'
+    ) {
+      continue;
+    }
+    const price =
+      priceFromSnapshotRow(row);
+    if (price <= 0) {
+      continue;
+    }
+    for (
+      const key
+      of [
+        ...symbolTokensFromAnySymbol(
+          row.symbol
+        ),
+        ...symbolTokensFromAnySymbol(
+          row.baseSymbol
+        ),
+        ...symbolTokensFromAnySymbol(
+          row.contractSymbol
+        )
+      ]
+    ) {
+      if (
+        key &&
+        !hints.has(key)
+      ) {
+        hints.set(
+          key,
+          price
+        );
+      }
+    }
+  }
+  return hints;
 }
 
 function snapshotKeysForId(id) {
@@ -7079,7 +7642,7 @@ export async function runTradeSystem(options = {}) {
       }
     );
 
-    const priceHints = buildSnapshotPriceHints(snapshot);
+    const priceHints = buildSnapshotPriceHints(snapshot || null);
 
     const lastProcessed = await withDeadline(
       () => getJsonSafe(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, null),
