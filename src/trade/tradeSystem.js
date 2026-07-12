@@ -5363,8 +5363,8 @@ async function monitorOpenPositionsSafe({
       bitgetOrdersDisabled: true,
       exchangeCallsDisabled: true,
 
-      preloadedPositions, // nieuw
-      openPositions: preloadedPositions, // alias
+      preloadedPositions,
+      openPositions: preloadedPositions,
       positions: preloadedPositions,
 
       monitorTimeoutMs: cfg.monitorTimeoutMs,
@@ -7510,6 +7510,7 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push('PLAYBOOK_REFRESH_REQUIRED_FOR_CONFIRMED_WEATHER');
     }
 
+    // Snapshot lezen voor priceHints, maar beslissing over entry gebeurt na monitor
     const snapshot = await withDeadline(
       () => getLatestSnapshot(deadline, cfg),
       {
@@ -7537,19 +7538,16 @@ export async function runTradeSystem(options = {}) {
       Boolean(lastProcessed?.snapshotId) &&
       lastProcessed.snapshotId === snapshot.snapshotId;
 
-    // Gebruik de verbeterde shouldMarkSnapshotProcessed
     const sameSnapshotCompletedEnough = sameSnapshot && shouldMarkSnapshotProcessed(lastProcessed);
 
-    // Eerst open posities laden en monitoren, daarna entries
-    let openPositions = [];
+    // 1. Open posities laden
+    let openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline);
+
+    // 2. Monitor en sluit verlopen posities (altijd, onafhankelijk van snapshot)
     let virtualExits = [];
     let shadowExits = [];
     const realExits = [];
 
-    // 1. Laad open posities
-    openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline);
-
-    // 2. Monitor en sluit verlopen posities (gebruik de geladen posities)
     const skipMonitorBecauseSameSnapshot =
       sameSnapshot &&
       sameSnapshotCompletedEnough &&
@@ -7566,7 +7564,7 @@ export async function runTradeSystem(options = {}) {
         priceHints,
         runtimeWarnings,
         deadline,
-        preloadedPositions: openPositions // geef de geladen posities mee
+        preloadedPositions: openPositions
       });
       shadowExits = virtualExits;
     } else {
@@ -7576,7 +7574,6 @@ export async function runTradeSystem(options = {}) {
     // Verwijder gesloten posities uit de set
     if (virtualExits.length > 0) {
       runtimeWarnings.push(`VIRTUAL_EXITS_RECORDED_THIS_RUN:${virtualExits.length}`);
-      // We kunnen de exits uit openPositions filteren als ze een id hebben
       const exitIds = new Set(virtualExits.map(e => e.positionId || e.id).filter(Boolean));
       openPositions = openPositions.filter(p => !exitIds.has(p.positionId || p.id));
     }
@@ -7606,6 +7603,7 @@ export async function runTradeSystem(options = {}) {
       }));
     }
 
+    // Na monitor: als geen snapshot, dan alleen early return zonder entry
     if (!snapshot?.snapshotId) {
       return saveRunMeta(baseEarlyReturnPayload({
         runId,
@@ -7710,6 +7708,7 @@ export async function runTradeSystem(options = {}) {
       }));
     }
 
+    // Verder met entry loop zoals voorheen
     const activeRotation = await getActiveRotationDirect(
       cfg,
       runtimeWarnings,
@@ -7803,7 +7802,7 @@ export async function runTradeSystem(options = {}) {
         ...virtualFlags(row),
         ...learningIdentityFields(row)
       }, marketContext))
-      .slice(0, cfg.analyzeMaxCandidatesPerSnapshot); // nu gedefinieerd
+      .slice(0, cfg.analyzeMaxCandidatesPerSnapshot);
 
     const actualLiveRows = liveRows.length;
     const observationOnlyRows = liveRows.filter((row) => row.observationOnly || row.analysisInputOnly).length;
@@ -7945,16 +7944,16 @@ export async function runTradeSystem(options = {}) {
     const weakContraRejectedRows = analyzedRows.filter((row) => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
     const weakContraAllowedRows = analyzedRows.filter((row) => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length;
 
-    // openPositions is al geladen, maar we moeten de openSymbolSet opnieuw bouwen (of bijwerken)
     const openSymbolSet = buildOpenSymbolSet(openPositions);
     const openPositionCountBeforeEntries = openPositions.length;
     const actions = [...earlyActions];
     const counters = buildVirtualEntryResultCounters();
+    let analyzeFailedRows = 0;
+    let analyzeTimeoutRows = 0;
 
     for (const rawRow of analyzedRows) {
       counters.entryLoopAttempts += 1;
 
-      // Gebruik minEntryLoopAttempts
       const minimumAttemptsStillRequired = counters.entryLoopAttempts <= cfg.minEntryLoopAttempts;
 
       if (!minimumAttemptsStillRequired && deadlineExceeded(deadline, cfg.entryLoopReserveMs)) {
@@ -8021,6 +8020,9 @@ export async function runTradeSystem(options = {}) {
           ...isolationFlags()
         });
 
+        if (virtualGate.reason === 'SHORT_ESTIMATED_COST_R_TOO_HIGH' || virtualGate.reason === 'SHORT_RISK_INVALID') {
+          analyzeFailedRows += 1;
+        }
         continue;
       }
 
@@ -8098,10 +8100,12 @@ export async function runTradeSystem(options = {}) {
 
       if (selectedAlertMatch.ok && runtimeGate.eligible !== true) {
         counters.discordAlertsSkippedRuntimeGate += 1;
+        analyzeFailedRows += 1;
       }
 
       if (selectedAlertMatch.ok && runtimeGate.eligible === true && !currentFitGate.ok) {
         counters.discordAlertsSkippedCurrentFit += 1;
+        analyzeFailedRows += 1;
       }
 
       const discordAlertEligible = riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY;
@@ -8167,6 +8171,7 @@ export async function runTradeSystem(options = {}) {
       } catch (error) {
         counters.waitRows += 1;
         counters.virtualFailedRows += 1;
+        analyzeFailedRows += 1;
 
         actions.push({
           ...row,
@@ -8330,6 +8335,8 @@ export async function runTradeSystem(options = {}) {
       snapshotChunkComplete: effectiveChunkComplete,
       snapshotChunkCursorPersisted: cursorPersisted,
       snapshotChunkAdvanced: canAdvanceCursor,
+      snapshotProgressPct: chunk.total > 0 ? round((effectiveNextIndex / chunk.total) * 100, 2) : 0,
+      snapshotRemainingCandidates: Math.max(0, chunk.total - effectiveNextIndex),
 
       ...sideFlags(),
       ...virtualFlags(),
@@ -8403,6 +8410,8 @@ export async function runTradeSystem(options = {}) {
       analyzeError,
       analyzeFallbackUsed,
       analyzeWeekKey: PERSISTENT_LEARNING_KEY,
+      analyzeFailedRows,
+      analyzeTimeoutRows,
 
       entryRows: counters.entryRows,
       waitRows: counters.waitRows,
