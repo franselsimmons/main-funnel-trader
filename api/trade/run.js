@@ -32,11 +32,6 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 
-/*
- * De route moet ruim vóór de Vercel-limiet antwoorden.
- * Dit is een absolute routegrens vanaf het begin van de request,
- * dus imports en lock-I/O tellen ook mee.
- */
 const ABSOLUTE_ROUTE_RETURN_MS = 24_000;
 const ROUTE_RESPONSE_RESERVE_MS = 1_500;
 
@@ -44,19 +39,11 @@ const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 19_000;
 const MIN_ROUTE_SOFT_TIMEOUT_MS = 12_000;
 const MAX_ROUTE_SOFT_TIMEOUT_MS = 21_000;
 
-/*
- * TradeSystem krijgt bewust een kleiner intern budget dan de route.
- * Daardoor hoort TradeSystem zelf af te ronden voordat de route-race afloopt.
- */
 const DEFAULT_TRADE_RUNTIME_MS = 13_000;
 const DEFAULT_MONITOR_ONLY_RUNTIME_MS = 10_000;
 
-/*
- * Lage limieten zijn tijdelijk de veilige keuze totdat PositionEngine
- * Redis-posities in batches leest. Hiermee voorkom je tientallen Upstash-calls
- * binnen één Vercel-invocation.
- */
 const DEFAULT_MAX_CANDIDATES = 2;
+const DEFAULT_CANDIDATE_CHUNK_SIZE = 2;
 const DEFAULT_MAX_ENTRIES = 2;
 const DEFAULT_MONITOR_TIMEOUT_MS = 1_200;
 const DEFAULT_MONITOR_BATCH_SIZE = 6;
@@ -88,26 +75,67 @@ function number(value, fallback = 0) {
 function int(value, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
   return Math.max(
     min,
-    Math.min(max, Math.floor(number(value, fallback)))
+    Math.min(
+      max,
+      Math.floor(
+        number(value, fallback)
+      )
+    )
   );
 }
 
 function upper(value) {
-  return String(value || '').trim().toUpperCase();
+  return String(value || '')
+    .trim()
+    .toUpperCase();
 }
 
 function bool(value, fallback = false) {
-  if (value === undefined || value === null || value === '') return fallback;
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return fallback;
+  }
 
-  const raw = String(value).trim().toLowerCase();
+  if (typeof value === 'boolean') {
+    return value;
+  }
 
-  if (['true', '1', 'yes', 'y', 'on', 'force', 'forced'].includes(raw)) {
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+
+  const raw = String(value)
+    .trim()
+    .toLowerCase();
+
+  if (
+    [
+      'true',
+      '1',
+      'yes',
+      'y',
+      'on',
+      'force',
+      'forced'
+    ].includes(raw)
+  ) {
     return true;
   }
 
-  if (['false', '0', 'no', 'n', 'off', 'disabled', 'skip'].includes(raw)) {
+  if (
+    [
+      'false',
+      '0',
+      'no',
+      'n',
+      'off',
+      'disabled',
+      'skip'
+    ].includes(raw)
+  ) {
     return false;
   }
 
@@ -116,7 +144,10 @@ function bool(value, fallback = false) {
 
 function first(...values) {
   return values.find(
-    (value) => value !== undefined && value !== null && value !== ''
+    (value) =>
+      value !== undefined &&
+      value !== null &&
+      value !== ''
   );
 }
 
@@ -159,26 +190,27 @@ async function bounded(
 ) {
   let timer = null;
 
-  const timeoutPromise = new Promise((resolve) => {
-    timer = setTimeout(
-      () => {
-        resolve(
-          typeof fallback === 'function'
-            ? fallback()
-            : fallback
-        );
-      },
-      Math.max(
-        1,
-        int(
-          timeoutMs,
+  const timeoutPromise =
+    new Promise((resolve) => {
+      timer = setTimeout(
+        () => {
+          resolve(
+            typeof fallback === 'function'
+              ? fallback()
+              : fallback
+          );
+        },
+        Math.max(
           1,
-          1,
-          60_000
+          int(
+            timeoutMs,
+            1,
+            1,
+            60_000
+          )
         )
-      )
-    );
-  });
+      );
+    });
 
   try {
     return await Promise.race([
@@ -215,10 +247,11 @@ async function boundedRequired(
   const result = await bounded(
     promise,
     timeoutMs,
-    () => timeoutMarker(
-      stage,
-      timeoutMs
-    )
+    () =>
+      timeoutMarker(
+        stage,
+        timeoutMs
+      )
   );
 
   if (isTimeoutMarker(result)) {
@@ -238,10 +271,7 @@ function remainingRouteMs(
   return Math.max(
     0,
     ABSOLUTE_ROUTE_RETURN_MS -
-      (
-        now() -
-        startedAt
-      ) -
+      (now() - startedAt) -
       reserveMs
   );
 }
@@ -269,9 +299,8 @@ function boundedByRoute(
 }
 
 function parseJson(value) {
-  const raw = String(
-    value || ''
-  ).trim();
+  const raw = String(value || '')
+    .trim();
 
   if (!raw) {
     return {};
@@ -299,24 +328,13 @@ async function readBody(req) {
     req.body !== undefined &&
     req.body !== null
   ) {
-    if (
-      typeof req.body ===
-      'string'
-    ) {
-      return parseJson(
-        req.body
-      );
+    if (typeof req.body === 'string') {
+      return parseJson(req.body);
     }
 
-    if (
-      Buffer.isBuffer(
-        req.body
-      )
-    ) {
+    if (Buffer.isBuffer(req.body)) {
       return parseJson(
-        req.body.toString(
-          'utf8'
-        )
+        req.body.toString('utf8')
       );
     }
 
@@ -325,28 +343,18 @@ async function readBody(req) {
 
   const chunks = [];
 
-  for await (
-    const chunk of req
-  ) {
+  for await (const chunk of req) {
     chunks.push(
-      Buffer.isBuffer(
-        chunk
-      )
+      Buffer.isBuffer(chunk)
         ? chunk
-        : Buffer.from(
-            chunk
-          )
+        : Buffer.from(chunk)
     );
   }
 
   return parseJson(
     Buffer
-      .concat(
-        chunks
-      )
-      .toString(
-        'utf8'
-      )
+      .concat(chunks)
+      .toString('utf8')
   );
 }
 
@@ -354,17 +362,9 @@ function getCorePromise() {
   if (!CORE_PROMISE) {
     CORE_PROMISE = Promise
       .all([
-        import(
-          '../../src/config.js'
-        ),
-
-        import(
-          '../../src/keys.js'
-        ),
-
-        import(
-          '../../src/redis.js'
-        )
+        import('../../src/config.js'),
+        import('../../src/keys.js'),
+        import('../../src/redis.js')
       ])
       .then(
         ([
@@ -373,89 +373,64 @@ function getCorePromise() {
           redisModule
         ]) => ({
           CONFIG:
-            configModule
-              .CONFIG ||
+            configModule.CONFIG ||
             {},
 
           KEYS:
-            keysModule
-              .KEYS ||
+            keysModule.KEYS ||
             {},
 
           redis:
             redisModule
         })
       )
-      .catch(
-        (error) => {
-          CORE_PROMISE =
-            null;
-
-          throw error;
-        }
-      );
+      .catch((error) => {
+        CORE_PROMISE = null;
+        throw error;
+      });
   }
 
   return CORE_PROMISE;
 }
 
-async function loadCoreModules(
-  startedAt
-) {
+async function loadCoreModules(startedAt) {
   return boundedRequired(
     getCorePromise(),
-
     boundedByRoute(
       startedAt,
       IMPORT_TIMEOUT_MS
     ),
-
     'LOAD_CORE_MODULES'
   );
 }
 
 function getTradeSystemPromise() {
-  if (
-    !TRADE_SYSTEM_PROMISE
-  ) {
+  if (!TRADE_SYSTEM_PROMISE) {
     TRADE_SYSTEM_PROMISE =
       import(
         '../../src/trade/tradeSystem.js'
       )
-        .then(
-          (module) => {
-            if (
-              typeof
-              module
-                .runTradeSystem !==
-              'function'
-            ) {
-              const error =
-                new Error(
-                  'RUN_TRADE_SYSTEM_EXPORT_MISSING'
-                );
+        .then((module) => {
+          if (
+            typeof module.runTradeSystem !==
+            'function'
+          ) {
+            const error = new Error(
+              'RUN_TRADE_SYSTEM_EXPORT_MISSING'
+            );
 
-              error
-                .availableExports =
-                Object.keys(
-                  module ||
-                    {}
-                );
-
-              throw error;
-            }
-
-            return module;
-          }
-        )
-        .catch(
-          (error) => {
-            TRADE_SYSTEM_PROMISE =
-              null;
+            error.availableExports =
+              Object.keys(module || {});
 
             throw error;
           }
-        );
+
+          return module;
+        })
+        .catch((error) => {
+          TRADE_SYSTEM_PROMISE = null;
+          throw error;
+        });
   }
 
   return TRADE_SYSTEM_PROMISE;
@@ -466,12 +441,10 @@ async function loadTradeSystemModule(
 ) {
   return boundedRequired(
     getTradeSystemPromise(),
-
     boundedByRoute(
       startedAt,
       IMPORT_TIMEOUT_MS
     ),
-
     'LOAD_TRADE_SYSTEM_MODULE'
   );
 }
@@ -480,34 +453,21 @@ function queryValue(
   req,
   ...keys
 ) {
-  for (
-    const key of keys
-  ) {
-    const value =
-      req.query?.[key];
+  for (const key of keys) {
+    const value = req.query?.[key];
 
-    if (
-      Array.isArray(
-        value
-      )
-    ) {
+    if (Array.isArray(value)) {
       if (
-        value[0] !==
-          undefined &&
-        value[0] !==
-          null &&
-        value[0] !==
-          ''
+        value[0] !== undefined &&
+        value[0] !== null &&
+        value[0] !== ''
       ) {
         return value[0];
       }
     } else if (
-      value !==
-        undefined &&
-      value !==
-        null &&
-      value !==
-        ''
+      value !== undefined &&
+      value !== null &&
+      value !== ''
     ) {
       return value;
     }
@@ -529,29 +489,20 @@ function requestValue(
     );
 
   if (
-    fromQuery !==
-      undefined &&
-    fromQuery !==
-      null &&
-    fromQuery !==
-      ''
+    fromQuery !== undefined &&
+    fromQuery !== null &&
+    fromQuery !== ''
   ) {
     return fromQuery;
   }
 
-  for (
-    const key of bodyKeys
-  ) {
-    const value =
-      body?.[key];
+  for (const key of bodyKeys) {
+    const value = body?.[key];
 
     if (
-      value !==
-        undefined &&
-      value !==
-        null &&
-      value !==
-        ''
+      value !== undefined &&
+      value !== null &&
+      value !== ''
     ) {
       return value;
     }
@@ -568,24 +519,27 @@ function shouldDebug(
     requestValue(
       req,
       body,
-
       [
         'debug',
         'details',
         'full'
       ],
-
       [
         'debug',
         'details',
         'full'
       ]
     ),
-
     false
   );
 }
 
+/*
+ * force=true betekent alleen:
+ * - run ondanks normale cooldown of reeds-verwerkt-controle;
+ * - geen cursor-reset;
+ * - geen automatische lock-delete.
+ */
 function shouldForce(
   req,
   body
@@ -594,14 +548,12 @@ function shouldForce(
     requestValue(
       req,
       body,
-
       [
         'force',
         'forced',
         'forceProcessSnapshot',
         'force_process_snapshot'
       ],
-
       [
         'force',
         'forced',
@@ -609,7 +561,35 @@ function shouldForce(
         'force_process_snapshot'
       ]
     ),
+    false
+  );
+}
 
+/*
+ * Cursor resetten is een afzonderlijke, expliciete actie.
+ * force=true mag deze optie nooit impliciet activeren.
+ */
+function shouldResetSnapshotCursor(
+  req,
+  body
+) {
+  return bool(
+    requestValue(
+      req,
+      body,
+      [
+        'resetSnapshotCursor',
+        'reset_snapshot_cursor',
+        'resetCursor',
+        'reset_cursor'
+      ],
+      [
+        'resetSnapshotCursor',
+        'reset_snapshot_cursor',
+        'resetCursor',
+        'reset_cursor'
+      ]
+    ),
     false
   );
 }
@@ -622,18 +602,15 @@ function shouldMonitorOnly(
     requestValue(
       req,
       body,
-
       [
         'monitorOnly',
         'monitor_only'
       ],
-
       [
         'monitorOnly',
         'monitor_only'
       ]
     ),
-
     false
   );
 }
@@ -646,56 +623,47 @@ function shouldUnlockOnly(
     requestValue(
       req,
       body,
-
       [
         'unlockOnly',
         'unlock_only'
       ],
-
       [
         'unlockOnly',
         'unlock_only'
       ]
     ),
-
     false
   );
 }
 
+/*
+ * force=true verwijdert geen geldige actieve lock.
+ * Alleen een expliciete unlockparameter mag dat doen.
+ */
 function shouldForceUnlock(
   req,
   body
 ) {
-  return Boolean(
-    shouldForce(
+  return bool(
+    requestValue(
       req,
-      body
-    ) ||
-
-    bool(
-      requestValue(
-        req,
-        body,
-
-        [
-          'forceUnlock',
-          'force_unlock',
-          'clearLock',
-          'clear_lock',
-          'unlock'
-        ],
-
-        [
-          'forceUnlock',
-          'force_unlock',
-          'clearLock',
-          'clear_lock',
-          'unlock'
-        ]
-      ),
-
-      false
-    )
+      body,
+      [
+        'forceUnlock',
+        'force_unlock',
+        'clearLock',
+        'clear_lock',
+        'unlock'
+      ],
+      [
+        'forceUnlock',
+        'force_unlock',
+        'clearLock',
+        'clear_lock',
+        'unlock'
+      ]
+    ),
+    false
   );
 }
 
@@ -709,14 +677,12 @@ function getRouteSoftTimeoutMs(
       requestValue(
         req,
         body,
-
         [
           'routeSoftTimeoutMs',
           'route_soft_timeout_ms',
           'softTimeoutMs',
           'soft_timeout_ms'
         ],
-
         [
           'routeSoftTimeoutMs',
           'route_soft_timeout_ms',
@@ -732,11 +698,8 @@ function getRouteSoftTimeoutMs(
 
       DEFAULT_ROUTE_SOFT_TIMEOUT_MS
     ),
-
     DEFAULT_ROUTE_SOFT_TIMEOUT_MS,
-
     MIN_ROUTE_SOFT_TIMEOUT_MS,
-
     MAX_ROUTE_SOFT_TIMEOUT_MS
   );
 }
@@ -745,10 +708,7 @@ function callMaybeKey(
   value,
   fallback = null
 ) {
-  if (
-    typeof value ===
-    'function'
-  ) {
+  if (typeof value === 'function') {
     try {
       return value();
     } catch {
@@ -756,8 +716,7 @@ function callMaybeKey(
     }
   }
 
-  return value ||
-    fallback;
+  return value || fallback;
 }
 
 function shortKey(
@@ -769,7 +728,7 @@ function shortKey(
       value,
       fallback
     ) ||
-    ''
+      ''
   ).trim();
 
   if (!raw) {
@@ -785,22 +744,17 @@ function shortKey(
   }
 
   if (
-    raw.startsWith(
-      'LONG:'
-    )
+    raw.startsWith('LONG:')
   ) {
-    raw =
-      raw.slice(
-        'LONG:'.length
-      );
+    raw = raw.slice(
+      'LONG:'.length
+    );
   }
 
   return `${SHORT_KEY_PREFIX}${raw}`;
 }
 
-function buildKeys(
-  KEYS = {}
-) {
+function buildKeys(KEYS = {}) {
   return {
     tradeLock:
       shortKey(
@@ -818,7 +772,6 @@ function buildKeys(
             .trade
             ?.lock
         ),
-
         'TRADE:LOCK'
       ),
 
@@ -838,7 +791,6 @@ function buildKeys(
             .trade
             ?.runMeta
         ),
-
         'TRADE:RUN:META'
       ),
 
@@ -858,19 +810,15 @@ function buildKeys(
             .trade
             ?.lastProcessedSnapshot
         ),
-
         'TRADE:LAST_PROCESSED_SNAPSHOT'
       )
   };
 }
 
-function getDurableRedis(
-  core
-) {
+function getDurableRedis(core) {
   try {
     if (
-      typeof
-      core
+      typeof core
         .redis
         ?.getDurableRedis !==
       'function'
@@ -893,24 +841,16 @@ async function redisGet(
   if (
     !redis ||
     !key ||
-    typeof
-      redis.get !==
-      'function'
+    typeof redis.get !== 'function'
   ) {
     return null;
   }
 
   return bounded(
     redis
-      .get(
-        key
-      )
-      .catch(
-        () => null
-      ),
-
+      .get(key)
+      .catch(() => null),
     REDIS_TIMEOUT_MS,
-
     null
   );
 }
@@ -922,24 +862,16 @@ async function redisTtl(
   if (
     !redis ||
     !key ||
-    typeof
-      redis.ttl !==
-      'function'
+    typeof redis.ttl !== 'function'
   ) {
     return null;
   }
 
   return bounded(
     redis
-      .ttl(
-        key
-      )
-      .catch(
-        () => null
-      ),
-
+      .ttl(key)
+      .catch(() => null),
     REDIS_TIMEOUT_MS,
-
     null
   );
 }
@@ -951,27 +883,17 @@ async function redisDelete(
   if (
     !redis ||
     !key ||
-    typeof
-      redis.del !==
-      'function'
+    typeof redis.del !== 'function'
   ) {
     return false;
   }
 
   return bounded(
     redis
-      .del(
-        key
-      )
-      .then(
-        () => true
-      )
-      .catch(
-        () => false
-      ),
-
+      .del(key)
+      .then(() => true)
+      .catch(() => false),
     REDIS_TIMEOUT_MS,
-
     false
   );
 }
@@ -985,20 +907,15 @@ async function redisSetNx(
   if (
     !redis ||
     !key ||
-    typeof
-      redis.set !==
-      'function'
+    typeof redis.set !== 'function'
   ) {
     return false;
   }
 
   const serialized =
-    typeof value ===
-    'string'
+    typeof value === 'string'
       ? value
-      : JSON.stringify(
-          value
-        );
+      : JSON.stringify(value);
 
   const modernResult =
     await bounded(
@@ -1006,38 +923,24 @@ async function redisSetNx(
         .set(
           key,
           serialized,
-
           {
             nx: true,
             ex: ttlSec
           }
         )
-        .catch(
-          () => null
-        ),
-
+        .catch(() => null),
       REDIS_TIMEOUT_MS,
-
       null
     );
 
   if (
-    modernResult ===
-      'OK' ||
-
-    modernResult ===
-      true ||
-
-    modernResult?.ok ===
-      true
+    modernResult === 'OK' ||
+    modernResult === true ||
+    modernResult?.ok === true
   ) {
     return true;
   }
 
-  /*
-   * Alleen als de moderne Upstash-signatuur niet werkt, één legacy-poging.
-   * In het normale pad blijft lock-acquire dus één Redis-call.
-   */
   const legacyResult =
     await bounded(
       redis
@@ -1048,53 +951,34 @@ async function redisSetNx(
           ttlSec,
           'NX'
         )
-        .catch(
-          () => null
-        ),
-
+        .catch(() => null),
       REDIS_TIMEOUT_MS,
-
       null
     );
 
   return Boolean(
-    legacyResult ===
-      'OK' ||
-
-    legacyResult ===
-      true ||
-
-    legacyResult?.ok ===
-      true
+    legacyResult === 'OK' ||
+      legacyResult === true ||
+      legacyResult?.ok === true
   );
 }
 
-function parseLock(
-  raw
-) {
+function parseLock(raw) {
   if (!raw) {
     return null;
   }
 
-  if (
-    typeof raw ===
-    'object'
-  ) {
+  if (typeof raw === 'object') {
     return raw;
   }
 
   try {
     return JSON.parse(
-      String(
-        raw
-      )
+      String(raw)
     );
   } catch {
     return {
-      token:
-        String(
-          raw
-        )
+      token: String(raw)
     };
   }
 }
@@ -1111,7 +995,6 @@ async function readLock(
       redis,
       key
     ),
-
     redisTtl(
       redis,
       key
@@ -1119,48 +1002,36 @@ async function readLock(
   ]);
 
   const parsed =
-    parseLock(
-      raw
-    );
+    parseLock(raw);
 
   if (!parsed) {
     return {
-      exists:
-        false,
+      exists: false,
 
       ttlSec:
         Number.isFinite(
-          Number(
-            ttl
-          )
+          Number(ttl)
         )
-          ? Number(
-              ttl
-            )
+          ? Number(ttl)
           : null
     };
   }
 
   const createdAt =
     number(
-      parsed
-        .createdAt,
-
+      parsed.createdAt,
       0
     );
 
   return {
-    exists:
-      true,
+    exists: true,
 
     token:
-      parsed
-        .token ||
+      parsed.token ||
       null,
 
     runId:
-      parsed
-        .runId ||
+      parsed.runId ||
       null,
 
     createdAt,
@@ -1168,41 +1039,28 @@ async function readLock(
     ageSec:
       createdAt > 0
         ? Math.floor(
-            (
-              now() -
-              createdAt
-            ) /
-            1000
+            (now() - createdAt) /
+              1000
           )
         : null,
 
     expiresAt:
       number(
-        parsed
-          .expiresAt,
-
+        parsed.expiresAt,
         0
       ),
 
     ttlSec:
       Number.isFinite(
-        Number(
-          ttl
-        )
+        Number(ttl)
       )
-        ? Number(
-            ttl
-          )
+        ? Number(ttl)
         : null
   };
 }
 
-function isStaleLock(
-  state
-) {
-  if (
-    !state?.exists
-  ) {
+function isStaleLock(state) {
+  if (!state?.exists) {
     return false;
   }
 
@@ -1210,7 +1068,6 @@ function isStaleLock(
     Number.isFinite(
       state.ageSec
     ) &&
-
     state.ageSec >=
       DEFAULT_STALE_LOCK_AFTER_SEC
   ) {
@@ -1221,19 +1078,14 @@ function isStaleLock(
     Number.isFinite(
       state.ttlSec
     ) &&
-
-    state.ttlSec <=
-      0
+    state.ttlSec <= 0
   ) {
     return true;
   }
 
   return Boolean(
-    state.expiresAt >
-      0 &&
-
-    state.expiresAt <=
-      now()
+    state.expiresAt > 0 &&
+      state.expiresAt <= now()
   );
 }
 
@@ -1252,8 +1104,7 @@ async function acquireLock(
       .toString(16)
       .slice(2, 12)}`;
 
-  const createdAt =
-    now();
+  const createdAt = now();
 
   const lockValue = {
     token,
@@ -1278,9 +1129,7 @@ async function acquireLock(
       TRADE_RUN_ROUTE_VERSION
   };
 
-  if (
-    forceUnlock
-  ) {
+  if (forceUnlock) {
     await redisDelete(
       redis,
       key
@@ -1295,12 +1144,9 @@ async function acquireLock(
       DEFAULT_LOCK_TTL_SEC
     );
 
-  if (
-    acquired
-  ) {
+  if (acquired) {
     return {
-      acquired:
-        true,
+      acquired: true,
 
       reason:
         forceUnlock
@@ -1315,8 +1161,7 @@ async function acquireLock(
       staleClearedBeforeAcquire:
         false,
 
-      state:
-        null
+      state: null
     };
   }
 
@@ -1328,9 +1173,7 @@ async function acquireLock(
 
   if (
     state.exists &&
-    isStaleLock(
-      state
-    )
+    isStaleLock(state)
   ) {
     await redisDelete(
       redis,
@@ -1345,12 +1188,9 @@ async function acquireLock(
         DEFAULT_LOCK_TTL_SEC
       );
 
-    if (
-      acquired
-    ) {
+    if (acquired) {
       return {
-        acquired:
-          true,
+        acquired: true,
 
         reason:
           'STALE_TRADE_RUN_LOCK_CLEARED_AND_ACQUIRED',
@@ -1369,8 +1209,7 @@ async function acquireLock(
   }
 
   return {
-    acquired:
-      false,
+    acquired: false,
 
     reason:
       'TRADE_RUN_LOCK_ACTIVE',
@@ -1398,9 +1237,7 @@ async function releaseOwnLock(
     !lockValue?.token
   ) {
     return {
-      released:
-        false,
-
+      released: false,
       reason:
         'LOCK_RELEASE_INPUT_MISSING'
     };
@@ -1412,13 +1249,9 @@ async function releaseOwnLock(
       key
     );
 
-  if (
-    !state?.exists
-  ) {
+  if (!state?.exists) {
     return {
-      released:
-        false,
-
+      released: false,
       reason:
         'LOCK_ALREADY_GONE'
     };
@@ -1429,9 +1262,7 @@ async function releaseOwnLock(
     lockValue.token
   ) {
     return {
-      released:
-        false,
-
+      released: false,
       reason:
         'LOCK_NOT_OWNED'
     };
@@ -1444,8 +1275,7 @@ async function releaseOwnLock(
     );
 
   return {
-    released:
-      deleted,
+    released: deleted,
 
     reason:
       deleted
@@ -1483,29 +1313,16 @@ function baseFlags() {
     direction:
       TARGET_TRADE_SIDE,
 
-    shortOnly:
-      true,
+    shortOnly: true,
+    longDisabled: true,
 
-    longDisabled:
-      true,
+    virtualOnly: true,
+    virtualLearning: true,
 
-    virtualOnly:
-      true,
-
-    virtualLearning:
-      true,
-
-    realOrdersDisabled:
-      true,
-
-    exchangeOrdersDisabled:
-      true,
-
-    bitgetOrdersDisabled:
-      true,
-
-    noRealOrders:
-      true,
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    noRealOrders: true,
 
     namespace:
       SHORT_NAMESPACE,
@@ -1555,8 +1372,20 @@ function baseFlags() {
     tradeSystemOwnsRunMetaPersistence:
       true,
 
+    forceDoesNotResetSnapshotCursor:
+      true,
+
+    resetSnapshotCursorRequiresExplicitFlag:
+      true,
+
+    forceDoesNotForceUnlock:
+      true,
+
     maxCandidatesEmergencyCap:
       DEFAULT_MAX_CANDIDATES,
+
+    candidateChunkEmergencyCap:
+      DEFAULT_CANDIDATE_CHUNK_SIZE,
 
     openPositionMonitorEmergencyCap:
       DEFAULT_OPEN_POSITION_LIMIT,
@@ -1590,9 +1419,7 @@ function baseFlags() {
   };
 }
 
-function setHeaders(
-  res
-) {
+function setHeaders(res) {
   res.setHeader(
     'Cache-Control',
     'no-store, max-age=0'
@@ -1645,6 +1472,13 @@ function setHeaders(
   );
 
   res.setHeader(
+    'X-Candidate-Chunk-Emergency-Cap',
+    String(
+      DEFAULT_CANDIDATE_CHUNK_SIZE
+    )
+  );
+
+  res.setHeader(
     'X-Open-Position-Monitor-Emergency-Cap',
     String(
       DEFAULT_OPEN_POSITION_LIMIT
@@ -1663,17 +1497,51 @@ function buildRunOptions(
       body
     );
 
+  const resetSnapshotCursor =
+    shouldResetSnapshotCursor(
+      req,
+      body
+    );
+
   const monitorOnly =
     shouldMonitorOnly(
       req,
       body
     );
 
+  const maxCandidatesPerSnapshot =
+    monitorOnly
+      ? 1
+      : DEFAULT_MAX_CANDIDATES;
+
+  const candidateChunkSize =
+    monitorOnly
+      ? 1
+      : Math.min(
+          DEFAULT_CANDIDATE_CHUNK_SIZE,
+          maxCandidatesPerSnapshot
+        );
+
   return {
+    /*
+     * force mag cooldowns of normale overslagchecks omzeilen,
+     * maar reset de cursor niet.
+     */
     force,
 
     forceProcessSnapshot:
       force,
+
+    resetSnapshotCursor,
+
+    resetCursor:
+      resetSnapshotCursor,
+
+    forceResetSnapshotCursor:
+      false,
+
+    forceDoesNotResetSnapshotCursor:
+      true,
 
     monitorOnly,
 
@@ -1695,15 +1563,15 @@ function buildRunOptions(
     hardReturnReserveMs:
       2_500,
 
-    maxCandidatesPerSnapshot:
-      monitorOnly
-        ? 1
-        : DEFAULT_MAX_CANDIDATES,
+    maxCandidatesPerSnapshot,
+
+    candidateChunkSize,
+
+    snapshotCandidateChunkSize:
+      candidateChunkSize,
 
     analyzeMaxCandidatesPerSnapshot:
-      monitorOnly
-        ? 1
-        : DEFAULT_MAX_CANDIDATES,
+      maxCandidatesPerSnapshot,
 
     hardMaxCandidatesPerSnapshot:
       DEFAULT_MAX_CANDIDATES,
@@ -1713,11 +1581,9 @@ function buildRunOptions(
         ? 0
         : DEFAULT_MAX_ENTRIES,
 
-    dataConcurrency:
-      1,
+    dataConcurrency: 1,
 
-    monitorOpenPositions:
-      true,
+    monitorOpenPositions: true,
 
     monitorOpenPositionsEnabled:
       true,
@@ -1839,35 +1705,19 @@ function buildRunOptions(
     actualScannerSide:
       TARGET_SCANNER_SIDE,
 
-    shortOnly:
-      true,
+    shortOnly: true,
+    longDisabled: true,
 
-    longDisabled:
-      true,
+    virtualOnly: true,
+    virtualLearning: true,
 
-    virtualOnly:
-      true,
+    realOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeCallsDisabled: true,
 
-    virtualLearning:
-      true,
-
-    realOrdersDisabled:
-      true,
-
-    exchangeOrdersDisabled:
-      true,
-
-    bitgetOrdersDisabled:
-      true,
-
-    exchangeCallsDisabled:
-      true,
-
-    noRealOrders:
-      true,
-
-    noExchangeOrders:
-      true,
+    noRealOrders: true,
+    noExchangeOrders: true,
 
     namespace:
       SHORT_NAMESPACE,
@@ -1974,13 +1824,18 @@ function buildRunOptions(
     responseCompaction:
       true,
 
+    routePersistsRunMeta:
+      false,
+
+    tradeSystemOwnsRunMetaPersistence:
+      true,
+
     details:
       debug,
 
     debug,
 
-    full:
-      false
+    full: false
   };
 }
 
@@ -1989,18 +1844,14 @@ function compactIds(
   requireMicroMicro = false
 ) {
   const rows =
-    Array.isArray(
-      values
-    )
+    Array.isArray(values)
       ? values
       : [];
 
   return [
     ...new Set(
       rows
-        .map(
-          upper
-        )
+        .map(upper)
         .filter(
           (value) =>
             value.startsWith(
@@ -2028,24 +1879,16 @@ function compactIds(
         .filter(
           (value) =>
             !requireMicroMicro ||
-            value.includes(
-              '_MM_'
-            )
+            value.includes('_MM_')
         )
     )
-  ].slice(
-    0,
-    100
-  );
+  ].slice(0, 100);
 }
 
-function compactAction(
-  row
-) {
+function compactAction(row) {
   if (
     !row ||
-    typeof row !==
-      'object'
+    typeof row !== 'object'
   ) {
     return row;
   }
@@ -2101,6 +1944,10 @@ function compactAction(
       row.rr ??
       null,
 
+    riskFractionForEntry:
+      row.riskFractionForEntry ??
+      null,
+
     signalType:
       row.signalType ||
       null,
@@ -2141,15 +1988,12 @@ function compactPayload(
 ) {
   const row =
     payload &&
-    typeof payload ===
-      'object'
+    typeof payload === 'object'
       ? payload
       : {};
 
   const actions =
-    Array.isArray(
-      row.actions
-    )
+    Array.isArray(row.actions)
       ? row.actions
       : [];
 
@@ -2164,20 +2008,86 @@ function compactPayload(
         ? row.shadowExits
         : [];
 
+  const snapshotChunkStart =
+    number(
+      first(
+        row.snapshotChunkStart,
+        row.chunkStart,
+        row.cursorStart
+      ),
+      0
+    );
+
+  const snapshotChunkNextIndex =
+    number(
+      first(
+        row.snapshotChunkNextIndex,
+        row.chunkNextIndex,
+        row.cursorNextIndex
+      ),
+      snapshotChunkStart
+    );
+
+  const snapshotChunkTotalCandidates =
+    number(
+      first(
+        row.snapshotChunkTotalCandidates,
+        row.snapshotTotalCandidates,
+        row.chunkTotalCandidates,
+        row.totalCandidates
+      ),
+      0
+    );
+
+  const snapshotChunkComplete =
+    Boolean(
+      row.snapshotChunkComplete === true ||
+      (
+        snapshotChunkTotalCandidates > 0 &&
+        snapshotChunkNextIndex >=
+          snapshotChunkTotalCandidates
+      )
+    );
+
+  const snapshotRemainingCandidates =
+    Math.max(
+      0,
+      snapshotChunkTotalCandidates -
+        snapshotChunkNextIndex
+    );
+
+  const snapshotProgressPct =
+    snapshotChunkTotalCandidates > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Number(
+              (
+                snapshotChunkNextIndex /
+                snapshotChunkTotalCandidates *
+                100
+              ).toFixed(2)
+            )
+          )
+        )
+      : 0;
+
   return {
     ok:
-      row.ok !==
-      false,
+      row.ok !== false,
 
     degraded:
-      Boolean(
-        row.degraded
-      ),
+      Boolean(row.degraded),
+
+    partial:
+      Boolean(row.partial),
+
+    timedOut:
+      Boolean(row.timedOut),
 
     skipped:
-      Boolean(
-        row.skipped
-      ),
+      Boolean(row.skipped),
 
     skippedNewEntries:
       Boolean(
@@ -2234,6 +2144,28 @@ function compactPayload(
       row.selectedSnapshotReason ||
       null,
 
+    snapshotChunkStart,
+
+    snapshotChunkNextIndex,
+
+    snapshotChunkTotalCandidates,
+
+    snapshotChunkComplete,
+
+    snapshotProgressPct,
+
+    snapshotRemainingCandidates,
+
+    snapshotCursorReset:
+      Boolean(
+        row.snapshotCursorReset
+      ),
+
+    snapshotCursorAdvanced:
+      Boolean(
+        row.snapshotCursorAdvanced
+      ),
+
     candidates:
       number(
         row.candidates,
@@ -2249,6 +2181,30 @@ function compactPayload(
     processed:
       number(
         row.processed,
+        0
+      ),
+
+    attempted:
+      number(
+        row.attempted,
+        0
+      ),
+
+    successfulCandidates:
+      number(
+        row.successfulCandidates,
+        0
+      ),
+
+    failedCandidates:
+      number(
+        row.failedCandidates,
+        0
+      ),
+
+    timedOutCandidates:
+      number(
+        row.timedOutCandidates,
         0
       ),
 
@@ -2463,10 +2419,7 @@ function compactPayload(
                 ? row
                     .qualityAudit
                     .topWaitReasons
-                    .slice(
-                      0,
-                      15
-                    )
+                    .slice(0, 15)
                 : []
           }
         : null,
@@ -2475,12 +2428,10 @@ function compactPayload(
       Array.isArray(
         row.runtimeWarnings
       )
-        ? row
-            .runtimeWarnings
-            .slice(
-              0,
-              40
-            )
+        ? row.runtimeWarnings.slice(
+            0,
+            40
+          )
         : [],
 
     entryRowsList:
@@ -2495,9 +2446,7 @@ function compactPayload(
               0,
               MAX_DEBUG_ROWS
             )
-            .map(
-              compactAction
-            )
+            .map(compactAction)
         : [],
 
     waitRowsList:
@@ -2512,9 +2461,7 @@ function compactPayload(
               0,
               MAX_DEBUG_ROWS
             )
-            .map(
-              compactAction
-            )
+            .map(compactAction)
         : [],
 
     virtualExits:
@@ -2524,9 +2471,7 @@ function compactPayload(
               0,
               MAX_DEBUG_ROWS
             )
-            .map(
-              compactAction
-            )
+            .map(compactAction)
         : [],
 
     ...baseFlags()
@@ -2541,20 +2486,14 @@ function routeTimeoutResponse({
   lock
 }) {
   return {
-    ok:
-      false,
+    ok: false,
+    tradeOk: false,
 
-    tradeOk:
-      false,
+    skipped: true,
+    partial: true,
+    timedOut: true,
 
-    skipped:
-      true,
-
-    partial:
-      true,
-
-    routeSoftTimeout:
-      true,
+    routeSoftTimeout: true,
 
     routeSoftTimeoutBeforeVercel504:
       true,
@@ -2566,7 +2505,7 @@ function routeTimeoutResponse({
       'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504',
 
     message:
-      'De route heeft vóór de Vercel-limiet geantwoord. De lopende TradeSystem-taak krijgt geen extra route-persistence. De SHORT-lock wordt door de taak zelf vrijgegeven of verloopt via TTL.',
+      'De route heeft vóór de Vercel-limiet geantwoord. De lopende TradeSystem-taak krijgt geen extra route-persistence. De eigen SHORT-lock wordt in de taak-finally vrijgegeven of verloopt via TTL.',
 
     routeSoftTimeoutMs,
 
@@ -2576,22 +2515,18 @@ function routeTimeoutResponse({
       ABSOLUTE_ROUTE_RETURN_MS,
 
     durationMs:
-      now() -
-      startedAt,
+      now() - startedAt,
 
     completedAt:
       now(),
 
     lock: {
-      key:
-        lockKey,
+      key: lockKey,
 
       acquired:
-        lock?.acquired ===
-        true,
+        lock?.acquired === true,
 
-      released:
-        false,
+      released: false,
 
       releaseMode:
         'TRADE_TASK_FINALLY_OR_TTL',
@@ -2604,8 +2539,10 @@ function routeTimeoutResponse({
       'VERCEL_504_PREVENTED_BY_ABSOLUTE_ROUTE_DEADLINE',
       'NO_REDIS_WRITE_WAIT_AFTER_ROUTE_TIMEOUT',
       'NO_DUPLICATE_ROUTE_PERSISTENCE',
+      'TRADE_TASK_OWNS_FINAL_LOCK_RELEASE',
       'OPEN_POSITION_MONITOR_LIMIT_REDUCED_TO_6',
-      'MAX_CANDIDATES_REDUCED_TO_2'
+      'MAX_CANDIDATES_REDUCED_TO_2',
+      'SNAPSHOT_CURSOR_NOT_RESET_BY_FORCE'
     ],
 
     ...baseFlags()
@@ -2619,14 +2556,10 @@ function lockActiveResponse(
   debug
 ) {
   return {
-    ok:
-      true,
+    ok: true,
+    tradeOk: true,
 
-    tradeOk:
-      true,
-
-    skipped:
-      true,
+    skipped: true,
 
     skippedNewEntries:
       true,
@@ -2641,20 +2574,15 @@ function lockActiveResponse(
       'Een vorige SHORT trade-run is nog actief. Deze cron-run is veilig overgeslagen.',
 
     lock: {
-      key:
-        lockKey,
-
-      active:
-        true,
+      key: lockKey,
+      active: true,
 
       ttlSec:
-        lock?.state
-          ?.ttlSec ??
+        lock?.state?.ttlSec ??
         null,
 
       ageSec:
-        lock?.state
-          ?.ageSec ??
+        lock?.state?.ageSec ??
         null,
 
       state:
@@ -2664,8 +2592,7 @@ function lockActiveResponse(
     },
 
     durationMs:
-      now() -
-      startedAt,
+      now() - startedAt,
 
     completedAt:
       now(),
@@ -2687,10 +2614,8 @@ function errorResponse(
     );
 
   const status =
-    requestedStatus >=
-      400 &&
-    requestedStatus <
-      500
+    requestedStatus >= 400 &&
+    requestedStatus < 500
       ? requestedStatus
       : 200;
 
@@ -2698,19 +2623,14 @@ function errorResponse(
     status,
 
     payload: {
-      ok:
-        false,
-
-      tradeOk:
-        false,
+      ok: false,
+      tradeOk: false,
 
       reason:
         'TRADE_RUN_CAUGHT_ERROR',
 
       error:
-        errorMessage(
-          error
-        ),
+        errorMessage(error),
 
       errorName:
         error?.name ||
@@ -2727,8 +2647,7 @@ function errorResponse(
       phase,
 
       availableExports:
-        error
-          ?.availableExports ||
+        error?.availableExports ||
         null,
 
       stack:
@@ -2740,8 +2659,7 @@ function errorResponse(
           : null,
 
       durationMs:
-        now() -
-        startedAt,
+        now() - startedAt,
 
       completedAt:
         now(),
@@ -2755,39 +2673,21 @@ export default async function handler(
   req,
   res
 ) {
-  setHeaders(
-    res
-  );
+  setHeaders(res);
 
-  const startedAt =
-    now();
+  const startedAt = now();
 
-  let phase =
-    'START';
-
-  let body =
-    {};
-
-  let debug =
-    false;
-
-  let redis =
-    null;
-
-  let keys =
-    buildKeys(
-      {}
-    );
-
-  let lock =
-    null;
+  let phase = 'START';
+  let body = {};
+  let debug = false;
+  let redis = null;
+  let keys = buildKeys({});
+  let lock = null;
 
   try {
     if (
-      req.method !==
-        'GET' &&
-      req.method !==
-        'POST'
+      req.method !== 'GET' &&
+      req.method !== 'POST'
     ) {
       res.setHeader(
         'Allow',
@@ -2795,12 +2695,9 @@ export default async function handler(
       );
 
       return res
-        .status(
-          405
-        )
+        .status(405)
         .json({
-          ok:
-            false,
+          ok: false,
 
           reason:
             'METHOD_NOT_ALLOWED',
@@ -2809,20 +2706,15 @@ export default async function handler(
         });
     }
 
-    phase =
-      'READ_BODY';
+    phase = 'READ_BODY';
 
     body =
       await boundedRequired(
-        readBody(
-          req
-        ),
-
+        readBody(req),
         boundedByRoute(
           startedAt,
           BODY_TIMEOUT_MS
         ),
-
         'READ_BODY'
       );
 
@@ -2832,8 +2724,7 @@ export default async function handler(
         body
       );
 
-    phase =
-      'LOAD_CORE';
+    phase = 'LOAD_CORE';
 
     const core =
       await loadCoreModules(
@@ -2845,17 +2736,12 @@ export default async function handler(
         core.KEYS
       );
 
-    phase =
-      'GET_REDIS';
+    phase = 'GET_REDIS';
 
     redis =
-      getDurableRedis(
-        core
-      );
+      getDurableRedis(core);
 
-    if (
-      !redis
-    ) {
+    if (!redis) {
       throw new Error(
         'DURABLE_REDIS_UNAVAILABLE'
       );
@@ -2867,8 +2753,7 @@ export default async function handler(
         body
       )
     ) {
-      phase =
-        'UNLOCK_ONLY';
+      phase = 'UNLOCK_ONLY';
 
       const stateBefore =
         await bounded(
@@ -2876,12 +2761,10 @@ export default async function handler(
             redis,
             keys.tradeLock
           ),
-
           boundedByRoute(
             startedAt,
             LOCK_STAGE_TIMEOUT_MS
           ),
-
           null
         );
 
@@ -2891,25 +2774,18 @@ export default async function handler(
             redis,
             keys.tradeLock
           ),
-
           boundedByRoute(
             startedAt,
             REDIS_TIMEOUT_MS
           ),
-
           false
         );
 
       return res
-        .status(
-          200
-        )
+        .status(200)
         .json({
-          ok:
-            true,
-
-          skipped:
-            true,
+          ok: true,
+          skipped: true,
 
           reason:
             'UNLOCK_ONLY',
@@ -2927,8 +2803,7 @@ export default async function handler(
           },
 
           durationMs:
-            now() -
-            startedAt,
+            now() - startedAt,
 
           completedAt:
             now(),
@@ -2937,45 +2812,33 @@ export default async function handler(
         });
     }
 
-    phase =
-      'ACQUIRE_LOCK';
+    phase = 'ACQUIRE_LOCK';
 
     lock =
       await boundedRequired(
         acquireLock(
           redis,
-
           keys.tradeLock,
-
           shouldForceUnlock(
             req,
             body
           )
         ),
-
         boundedByRoute(
           startedAt,
           LOCK_STAGE_TIMEOUT_MS
         ),
-
         'ACQUIRE_TRADE_LOCK'
       );
 
-    if (
-      !lock.acquired
-    ) {
+    if (!lock.acquired) {
       return res
-        .status(
-          200
-        )
+        .status(200)
         .json(
           lockActiveResponse(
             startedAt,
-
             keys.tradeLock,
-
             lock,
-
             debug
           )
         );
@@ -2995,16 +2858,13 @@ export default async function handler(
       getRouteSoftTimeoutMs(
         req,
         body,
-        core.CONFIG ||
-          {}
+        core.CONFIG || {}
       );
 
     const effectiveTradeWaitMs =
       boundedByRoute(
         startedAt,
-
         routeSoftTimeoutMs,
-
         ROUTE_RESPONSE_RESERVE_MS
       );
 
@@ -3014,7 +2874,6 @@ export default async function handler(
     ) {
       throw makeTimeoutError(
         'ROUTE_BUDGET_EXHAUSTED_BEFORE_TRADE_SYSTEM',
-
         effectiveTradeWaitMs
       );
     }
@@ -3029,73 +2888,57 @@ export default async function handler(
     phase =
       'RUN_TRADE_SYSTEM';
 
+    /*
+     * De lock hoort bij de volledige TradeSystem-taak.
+     * Bij een route-soft-timeout blijft de taak zelfstandig afronden.
+     * De taak-finally verwijdert alleen de lock die zij zelf bezit.
+     */
     const tradeTask =
-      (
-        async () => {
-          try {
-            return await runTradeSystem(
-              runOptions
-            );
-          } finally {
-            await bounded(
-              releaseOwnLock(
-                redis,
-
-                keys.tradeLock,
-
-                lock.lockValue
-              ),
-
-              LOCK_RELEASE_TIMEOUT_MS,
-
-              null
-            );
-          }
+      (async () => {
+        try {
+          return await runTradeSystem(
+            runOptions
+          );
+        } finally {
+          await bounded(
+            releaseOwnLock(
+              redis,
+              keys.tradeLock,
+              lock.lockValue
+            ),
+            LOCK_RELEASE_TIMEOUT_MS,
+            null
+          );
         }
-      )();
+      })();
 
     const result =
       await bounded(
         tradeTask,
-
         effectiveTradeWaitMs,
-
         () =>
           timeoutMarker(
             'RUN_TRADE_SYSTEM',
-
             effectiveTradeWaitMs
           )
       );
 
     if (
-      isTimeoutMarker(
-        result
-      )
+      isTimeoutMarker(result)
     ) {
       phase =
         'ROUTE_SOFT_TIMEOUT';
 
-      /*
-       * Geen await, geen Redis-write en geen lock-delete hier.
-       * De taak kan nog afronden; haar finally probeert de eigen lock vrij te geven.
-       * Anders vervalt de lock automatisch via TTL.
-       */
-      tradeTask
-        .catch(
-          () => null
-        );
+      tradeTask.catch(
+        () => null
+      );
 
       return res
-        .status(
-          200
-        )
+        .status(200)
         .json(
           routeTimeoutResponse({
             startedAt,
-
             routeSoftTimeoutMs,
-
             effectiveTradeWaitMs,
 
             lockKey:
@@ -3119,17 +2962,13 @@ export default async function handler(
       'SEND_RESPONSE';
 
     return res
-      .status(
-        200
-      )
+      .status(200)
       .json({
         ok:
-          payload.ok !==
-          false,
+          payload.ok !== false,
 
         tradeOk:
-          payload.ok !==
-          false,
+          payload.ok !== false,
 
         routeSoftTimeout:
           false,
@@ -3145,35 +2984,37 @@ export default async function handler(
           ABSOLUTE_ROUTE_RETURN_MS,
 
         maxTradeRuntimeMs:
-          runOptions
-            .maxRuntimeMs,
+          runOptions.maxRuntimeMs,
 
         monitorTimeoutMs:
-          runOptions
-            .monitorTimeoutMs,
+          runOptions.monitorTimeoutMs,
 
         monitorBatchSize:
-          runOptions
-            .monitorBatchSize,
+          runOptions.monitorBatchSize,
 
         openPositionMonitorLimit:
-          runOptions
-            .openPositionMonitorLimit,
+          runOptions.openPositionMonitorLimit,
 
         maxCandidatesPerSnapshot:
-          runOptions
-            .maxCandidatesPerSnapshot,
+          runOptions.maxCandidatesPerSnapshot,
+
+        candidateChunkSize:
+          runOptions.candidateChunkSize,
 
         maxEntriesPerRun:
-          runOptions
-            .maxEntriesPerRun,
+          runOptions.maxEntriesPerRun,
+
+        force:
+          runOptions.force,
+
+        resetSnapshotCursor:
+          runOptions.resetSnapshotCursor,
 
         lock: {
           key:
             keys.tradeLock,
 
-          acquired:
-            true,
+          acquired: true,
 
           releaseMode:
             'TRADE_TASK_FINALLY',
@@ -3199,10 +3040,6 @@ export default async function handler(
             MARKET_WEATHER_KEY
         },
 
-        /*
-         * Geen dubbele volledige payload meer.
-         * Alleen bij debug=true komt er een extra geneste run-kopie.
-         */
         run:
           debug
             ? payload
@@ -3211,17 +3048,14 @@ export default async function handler(
         ...payload,
 
         durationMs:
-          now() -
-          startedAt,
+          now() - startedAt,
 
         routeCompletedAt:
           now(),
 
         ...baseFlags()
       });
-  } catch (
-    error
-  ) {
+  } catch (error) {
     phase =
       `${phase}_CAUGHT`;
 
@@ -3234,49 +3068,36 @@ export default async function handler(
         await bounded(
           releaseOwnLock(
             redis,
-
             keys.tradeLock,
-
             lock.lockValue
           ),
-
           Math.min(
             LOCK_RELEASE_TIMEOUT_MS,
-
             Math.max(
               1,
-
               remainingRouteMs(
                 startedAt,
                 200
               )
             )
           ),
-
           null
         );
       }
     } catch {
-      // Een foutresponse mag nooit worden geblokkeerd door lock-release.
+      // Lock-release mag de foutresponse nooit blokkeren.
     }
 
     const response =
       errorResponse(
         error,
-
         startedAt,
-
         phase,
-
         debug
       );
 
     return res
-      .status(
-        response.status
-      )
-      .json(
-        response.payload
-      );
+      .status(response.status)
+      .json(response.payload);
   }
 }
