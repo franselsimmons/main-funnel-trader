@@ -28,10 +28,9 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const ADMIN_UI_VERSION =
-  'SHORT_ADMIN_MICRO_FAMILIES_V4_IMMUTABLE_ENTRY_NETR_GEOMETRY_SAFE';
-
+  'SHORT_ADMIN_MICRO_FAMILIES_V5_BOUNDED_PAGINATED_MEMOIZED';
 const MICRO_MICRO_RUNTIME_GATE_VERSION =
-  'SHORT_MM_RUNTIME_GATE_V6_IMMUTABLE_ENTRY_NETR_GEOMETRY_SAFE';
+  'SHORT_MM_RUNTIME_GATE_V7_BOUNDED_PAGINATED_MEMOIZED';
 
 const MARKET_WEATHER_KEY_VERSION = 'SHORT_MARKET_WEATHER_KEY_V1';
 const MARKET_WEATHER_AGGREGATION_VERSION =
@@ -85,13 +84,16 @@ const MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT = 0.25;
 
 const MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES = 2;
 
-const DEFAULT_LIMIT = 120;
-const MAX_LIMIT = 300;
-const DEFAULT_BEST_LIMIT = 120;
-const MAX_BEST_LIMIT = 300;
-
-const WEEK_MICROS_TIMEOUT_MS = 8_500;
-const ACTIVE_ROTATION_TIMEOUT_MS = 1_800;
+const DEFAULT_LIMIT = 60;
+const MAX_LIMIT = 150;
+const DEFAULT_BEST_LIMIT = 25;
+const MAX_BEST_LIMIT = 60;
+const WEEK_MICROS_TIMEOUT_MS = 7_500;
+const ACTIVE_ROTATION_TIMEOUT_MS = 1_500;
+const ROUTE_HARD_DEADLINE_MS = 18_500;
+const ROUTE_PROCESSING_RESERVE_MS = 1_250;
+const MAX_SOURCE_MICRO_ROWS = 5_000;
+const MAX_PLAYBOOK_CANDIDATES = 60;
 
 const CACHE_TTL_MS = 45_000;
 const CACHE_MAX_KEYS = 8;
@@ -138,12 +140,35 @@ const SIGNAL_RANK = Object.freeze({
 });
 
 const cache =
-  globalThis.__ADMIN_MICRO_FAMILIES_V4_IMMUTABLE_ENTRY_NETR_GEOMETRY_SAFE_CACHE__ ||= {
-    weekMicros: new Map()
+  globalThis.__ADMIN_MICRO_FAMILIES_V5_BOUNDED_PAGINATED_MEMOIZED_CACHE__ ||= {
+    weekMicros: new Map(),
+    activeRotation: {
+      ts: 0,
+      value: null
+    }
   };
 
 function now() {
   return Date.now();
+}
+
+function remainingMs(deadlineAt = 0) {
+  if (!Number.isFinite(Number(deadlineAt)) || Number(deadlineAt) <= 0) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Math.max(0, Number(deadlineAt) - now());
+}
+function deadlineReached(deadlineAt = 0, reserveMs = 0) {
+  return remainingMs(deadlineAt) <= Math.max(0, Number(reserveMs) || 0);
+}
+function boundedTimeoutMs(
+  requestedMs,
+  deadlineAt,
+  reserveMs = ROUTE_PROCESSING_RESERVE_MS
+) {
+  const requested = Math.max(1, Math.floor(Number(requestedMs) || 1));
+  const available = Math.max(1, remainingMs(deadlineAt) - reserveMs);
+  return Math.max(1, Math.min(requested, available));
 }
 
 function hasValue(value) {
@@ -221,6 +246,34 @@ function toSafeLimit(value, fallback = DEFAULT_LIMIT, max = MAX_LIMIT) {
   return Math.min(n, max);
 }
 
+function toSafeOffset(value, fallback = 0) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 0) {
+    return fallback;
+  }
+  return Math.min(n, 100_000);
+}
+function parsePagination(req, limit) {
+  const requestedPage = Math.floor(
+    Number(firstQueryValue(req.query?.page, 1))
+  );
+  const page =
+    Number.isFinite(requestedPage) && requestedPage >= 1
+      ? requestedPage
+      : 1;
+  const explicitOffset = firstQueryValue(
+    req.query?.offset,
+    null
+  );
+  const offset = hasValue(explicitOffset)
+    ? toSafeOffset(explicitOffset, 0)
+    : (page - 1) * limit;
+  return {
+    page,
+    offset
+  };
+}
+
 function flattenValues(values = []) {
   const stack = Array.isArray(values) ? [...values] : [values];
   const out = [];
@@ -280,16 +333,24 @@ function sourceEntriesFromMicros(micros = {}) {
 
 function withTimeout(promise, timeoutMs, code = 'TIMEOUT') {
   let timer = null;
-
+  const safeTimeoutMs = Math.max(
+    1,
+    Math.floor(Number(timeoutMs) || 1)
+  );
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       const error = new Error(code);
       error.code = code;
       reject(error);
-    }, Math.max(1, timeoutMs));
+    }, safeTimeoutMs);
+    if (typeof timer?.unref === 'function') {
+      timer.unref();
+    }
   });
-
-  return Promise.race([promise, timeout]).finally(() => {
+  return Promise.race([
+    Promise.resolve(promise),
+    timeout
+  ]).finally(() => {
     if (timer) clearTimeout(timer);
   });
 }
@@ -2226,6 +2287,26 @@ function microMicroRuntimeGate(row = {}) {
   };
 }
 
+// Helpers to reuse computed gates and stats
+function runtimeGateOf(row = {}) {
+  if (
+    row.microMicroRuntimeGate &&
+    typeof row.microMicroRuntimeGate === 'object'
+  ) {
+    return row.microMicroRuntimeGate;
+  }
+  return microMicroRuntimeGate(row);
+}
+function normalizedStatsOf(row = {}) {
+  if (
+    row.__normalizedNetStats &&
+    typeof row.__normalizedNetStats === 'object'
+  ) {
+    return row.__normalizedNetStats;
+  }
+  return normalizedNetStats(row);
+}
+
 function getWeatherStatsObject(row = {}) {
   return row.marketWeatherStats ||
     row.weatherStats ||
@@ -2630,19 +2711,53 @@ function netEdgeScore(row = {}) {
 }
 
 function compareRowsBase(a, b) {
+  const gateA = runtimeGateOf(a);
+  const gateB = runtimeGateOf(b);
   return (
-    (STATUS_RANK[microMicroRuntimeGate(a).status] ?? STATUS_RANK.UNKNOWN) -
-      (STATUS_RANK[microMicroRuntimeGate(b).status] ?? STATUS_RANK.UNKNOWN) ||
-    compareNumberDesc(netEdgeScore(a), netEdgeScore(b)) ||
-    compareNumberDesc(getLcb95AvgR(a) ?? 0, getLcb95AvgR(b) ?? 0) ||
-    compareNumberDesc(getTotalR(a), getTotalR(b)) ||
-    compareNumberDesc(getAvgR(a), getAvgR(b)) ||
-    compareNumberDesc(getProfitFactor(a), getProfitFactor(b)) ||
-    compareNumberAsc(getDirectSLPct(a), getDirectSLPct(b)) ||
-    compareNumberAsc(getAvgCostR(a), getAvgCostR(b)) ||
-    compareNumberDesc(getCompletedSample(a), getCompletedSample(b)) ||
-    compareNumberDesc(getObservationSample(a), getObservationSample(b)) ||
-    compareIdAsc(getExplicitMicroMicroId(a, a?.key), getExplicitMicroMicroId(b, b?.key))
+    (STATUS_RANK[gateA.status] ?? STATUS_RANK.UNKNOWN) -
+      (STATUS_RANK[gateB.status] ?? STATUS_RANK.UNKNOWN) ||
+    compareNumberDesc(
+      a.netEdgeScore ?? netEdgeScore(a),
+      b.netEdgeScore ?? netEdgeScore(b)
+    ) ||
+    compareNumberDesc(
+      a.lcb95AvgR ?? getLcb95AvgR(a) ?? 0,
+      b.lcb95AvgR ?? getLcb95AvgR(b) ?? 0
+    ) ||
+    compareNumberDesc(
+      a.totalR ?? getTotalR(a),
+      b.totalR ?? getTotalR(b)
+    ) ||
+    compareNumberDesc(
+      a.avgR ?? getAvgR(a),
+      b.avgR ?? getAvgR(b)
+    ) ||
+    compareNumberDesc(
+      a.profitFactor ?? getProfitFactor(a),
+      b.profitFactor ?? getProfitFactor(b)
+    ) ||
+    compareNumberAsc(
+      a.directSLPct ?? getDirectSLPct(a),
+      b.directSLPct ?? getDirectSLPct(b)
+    ) ||
+    compareNumberAsc(
+      a.avgCostR ?? getAvgCostR(a),
+      b.avgCostR ?? getAvgCostR(b)
+    ) ||
+    compareNumberDesc(
+      a.completed ?? getCompletedSample(a),
+      b.completed ?? getCompletedSample(b)
+    ) ||
+    compareNumberDesc(
+      a.observationSample ?? getObservationSample(a),
+      b.observationSample ?? getObservationSample(b)
+    ) ||
+    compareIdAsc(
+      a.trueMicroFamilyId ||
+        getExplicitMicroMicroId(a, a?.key),
+      b.trueMicroFamilyId ||
+        getExplicitMicroMicroId(b, b?.key)
+    )
   );
 }
 
@@ -2664,16 +2779,16 @@ function compareRowsByMode(a, b, mode = DEFAULT_RANK_MODE) {
 
   if (mode === 'passed') {
     return (
-      Number(microMicroRuntimeGate(b).status === MICRO_MICRO_STATUS_PASSED) -
-        Number(microMicroRuntimeGate(a).status === MICRO_MICRO_STATUS_PASSED) ||
+      Number(runtimeGateOf(b).status === MICRO_MICRO_STATUS_PASSED) -
+        Number(runtimeGateOf(a).status === MICRO_MICRO_STATUS_PASSED) ||
       compareRowsBase(a, b)
     );
   }
 
   if (mode === 'observe') {
     return (
-      Number(microMicroRuntimeGate(b).status === MICRO_MICRO_STATUS_OBSERVING) -
-        Number(microMicroRuntimeGate(a).status === MICRO_MICRO_STATUS_OBSERVING) ||
+      Number(runtimeGateOf(b).status === MICRO_MICRO_STATUS_OBSERVING) -
+        Number(runtimeGateOf(a).status === MICRO_MICRO_STATUS_OBSERVING) ||
       compareRowsBase(a, b)
     );
   }
@@ -2696,16 +2811,32 @@ function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), comp
   if (!parsed.isMicroMicro) return null;
   if (!isShortRow({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id })) return null;
 
-  const winrate = getSampleAdjustedWinrate(row);
-  const runtimeGate = microMicroRuntimeGate({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id });
-  const marketFields = entryMarketWeatherFields(row, currentMarket || {});
+  const normalizedStats = normalizedNetStats(row);
+  const rowWithIdentity = {
+    ...row,
+    trueMicroFamilyId: id,
+    microFamilyId: id,
+    microMicroFamilyId: id,
+    trueMicroMicroFamilyId: id,
+    exactMicroMicroFamilyId: id
+  };
+  const winrate = getSampleAdjustedWinrate(rowWithIdentity);
+  const runtimeGate = microMicroRuntimeGate(rowWithIdentity);
+  const marketFields = entryMarketWeatherFields(
+    rowWithIdentity,
+    currentMarket || {}
+  );
   const fit = getShortCurrentFit(row);
   const currentMarketCandidate = currentMarket
-    ? buildCurrentMarketCandidate({ ...row, trueMicroFamilyId: id, microMicroFamilyId: id }, currentMarket)
+    ? buildCurrentMarketCandidate(
+        rowWithIdentity,
+        currentMarket
+      )
     : null;
 
   const normalized = {
     ...row,
+    __normalizedNetStats: normalizedStats,
 
     rank: index + 1,
 
@@ -2785,9 +2916,10 @@ function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), comp
     directSLPct: round(getDirectSLPct(row), 4),
 
     netRStatsSourceOfTruth: true,
-    netRStatsSource: normalizedNetStats(row)?.source || null,
+    netRStatsSource: normalizedStats?.source || null,
     netRStatsPresent: Boolean(statsObject(row)),
-    recentOutcomesFallbackUsed: normalizedNetStats(row)?.source === 'RECENT_OUTCOMES_FALLBACK',
+    recentOutcomesFallbackUsed:
+      normalizedStats?.source === 'RECENT_OUTCOMES_FALLBACK',
 
     dashboardBalancedScore: round(row.dashboardBalancedScore ?? getBalancedScore(row, winrate), 4),
     balancedScore: round(row.balancedScore ?? getBalancedScore(row, winrate), 4),
@@ -2898,6 +3030,19 @@ function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), comp
     delete normalized.counters;
     delete normalized.rawCandles;
     delete normalized.rawKlines;
+    delete normalized.marketWeatherStats;
+    delete normalized.weatherStats;
+    delete normalized.entryMarketWeatherStats;
+    delete normalized.netRStats;
+    delete normalized.shortNetRStats;
+    delete normalized.outcomeNetRStats;
+    delete normalized.entryMarketWeatherRaw;
+    delete normalized.raw;
+    delete normalized.payload;
+    delete normalized.debug;
+    delete normalized.diagnostics;
+    delete normalized.riskDecision;
+    delete normalized.__normalizedNetStats;
   }
 
   return normalized;
@@ -2944,11 +3089,48 @@ function hiddenLayerCountsFromMicros(micros = {}) {
   return counts;
 }
 
-function buildRowsFromMicros(micros = {}, activeSet = new Set(), compact = true, currentMarket = null) {
+function buildRowsFromMicros(
+  micros = {},
+  activeSet = new Set(),
+  compact = true,
+  currentMarket = null,
+  options = {}
+) {
   const rows = [];
   const seen = new Set();
 
+  const deadlineAt = num(
+    options.deadlineAt,
+    0
+  );
+  const maxSourceRows = Math.max(
+    1,
+    Math.floor(
+      num(
+        options.maxSourceRows,
+        MAX_SOURCE_MICRO_ROWS
+      )
+    )
+  );
+  let sourceRowsInspected = 0;
+  let processingTruncated = false;
+
   for (const [key, row] of sourceEntriesFromMicros(micros)) {
+    if (sourceRowsInspected >= maxSourceRows) {
+      processingTruncated = true;
+      break;
+    }
+    if (
+      deadlineReached(
+        deadlineAt,
+        ROUTE_PROCESSING_RESERVE_MS
+      )
+    ) {
+      processingTruncated = true;
+      break;
+    }
+    sourceRowsInspected += 1;
+
     if (!row || typeof row !== 'object') continue;
 
     const id = getExplicitMicroMicroId({ ...row, key }, key);
@@ -2976,7 +3158,11 @@ function buildRowsFromMicros(micros = {}, activeSet = new Set(), compact = true,
     if (normalized) rows.push(normalized);
   }
 
-  return rows;
+  return {
+    rows,
+    sourceRowsInspected,
+    processingTruncated
+  };
 }
 
 function normalizeActiveRotationObject(rotation = null) {
@@ -3089,7 +3275,7 @@ function parseFilters(req) {
 
 function rowPassesFilters(row = {}, filters, activeSet = new Set()) {
   const parsed = parseShortTaxonomyMicroId(row.trueMicroFamilyId || row.microMicroFamilyId);
-  const gate = microMicroRuntimeGate(row);
+  const gate = runtimeGateOf(row);
 
   if (!isMicroMicroAnalyzeRow(row)) return false;
   if (filters.side && ['LONG', 'BULL', 'BULLISH', 'BUY'].includes(filters.side)) return false;
@@ -3120,30 +3306,43 @@ function countBy(rows = [], fn) {
 }
 
 function activationSummary(rows = []) {
-  const eligible = rows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED);
-  const blocked = rows.filter((row) => microMicroRuntimeGate(row).status !== MICRO_MICRO_STATUS_PASSED);
-
-  const blockedReasonCounts = blocked.reduce((acc, row) => {
-    const gate = microMicroRuntimeGate(row);
-
-    for (const reason of gate.reasons || [gate.reason || 'UNKNOWN']) {
-      acc[reason] = (acc[reason] || 0) + 1;
+  const eligible = [];
+  const blocked = [];
+  const blockedReasonCounts = {};
+  const statusCounts = {};
+  for (const row of rows) {
+    const gate = runtimeGateOf(row);
+    const status = gate.status || 'UNKNOWN';
+    statusCounts[status] =
+      (statusCounts[status] || 0) + 1;
+    if (status === MICRO_MICRO_STATUS_PASSED) {
+      eligible.push(row);
+      continue;
     }
-
-    return acc;
-  }, {});
-
+    blocked.push(row);
+    for (const reason of gate.reasons || [
+      gate.reason || 'UNKNOWN'
+    ]) {
+      blockedReasonCounts[reason] =
+        (blockedReasonCounts[reason] || 0) + 1;
+    }
+  }
   return {
     version: DISCORD_ACTIVATION_GATE_VERSION,
     runtimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
     total: rows.length,
     eligible: eligible.length,
     blocked: blocked.length,
-    statusCounts: countBy(rows, (row) => microMicroRuntimeGate(row).status),
-    eligibleIds: eligible.map((row) => row.trueMicroFamilyId),
-    topEligibleIds: eligible
+    statusCounts,
+    eligibleIds: eligible.map(
+      (row) => row.trueMicroFamilyId
+    ),
+    topEligibleIds: [...eligible]
       .sort(compareRowsBase)
-      .slice(0, MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES)
+      .slice(
+        0,
+        MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES
+      )
       .map((row) => row.trueMicroFamilyId),
     blockedReasonCounts,
     thresholds: activationGateConfig()
@@ -3187,11 +3386,24 @@ function compactBestRow(row = null) {
 
 function buildCurrentMarketPlaybook(rows = [], currentMarket = {}) {
   const candidates = rows
-    .map((row) => ({
-      ...row,
-      ...buildCurrentMarketCandidate(row, currentMarket)
-    }))
-    .sort(compareCurrentMarketCandidates);
+    .map((row) => {
+      if (
+        row.selectedFamilyId &&
+        row.signalType &&
+        hasValue(row.shrunkLCB95AvgR)
+      ) {
+        return row;
+      }
+      return {
+        ...row,
+        ...buildCurrentMarketCandidate(
+          row,
+          currentMarket
+        )
+      };
+    })
+    .sort(compareCurrentMarketCandidates)
+    .slice(0, MAX_PLAYBOOK_CANDIDATES);
 
   const tradeReady = candidates.find((row) => row.signalType === SIGNAL_TYPE_TRADE_READY) || null;
   const watch = candidates.find((row) => row.signalType === SIGNAL_TYPE_WATCH_ONLY) || null;
@@ -3286,11 +3498,17 @@ function buildSummary(rows = [], activeSet = new Set()) {
     observationSample: round(observationSample, 4),
     completedMicroMicroFamilies: rows.filter((row) => getCompletedSample(row) > 0).length,
 
-    runtimeStatusCounts: countBy(rows, (row) => microMicroRuntimeGate(row).status),
+    runtimeStatusCounts: countBy(
+      rows,
+      (row) => runtimeGateOf(row).status
+    ),
     signalTypeCounts: countBy(rows, (row) => upper(row.signalType || SIGNAL_TYPE_OBSERVE_ONLY)),
     currentFitCounts: countBy(rows, (row) => upper(row.currentFitLabel || row.currentFit || 'UNKNOWN')),
 
-    inheritedForbiddenPolicyIgnoredRows: rows.filter((row) => microMicroRuntimeGate(row).inheritedForbiddenPolicyIgnored).length,
+    inheritedForbiddenPolicyIgnoredRows: rows.filter(
+      (row) =>
+        runtimeGateOf(row).inheritedForbiddenPolicyIgnored
+    ).length,
 
     totalR: round(totalR, 4),
     totalCostR: round(totalCostR, 4),
@@ -3312,7 +3530,11 @@ function getCachedWeekMicros(weekKey) {
   return null;
 }
 
-async function getWeekMicrosCached(weekKey, timeoutMs = WEEK_MICROS_TIMEOUT_MS) {
+async function getWeekMicrosCached(
+  weekKey,
+  timeoutMs = WEEK_MICROS_TIMEOUT_MS,
+  deadlineAt = 0
+) {
   const cached = getCachedWeekMicros(weekKey);
 
   if (cached) {
@@ -3328,7 +3550,10 @@ async function getWeekMicrosCached(weekKey, timeoutMs = WEEK_MICROS_TIMEOUT_MS) 
   try {
     const micros = await withTimeout(
       getWeekMicros(weekKey),
-      timeoutMs,
+      boundedTimeoutMs(
+        timeoutMs,
+        deadlineAt
+      ),
       `GET_WEEK_MICROS_TIMEOUT_${weekKey}`
     );
 
@@ -3373,15 +3598,19 @@ async function getWeekMicrosCached(weekKey, timeoutMs = WEEK_MICROS_TIMEOUT_MS) 
   }
 }
 
-async function getActiveRotationSafe() {
+async function getActiveRotationSafe(
+  deadlineAt = 0
+) {
+  const cached = cache.activeRotation;
   try {
-    return await withTimeout(
+    const value = await withTimeout(
       getActiveRotation({
         tradeSide: TARGET_TRADE_SIDE,
         side: TARGET_DASHBOARD_SIDE,
         dashboardSide: TARGET_DASHBOARD_SIDE,
         weekKey: PERSISTENT_LEARNING_KEY,
-        persistentLearningKey: PERSISTENT_LEARNING_KEY,
+        persistentLearningKey:
+          PERSISTENT_LEARNING_KEY,
         namespace: SHORT_NAMESPACE,
         keyPrefix: SHORT_KEY_PREFIX,
         redisNamespace: SHORT_NAMESPACE,
@@ -3390,17 +3619,51 @@ async function getActiveRotationSafe() {
         longDisabled: true,
         microMicroOnly: true,
         selectableMicroMicroOnly: true,
-        selectionGranularity: 'EXACT_MICRO_MICRO_ONLY',
+        selectionGranularity:
+          'EXACT_MICRO_MICRO_ONLY',
         discordOnlyForExactMicroMicroMatch: true,
-        microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
-        discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-        empiricalVetoVersion: EMPIRICAL_VETO_VERSION
+        microMicroRuntimeGateVersion:
+          MICRO_MICRO_RUNTIME_GATE_VERSION,
+        discordActivationGateVersion:
+          DISCORD_ACTIVATION_GATE_VERSION,
+        empiricalVetoVersion:
+          EMPIRICAL_VETO_VERSION
       }),
-      ACTIVE_ROTATION_TIMEOUT_MS,
+      boundedTimeoutMs(
+        ACTIVE_ROTATION_TIMEOUT_MS,
+        deadlineAt
+      ),
       'GET_ACTIVE_ROTATION_TIMEOUT'
     );
-  } catch {
-    return null;
+    cache.activeRotation = {
+      ts: now(),
+      value: value || null
+    };
+    return {
+      value: value || null,
+      cacheHit: false,
+      stale: false,
+      warning: null
+    };
+  } catch (error) {
+    if (cached?.value) {
+      return {
+        value: cached.value,
+        cacheHit: true,
+        stale: true,
+        warning:
+          error?.message ||
+          String(error)
+      };
+    }
+    return {
+      value: null,
+      cacheHit: false,
+      stale: false,
+      warning:
+        error?.message ||
+        String(error)
+    };
   }
 }
 
@@ -3417,7 +3680,7 @@ function methodNotAllowed(res) {
 
 function setHeaders(res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-v4-immutable-entry-netr-geometry-safe');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-v5-bounded-paginated-memoized');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -3444,6 +3707,8 @@ function setHeaders(res) {
 
 export default async function handler(req, res) {
   const startedAt = now();
+  const deadlineAt =
+    startedAt + ROUTE_HARD_DEADLINE_MS;
   setHeaders(res);
 
   if (req.method !== 'GET') return methodNotAllowed(res);
@@ -3461,10 +3726,28 @@ export default async function handler(req, res) {
     const filters = parseFilters(req);
     const currentMarket = currentMarketWeatherFromQuery(req);
 
-    const [activeRotationRaw, weekResult] = await Promise.all([
-      getActiveRotationSafe(),
-      getWeekMicrosCached(PERSISTENT_LEARNING_KEY, WEEK_MICROS_TIMEOUT_MS)
+    const pagination = parsePagination(
+      req,
+      limit
+    );
+    const {
+      page,
+      offset
+    } = pagination;
+
+    const [
+      activeRotationResult,
+      weekResult
+    ] = await Promise.all([
+      getActiveRotationSafe(deadlineAt),
+      getWeekMicrosCached(
+        PERSISTENT_LEARNING_KEY,
+        WEEK_MICROS_TIMEOUT_MS,
+        deadlineAt
+      )
     ]);
+    const activeRotationRaw =
+      activeRotationResult.value;
 
     const configuredActiveMicroMicroFamilyIds = extractActiveMicroMicroIds(activeRotationRaw);
     const legacyChild75ActiveIdsIgnored = extractLegacyActiveChild75Ids(activeRotationRaw);
@@ -3472,22 +3755,44 @@ export default async function handler(req, res) {
     const activeSet = new Set(configuredActiveMicroMicroFamilyIds);
     const hiddenCounts = hiddenLayerCountsFromMicros(weekResult.micros);
 
-    const rows = buildRowsFromMicros(
-      weekResult.micros,
-      activeSet,
-      compact,
-      currentMarket
-    )
-      .map((row) => ({
-        ...row,
-        ...buildCurrentMarketCandidate(row, currentMarket)
-      }))
+    const builtRowsResult =
+      buildRowsFromMicros(
+        weekResult.micros,
+        activeSet,
+        compact,
+        currentMarket,
+        {
+          deadlineAt,
+          maxSourceRows:
+            MAX_SOURCE_MICRO_ROWS
+        }
+      );
+    const rows = builtRowsResult.rows
       .filter(isMicroMicroAnalyzeRow);
 
-    const runtimeEligibleActiveIds = configuredActiveMicroMicroFamilyIds.filter((id) => {
-      const row = rows.find((item) => item.trueMicroFamilyId === id) || { id, key: id };
-      return microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED;
-    });
+    const rowById = new Map(
+      rows.map((row) => [
+        row.trueMicroFamilyId,
+        row
+      ])
+    );
+    const runtimeEligibleActiveIds =
+      configuredActiveMicroMicroFamilyIds.filter(
+        (id) => {
+          const row =
+            rowById.get(id) ||
+            {
+              id,
+              key: id,
+              trueMicroFamilyId: id,
+              microMicroFamilyId: id
+            };
+          return (
+            runtimeGateOf(row).status ===
+            MICRO_MICRO_STATUS_PASSED
+          );
+        }
+      );
 
     const runtimeBlockedActiveIds = configuredActiveMicroMicroFamilyIds.filter(
       (id) => !runtimeEligibleActiveIds.includes(id)
@@ -3495,14 +3800,26 @@ export default async function handler(req, res) {
 
     const runtimeEligibleActiveSet = new Set(runtimeEligibleActiveIds);
 
-    const rowsWithActive = rows.map((row) => ({
-      ...row,
-      active: runtimeEligibleActiveSet.has(row.trueMicroFamilyId),
-      activeRawSelection: activeSet.has(row.trueMicroFamilyId),
-      activeDiscordEligible:
-        runtimeEligibleActiveSet.has(row.trueMicroFamilyId) &&
-        microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED
-    }));
+    const rowsWithActive = rows.map((row) => {
+      const gate = runtimeGateOf(row);
+      return {
+        ...row,
+        active:
+          runtimeEligibleActiveSet.has(
+            row.trueMicroFamilyId
+          ),
+        activeRawSelection:
+          activeSet.has(
+            row.trueMicroFamilyId
+          ),
+        activeDiscordEligible:
+          runtimeEligibleActiveSet.has(
+            row.trueMicroFamilyId
+          ) &&
+          gate.status ===
+            MICRO_MICRO_STATUS_PASSED
+      };
+    });
 
     const filteredRows = rowsWithActive.filter((row) => rowPassesFilters(row, filters, runtimeEligibleActiveSet));
 
@@ -3516,13 +3833,20 @@ export default async function handler(req, res) {
       .map((row, index) => ({ ...row, rank: index + 1 }));
 
     const responseRows = rankedRows
-      .slice(0, limit)
-      .map((row, index) => normalizeMicroMicroRow(row, index, runtimeEligibleActiveSet, compact, currentMarket))
-      .filter(Boolean);
+      .slice(
+        offset,
+        offset + limit
+      )
+      .map((row, index) => ({
+        ...row,
+        rank: offset + index + 1
+      }));
 
-    const bestMicroMicroFamilies = bestRows
-      .map((row, index) => normalizeMicroMicroRow(row, index, runtimeEligibleActiveSet, compact, currentMarket))
-      .filter(Boolean);
+    const bestMicroMicroFamilies =
+      bestRows.map((row, index) => ({
+        ...row,
+        rank: index + 1
+      }));
 
     const currentMarketPlaybook = buildCurrentMarketPlaybook(rowsWithActive, currentMarket);
 
@@ -3530,19 +3854,22 @@ export default async function handler(req, res) {
     const filteredActivation = activationSummary(rankedRows);
 
     const inheritedForbiddenPolicyIgnoredRows = rowsWithActive.filter(
-      (row) => microMicroRuntimeGate(row).inheritedForbiddenPolicyIgnored
+      (row) => runtimeGateOf(row).inheritedForbiddenPolicyIgnored
     ).length;
 
     const invalidGeometryPolicyRows = rowsWithActive.filter(
-      (row) => microMicroRuntimeGate(row).policyReasons.includes('INVALID_SHORT_GEOMETRY_POLICY_BLOCK')
+      (row) => runtimeGateOf(row).policyReasons.includes('INVALID_SHORT_GEOMETRY_POLICY_BLOCK')
     ).length;
 
     const aggregateGeometryIgnoredRows = rowsWithActive.filter(
-      (row) => microMicroRuntimeGate(row).aggregateStatsRowGeometryIgnored
+      (row) => runtimeGateOf(row).aggregateStatsRowGeometryIgnored
     ).length;
 
     const netRStatsRows = rowsWithActive.filter(
-      (row) => Boolean(normalizedNetStats(row))
+      (row) => Boolean(
+        row.__normalizedNetStats ||
+        normalizedStatsOf(row)
+      )
     ).length;
 
     const warnings = uniqueWarnings([
@@ -3550,6 +3877,16 @@ export default async function handler(req, res) {
         ? `QUERY_WEEKKEY_IGNORED_USING_PERSISTENT:${requestedQueryWeekKey}`
         : null,
       weekResult.warning,
+      activeRotationResult.warning,
+      activeRotationResult.stale
+        ? 'USING_STALE_ACTIVE_ROTATION_CACHE'
+        : null,
+      builtRowsResult.processingTruncated
+        ? `MICRO_FAMILY_PROCESSING_TRUNCATED:${builtRowsResult.sourceRowsInspected}`
+        : null,
+      deadlineReached(deadlineAt)
+        ? 'ADMIN_MICRO_FAMILIES_INTERNAL_DEADLINE_REACHED'
+        : null,
       weekResult.stale ? 'USING_STALE_WEEK_MICROS_CACHE' : null,
       legacyChild75ActiveIdsIgnored.length > 0
         ? `LEGACY_CHILD75_ACTIVE_IDS_IGNORED_MICRO_MICRO_ONLY:${legacyChild75ActiveIdsIgnored.length}`
@@ -3772,10 +4109,12 @@ export default async function handler(req, res) {
       },
 
       weekKey: PERSISTENT_LEARNING_KEY,
-      requestedWeekKey: PERSISTENT_LEARNING_KEY,
+      requestedWeekKey:
+        requestedQueryWeekKey,
       requestedQueryWeekKey,
       ignoredQueryWeekKey: requestedQueryWeekKey !== PERSISTENT_LEARNING_KEY ? requestedQueryWeekKey : null,
-      sourceWeekKeyUsed: PERSISTENT_LEARNING_KEY,
+      sourceWeekKeyUsed:
+        PERSISTENT_LEARNING_KEY,
       source: 'persistentLearningKey',
 
       mode,
@@ -3783,6 +4122,39 @@ export default async function handler(req, res) {
       bestLimit,
       filters,
       compact,
+      page,
+      offset,
+      pagination: {
+        page,
+        offset,
+        limit,
+        returned:
+          responseRows.length,
+        filteredTotal:
+          rankedRows.length,
+        totalAvailable:
+          rowsWithActive.length,
+        hasPrevious:
+          offset > 0,
+        hasMore:
+          offset + responseRows.length <
+          rankedRows.length,
+        nextOffset:
+          offset + responseRows.length <
+          rankedRows.length
+            ? offset + responseRows.length
+            : null,
+        previousOffset:
+          offset > 0
+            ? Math.max(0, offset - limit)
+            : null,
+        totalPages:
+          limit > 0
+            ? Math.ceil(
+                rankedRows.length / limit
+              )
+            : 0
+      },
 
       count: responseRows.length,
       filtered: rankedRows.length,
@@ -3813,7 +4185,10 @@ export default async function handler(req, res) {
       rawExecutionFingerprintRowsHidden: hiddenCounts.executionFingerprint,
       rawLongRowsHidden: hiddenCounts.long,
 
-      runtimeStatusCounts: countBy(rowsWithActive, (row) => microMicroRuntimeGate(row).status),
+      runtimeStatusCounts: countBy(
+        rowsWithActive,
+        (row) => runtimeGateOf(row).status
+      ),
       signalTypeCounts: countBy(rowsWithActive, (row) => upper(row.signalType || SIGNAL_TYPE_OBSERVE_ONLY)),
       currentFitCounts: countBy(rowsWithActive, (row) => upper(row.currentFitLabel || row.currentFit || 'UNKNOWN')),
 
@@ -3870,22 +4245,85 @@ export default async function handler(req, res) {
       error: null,
 
       perf: {
-        durationMs: now() - startedAt,
-        weekMicrosCacheHit: Boolean(weekResult.cacheHit),
-        weekMicrosCacheStale: Boolean(weekResult.stale),
-        weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnlyExactMicroMicroV4ImmutableEntryNetRGeometrySafe',
-        compactPayload: compact
+        durationMs:
+          now() - startedAt,
+        hardDeadlineMs:
+          ROUTE_HARD_DEADLINE_MS,
+        remainingMsAtResponse:
+          remainingMs(deadlineAt),
+        deadlineReached:
+          deadlineReached(deadlineAt),
+        processingTruncated:
+          builtRowsResult.processingTruncated,
+        sourceRowsInspected:
+          builtRowsResult.sourceRowsInspected,
+        normalizedRows:
+          rows.length,
+        filteredRows:
+          rankedRows.length,
+        returnedRows:
+          responseRows.length,
+        weekMicrosCacheHit:
+          Boolean(weekResult.cacheHit),
+        weekMicrosCacheStale:
+          Boolean(weekResult.stale),
+        weekMicrosCacheSize:
+          cache.weekMicros.size,
+        activeRotationCacheHit:
+          Boolean(
+            activeRotationResult.cacheHit
+          ),
+        activeRotationCacheStale:
+          Boolean(
+            activeRotationResult.stale
+          ),
+        path:
+          'shortOnlyExactMicroMicroV5BoundedPaginatedMemoized',
+        compactPayload:
+          compact
       },
 
       serverTs: Date.now()
     });
   } catch (error) {
-    return res.status(500).json({
+    return res.status(200).json({
       ok: false,
+      degraded: true,
       ...modePayload(),
-      error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+      rows: [],
+      microRows: [],
+      microFamilies: [],
+      microMicroRows: [],
+      microMicroFamilies: [],
+      bestRows: [],
+      bestMicroMicroFamilies: [],
+      count: 0,
+      filtered: 0,
+      totalAvailable: 0,
+      currentMarketPlaybook: null,
+      bestForCurrentMarket: null,
+      warnings: [
+        'ADMIN_MICRO_FAMILIES_DEGRADED_RESPONSE_INSTEAD_OF_HTTP_500'
+      ],
+      error:
+        error?.message ||
+        String(error),
+      stack:
+        process.env.NODE_ENV ===
+        'production'
+          ? undefined
+          : error?.stack,
+      perf: {
+        durationMs:
+          now() - startedAt,
+        hardDeadlineMs:
+          ROUTE_HARD_DEADLINE_MS,
+        deadlineReached:
+          deadlineReached(deadlineAt),
+        path:
+          'shortOnlyExactMicroMicroV5Degraded'
+      },
+      serverTs: Date.now()
     });
   }
 }
