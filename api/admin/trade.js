@@ -192,7 +192,7 @@ const SHORT_KEYS = {
       KEYS.short?.trade?.runMeta ||
         KEYS.trade?.shortRunMeta ||
         KEYS.trade?.runMeta,
-      'TRADE:RUN_META'
+      'TRADE:RUN:META'
     ),
 
     lastProcessedSnapshot: namespacedShortKey(
@@ -218,6 +218,10 @@ const SHORT_KEYS = {
     )
   }
 };
+
+const LEGACY_SHORT_KEYS = Object.freeze({
+  tradeRunMeta: `${SHORT_KEY_PREFIX}TRADE:RUN_META`
+});
 
 function flattenValues(values = []) {
   const stack = Array.isArray(values) ? [...values] : [values];
@@ -379,6 +383,55 @@ async function readJsonFromStores({ durable, volatile, key, fallback = null }) {
   return {
     value: fallback,
     source: null
+  };
+}
+
+async function readTradeRunMetaFromStores({
+  durable,
+  volatile
+} = {}) {
+  const primaryRead = await readJsonFromStores({
+    durable,
+    volatile,
+    key: SHORT_KEYS.trade.runMeta,
+    fallback: null
+  });
+  if (
+    primaryRead.value !== null &&
+    primaryRead.value !== undefined
+  ) {
+    return {
+      ...primaryRead,
+      key: SHORT_KEYS.trade.runMeta,
+      legacyFallbackUsed: false
+    };
+  }
+  if (
+    LEGACY_SHORT_KEYS.tradeRunMeta &&
+    LEGACY_SHORT_KEYS.tradeRunMeta !== SHORT_KEYS.trade.runMeta
+  ) {
+    const legacyRead = await readJsonFromStores({
+      durable,
+      volatile,
+      key: LEGACY_SHORT_KEYS.tradeRunMeta,
+      fallback: null
+    });
+    if (
+      legacyRead.value !== null &&
+      legacyRead.value !== undefined
+    ) {
+      return {
+        ...legacyRead,
+        key: LEGACY_SHORT_KEYS.tradeRunMeta,
+        legacyFallbackUsed: true
+      };
+    }
+  }
+  return {
+    value: null,
+    source: null,
+    key: SHORT_KEYS.trade.runMeta,
+    legacyFallbackUsed: false
   };
 }
 
@@ -2579,19 +2632,29 @@ function buildPositionStats(positions = [], ignored = {}) {
 
 function extractSnapshotId(value) {
   if (!value) return null;
-  if (typeof value === 'string') return value;
-
-  if (typeof value === 'object') {
-    return (
-      value.snapshotId ||
-      value.id ||
-      value.latestSnapshotId ||
-      value.scanId ||
-      null
-    );
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
   }
-
-  return null;
+  if (
+    typeof value !== 'object' ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+  return (
+    value.snapshotId ||
+    value.id ||
+    value.latestSnapshotId ||
+    value.scanId ||
+    value.snapshot?.snapshotId ||
+    value.snapshot?.id ||
+    value.snapshot?.scanId ||
+    value.pointer?.snapshotId ||
+    value.pointer?.id ||
+    value.meta?.snapshotId ||
+    null
+  );
 }
 
 function normalizeLastProcessed(lastProcessed) {
@@ -2618,6 +2681,253 @@ function normalizeLastProcessed(lastProcessed) {
     ...modeFlags(),
     snapshotId,
     raw: lastProcessed
+  };
+}
+
+function booleanValue(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  const raw = lower(value);
+  if (['true', '1', 'yes', 'y', 'complete', 'completed', 'done'].includes(raw)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'n', 'processing', 'pending'].includes(raw)) {
+    return false;
+  }
+  return fallback;
+}
+
+function clampInteger(
+  value,
+  fallback = 0,
+  min = 0,
+  max = Number.MAX_SAFE_INTEGER
+) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(min, Math.min(max, Math.floor(fallback)));
+  }
+  return Math.max(
+    min,
+    Math.min(
+      max,
+      Math.floor(parsed)
+    )
+  );
+}
+
+function extractSnapshotCandidateCount(value) {
+  if (
+    !value ||
+    typeof value !== 'object'
+  ) {
+    return 0;
+  }
+  const directCandidates = Array.isArray(value.candidates)
+    ? value.candidates
+    : null;
+  const nestedCandidates = Array.isArray(value.snapshot?.candidates)
+    ? value.snapshot.candidates
+    : null;
+  const directCount = firstFinite(
+    value.snapshotChunkTotalCandidates,
+    value.totalCandidates,
+    value.candidatesCount,
+    value.shortCandidatesCount,
+    value.rawCandidatesCount,
+    value.candidateCount,
+    value.total
+  );
+  const nestedCount = firstFinite(
+    value.snapshot?.snapshotChunkTotalCandidates,
+    value.snapshot?.totalCandidates,
+    value.snapshot?.candidatesCount,
+    value.snapshot?.shortCandidatesCount,
+    value.snapshot?.rawCandidatesCount,
+    value.snapshot?.candidateCount,
+    value.snapshot?.total
+  );
+  if (directCount !== null) {
+    return clampInteger(directCount, 0, 0);
+  }
+  if (nestedCount !== null) {
+    return clampInteger(nestedCount, 0, 0);
+  }
+  if (directCandidates) {
+    return directCandidates.length;
+  }
+  if (nestedCandidates) {
+    return nestedCandidates.length;
+  }
+  return 0;
+}
+
+function buildSnapshotProcessingState({
+  latestScanRaw = null,
+  runMeta = null,
+  lastProcessed = null
+} = {}) {
+  const latestScannerSnapshotId =
+    extractSnapshotId(latestScanRaw);
+  const activeTradeSnapshotId =
+    extractSnapshotId(
+      runMeta?.snapshotId ||
+      runMeta?.activeSnapshotId ||
+      runMeta?.processingSnapshotId ||
+      runMeta?.snapshotCursor?.snapshotId ||
+      runMeta?.cursor?.snapshotId ||
+      runMeta?.snapshot
+    );
+  const lastProcessedSnapshotId =
+    extractSnapshotId(lastProcessed);
+  const latestCandidateCount =
+    extractSnapshotCandidateCount(latestScanRaw);
+  const rawChunkStart = firstFinite(
+    runMeta?.snapshotChunkStart,
+    runMeta?.chunkStart,
+    runMeta?.snapshotCursorStart,
+    runMeta?.snapshotCursor?.start,
+    runMeta?.cursor?.start,
+    0
+  );
+  const rawNextIndex = firstFinite(
+    runMeta?.snapshotChunkNextIndex,
+    runMeta?.nextCandidateIndex,
+    runMeta?.snapshotCursorNextIndex,
+    runMeta?.snapshotCursor?.nextIndex,
+    runMeta?.cursor?.nextIndex,
+    runMeta?.cursor?.index,
+    rawChunkStart,
+    0
+  );
+  const rawTotalCandidates = firstFinite(
+    runMeta?.snapshotChunkTotalCandidates,
+    runMeta?.totalCandidates,
+    runMeta?.snapshotCandidateCount,
+    runMeta?.snapshotCursor?.totalCandidates,
+    runMeta?.cursor?.totalCandidates,
+    latestCandidateCount
+  );
+  const snapshotChunkTotalCandidates =
+    clampInteger(
+      rawTotalCandidates,
+      latestCandidateCount,
+      0
+    );
+  const snapshotChunkStart =
+    clampInteger(
+      rawChunkStart,
+      0,
+      0,
+      snapshotChunkTotalCandidates > 0
+        ? snapshotChunkTotalCandidates
+        : Number.MAX_SAFE_INTEGER
+    );
+  const snapshotChunkNextIndex =
+    clampInteger(
+      rawNextIndex,
+      snapshotChunkStart,
+      0,
+      snapshotChunkTotalCandidates > 0
+        ? snapshotChunkTotalCandidates
+        : Number.MAX_SAFE_INTEGER
+    );
+  const explicitChunkComplete =
+    booleanValue(
+      firstValue(
+        runMeta?.snapshotChunkComplete,
+        runMeta?.snapshotComplete,
+        runMeta?.cursorComplete,
+        runMeta?.snapshotCursor?.complete,
+        runMeta?.cursor?.complete
+      ),
+      false
+    );
+  const completeByIndex =
+    snapshotChunkTotalCandidates > 0 &&
+    snapshotChunkNextIndex >= snapshotChunkTotalCandidates;
+  const completeByLastProcessed =
+    Boolean(latestScannerSnapshotId) &&
+    Boolean(lastProcessedSnapshotId) &&
+    latestScannerSnapshotId === lastProcessedSnapshotId;
+  const sameSnapshotActive =
+    Boolean(latestScannerSnapshotId) &&
+    Boolean(activeTradeSnapshotId) &&
+    latestScannerSnapshotId === activeTradeSnapshotId;
+  const snapshotChunkComplete =
+    Boolean(
+      completeByLastProcessed ||
+      (
+        sameSnapshotActive &&
+        (
+          explicitChunkComplete ||
+          completeByIndex
+        )
+      )
+    );
+  const processingCurrentSnapshot =
+    Boolean(
+      sameSnapshotActive &&
+      !snapshotChunkComplete &&
+      snapshotChunkNextIndex > 0 &&
+      (
+        snapshotChunkTotalCandidates <= 0 ||
+        snapshotChunkNextIndex < snapshotChunkTotalCandidates
+      )
+    );
+  let scannerTradeStatus = 'BEHIND';
+  if (snapshotChunkComplete) {
+    scannerTradeStatus = 'COMPLETE';
+  } else if (processingCurrentSnapshot) {
+    scannerTradeStatus = 'PROCESSING';
+  }
+  const snapshotRemainingCandidates =
+    snapshotChunkTotalCandidates > 0
+      ? Math.max(
+          0,
+          snapshotChunkTotalCandidates -
+          snapshotChunkNextIndex
+        )
+      : null;
+  const snapshotProgressPct =
+    snapshotChunkTotalCandidates > 0
+      ? round(
+          Math.min(
+            100,
+            Math.max(
+              0,
+              (
+                snapshotChunkNextIndex /
+                snapshotChunkTotalCandidates
+              ) *
+                100
+            )
+          ),
+          2
+        )
+      : snapshotChunkComplete
+        ? 100
+        : 0;
+  return {
+    scannerTradeStatus,
+    scannerAndTradeInSync:
+      scannerTradeStatus === 'COMPLETE',
+    latestScannerSnapshotId,
+    activeTradeSnapshotId,
+    lastProcessedSnapshotId,
+    sameSnapshotActive,
+    processingCurrentSnapshot,
+    snapshotChunkStart,
+    snapshotChunkNextIndex,
+    snapshotChunkTotalCandidates,
+    snapshotChunkComplete,
+    snapshotProgressPct,
+    snapshotRemainingCandidates,
+    completeByLastProcessed,
+    completeByIndex,
+    explicitChunkComplete
   };
 }
 
@@ -2996,12 +3306,73 @@ function normalizeRunMeta(runMeta, currentMarketWeather = {}, helpers = {}) {
     completedAt: runMeta.completedAt || null,
     durationMs: runMeta.durationMs ?? null,
 
-    snapshotId: runMeta.snapshotId || null,
-    snapshotAgeSec: runMeta.snapshotAgeSec ?? null,
-
-    skippedNewEntries: Boolean(runMeta.skippedNewEntries),
-    skipReason: runMeta.skipReason || runMeta.reason || null,
-    reason: runMeta.reason || runMeta.skipReason || null
+    snapshotId:
+      runMeta.snapshotId ||
+      runMeta.activeSnapshotId ||
+      runMeta.processingSnapshotId ||
+      runMeta.snapshotCursor?.snapshotId ||
+      runMeta.cursor?.snapshotId ||
+      null,
+    snapshotAgeSec:
+      runMeta.snapshotAgeSec ??
+      null,
+    snapshotChunkStart: clampInteger(
+      firstFinite(
+        runMeta.snapshotChunkStart,
+        runMeta.chunkStart,
+        runMeta.snapshotCursorStart,
+        runMeta.snapshotCursor?.start,
+        runMeta.cursor?.start,
+        0
+      ),
+      0,
+      0
+    ),
+    snapshotChunkNextIndex: clampInteger(
+      firstFinite(
+        runMeta.snapshotChunkNextIndex,
+        runMeta.nextCandidateIndex,
+        runMeta.snapshotCursorNextIndex,
+        runMeta.snapshotCursor?.nextIndex,
+        runMeta.cursor?.nextIndex,
+        runMeta.cursor?.index,
+        0
+      ),
+      0,
+      0
+    ),
+    snapshotChunkTotalCandidates: clampInteger(
+      firstFinite(
+        runMeta.snapshotChunkTotalCandidates,
+        runMeta.totalCandidates,
+        runMeta.snapshotCandidateCount,
+        runMeta.snapshotCursor?.totalCandidates,
+        runMeta.cursor?.totalCandidates,
+        0
+      ),
+      0,
+      0
+    ),
+    snapshotChunkComplete: booleanValue(
+      firstValue(
+        runMeta.snapshotChunkComplete,
+        runMeta.snapshotComplete,
+        runMeta.cursorComplete,
+        runMeta.snapshotCursor?.complete,
+        runMeta.cursor?.complete
+      ),
+      false
+    ),
+    skippedNewEntries:
+      Boolean(runMeta.skippedNewEntries),
+    skipReason:
+      runMeta.skipReason ||
+      runMeta.reason ||
+      null,
+    reason:
+      runMeta.reason ||
+      runMeta.skipReason ||
+      null
   };
 }
 
@@ -3239,48 +3610,142 @@ function buildSummary({
   positions = [],
   runMeta = null,
   activeRotation = null,
-  latestScannerSnapshotId = null,
-  lastProcessedSnapshotId = null
+  snapshotProcessingState = null
 } = {}) {
+  const state =
+    snapshotProcessingState ||
+    buildSnapshotProcessingState({
+      latestScanRaw: null,
+      runMeta,
+      lastProcessed: null
+    });
   return {
     ...modeFlags(),
-
     openVirtualPositions: positions.length,
-
-    virtualEntriesLastRun: num(runMeta?.entryRows ?? runMeta?.entriesCount, 0),
-    virtualExitsLastRun: num(runMeta?.virtualExitsCount, 0),
-    shadowExitsLastRun: num(runMeta?.shadowExitsCount, 0),
-    observationsLastRun: num(runMeta?.observationsCount, 0),
-    skippedActionsLastRun: num(runMeta?.skippedActionsCount, 0),
-    waitRowsLastRun: num(runMeta?.waitRows ?? runMeta?.waitsCount, 0),
-
-    actionCountsLastRun: runMeta?.actionCounts || {},
-
-    exitReadyNow: positions.filter((position) => position.exitReadyNow).length,
-    tpHitNow: positions.filter((position) => position.tpHitNow).length,
-    slHitNow: positions.filter((position) => position.slHitNow).length,
-    timeStopHitNow: positions.filter((position) => position.timeStopHitNow).length,
-
-    tradeReadyPositions: positions.filter((position) => position.signalType === SIGNAL_TYPE_TRADE_READY).length,
-    watchPositions: positions.filter((position) => position.signalType === SIGNAL_TYPE_WATCH_ONLY).length,
-    observeOnlyPositions: positions.filter((position) => position.signalType === SIGNAL_TYPE_OBSERVE_ONLY).length,
-    blockedPositions: positions.filter((position) => position.signalType === SIGNAL_TYPE_BLOCKED).length,
-
-    unknownWeatherPositions: positions.filter((position) => position.entryMarketWeatherKey === 'UNKNOWN|UNKNOWN').length,
-
-    activeMicroMicroFamilies: num(activeRotation?.activeMicroMicroCount, 0),
-    activeMicroFamilies: num(activeRotation?.activeMicroCount, 0),
-    activeMacroFamilies: num(activeRotation?.activeMacroCount, 0),
-    manualSelectionActive: Boolean(activeRotation?.manualSelectionActive),
-    discordAlertsEnabled: Boolean(activeRotation?.discordAlertsEnabled),
-
-    latestScannerSnapshotId,
-    lastProcessedSnapshotId,
-    scannerAndTradeInSync: Boolean(
-      latestScannerSnapshotId &&
-        lastProcessedSnapshotId &&
-        latestScannerSnapshotId === lastProcessedSnapshotId
-    )
+    virtualEntriesLastRun: num(
+      runMeta?.entryRows ??
+      runMeta?.entriesCount,
+      0
+    ),
+    virtualExitsLastRun: num(
+      runMeta?.virtualExitsCount,
+      0
+    ),
+    shadowExitsLastRun: num(
+      runMeta?.shadowExitsCount,
+      0
+    ),
+    observationsLastRun: num(
+      runMeta?.observationsCount,
+      0
+    ),
+    skippedActionsLastRun: num(
+      runMeta?.skippedActionsCount,
+      0
+    ),
+    waitRowsLastRun: num(
+      runMeta?.waitRows ??
+      runMeta?.waitsCount,
+      0
+    ),
+    actionCountsLastRun:
+      runMeta?.actionCounts ||
+      {},
+    exitReadyNow:
+      positions.filter(
+        (position) =>
+          position.exitReadyNow
+      ).length,
+    tpHitNow:
+      positions.filter(
+        (position) =>
+          position.tpHitNow
+      ).length,
+    slHitNow:
+      positions.filter(
+        (position) =>
+          position.slHitNow
+      ).length,
+    timeStopHitNow:
+      positions.filter(
+        (position) =>
+          position.timeStopHitNow
+      ).length,
+    tradeReadyPositions:
+      positions.filter(
+        (position) =>
+          position.signalType ===
+          SIGNAL_TYPE_TRADE_READY
+      ).length,
+    watchPositions:
+      positions.filter(
+        (position) =>
+          position.signalType ===
+          SIGNAL_TYPE_WATCH_ONLY
+      ).length,
+    observeOnlyPositions:
+      positions.filter(
+        (position) =>
+          position.signalType ===
+          SIGNAL_TYPE_OBSERVE_ONLY
+      ).length,
+    blockedPositions:
+      positions.filter(
+        (position) =>
+          position.signalType ===
+          SIGNAL_TYPE_BLOCKED
+      ).length,
+    unknownWeatherPositions:
+      positions.filter(
+        (position) =>
+          position.entryMarketWeatherKey ===
+          'UNKNOWN|UNKNOWN'
+      ).length,
+    activeMicroMicroFamilies:
+      num(
+        activeRotation?.activeMicroMicroCount,
+        0
+      ),
+    activeMicroFamilies:
+      num(
+        activeRotation?.activeMicroCount,
+        0
+      ),
+    activeMacroFamilies:
+      num(
+        activeRotation?.activeMacroCount,
+        0
+      ),
+    manualSelectionActive:
+      Boolean(
+        activeRotation?.manualSelectionActive
+      ),
+    discordAlertsEnabled:
+      Boolean(
+        activeRotation?.discordAlertsEnabled
+      ),
+    scannerTradeStatus:
+      state.scannerTradeStatus,
+    scannerAndTradeInSync:
+      state.scannerAndTradeInSync,
+    latestScannerSnapshotId:
+      state.latestScannerSnapshotId,
+    activeTradeSnapshotId:
+      state.activeTradeSnapshotId,
+    lastProcessedSnapshotId:
+      state.lastProcessedSnapshotId,
+    snapshotChunkStart:
+      state.snapshotChunkStart,
+    snapshotChunkNextIndex:
+      state.snapshotChunkNextIndex,
+    snapshotChunkTotalCandidates:
+      state.snapshotChunkTotalCandidates,
+    snapshotChunkComplete:
+      state.snapshotChunkComplete,
+    snapshotProgressPct:
+      state.snapshotProgressPct,
+    snapshotRemainingCandidates:
+      state.snapshotRemainingCandidates
   };
 }
 
@@ -3373,7 +3838,15 @@ function buildErrorPayload(error, extra = {}) {
 
     latestScan: null,
     latestScannerSnapshotId: null,
+    activeTradeSnapshotId: null,
+    scannerTradeStatus: 'BEHIND',
     scannerAndTradeInSync: false,
+    snapshotChunkStart: 0,
+    snapshotChunkNextIndex: 0,
+    snapshotChunkTotalCandidates: 0,
+    snapshotChunkComplete: false,
+    snapshotProgressPct: 0,
+    snapshotRemainingCandidates: null,
 
     activeRotation: normalizeActiveRotation(null),
     activeRotationId: null,
@@ -3450,13 +3923,16 @@ export default async function handler(req, res) {
       ),
       safeRead(
         'tradeRunMeta',
-        () => readJsonFromStores({
+        () => readTradeRunMetaFromStores({
           durable,
-          volatile,
+          volatile
+        }),
+        {
+          value: null,
+          source: null,
           key: SHORT_KEYS.trade.runMeta,
-          fallback: null
-        }).then((row) => row.value),
-        null
+          legacyFallbackUsed: false
+        }
       ),
       safeRead(
         'lastProcessedSnapshot',
@@ -3484,6 +3960,16 @@ export default async function handler(req, res) {
         null
       )
     ]);
+
+    const rawRunMeta =
+      runMetaRead.value?.value ??
+      runMetaRead.value ??
+      null;
+    const runMeta = normalizeRunMeta(
+      rawRunMeta,
+      currentMarketWeather,
+      marketKeyHelpers
+    );
 
     const allPositions = asArray(rawPositionsRead.value)
       .map((position) => normalizePosition({
@@ -3513,12 +3999,6 @@ export default async function handler(req, res) {
       ignoredUnknownSidePositions
     });
 
-    const runMeta = normalizeRunMeta(
-      runMetaRead.value,
-      currentMarketWeather,
-      marketKeyHelpers
-    );
-
     const lastProcessed = normalizeLastProcessed(lastProcessedRead.value);
 
     const latestScan = normalizeLatestScan(
@@ -3530,12 +4010,27 @@ export default async function handler(req, res) {
       marketKeyHelpers
     );
 
-    const latestScannerSnapshotId = extractSnapshotId(latestScanRead.value);
-
-    const scannerAndTradeInSync =
-      Boolean(latestScannerSnapshotId) &&
-      Boolean(lastProcessed.snapshotId) &&
-      latestScannerSnapshotId === lastProcessed.snapshotId;
+    const snapshotProcessingState =
+      buildSnapshotProcessingState({
+        latestScanRaw:
+          latestScanRead.value,
+        runMeta,
+        lastProcessed:
+          lastProcessedRead.value
+      });
+    const {
+      latestScannerSnapshotId,
+      activeTradeSnapshotId,
+      lastProcessedSnapshotId,
+      scannerTradeStatus,
+      scannerAndTradeInSync,
+      snapshotChunkStart,
+      snapshotChunkNextIndex,
+      snapshotChunkTotalCandidates,
+      snapshotChunkComplete,
+      snapshotProgressPct,
+      snapshotRemainingCandidates
+    } = snapshotProcessingState;
 
     const activeRotation = normalizeActiveRotation(
       activeRotationRead.value,
@@ -3552,8 +4047,7 @@ export default async function handler(req, res) {
       positions,
       runMeta,
       activeRotation,
-      latestScannerSnapshotId,
-      lastProcessedSnapshotId: lastProcessed.snapshotId
+      snapshotProcessingState
     });
 
     const readWarnings = [
@@ -3568,6 +4062,15 @@ export default async function handler(req, res) {
 
     const warnings = uniqueStrings([
       readWarnings,
+      scannerTradeStatus === 'PROCESSING'
+        ? `SCANNER_SNAPSHOT_PROCESSING:${snapshotChunkNextIndex}/${snapshotChunkTotalCandidates}`
+        : null,
+      scannerTradeStatus === 'BEHIND'
+        ? 'TRADE_SYSTEM_BEHIND_LATEST_SCANNER_SNAPSHOT'
+        : null,
+      runMetaRead.value?.legacyFallbackUsed === true
+        ? 'LEGACY_TRADE_RUN_META_KEY_USED'
+        : null,
       activeRotation.activeMicroMicroCount <= 0
         ? 'NO_MANUAL_MICRO_MICRO_SELECTION_ACTIVE_DISCORD_DISABLED'
         : null,
@@ -3640,11 +4143,28 @@ export default async function handler(req, res) {
       shortKeys: {
         namespace: SHORT_NAMESPACE,
         prefix: SHORT_KEY_PREFIX,
-        tradeRunMeta: SHORT_KEYS.trade.runMeta,
-        tradeLastProcessedSnapshot: SHORT_KEYS.trade.lastProcessedSnapshot,
-        scanLatest: SHORT_KEYS.scan.latest,
-        rotationActive: SHORT_KEYS.rotation.active,
-        rotationDashboard: SHORT_KEYS.rotation.dashboard
+        tradeRunMeta:
+          SHORT_KEYS.trade.runMeta,
+        legacyTradeRunMeta:
+          LEGACY_SHORT_KEYS.tradeRunMeta,
+        tradeRunMetaReadKey:
+          runMetaRead.value?.key ||
+          SHORT_KEYS.trade.runMeta,
+        tradeRunMetaReadSource:
+          runMetaRead.value?.source ||
+          null,
+        legacyTradeRunMetaFallbackUsed:
+          Boolean(
+            runMetaRead.value?.legacyFallbackUsed
+          ),
+        tradeLastProcessedSnapshot:
+          SHORT_KEYS.trade.lastProcessedSnapshot,
+        scanLatest:
+          SHORT_KEYS.scan.latest,
+        rotationActive:
+          SHORT_KEYS.rotation.active,
+        rotationDashboard:
+          SHORT_KEYS.rotation.dashboard
       },
 
       positions,
@@ -3672,6 +4192,16 @@ export default async function handler(req, res) {
             entryRows: runMeta.entryRows,
             waitRows: runMeta.waitRows,
             virtualCreatedRows: runMeta.virtualCreatedRows,
+            snapshotId:
+              runMeta.snapshotId ||
+              null,
+            snapshotChunkStart,
+            snapshotChunkNextIndex,
+            snapshotChunkTotalCandidates,
+            snapshotChunkComplete,
+            snapshotProgressPct,
+            snapshotRemainingCandidates,
+            scannerTradeStatus,
             marketWeatherRows: {
               unknownWeatherActions: (runMeta.actions || []).filter((row) => row.entryMarketWeatherKey === 'UNKNOWN|UNKNOWN').length,
               tradeReadyActions: (runMeta.actions || []).filter((row) => row.signalType === SIGNAL_TYPE_TRADE_READY).length,
@@ -3683,11 +4213,20 @@ export default async function handler(req, res) {
         : null,
 
       lastProcessed,
-      lastProcessedSnapshotId: lastProcessed.snapshotId,
+      lastProcessedSnapshotId,
 
       latestScan,
       latestScannerSnapshotId,
+      activeTradeSnapshotId,
+      scannerTradeStatus,
       scannerAndTradeInSync,
+      snapshotChunkStart,
+      snapshotChunkNextIndex,
+      snapshotChunkTotalCandidates,
+      snapshotChunkComplete,
+      snapshotProgressPct,
+      snapshotRemainingCandidates,
+      snapshotProcessingState,
 
       activeRotationId: activeRotation.rotationId,
       activeMicroFamilyIds: activeRotation.activeMicroFamilyIds,
