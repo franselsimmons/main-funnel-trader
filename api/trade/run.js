@@ -35,17 +35,18 @@ const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 const ABSOLUTE_ROUTE_RETURN_MS = 24_000;
 const ROUTE_RESPONSE_RESERVE_MS = 1_500;
 
-const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 19_000;
+const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 20_000; // verhoogd van 19s naar 20s
 const MIN_ROUTE_SOFT_TIMEOUT_MS = 12_000;
 const MAX_ROUTE_SOFT_TIMEOUT_MS = 21_000;
 
-const DEFAULT_TRADE_RUNTIME_MS = 13_000;
+const DEFAULT_TRADE_RUNTIME_MS = 16_000; // verhoogd van 13s naar 16s
 const DEFAULT_MONITOR_ONLY_RUNTIME_MS = 10_000;
 
-const DEFAULT_MAX_CANDIDATES = 2;
-const DEFAULT_CANDIDATE_CHUNK_SIZE = 2;
-const DEFAULT_MAX_ENTRIES = 2;
-const DEFAULT_MONITOR_TIMEOUT_MS = 1_200;
+// Learning-batch: 15 kandidaten per run
+const DEFAULT_MAX_CANDIDATES = 15;
+const DEFAULT_CANDIDATE_CHUNK_SIZE = 15;
+const DEFAULT_MAX_ENTRIES = 2; // maximaal 2 virtuele entries per run
+const DEFAULT_MONITOR_TIMEOUT_MS = 1_500; // iets ruimer
 const DEFAULT_MONITOR_BATCH_SIZE = 6;
 const DEFAULT_OPEN_POSITION_LIMIT = 6;
 
@@ -1509,6 +1510,7 @@ function buildRunOptions(
       body
     );
 
+  // Voor monitor-only gebruiken we een kleinere batch (1), anders de normale 15
   const maxCandidatesPerSnapshot =
     monitorOnly
       ? 1
@@ -2541,7 +2543,7 @@ function routeTimeoutResponse({
       'NO_DUPLICATE_ROUTE_PERSISTENCE',
       'TRADE_TASK_OWNS_FINAL_LOCK_RELEASE',
       'OPEN_POSITION_MONITOR_LIMIT_REDUCED_TO_6',
-      'MAX_CANDIDATES_REDUCED_TO_2',
+      'MAX_CANDIDATES_REDUCED_TO_15',
       'SNAPSHOT_CURSOR_NOT_RESET_BY_FORCE'
     ],
 
