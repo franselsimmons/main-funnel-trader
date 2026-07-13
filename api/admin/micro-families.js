@@ -90,12 +90,19 @@ const DEFAULT_BEST_LIMIT = 25;
 const MAX_BEST_LIMIT = 60;
 const WEEK_MICROS_TIMEOUT_MS = 7_500;
 const ACTIVE_ROTATION_TIMEOUT_MS = 1_500;
-const ROUTE_HARD_DEADLINE_MS = 18_500;
+
+// Verlaagd van 5000 naar 2000 om de verwerkingslast te beperken
+const MAX_SOURCE_MICRO_ROWS = 2_000;
+
+// Verhoogde cache-TTL van 45s naar 120s om Redis-leeslast te verminderen
+const CACHE_TTL_MS = 120_000;
+
+// Ruimere deadline voor meer ademruimte
+const ROUTE_HARD_DEADLINE_MS = 20_000;
+
 const ROUTE_PROCESSING_RESERVE_MS = 1_250;
-const MAX_SOURCE_MICRO_ROWS = 5_000;
 const MAX_PLAYBOOK_CANDIDATES = 60;
 
-const CACHE_TTL_MS = 45_000;
 const CACHE_MAX_KEYS = 8;
 
 const DEFAULT_RANK_MODE = 'currentMarket';
@@ -3872,6 +3879,11 @@ export default async function handler(req, res) {
       )
     ).length;
 
+    // Voeg waarschuwing toe als we de limiet hebben bereikt
+    const maxRowsReachedWarning = builtRowsResult.processingTruncated
+      ? `MAX_SOURCE_MICRO_ROWS_REACHED:${MAX_SOURCE_MICRO_ROWS}; response may be incomplete`
+      : null;
+
     const warnings = uniqueWarnings([
       requestedQueryWeekKey !== PERSISTENT_LEARNING_KEY
         ? `QUERY_WEEKKEY_IGNORED_USING_PERSISTENT:${requestedQueryWeekKey}`
@@ -3884,6 +3896,7 @@ export default async function handler(req, res) {
       builtRowsResult.processingTruncated
         ? `MICRO_FAMILY_PROCESSING_TRUNCATED:${builtRowsResult.sourceRowsInspected}`
         : null,
+      maxRowsReachedWarning,
       deadlineReached(deadlineAt)
         ? 'ADMIN_MICRO_FAMILIES_INTERNAL_DEADLINE_REACHED'
         : null,
