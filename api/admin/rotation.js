@@ -169,18 +169,24 @@ const ALLOWED_MODES = new Set([
   'currentMarket'
 ]);
 
+// Verlaagde limieten voor snellere response
 const DEFAULT_AVAILABLE_LIMIT = 120;
-const MAX_AVAILABLE_LIMIT = 500;
+const MAX_AVAILABLE_LIMIT = 200; // verlaagd van 500 naar 200
 const DEFAULT_ACTIVE_ROWS_LIMIT = 160;
 const MAX_ACTIVE_ROWS_LIMIT = 500;
 
-const WEEK_MICROS_TIMEOUT_MS = 7_500;
-const ACTIVE_ROTATION_TIMEOUT_MS = 1_600;
-const ROTATION_DASHBOARD_TIMEOUT_MS = 1_600;
-const ACTIVATION_VALIDATE_TIMEOUT_MS = 8_500;
+// Verlaagde timeouts om sneller te falen bij trage Redis
+const WEEK_MICROS_TIMEOUT_MS = 5_000; // verlaagd van 7_500
+const ACTIVE_ROTATION_TIMEOUT_MS = 1_200; // verlaagd van 1_600
+const ROTATION_DASHBOARD_TIMEOUT_MS = 1_200; // verlaagd van 1_600
+const ACTIVATION_VALIDATE_TIMEOUT_MS = 6_000;
 
-const CACHE_TTL_MS = 45_000;
+// Verhoogde cache-TTL om Redis-leeslast te verminderen
+const CACHE_TTL_MS = 120_000; // verhoogd van 45_000
 const CACHE_MAX_KEYS = 6;
+
+// Limiet voor aantal micro-rows dat verwerkt wordt (voorkomt overbelasting)
+const MAX_SOURCE_MICRO_ROWS = 2_000;
 
 const STATUS_RANK = Object.freeze({
   [STATUS_PASSED]: 0,
@@ -2971,8 +2977,18 @@ function buildAvailableRowsFromMicros(micros = {}, activeSet = new Set(), curren
     unknown: 0
   };
 
+  let processed = 0;
+
   for (const [key, row] of sourceEntries(micros)) {
+    // Stop na max aantal rijen om overbelasting te voorkomen
+    if (processed >= MAX_SOURCE_MICRO_ROWS) {
+      // voeg warning toe via rows property (later opgevangen)
+      rows._truncated = true;
+      break;
+    }
+
     if (!row || typeof row !== 'object') continue;
+    processed += 1;
 
     const id = getExplicitMicroMicroId({ ...row, key }, key);
 
@@ -3037,6 +3053,7 @@ function buildAvailableRowsFromMicros(micros = {}, activeSet = new Set(), curren
     .sort(currentMarket ? compareCurrentMarketRows : compareBestMicroMicroRows);
 
   output.ignoredLayerCounts = ignoredLayerCounts;
+  output._truncated = Boolean(rows._truncated);
 
   return output;
 }
@@ -3178,6 +3195,8 @@ async function loadAvailableRows({
   const allRows = buildAvailableRowsFromMicros(weekResult.micros || {}, activeSet, currentMarket);
   const rows = allRows.slice(0, limit);
 
+  const truncated = Boolean(allRows._truncated);
+
   return {
     requestedWeekKey,
     currentWeekKey: PERSISTENT_LEARNING_KEY,
@@ -3193,7 +3212,8 @@ async function loadAvailableRows({
     rows,
     weekMicrosCacheHit: Boolean(weekResult.cacheHit),
     weekMicrosCacheStale: Boolean(weekResult.stale),
-    warning: weekResult.warning || null
+    warning: weekResult.warning || (truncated ? `TRUNCATED_AT_${MAX_SOURCE_MICRO_ROWS}_ROWS` : null),
+    truncated
   };
 }
 
@@ -4095,6 +4115,9 @@ async function handleGet(req, res) {
       : null,
     aggregateGeometryIgnoredRows > 0
       ? `AGGREGATE_STATS_ROWS_GEOMETRY_POLICY_IGNORED:${aggregateGeometryIgnoredRows}`
+      : null,
+    availableResult.truncated
+      ? `TRUNCATED_AT_${MAX_SOURCE_MICRO_ROWS}_ROWS`
       : null
   ]);
 
@@ -4224,7 +4247,9 @@ async function handleGet(req, res) {
       explicitMicroMicroOnly: true,
       child75ProxySelectionDisabled: true,
       persistentLearningOnly: true,
-      warning: availableResult.warning || null
+      warning: availableResult.warning || null,
+      truncated: availableResult.truncated || false,
+      maxSourceRows: MAX_SOURCE_MICRO_ROWS
     },
 
     allowedActions: ALLOWED_ACTIONS,
