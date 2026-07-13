@@ -3552,6 +3552,61 @@
         }) || {};
       }
 
+      // ================= NIEUW: Systeem audit tabel =================
+      function renderSystemAudit(audit) {
+        if (!audit || !audit.stages || audit.stages.length === 0) {
+          return `<div class="empty">Geen systeem‑audit data beschikbaar.</div>`;
+        }
+
+        const stages = audit.stages;
+
+        const cols = [
+          { label: "Status", render: (row) => {
+            const status = row.status || "UNKNOWN";
+            const cls = status === "PASS" ? "passed" : status === "FAIL" ? "danger" : status === "WARN" ? "warn" : "raw";
+            return `<span class="pill ${cls}">${escapeHtml(status)}</span>`;
+          }},
+          { label: "Onderdeel", key: "name" },
+          { label: "Input", key: "inputCount" },
+          { label: "Output", key: "outputCount" },
+          { label: "Laatste update", render: (row) => {
+            if (row.lastAt) return fmtTs(row.lastAt);
+            if (row.ageMs !== undefined && row.ageMs !== null) return `${(row.ageMs / 1000).toFixed(0)}s geleden`;
+            return "-";
+          }},
+          { label: "Controle", render: (row) => row.expected ? escapeHtml(row.expected) : "-" },
+          { label: "Reden", render: (row) => {
+            const reason = row.reasonText || row.reasonCode || "";
+            return `<div class="reason-cell">${escapeHtml(reason)}</div>`;
+          }}
+        ];
+
+        // Extra details in een drawer? We kunnen een knop toevoegen of details in de cel zetten.
+        // Voor nu voegen we een extra kolom met details als tooltip of compact.
+        // We voegen een kolom "Details" die een knop heeft om een JSON-blok te tonen.
+        // Maar we kunnen ook details in een aparte collapsible zetten. We doen het eenvoudig: we voegen een kolom "Details" met een knop die een alert toont.
+        // Of we zetten de details in de 'Reden' kolom, maar dat wordt te lang. We voegen een extra kolom 'Details' met een knop.
+        // Omdat we de tabel al vrij breed hebben, voegen we een extra kolom toe.
+
+        const extendedCols = [
+          ...cols,
+          { label: "Details", render: (row) => {
+            const details = row.details || {};
+            const detailKeys = Object.keys(details);
+            if (detailKeys.length === 0) return "-";
+
+            // Maak een compacte weergave: toon de eerste 2 key-value paren
+            const preview = detailKeys.slice(0, 2).map(k => `${k}=${details[k]}`).join(", ");
+            const more = detailKeys.length > 2 ? ` … +${detailKeys.length - 2}` : "";
+            return `<span title="${escapeHtml(JSON.stringify(details, null, 2))}">${escapeHtml(preview)}${more}</span>`;
+          }}
+        ];
+
+        return table(stages, extendedCols, "Geen audit-stages.");
+      }
+
+      // ================= EINDE NIEUW =================
+
       async function renderOverview() {
         showLoading("overview");
 
@@ -3610,6 +3665,9 @@
 
           const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData, tradeData, scannerData);
           const compactJson = safeJson(compact);
+
+          // ====== Systeem audit ======
+          const audit = overview.systemAudit || null;
 
           $("overview").innerHTML = `
             <div class="grid">
@@ -3687,6 +3745,19 @@
               </div>
             ` : ""}
 
+            <!-- ===== NIEUW: Systeem audit ===== -->
+            <div class="section-title">
+              <h2>Systeem Audit</h2>
+              <div class="toolbar" style="margin:0;">
+                <button type="button" class="primary" data-action="copy-system-audit">Kopieer systeem-audit</button>
+                <button type="button" class="success" data-action="copy-system-audit-json">Kopieer JSON</button>
+              </div>
+            </div>
+            <div id="systemAuditContainer">
+              ${audit ? renderSystemAudit(audit) : '<div class="empty">Nog geen systeem‑audit beschikbaar. Refresh de pagina of wacht tot de backend de audit heeft opgebouwd.</div>'}
+            </div>
+            <!-- ===== EINDE NIEUW ===== -->
+
             <div class="card">
               <h3>Alle belangrijke API-stukken in één kopieerbaar bericht</h3>
               <p class="metric-extra">
@@ -3742,6 +3813,28 @@
           }
         }
       }
+
+      // ===== Nieuwe acties voor kopiëren systeem-audit =====
+      async function copySystemAudit() {
+        const audit = state.overview?.systemAudit;
+        if (!audit || !audit.copyPasteText) {
+          setMessage("Geen systeem‑audit gevonden om te kopiëren.", "warn");
+          return;
+        }
+        await copyText(audit.copyPasteText, "Systeem‑audit gekopieerd.");
+      }
+
+      async function copySystemAuditJson() {
+        const audit = state.overview?.systemAudit;
+        if (!audit) {
+          setMessage("Geen systeem‑audit gevonden om te kopiëren.", "warn");
+          return;
+        }
+        const json = JSON.stringify(audit, null, 2);
+        await copyText(json, "Systeem‑audit JSON gekopieerd.");
+      }
+
+      // ===== Einde nieuwe acties =====
 
       async function renderMarket() {
         showLoading("market");
@@ -5044,6 +5137,18 @@
           if (!target) return;
 
           const action = target.dataset.action;
+
+          // ===== Nieuwe acties =====
+          if (action === "copy-system-audit") {
+            await copySystemAudit();
+            return;
+          }
+
+          if (action === "copy-system-audit-json") {
+            await copySystemAuditJson();
+            return;
+          }
+          // ===== Einde nieuwe acties =====
 
           if (target.dataset.copyTarget) {
             const el = $(target.dataset.copyTarget);
