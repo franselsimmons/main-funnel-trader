@@ -169,24 +169,22 @@ const ALLOWED_MODES = new Set([
   'currentMarket'
 ]);
 
-// Verlaagde limieten voor snellere response
-const DEFAULT_AVAILABLE_LIMIT = 120;
-const MAX_AVAILABLE_LIMIT = 200; // verlaagd van 500 naar 200
-const DEFAULT_ACTIVE_ROWS_LIMIT = 160;
-const MAX_ACTIVE_ROWS_LIMIT = 500;
+// ================= OPTIMALISATIES (verlaagde limieten/timeouts) =================
+const DEFAULT_AVAILABLE_LIMIT = 80;           // was 120
+const MAX_AVAILABLE_LIMIT = 120;              // was 200
+const DEFAULT_ACTIVE_ROWS_LIMIT = 60;         // was 160
+const MAX_ACTIVE_ROWS_LIMIT = 500;            // blijft
 
-// Verlaagde timeouts om sneller te falen bij trage Redis
-const WEEK_MICROS_TIMEOUT_MS = 5_000; // verlaagd van 7_500
-const ACTIVE_ROTATION_TIMEOUT_MS = 1_200; // verlaagd van 1_600
-const ROTATION_DASHBOARD_TIMEOUT_MS = 1_200; // verlaagd van 1_600
-const ACTIVATION_VALIDATE_TIMEOUT_MS = 6_000;
+const WEEK_MICROS_TIMEOUT_MS = 4_000;         // was 5_000
+const ACTIVE_ROTATION_TIMEOUT_MS = 800;       // was 1_200
+const ROTATION_DASHBOARD_TIMEOUT_MS = 800;    // was 1_200
+const ACTIVATION_VALIDATE_TIMEOUT_MS = 6_000; // blijft
 
-// Verhoogde cache-TTL om Redis-leeslast te verminderen
-const CACHE_TTL_MS = 120_000; // verhoogd van 45_000
-const CACHE_MAX_KEYS = 6;
+const CACHE_TTL_MS = 180_000;                 // was 120_000
+const CACHE_MAX_KEYS = 6;                     // blijft
 
-// Limiet voor aantal micro-rows dat verwerkt wordt (voorkomt overbelasting)
-const MAX_SOURCE_MICRO_ROWS = 2_000;
+const MAX_SOURCE_MICRO_ROWS = 1_000;          // was 2_000
+// =======================================================================
 
 const STATUS_RANK = Object.freeze({
   [STATUS_PASSED]: 0,
