@@ -169,21 +169,21 @@ const ALLOWED_MODES = new Set([
   'currentMarket'
 ]);
 
-// ================= OPTIMALISATIES (nog verder aangescherpt) =================
-const DEFAULT_AVAILABLE_LIMIT = 60;           // was 80
-const MAX_AVAILABLE_LIMIT = 80;              // was 120
-const DEFAULT_ACTIVE_ROWS_LIMIT = 40;         // was 60
+// ================= OPTIMALISATIES (verder aangescherpt) =================
+const DEFAULT_AVAILABLE_LIMIT = 20;           // was 60
+const MAX_AVAILABLE_LIMIT = 40;               // was 80
+const DEFAULT_ACTIVE_ROWS_LIMIT = 20;         // was 40
 const MAX_ACTIVE_ROWS_LIMIT = 500;            // blijft
 
-const WEEK_MICROS_TIMEOUT_MS = 3000;          // was 4000
-const ACTIVE_ROTATION_TIMEOUT_MS = 600;       // was 800
-const ROTATION_DASHBOARD_TIMEOUT_MS = 600;    // was 800
-const ACTIVATION_VALIDATE_TIMEOUT_MS = 5000;  // was 6000
+const WEEK_MICROS_TIMEOUT_MS = 1500;          // was 3000
+const ACTIVE_ROTATION_TIMEOUT_MS = 500;       // was 600
+const ROTATION_DASHBOARD_TIMEOUT_MS = 500;    // was 600
+const ACTIVATION_VALIDATE_TIMEOUT_MS = 5000;  // blijft
 
-const CACHE_TTL_MS = 300000;                  // was 180000 (5 min)
+const CACHE_TTL_MS = 600000;                  // 10 minuten (was 300000)
 const CACHE_MAX_KEYS = 6;                     // blijft
 
-const MAX_SOURCE_MICRO_ROWS = 500;            // was 1000
+const MAX_SOURCE_MICRO_ROWS = 150;            // was 500
 // =======================================================================
 
 const STATUS_RANK = Object.freeze({
