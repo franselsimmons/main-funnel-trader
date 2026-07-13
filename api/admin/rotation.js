@@ -169,21 +169,21 @@ const ALLOWED_MODES = new Set([
   'currentMarket'
 ]);
 
-// ================= OPTIMALISATIES (verlaagde limieten/timeouts) =================
-const DEFAULT_AVAILABLE_LIMIT = 80;           // was 120
-const MAX_AVAILABLE_LIMIT = 120;              // was 200
-const DEFAULT_ACTIVE_ROWS_LIMIT = 60;         // was 160
+// ================= OPTIMALISATIES (nog verder aangescherpt) =================
+const DEFAULT_AVAILABLE_LIMIT = 60;           // was 80
+const MAX_AVAILABLE_LIMIT = 80;              // was 120
+const DEFAULT_ACTIVE_ROWS_LIMIT = 40;         // was 60
 const MAX_ACTIVE_ROWS_LIMIT = 500;            // blijft
 
-const WEEK_MICROS_TIMEOUT_MS = 4_000;         // was 5_000
-const ACTIVE_ROTATION_TIMEOUT_MS = 800;       // was 1_200
-const ROTATION_DASHBOARD_TIMEOUT_MS = 800;    // was 1_200
-const ACTIVATION_VALIDATE_TIMEOUT_MS = 6_000; // blijft
+const WEEK_MICROS_TIMEOUT_MS = 3000;          // was 4000
+const ACTIVE_ROTATION_TIMEOUT_MS = 600;       // was 800
+const ROTATION_DASHBOARD_TIMEOUT_MS = 600;    // was 800
+const ACTIVATION_VALIDATE_TIMEOUT_MS = 5000;  // was 6000
 
-const CACHE_TTL_MS = 180_000;                 // was 120_000
+const CACHE_TTL_MS = 300000;                  // was 180000 (5 min)
 const CACHE_MAX_KEYS = 6;                     // blijft
 
-const MAX_SOURCE_MICRO_ROWS = 1_000;          // was 2_000
+const MAX_SOURCE_MICRO_ROWS = 500;            // was 1000
 // =======================================================================
 
 const STATUS_RANK = Object.freeze({
@@ -2964,7 +2964,8 @@ function normalizeRotationRow(row = {}, index = 0, activeSet = new Set(), curren
   };
 }
 
-function buildAvailableRowsFromMicros(micros = {}, activeSet = new Set(), currentMarket = null) {
+// ======== AANGEPAST: buildAvailableRowsFromMicros stopt bij maxRows =========
+function buildAvailableRowsFromMicros(micros = {}, activeSet = new Set(), currentMarket = null, maxRows = MAX_SOURCE_MICRO_ROWS) {
   const rows = [];
   const ignoredLayerCounts = {
     parent15: 0,
@@ -2978,9 +2979,8 @@ function buildAvailableRowsFromMicros(micros = {}, activeSet = new Set(), curren
   let processed = 0;
 
   for (const [key, row] of sourceEntries(micros)) {
-    // Stop na max aantal rijen om overbelasting te voorkomen
-    if (processed >= MAX_SOURCE_MICRO_ROWS) {
-      // voeg warning toe via rows property (later opgevangen)
+    // Stop zodra we maxRows hebben bereikt
+    if (processed >= maxRows) {
       rows._truncated = true;
       break;
     }
@@ -3190,7 +3190,10 @@ async function loadAvailableRows({
 } = {}) {
   const requestedWeekKey = String(weekKey || PERSISTENT_LEARNING_KEY).trim();
   const weekResult = weekMicrosResult || await getWeekMicrosCached(PERSISTENT_LEARNING_KEY);
-  const allRows = buildAvailableRowsFromMicros(weekResult.micros || {}, activeSet, currentMarket);
+  
+  // We normaliseren alleen het aantal rijen dat we nodig hebben voor de response + een buffer
+  const maxNormalizeRows = Math.min(limit + 20, MAX_SOURCE_MICRO_ROWS);
+  const allRows = buildAvailableRowsFromMicros(weekResult.micros || {}, activeSet, currentMarket, maxNormalizeRows);
   const rows = allRows.slice(0, limit);
 
   const truncated = Boolean(allRows._truncated);
@@ -3210,7 +3213,7 @@ async function loadAvailableRows({
     rows,
     weekMicrosCacheHit: Boolean(weekResult.cacheHit),
     weekMicrosCacheStale: Boolean(weekResult.stale),
-    warning: weekResult.warning || (truncated ? `TRUNCATED_AT_${MAX_SOURCE_MICRO_ROWS}_ROWS` : null),
+    warning: weekResult.warning || (truncated ? `TRUNCATED_AT_${maxNormalizeRows}_ROWS` : null),
     truncated
   };
 }
@@ -4115,7 +4118,7 @@ async function handleGet(req, res) {
       ? `AGGREGATE_STATS_ROWS_GEOMETRY_POLICY_IGNORED:${aggregateGeometryIgnoredRows}`
       : null,
     availableResult.truncated
-      ? `TRUNCATED_AT_${MAX_SOURCE_MICRO_ROWS}_ROWS`
+      ? `TRUNCATED_AT_${Math.min(availableLimit + 20, MAX_SOURCE_MICRO_ROWS)}_ROWS`
       : null
   ]);
 
@@ -4247,7 +4250,7 @@ async function handleGet(req, res) {
       persistentLearningOnly: true,
       warning: availableResult.warning || null,
       truncated: availableResult.truncated || false,
-      maxSourceRows: MAX_SOURCE_MICRO_ROWS
+      maxSourceRows: Math.min(availableLimit + 20, MAX_SOURCE_MICRO_ROWS)
     },
 
     allowedActions: ALLOWED_ACTIONS,
