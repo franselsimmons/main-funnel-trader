@@ -684,6 +684,7 @@
       const tabs = ["overview", "market", "scanner", "trade", "micros", "rotation", "discord", "reset"];
       const microModes = ["currentMarket", "tradeReady", "watch", "observe", "passed", "diagnose", "best", "winrate", "totalR", "avgR", "directSL", "cost", "currentFit", "observed", "clean"];
 
+      // ================= AANGEPASTE STATE =================
       const state = {
         activeTab: "overview",
         overview: null,
@@ -696,17 +697,14 @@
         apiAudit: null,
         microMode: "currentMarket",
         microSearch: "",
-        apiTimeoutMs: 22000,
-        // VERLAAGDE LIMIETEN: van 260 → 60 en 220 → 60
+        apiTimeoutMs: 30000,          // verhoogd van 22000
         microLimit: 60,
         bestLimit: 60,
         currentMarketWeatherRegime: "",
         currentMarketWeatherTrendSide: "",
         currentMarketWeatherKey: "",
         lastKnownMarketWeather: null,
-        // Cache TTL in milliseconden (10 seconden)
-        cacheTTL: 10000,
-        // Timestamps per data-onderdeel
+        cacheTTL: 20000,              // verhoogd van 10000
         _cacheTs: {
           overview: 0,
           market: 0,
@@ -2658,14 +2656,15 @@
         return `${endpoints.micros}?${params.toString()}`;
       }
 
+      // ================= AANGEPASTE rotationApiUrl =================
       function rotationApiUrl() {
         const params = commonParams({ includeWeather: true });
 
         params.set("includeAvailable", "1");
         params.set("includeMicroMicro", "1");
         params.set("onlyMicroMicro", "1");
-        params.set("activeRowsLimit", "180");
-        params.set("availableLimit", "280");
+        params.set("activeRowsLimit", "80");   // verlaagd van 180 → 80
+        params.set("availableLimit", "120");   // verlaagd van 280 → 120
         params.set("mode", "currentMarket");
         params.set("uiMode", state.microMode);
 
@@ -3556,15 +3555,11 @@
       async function renderOverview() {
         showLoading("overview");
 
-        // Cache check: als de data minder dan cacheTTL oud is, gebruik dan de cached versie
         const now = Date.now();
         if (state.overview && (now - state._cacheTs.overview) < state.cacheTTL) {
-          // Toon cached data
-          $("overview").innerHTML = $("overview").innerHTML; // behoud huidige HTML (wordt later overschreven)
-          // We kunnen hier een korte indicatie geven dat cache wordt gebruikt, maar de rest van de functie wordt alsnog uitgevoerd om de data te verversen als de cache oud is.
+          // gebruik cache
         }
 
-        // Haal altijd nieuwe data op, maar bij timeout gebruiken we de oude
         try {
           const marketData = await safeApi(marketApiUrl(), { ok: false });
           state.market = marketData;
@@ -3608,7 +3603,6 @@
           const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
           const mw = currentMarketWeather();
 
-          // Toon scannerTradeStatus indien beschikbaar
           const scannerTradeStatus = overview.scannerTradeStatus || rotationData.scannerTradeStatus || tradeData.scannerTradeStatus || "UNKNOWN";
           const scannerTradeStatusLabel = scannerTradeStatus === "COMPLETE" ? "✅ COMPLETE" :
                                           scannerTradeStatus === "PROCESSING" ? "⏳ PROCESSING" :
@@ -3738,18 +3732,12 @@
 
           $("overview").dataset.exportPayload = compactJson;
         } catch (error) {
-          // Bij timeout of andere fout: toon oude data + waarschuwing
           const msg = friendlyApiMessage(error);
           setMessage(msg, "warn");
-          // Als er al een cached overview is, toon die dan nogmaals met een waarschuwing
           if (state.overview) {
-            // We hebben al data, dus we kunnen de bestaande HTML behouden, maar voeg een waarschuwing toe bovenaan
             const overviewPanel = $("overview");
-            if (overviewPanel) {
-              // Check of er al een waarschuwing staat
-              if (!overviewPanel.querySelector(".message.warn")) {
-                overviewPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
-              }
+            if (overviewPanel && !overviewPanel.querySelector(".message.warn")) {
+              overviewPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
             }
           }
         }
@@ -3758,10 +3746,9 @@
       async function renderMarket() {
         showLoading("market");
 
-        // Cache check
         const now = Date.now();
         if (state.market && (now - state._cacheTs.market) < state.cacheTTL) {
-          // Gebruik cache
+          // gebruik cache
         }
 
         try {
@@ -3834,7 +3821,6 @@
         } catch (error) {
           const msg = friendlyApiMessage(error);
           setMessage(msg, "warn");
-          // Toon oude data indien beschikbaar
           if (state.market) {
             const marketPanel = $("market");
             if (marketPanel && !marketPanel.querySelector(".message.warn")) {
@@ -3850,7 +3836,7 @@
 
         const now = Date.now();
         if (state.scanner && (now - state._cacheTs.scanner) < state.cacheTTL) {
-          // Gebruik cache
+          // gebruik cache
         }
 
         try {
@@ -3959,7 +3945,7 @@
 
         const now = Date.now();
         if (state.trade && (now - state._cacheTs.trade) < state.cacheTTL) {
-          // Gebruik cache
+          // gebruik cache
         }
 
         try {
@@ -4489,7 +4475,7 @@
 
         const now = Date.now();
         if (state.rotation && (now - state._cacheTs.rotation) < state.cacheTTL) {
-          // Gebruik cache
+          // gebruik cache
         }
 
         try {
@@ -4609,7 +4595,7 @@
 
         const now = Date.now();
         if (state.discord && (now - state._cacheTs.discord) < state.cacheTTL) {
-          // Gebruik cache
+          // gebruik cache
         }
 
         try {
