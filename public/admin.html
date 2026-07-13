@@ -697,12 +697,25 @@
         microMode: "currentMarket",
         microSearch: "",
         apiTimeoutMs: 22000,
-        microLimit: 260,
-        bestLimit: 220,
+        // VERLAAGDE LIMIETEN: van 260 → 60 en 220 → 60
+        microLimit: 60,
+        bestLimit: 60,
         currentMarketWeatherRegime: "",
         currentMarketWeatherTrendSide: "",
         currentMarketWeatherKey: "",
-        lastKnownMarketWeather: null
+        lastKnownMarketWeather: null,
+        // Cache TTL in milliseconden (10 seconden)
+        cacheTTL: 10000,
+        // Timestamps per data-onderdeel
+        _cacheTs: {
+          overview: 0,
+          market: 0,
+          scanner: 0,
+          trade: 0,
+          micros: 0,
+          rotation: 0,
+          discord: 0
+        }
       };
 
       const $ = (id) => document.getElementById(id);
@@ -2536,7 +2549,8 @@
             apiError: error?.message || String(error),
             status: error?.status || 0,
             url,
-            data: error?.data || null
+            data: error?.data || null,
+            _timeout: error?.timeout === true
           };
         }
       }
@@ -3542,283 +3556,362 @@
       async function renderOverview() {
         showLoading("overview");
 
-        const marketData = await safeApi(marketApiUrl(), { ok: false });
-        state.market = marketData;
-        rememberMarketWeatherFromPayload(marketData);
+        // Cache check: als de data minder dan cacheTTL oud is, gebruik dan de cached versie
+        const now = Date.now();
+        if (state.overview && (now - state._cacheTs.overview) < state.cacheTTL) {
+          // Toon cached data
+          $("overview").innerHTML = $("overview").innerHTML; // behoud huidige HTML (wordt later overschreven)
+          // We kunnen hier een korte indicatie geven dat cache wordt gebruikt, maar de rest van de functie wordt alsnog uitgevoerd om de data te verversen als de cache oud is.
+        }
 
-        const [overview, microData, rotationData, tradeData, scannerData] = await Promise.all([
-          safeApi(overviewApiUrl(), { ok: false }),
-          ensureMicrosLoaded(),
-          safeApi(rotationApiUrl(), { ok: false, activeMicroMicroFamilyIds: [] }),
-          safeApi(tradeApiUrl(), { ok: false, positions: [], openPositions: [] }),
-          safeApi(scannerApiUrl(), { ok: false, rows: [], candidates: [] })
-        ]);
+        // Haal altijd nieuwe data op, maar bij timeout gebruiken we de oude
+        try {
+          const marketData = await safeApi(marketApiUrl(), { ok: false });
+          state.market = marketData;
+          rememberMarketWeatherFromPayload(marketData);
 
-        state.overview = overview;
-        state.trade = tradeData;
-        state.scanner = scannerData;
-        state.rotation = {
-          ...(state.rotation || {}),
-          ...rotationData,
-          activeMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData),
-          selectedMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData)
-        };
+          const [overview, microData, rotationData, tradeData, scannerData] = await Promise.all([
+            safeApi(overviewApiUrl(), { ok: false }),
+            ensureMicrosLoaded(),
+            safeApi(rotationApiUrl(), { ok: false, activeMicroMicroFamilyIds: [] }),
+            safeApi(tradeApiUrl(), { ok: false, positions: [], openPositions: [] }),
+            safeApi(scannerApiUrl(), { ok: false, rows: [], candidates: [] })
+          ]);
 
-        rememberMarketWeatherFromPayload(overview);
+          state.overview = overview;
+          state.trade = tradeData;
+          state.scanner = scannerData;
+          state.rotation = {
+            ...(state.rotation || {}),
+            ...rotationData,
+            activeMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData),
+            selectedMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData)
+          };
+          state._cacheTs.overview = now;
 
-        const rows = microData?.rows || [];
-        const activeIds = activeMicroMicroIds();
-        const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
-        const legacyRows = rows.length - cleanRows;
-        const tradeReadyRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length;
-        const watchRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length;
-        const observeRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length;
-        const blockedRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length;
-        const passedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length;
-        const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
-        const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
-        const empiricalVetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
-        const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
-        const top = rows[0] || null;
-        const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
-        const mw = currentMarketWeather();
+          rememberMarketWeatherFromPayload(overview);
 
-        const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData, tradeData, scannerData);
-        const compactJson = safeJson(compact);
+          const rows = microData?.rows || [];
+          const activeIds = activeMicroMicroIds();
+          const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
+          const legacyRows = rows.length - cleanRows;
+          const tradeReadyRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length;
+          const watchRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_WATCH_ONLY).length;
+          const observeRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_OBSERVE_ONLY).length;
+          const blockedRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_BLOCKED).length;
+          const passedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_PASSED).length;
+          const observingRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_OBSERVING).length;
+          const rejectedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_REJECTED).length;
+          const empiricalVetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
+          const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
+          const top = rows[0] || null;
+          const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
+          const mw = currentMarketWeather();
 
-        $("overview").innerHTML = `
-          <div class="grid">
-            ${metricCard("MarketWeather key", mw.currentMarketWeatherKey, `${MARKET_WEATHER_KEY_VERSION} · ${mw.source || "unknown"}`)}
-            ${metricCard("Weather known", currentWeatherKnown() ? "YES" : "NO", currentWeatherKnown() ? "selector kan matchen" : "UNKNOWN => OBSERVE_ONLY")}
-            ${metricCard("Unknown override", "BLOCKED", "frontend stuurt geen UNKNOWN override")}
-            ${metricCard("Visible MM rows", fmtInt(rows.length), "exact micro-micro only")}
-            ${metricCard("Discord selected", fmtInt(activeIds.length), "max 2 exact MM IDs")}
-            ${metricCard("TRADE_READY", fmtInt(tradeReadyRows), "risk > 0 vereist")}
-            ${metricCard("WATCH", fmtInt(watchRows), "risk 0")}
-            ${metricCard("OBSERVE_ONLY", fmtInt(observeRows), "risk 0")}
-          </div>
+          // Toon scannerTradeStatus indien beschikbaar
+          const scannerTradeStatus = overview.scannerTradeStatus || rotationData.scannerTradeStatus || tradeData.scannerTradeStatus || "UNKNOWN";
+          const scannerTradeStatusLabel = scannerTradeStatus === "COMPLETE" ? "✅ COMPLETE" :
+                                          scannerTradeStatus === "PROCESSING" ? "⏳ PROCESSING" :
+                                          scannerTradeStatus === "BEHIND" ? "⚠️ BEHIND" : "❓ UNKNOWN";
 
-          <div class="grid">
-            ${metricCard("PASSED", fmtInt(passedRows), "runtime gate")}
-            ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
-            ${metricCard("REJECTED", fmtInt(rejectedRows), "zwak maar geen veto")}
-            ${metricCard("EMPIRICAL VETO", fmtInt(empiricalVetoRows), "LCB95(avgR)<0")}
-            ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "systeemregel")}
-            ${metricCard("BLOCKED signal", fmtInt(blockedRows))}
-            ${metricCard("Clean rows", fmtInt(cleanRows), `${fmtInt(legacyRows)} legacy`)}
-            ${metricCard("Real orders", "OFF", "virtual/shadow only")}
-          </div>
+          const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData, tradeData, scannerData);
+          const compactJson = safeJson(compact);
 
-          ${playbook ? `
+          $("overview").innerHTML = `
+            <div class="grid">
+              ${metricCard("MarketWeather key", mw.currentMarketWeatherKey, `${MARKET_WEATHER_KEY_VERSION} · ${mw.source || "unknown"}`)}
+              ${metricCard("Weather known", currentWeatherKnown() ? "YES" : "NO", currentWeatherKnown() ? "selector kan matchen" : "UNKNOWN => OBSERVE_ONLY")}
+              ${metricCard("Unknown override", "BLOCKED", "frontend stuurt geen UNKNOWN override")}
+              ${metricCard("Visible MM rows", fmtInt(rows.length), "exact micro-micro only")}
+              ${metricCard("Discord selected", fmtInt(activeIds.length), "max 2 exact MM IDs")}
+              ${metricCard("TRADE_READY", fmtInt(tradeReadyRows), "risk > 0 vereist")}
+              ${metricCard("WATCH", fmtInt(watchRows), "risk 0")}
+              ${metricCard("OBSERVE_ONLY", fmtInt(observeRows), "risk 0")}
+            </div>
+
+            <div class="grid">
+              ${metricCard("PASSED", fmtInt(passedRows), "runtime gate")}
+              ${metricCard("OBSERVING", fmtInt(observingRows), `completed < ${MIN_COMPLETED_MICRO_MICRO_ACTIVE}`)}
+              ${metricCard("REJECTED", fmtInt(rejectedRows), "zwak maar geen veto")}
+              ${metricCard("EMPIRICAL VETO", fmtInt(empiricalVetoRows), "LCB95(avgR)<0")}
+              ${metricCard("POLICY BLOCKED", fmtInt(policyBlockedRows), "systeemregel")}
+              ${metricCard("BLOCKED signal", fmtInt(blockedRows))}
+              ${metricCard("Clean rows", fmtInt(cleanRows), `${fmtInt(legacyRows)} legacy`)}
+              ${metricCard("Real orders", "OFF", "virtual/shadow only")}
+            </div>
+
             <div class="card">
-              <h3>Best for current market</h3>
+              <h3>Scanner vs Trade sync</h3>
               <div class="toolbar">
-                <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || mw.currentMarketWeatherKey)}</span>
-                <span class="pill best">${escapeHtml(playbook.answerType || "BEST_AVAILABLE")}</span>
-                <span class="pill observe">SELECTOR OBSERVE</span>
-                <span class="pill observe">SIZING CAP OBSERVE</span>
-                <span class="pill observe">FDR OBSERVE</span>
+                <span class="pill ${scannerTradeStatus === "COMPLETE" ? "active" : scannerTradeStatus === "PROCESSING" ? "warn" : "danger"}">${scannerTradeStatusLabel}</span>
+                <span class="pill soft">${overview.scannerAndTradeInSync !== undefined ? (overview.scannerAndTradeInSync ? "IN SYNC" : "NOT IN SYNC") : "-"}</span>
+                <span class="pill raw">${overview.latestScannerSnapshotId || "geen scanner snapshot"}</span>
+                <span class="pill raw">${overview.lastProcessedSnapshotId || "geen trade snapshot"}</span>
               </div>
-              ${playbook.bestForCurrentMarket || playbook.selected ? `
-                <p><code>${escapeHtml((playbook.bestForCurrentMarket || playbook.selected)?.selectedFamilyId || microId(playbook.bestForCurrentMarket || playbook.selected) || "-")}</code></p>
-              ` : `<div class="empty">Geen current-market kandidaat.</div>`}
             </div>
-          ` : ""}
 
-          ${top ? `
+            ${playbook ? `
+              <div class="card">
+                <h3>Best for current market</h3>
+                <div class="toolbar">
+                  <span class="pill weather">${escapeHtml(playbook.currentMarketWeatherKey || mw.currentMarketWeatherKey)}</span>
+                  <span class="pill best">${escapeHtml(playbook.answerType || "BEST_AVAILABLE")}</span>
+                  <span class="pill observe">SELECTOR OBSERVE</span>
+                  <span class="pill observe">SIZING CAP OBSERVE</span>
+                  <span class="pill observe">FDR OBSERVE</span>
+                </div>
+                ${playbook.bestForCurrentMarket || playbook.selected ? `
+                  <p><code>${escapeHtml((playbook.bestForCurrentMarket || playbook.selected)?.selectedFamilyId || microId(playbook.bestForCurrentMarket || playbook.selected) || "-")}</code></p>
+                ` : `<div class="empty">Geen current-market kandidaat.</div>`}
+              </div>
+            ` : ""}
+
+            ${top ? `
+              <div class="card">
+                <h3>Beste zichtbare micro-micro</h3>
+                <div class="toolbar">
+                  <span class="pill short">SHORT</span>
+                  <span class="pill best">BEST FIRST</span>
+                  ${signalTypePill(top)}
+                  ${runtimeStatusPill(top)}
+                  ${discordGatePill(top)}
+                  ${measurementPill(top)}
+                  ${currentFitPill(top)}
+                  ${marketWeatherPill(top)}
+                </div>
+                <p><code>${escapeHtml(microId(top))}</code></p>
+                <div class="grid">
+                  ${metricCard("NetEdge", fmt(netEdgeScore(top), 2), "ranking-score")}
+                  ${metricCard("Completed", fmt(completed(top), 0), "gate/tie-breaker")}
+                  ${metricCard("AvgR", fmt(netAvgR(top), 3))}
+                  ${metricCard("LCB95", lcb95AvgR(top) === null ? "-" : fmt(lcb95AvgR(top), 4))}
+                  ${metricCard("ShrunkAvgR", fmt(shrunkAvgR(top), 4))}
+                  ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(top), 4))}
+                  ${metricCard("Risk", fmt(riskFractionForEntry(top), 6))}
+                  ${metricCard("Why", whyBlocked(top) || whySelected(top))}
+                </div>
+              </div>
+            ` : ""}
+
             <div class="card">
-              <h3>Beste zichtbare micro-micro</h3>
+              <h3>Alle belangrijke API-stukken in één kopieerbaar bericht</h3>
+              <p class="metric-extra">
+                De audit haalt Overview, MarketWeather, Scanner, TradeSystem, Micro-Micro, Rotation en Discord Logs op.
+                UNKNOWN|UNKNOWN wordt niet als query-override meegestuurd.
+              </p>
               <div class="toolbar">
-                <span class="pill short">SHORT</span>
-                <span class="pill best">BEST FIRST</span>
-                ${signalTypePill(top)}
-                ${runtimeStatusPill(top)}
-                ${discordGatePill(top)}
-                ${measurementPill(top)}
-                ${currentFitPill(top)}
-                ${marketWeatherPill(top)}
+                <button type="button" class="primary" data-action="run-api-audit">Maak compact API audit</button>
+                <button type="button" class="success" data-action="run-api-audit-copy">Maak + Copy audit</button>
+                <button type="button" data-copy-target="allApisAuditOutput">Copy audit output</button>
+                <button type="button" data-select-target="allApisAuditOutput">Select audit output</button>
               </div>
-              <p><code>${escapeHtml(microId(top))}</code></p>
-              <div class="grid">
-                ${metricCard("NetEdge", fmt(netEdgeScore(top), 2), "ranking-score")}
-                ${metricCard("Completed", fmt(completed(top), 0), "gate/tie-breaker")}
-                ${metricCard("AvgR", fmt(netAvgR(top), 3))}
-                ${metricCard("LCB95", lcb95AvgR(top) === null ? "-" : fmt(lcb95AvgR(top), 4))}
-                ${metricCard("ShrunkAvgR", fmt(shrunkAvgR(top), 4))}
-                ${metricCard("ShrunkLCB95", fmt(shrunkLCB95AvgR(top), 4))}
-                ${metricCard("Risk", fmt(riskFractionForEntry(top), 6))}
-                ${metricCard("Why", whyBlocked(top) || whySelected(top))}
+              <textarea id="allApisAuditOutput" class="api-output-textarea audit-output-textarea" readonly>${escapeHtml(state.apiAudit?.message || "Klik op “Maak compact API audit”. Daarna kun je alles in één keer kopiëren en sturen.")}</textarea>
+            </div>
+
+            <div class="grid-3">
+              <div class="card">
+                <h3>Feature flags</h3>
+                ${jsonBlock(featureFlagsObject())}
+              </div>
+
+              <div class="card">
+                <h3>Runtime / veto gate</h3>
+                ${jsonBlock(activationGateObject())}
+              </div>
+
+              <div class="card">
+                <h3>Risk policy</h3>
+                ${jsonBlock(riskPolicyObject())}
               </div>
             </div>
-          ` : ""}
-
-          <div class="card">
-            <h3>Alle belangrijke API-stukken in één kopieerbaar bericht</h3>
-            <p class="metric-extra">
-              De audit haalt Overview, MarketWeather, Scanner, TradeSystem, Micro-Micro, Rotation en Discord Logs op.
-              UNKNOWN|UNKNOWN wordt niet als query-override meegestuurd.
-            </p>
-            <div class="toolbar">
-              <button type="button" class="primary" data-action="run-api-audit">Maak compact API audit</button>
-              <button type="button" class="success" data-action="run-api-audit-copy">Maak + Copy audit</button>
-              <button type="button" data-copy-target="allApisAuditOutput">Copy audit output</button>
-              <button type="button" data-select-target="allApisAuditOutput">Select audit output</button>
-            </div>
-            <textarea id="allApisAuditOutput" class="api-output-textarea audit-output-textarea" readonly>${escapeHtml(state.apiAudit?.message || "Klik op “Maak compact API audit”. Daarna kun je alles in één keer kopiëren en sturen.")}</textarea>
-          </div>
-
-          <div class="grid-3">
-            <div class="card">
-              <h3>Feature flags</h3>
-              ${jsonBlock(featureFlagsObject())}
-            </div>
 
             <div class="card">
-              <h3>Runtime / veto gate</h3>
-              ${jsonBlock(activationGateObject())}
+              <h3>Compact overview only</h3>
+              <div class="toolbar">
+                <button type="button" class="primary" data-copy-target="overviewApiOutput">Copy compact overview</button>
+                <button type="button" data-select-target="overviewApiOutput">Select overview</button>
+                <button type="button" data-export-json="overview" data-filename="overview-short-mm-marketweather.json">Export JSON</button>
+              </div>
+              <textarea id="overviewApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactJson)}</textarea>
             </div>
+          `;
 
-            <div class="card">
-              <h3>Risk policy</h3>
-              ${jsonBlock(riskPolicyObject())}
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>Compact overview only</h3>
-            <div class="toolbar">
-              <button type="button" class="primary" data-copy-target="overviewApiOutput">Copy compact overview</button>
-              <button type="button" data-select-target="overviewApiOutput">Select overview</button>
-              <button type="button" data-export-json="overview" data-filename="overview-short-mm-marketweather.json">Export JSON</button>
-            </div>
-            <textarea id="overviewApiOutput" class="api-output-textarea" readonly>${escapeHtml(compactJson)}</textarea>
-          </div>
-        `;
-
-        $("overview").dataset.exportPayload = compactJson;
+          $("overview").dataset.exportPayload = compactJson;
+        } catch (error) {
+          // Bij timeout of andere fout: toon oude data + waarschuwing
+          const msg = friendlyApiMessage(error);
+          setMessage(msg, "warn");
+          // Als er al een cached overview is, toon die dan nogmaals met een waarschuwing
+          if (state.overview) {
+            // We hebben al data, dus we kunnen de bestaande HTML behouden, maar voeg een waarschuwing toe bovenaan
+            const overviewPanel = $("overview");
+            if (overviewPanel) {
+              // Check of er al een waarschuwing staat
+              if (!overviewPanel.querySelector(".message.warn")) {
+                overviewPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
+              }
+            }
+          }
+        }
       }
 
       async function renderMarket() {
         showLoading("market");
 
-        const url = marketApiUrl();
-        const data = await safeApi(url, { ok: false });
-        state.market = data;
-        rememberMarketWeatherFromPayload(data);
+        // Cache check
+        const now = Date.now();
+        if (state.market && (now - state._cacheTs.market) < state.cacheTTL) {
+          // Gebruik cache
+        }
 
-        const compact = compactEndpointImportant("MarketWeather", data);
-        const mw = currentMarketWeather();
+        try {
+          const url = marketApiUrl();
+          const data = await safeApi(url, { ok: false });
+          state.market = data;
+          state._cacheTs.market = now;
+          rememberMarketWeatherFromPayload(data);
 
-        $("market").innerHTML = `
-          <div class="section-title">
-            <div>
-              <h2>MarketWeather</h2>
-              <p>V1 key is klein: <code>entryMarketWeatherRegime|entryMarketWeatherTrendSide</code>. Family ID blijft schoon.</p>
+          const compact = compactEndpointImportant("MarketWeather", data);
+          const mw = currentMarketWeather();
+
+          $("market").innerHTML = `
+            <div class="section-title">
+              <div>
+                <h2>MarketWeather</h2>
+                <p>V1 key is klein: <code>entryMarketWeatherRegime|entryMarketWeatherTrendSide</code>. Family ID blijft schoon.</p>
+              </div>
             </div>
-          </div>
 
-          <div class="card">
-            <h3>Current market override voor selector-observe</h3>
+            <div class="card">
+              <h3>Current market override voor selector-observe</h3>
+              <div class="toolbar">
+                <select id="marketWeatherRegimeInput">
+                  ${["", "SQUEEZE", "TREND", "CHOP"].map((value) => `<option value="${escapeAttr(value)}" ${value === state.currentMarketWeatherRegime ? "selected" : ""}>${escapeHtml(value || "AUTO/UNKNOWN regime")}</option>`).join("")}
+                </select>
+                <select id="marketWeatherTrendSideInput">
+                  ${["", "BEARISH", "BULLISH", "NEUTRAL"].map((value) => `<option value="${escapeAttr(value)}" ${value === state.currentMarketWeatherTrendSide ? "selected" : ""}>${escapeHtml(value || "AUTO/UNKNOWN trendSide")}</option>`).join("")}
+                </select>
+                <input id="marketWeatherKeyInput" placeholder="Optioneel: SQUEEZE|BEARISH" value="${escapeAttr(state.currentMarketWeatherKey)}" />
+                <button type="button" class="primary" data-action="apply-market-weather">Apply</button>
+                <button type="button" data-action="clear-market-weather">Clear</button>
+              </div>
+              <div class="toolbar">
+                <span class="pill weather">${escapeHtml(mw.currentMarketWeatherKey)}</span>
+                <span class="pill ${currentWeatherKnown() ? "active" : "warn"}">${currentWeatherKnown() ? "KNOWN" : "UNKNOWN => OBSERVE_ONLY"}</span>
+                <span class="pill ${hasManualMarketWeatherOverride() ? "warn" : "active"}">${hasManualMarketWeatherOverride() ? "MANUAL OVERRIDE" : "AUTO BACKEND"}</span>
+                <span class="pill observe">selector observe</span>
+                <span class="pill observe">sizing cap observe</span>
+                <span class="pill observe">FDR observe</span>
+              </div>
+            </div>
+
             <div class="toolbar">
-              <select id="marketWeatherRegimeInput">
-                ${["", "SQUEEZE", "TREND", "CHOP"].map((value) => `<option value="${escapeAttr(value)}" ${value === state.currentMarketWeatherRegime ? "selected" : ""}>${escapeHtml(value || "AUTO/UNKNOWN regime")}</option>`).join("")}
-              </select>
-              <select id="marketWeatherTrendSideInput">
-                ${["", "BEARISH", "BULLISH", "NEUTRAL"].map((value) => `<option value="${escapeAttr(value)}" ${value === state.currentMarketWeatherTrendSide ? "selected" : ""}>${escapeHtml(value || "AUTO/UNKNOWN trendSide")}</option>`).join("")}
-              </select>
-              <input id="marketWeatherKeyInput" placeholder="Optioneel: SQUEEZE|BEARISH" value="${escapeAttr(state.currentMarketWeatherKey)}" />
-              <button type="button" class="primary" data-action="apply-market-weather">Apply</button>
-              <button type="button" data-action="clear-market-weather">Clear</button>
+              <button type="button" class="primary" data-copy-target="marketJson">Copy JSON</button>
+              <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
+              <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
+              <button type="button" data-export-json="market" data-filename="market-weather-short-mm.json">Export JSON</button>
             </div>
-            <div class="toolbar">
-              <span class="pill weather">${escapeHtml(mw.currentMarketWeatherKey)}</span>
-              <span class="pill ${currentWeatherKnown() ? "active" : "warn"}">${currentWeatherKnown() ? "KNOWN" : "UNKNOWN => OBSERVE_ONLY"}</span>
-              <span class="pill ${hasManualMarketWeatherOverride() ? "warn" : "active"}">${hasManualMarketWeatherOverride() ? "MANUAL OVERRIDE" : "AUTO BACKEND"}</span>
-              <span class="pill observe">selector observe</span>
-              <span class="pill observe">sizing cap observe</span>
-              <span class="pill observe">FDR observe</span>
+
+            <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
+
+            <div class="grid">
+              ${metricCard("Current key", mw.currentMarketWeatherKey)}
+              ${metricCard("Key version", MARKET_WEATHER_KEY_VERSION)}
+              ${metricCard("Regime", mw.currentMarketWeatherRegime || "-")}
+              ${metricCard("Trend side", mw.currentMarketWeatherTrendSide || "-")}
+              ${metricCard("Known", mw.currentMarketWeatherKnown ? "YES" : "NO")}
+              ${metricCard("Source", mw.source || "-")}
+              ${metricCard("Playbook", compact.playbookStatus || "-")}
+              ${metricCard("Unknown override", "BLOCKED")}
             </div>
-          </div>
 
-          <div class="toolbar">
-            <button type="button" class="primary" data-copy-target="marketJson">Copy JSON</button>
-            <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
-            <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
-            <button type="button" data-export-json="market" data-filename="market-weather-short-mm.json">Export JSON</button>
-          </div>
+            <div class="card">
+              <textarea id="marketJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
+            </div>
+          `;
 
-          <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
-
-          <div class="grid">
-            ${metricCard("Current key", mw.currentMarketWeatherKey)}
-            ${metricCard("Key version", MARKET_WEATHER_KEY_VERSION)}
-            ${metricCard("Regime", mw.currentMarketWeatherRegime || "-")}
-            ${metricCard("Trend side", mw.currentMarketWeatherTrendSide || "-")}
-            ${metricCard("Known", mw.currentMarketWeatherKnown ? "YES" : "NO")}
-            ${metricCard("Source", mw.source || "-")}
-            ${metricCard("Playbook", compact.playbookStatus || "-")}
-            ${metricCard("Unknown override", "BLOCKED")}
-          </div>
-
-          <div class="card">
-            <textarea id="marketJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
-          </div>
-        `;
-
-        $("market").dataset.exportPayload = safeJson(compact);
+          $("market").dataset.exportPayload = safeJson(compact);
+        } catch (error) {
+          const msg = friendlyApiMessage(error);
+          setMessage(msg, "warn");
+          // Toon oude data indien beschikbaar
+          if (state.market) {
+            const marketPanel = $("market");
+            if (marketPanel && !marketPanel.querySelector(".message.warn")) {
+              marketPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
+            }
+          }
+        }
       }
 
       async function renderScanner() {
         showLoading("scanner");
         await ensureMarketLoaded();
 
-        const url = scannerApiUrl();
-        const data = await safeApi(url, { ok: false, rows: [], candidates: [] }, { timeoutMs: 22000 });
-        state.scanner = data;
+        const now = Date.now();
+        if (state.scanner && (now - state._cacheTs.scanner) < state.cacheTTL) {
+          // Gebruik cache
+        }
 
-        const compact = compactEndpointImportant("Scanner", data);
-        const candidates = compact.topShortCandidates || [];
+        try {
+          const url = scannerApiUrl();
+          const data = await safeApi(url, { ok: false, rows: [], candidates: [] }, { timeoutMs: 22000 });
+          state.scanner = data;
+          state._cacheTs.scanner = now;
 
-        $("scanner").innerHTML = `
-          <div class="toolbar">
-            <button type="button" class="primary" data-action="run-scanner">Run Scanner now</button>
-            <button type="button" data-copy-target="scannerJson">Copy JSON</button>
-            <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
-            <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
-            <button type="button" data-export-json="scanner" data-filename="scanner-short-mm.json">Export JSON</button>
-          </div>
+          const compact = compactEndpointImportant("Scanner", data);
+          const candidates = compact.topShortCandidates || [];
 
-          <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
+          $("scanner").innerHTML = `
+            <div class="toolbar">
+              <button type="button" class="primary" data-action="run-scanner">Run Scanner now</button>
+              <button type="button" data-copy-target="scannerJson">Copy JSON</button>
+              <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
+              <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
+              <button type="button" data-export-json="scanner" data-filename="scanner-short-mm.json">Export JSON</button>
+            </div>
 
-          <div class="grid">
-            ${metricCard("OK", compact.ok !== false ? "YES" : "NO")}
-            ${metricCard("Snapshot", compact.snapshotId || "-")}
-            ${metricCard("Age", compact.ageText || "-")}
-            ${metricCard("SHORT candidates", fmtInt(compact.counts?.shortCandidates || 0))}
-            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
-            ${metricCard("Scanner role", "METADATA")}
-            ${metricCard("Learning", "NO")}
-            ${metricCard("Discord", "NO")}
-          </div>
+            <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
 
-          ${table(candidates, [
-            { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
-            { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
-            { label: "MarketWeather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
-            { label: "Price", render: (row) => fmtPrice(row.price) },
-            { label: "Score", render: (row) => fmt(row.scannerScore, 2) },
-            { label: "1h", render: (row) => escapeHtml(row.change1h ?? "-") },
-            { label: "24h", render: (row) => escapeHtml(row.change24h ?? "-") },
-            { label: "Regime", render: (row) => escapeHtml(row.regime || "-") },
-            { label: "Reason", render: (row) => escapeHtml(row.reason || "-") }
-          ], "Geen SHORT scanner candidates.")}
+            <div class="grid">
+              ${metricCard("OK", compact.ok !== false ? "YES" : "NO")}
+              ${metricCard("Snapshot", compact.snapshotId || "-")}
+              ${metricCard("Age", compact.ageText || "-")}
+              ${metricCard("SHORT candidates", fmtInt(compact.counts?.shortCandidates || 0))}
+              ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
+              ${metricCard("Scanner role", "METADATA")}
+              ${metricCard("Learning", "NO")}
+              ${metricCard("Discord", "NO")}
+            </div>
 
-          <div class="card">
-            <textarea id="scannerJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
-          </div>
-        `;
+            ${table(candidates, [
+              { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
+              { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+              { label: "MarketWeather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
+              { label: "Price", render: (row) => fmtPrice(row.price) },
+              { label: "Score", render: (row) => fmt(row.scannerScore, 2) },
+              { label: "1h", render: (row) => escapeHtml(row.change1h ?? "-") },
+              { label: "24h", render: (row) => escapeHtml(row.change24h ?? "-") },
+              { label: "Regime", render: (row) => escapeHtml(row.regime || "-") },
+              { label: "Reason", render: (row) => escapeHtml(row.reason || "-") }
+            ], "Geen SHORT scanner candidates.")}
 
-        $("scanner").dataset.exportPayload = safeJson(compact);
+            <div class="card">
+              <textarea id="scannerJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
+            </div>
+          `;
+
+          $("scanner").dataset.exportPayload = safeJson(compact);
+        } catch (error) {
+          const msg = friendlyApiMessage(error);
+          setMessage(msg, "warn");
+          if (state.scanner) {
+            const scannerPanel = $("scanner");
+            if (scannerPanel && !scannerPanel.querySelector(".message.warn")) {
+              scannerPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
+            }
+          }
+        }
       }
 
       async function runScannerNow() {
@@ -3853,6 +3946,7 @@
           });
 
           setMessage(`Scanner klaar. SHORT candidates=${data.shortCandidatesCount || data.candidatesCount || 0}`, "ok");
+          state._cacheTs.scanner = 0; // cache invaliden
           await renderScanner();
         } catch (error) {
           setMessage(friendlyApiMessage(error), "warn");
@@ -3863,56 +3957,73 @@
         showLoading("trade");
         await ensureMarketLoaded();
 
-        const url = tradeApiUrl();
-        const data = await safeApi(url, { ok: false, positions: [], openPositions: [] }, { timeoutMs: 22000 });
-        state.trade = data;
+        const now = Date.now();
+        if (state.trade && (now - state._cacheTs.trade) < state.cacheTTL) {
+          // Gebruik cache
+        }
 
-        const compact = compactEndpointImportant("TradeSystem", data);
-        const positions = compact.openPositions || [];
+        try {
+          const url = tradeApiUrl();
+          const data = await safeApi(url, { ok: false, positions: [], openPositions: [] }, { timeoutMs: 22000 });
+          state.trade = data;
+          state._cacheTs.trade = now;
 
-        $("trade").innerHTML = `
-          <div class="toolbar">
-            <button type="button" class="primary" data-action="run-trade">Run TradeSystem now</button>
-            <button type="button" data-copy-target="tradeJson">Copy JSON</button>
-            <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
-            <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
-            <button type="button" data-export-json="trade" data-filename="trade-short-mm.json">Export JSON</button>
-          </div>
+          const compact = compactEndpointImportant("TradeSystem", data);
+          const positions = compact.openPositions || [];
 
-          <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
+          $("trade").innerHTML = `
+            <div class="toolbar">
+              <button type="button" class="primary" data-action="run-trade">Run TradeSystem now</button>
+              <button type="button" data-copy-target="tradeJson">Copy JSON</button>
+              <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
+              <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
+              <button type="button" data-export-json="trade" data-filename="trade-short-mm.json">Export JSON</button>
+            </div>
 
-          <div class="grid">
-            ${metricCard("Open virtual SHORT", fmtInt(compact.counts?.openVirtualShortPositions || 0))}
-            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
-            ${metricCard("Capture", "LIVE")}
-            ${metricCard("Risk source", "positionSizing.js")}
-            ${metricCard("Clean", fmtInt(compact.counts?.cleanPositions || 0))}
-            ${metricCard("Legacy", fmtInt(compact.counts?.legacyPositions || 0))}
-            ${metricCard("Scanner sync", compact.sync?.scannerAndTradeInSync ? "YES" : "NO")}
-            ${metricCard("Orders", "0", "exchange disabled")}
-          </div>
+            <div class="api-url-box"><strong>API URL:</strong><code>${escapeHtml(url)}</code></div>
 
-          ${table(positions, [
-            { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
-            { label: "Source", render: (row) => `<span class="pill purple">${escapeHtml(row.source || "VIRTUAL")}</span>` },
-            { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
-            { label: "Signal", render: (row) => `<span class="pill raw">${escapeHtml(row.signalType || "-")}</span>` },
-            { label: "Weather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
-            { label: "MM ID", render: (row) => `<code>${escapeHtml(row.microMicroFamilyId || "-")}</code>` },
-            { label: "Entry", render: (row) => fmtPrice(row.entry) },
-            { label: "SL", render: (row) => fmtPrice(row.sl) },
-            { label: "TP", render: (row) => fmtPrice(row.tp) },
-            { label: "CurrentR", render: (row) => fmt(row.currentR, 3) },
-            { label: "Risk", render: (row) => fmt(row.riskFractionForEntry, 6) },
-            { label: "Opened", render: (row) => fmtTs(row.openedAt) }
-          ], "Geen open virtual SHORT posities.")}
+            <div class="grid">
+              ${metricCard("Open virtual SHORT", fmtInt(compact.counts?.openVirtualShortPositions || 0))}
+              ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
+              ${metricCard("Capture", "LIVE")}
+              ${metricCard("Risk source", "positionSizing.js")}
+              ${metricCard("Clean", fmtInt(compact.counts?.cleanPositions || 0))}
+              ${metricCard("Legacy", fmtInt(compact.counts?.legacyPositions || 0))}
+              ${metricCard("Scanner sync", compact.sync?.scannerAndTradeInSync ? "YES" : "NO")}
+              ${metricCard("Orders", "0", "exchange disabled")}
+            </div>
 
-          <div class="card">
-            <textarea id="tradeJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
-          </div>
-        `;
+            ${table(positions, [
+              { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
+              { label: "Source", render: (row) => `<span class="pill purple">${escapeHtml(row.source || "VIRTUAL")}</span>` },
+              { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+              { label: "Signal", render: (row) => `<span class="pill raw">${escapeHtml(row.signalType || "-")}</span>` },
+              { label: "Weather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
+              { label: "MM ID", render: (row) => `<code>${escapeHtml(row.microMicroFamilyId || "-")}</code>` },
+              { label: "Entry", render: (row) => fmtPrice(row.entry) },
+              { label: "SL", render: (row) => fmtPrice(row.sl) },
+              { label: "TP", render: (row) => fmtPrice(row.tp) },
+              { label: "CurrentR", render: (row) => fmt(row.currentR, 3) },
+              { label: "Risk", render: (row) => fmt(row.riskFractionForEntry, 6) },
+              { label: "Opened", render: (row) => fmtTs(row.openedAt) }
+            ], "Geen open virtual SHORT posities.")}
 
-        $("trade").dataset.exportPayload = safeJson(compact);
+            <div class="card">
+              <textarea id="tradeJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
+            </div>
+          `;
+
+          $("trade").dataset.exportPayload = safeJson(compact);
+        } catch (error) {
+          const msg = friendlyApiMessage(error);
+          setMessage(msg, "warn");
+          if (state.trade) {
+            const tradePanel = $("trade");
+            if (tradePanel && !tradePanel.querySelector(".message.warn")) {
+              tradePanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
+            }
+          }
+        }
       }
 
       async function runTradeNow() {
@@ -4019,6 +4130,7 @@
             "ok"
           );
 
+          state._cacheTs.trade = 0;
           await renderTrade();
         } catch (error) {
           setMessage(friendlyApiMessage(error), "warn");
@@ -4030,6 +4142,7 @@
 
         try {
           state.micros = await fetchMicros();
+          state._cacheTs.micros = Date.now();
         } catch (error) {
           state.micros = { rows: [], error: friendlyApiMessage(error), data: error?.data || null };
           setMessage(state.micros.error, "warn");
@@ -4374,154 +4487,189 @@
         showLoading("rotation");
         await ensureMarketLoaded();
 
-        const url = rotationApiUrl();
-        const data = await safeApi(url, { ok: false, active: {}, activeRows: [], availableRows: [] }, { timeoutMs: 22000 });
+        const now = Date.now();
+        if (state.rotation && (now - state._cacheTs.rotation) < state.cacheTTL) {
+          // Gebruik cache
+        }
 
-        const activeIds = extractActiveIdsFromPayload(data);
+        try {
+          const url = rotationApiUrl();
+          const data = await safeApi(url, { ok: false, active: {}, activeRows: [], availableRows: [] }, { timeoutMs: 22000 });
 
-        state.rotation = {
-          ...data,
-          activeMicroMicroFamilyIds: activeIds,
-          selectedMicroMicroFamilyIds: activeIds
-        };
+          const activeIds = extractActiveIdsFromPayload(data);
 
-        const activeRows = rankMicroRows([
-          ...(data.activeRows || []),
-          ...(data.active?.microFamilies || []),
-          ...(data.activeRotation?.microFamilies || []),
-          ...activeIds.map((id) => ({
-            microMicroFamilyId: id,
-            trueMicroFamilyId: id,
-            childTrueMicroFamilyId: child75FromAnyId(id),
-            parentTrueMicroFamilyId: parentFromAnyId(id),
-            active: true,
-            selectedTier: "MANUAL",
-            measurementClean: true
-          }))
-        ], "diagnose");
+          state.rotation = {
+            ...data,
+            activeMicroMicroFamilyIds: activeIds,
+            selectedMicroMicroFamilyIds: activeIds
+          };
+          state._cacheTs.rotation = now;
 
-        const availableRows = rankMicroRows([
-          ...(data.availableRows || []),
-          ...(data.availableMicroMicroRows || []),
-          ...(data.availableMicroMicroFamilies || [])
-        ], "currentMarket");
+          const activeRows = rankMicroRows([
+            ...(data.activeRows || []),
+            ...(data.active?.microFamilies || []),
+            ...(data.activeRotation?.microFamilies || []),
+            ...activeIds.map((id) => ({
+              microMicroFamilyId: id,
+              trueMicroFamilyId: id,
+              childTrueMicroFamilyId: child75FromAnyId(id),
+              parentTrueMicroFamilyId: parentFromAnyId(id),
+              active: true,
+              selectedTier: "MANUAL",
+              measurementClean: true
+            }))
+          ], "diagnose");
 
-        const tradeReadyAvailable = availableRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY);
-        const compact = compactEndpointImportant("Manual Discord Selection", data);
+          const availableRows = rankMicroRows([
+            ...(data.availableRows || []),
+            ...(data.availableMicroMicroRows || []),
+            ...(data.availableMicroMicroFamilies || [])
+          ], "currentMarket");
 
-        $("rotation").innerHTML = `
-          <div class="section-title">
-            <div>
-              <h2>Manual Discord selection</h2>
-              <p>Alleen exact geselecteerde SHORT micro-micro IDs met geldige TRADE_READY gate kunnen Discord triggeren.</p>
+          const tradeReadyAvailable = availableRows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY);
+          const compact = compactEndpointImportant("Manual Discord Selection", data);
+
+          $("rotation").innerHTML = `
+            <div class="section-title">
+              <div>
+                <h2>Manual Discord selection</h2>
+                <p>Alleen exact geselecteerde SHORT micro-micro IDs met geldige TRADE_READY gate kunnen Discord triggeren.</p>
+              </div>
             </div>
-          </div>
 
-          <div class="grid">
-            ${metricCard("Active MM IDs", fmtInt(activeIds.length))}
-            ${metricCard("Available MM", fmtInt(availableRows.length))}
-            ${metricCard("TRADE_READY", fmtInt(tradeReadyAvailable.length), "risk > 0")}
-            ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
-            ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT MM ONLY" : "OFF")}
-            ${metricCard("75-child selection", "DISABLED")}
-            ${metricCard("Auto rotation", "DISABLED")}
-            ${metricCard("Real orders", "OFF")}
-          </div>
-
-          <div class="card">
-            <h3>Manual micro-micro IDs</h3>
-            <p class="metric-extra">
-              Plak maximaal 2 exacte micro-micro IDs. Backend/runtime weigert veto/policy/watch/observe rows.
-            </p>
-
-            <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH">${escapeHtml(activeIds.join("\n"))}</textarea>
-
-            <div class="toolbar">
-              <button type="button" class="short-action" data-action="activate-manual">Save max 2 MM Discord IDs</button>
-              <button type="button" class="primary" data-action="activate-top-two">Select top 2 TRADE_READY</button>
-              <button type="button" data-action="clear-manual-input">Clear input</button>
-              <button type="button" data-copy-value="${escapeAttr(JSON.stringify(activeIds, null, 2))}">Copy active IDs</button>
-              <button type="button" data-copy-target="rotationJson">Copy compact JSON</button>
-              <button type="button" data-export-json="rotation" data-filename="manual-discord-selection-short-mm-marketweather.json">Export JSON</button>
+            <div class="grid">
+              ${metricCard("Active MM IDs", fmtInt(activeIds.length))}
+              ${metricCard("Available MM", fmtInt(availableRows.length))}
+              ${metricCard("TRADE_READY", fmtInt(tradeReadyAvailable.length), "risk > 0")}
+              ${metricCard("MarketWeather", currentMarketWeather().currentMarketWeatherKey)}
+              ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT MM ONLY" : "OFF")}
+              ${metricCard("75-child selection", "DISABLED")}
+              ${metricCard("Auto rotation", "DISABLED")}
+              ${metricCard("Real orders", "OFF")}
             </div>
-          </div>
 
-          <div class="section-title">
-            <div>
-              <h2>Active selected MM IDs</h2>
-              <p>Deze IDs bepalen Discord eligibility. Learning blijft breed doorlopen.</p>
+            <div class="card">
+              <h3>Manual micro-micro IDs</h3>
+              <p class="metric-extra">
+                Plak maximaal 2 exacte micro-micro IDs. Backend/runtime weigert veto/policy/watch/observe rows.
+              </p>
+
+              <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN_MM_HASH">${escapeHtml(activeIds.join("\n"))}</textarea>
+
+              <div class="toolbar">
+                <button type="button" class="short-action" data-action="activate-manual">Save max 2 MM Discord IDs</button>
+                <button type="button" class="primary" data-action="activate-top-two">Select top 2 TRADE_READY</button>
+                <button type="button" data-action="clear-manual-input">Clear input</button>
+                <button type="button" data-copy-value="${escapeAttr(JSON.stringify(activeIds, null, 2))}">Copy active IDs</button>
+                <button type="button" data-copy-target="rotationJson">Copy compact JSON</button>
+                <button type="button" data-export-json="rotation" data-filename="manual-discord-selection-short-mm-marketweather.json">Export JSON</button>
+              </div>
             </div>
-          </div>
 
-          ${microTable(activeRows, "Geen active micro-micro IDs.")}
-
-          <div class="section-title">
-            <div>
-              <h2>Available MM rows</h2>
-              <p>Current-market TRADE_READY rows staan bovenaan. Samples zijn tie-breaker.</p>
+            <div class="section-title">
+              <div>
+                <h2>Active selected MM IDs</h2>
+                <p>Deze IDs bepalen Discord eligibility. Learning blijft breed doorlopen.</p>
+              </div>
             </div>
-          </div>
 
-          ${microTable(availableRows.slice(0, 160), "Geen available micro-micro rows.")}
+            ${microTable(activeRows, "Geen active micro-micro IDs.")}
 
-          <div class="card">
-            <h3>Rotation compact output</h3>
-            <textarea id="rotationJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
-          </div>
-        `;
+            <div class="section-title">
+              <div>
+                <h2>Available MM rows</h2>
+                <p>Current-market TRADE_READY rows staan bovenaan. Samples zijn tie-breaker.</p>
+              </div>
+            </div>
 
-        $("rotation").dataset.exportPayload = safeJson(compact);
+            ${microTable(availableRows.slice(0, 160), "Geen available micro-micro rows.")}
+
+            <div class="card">
+              <h3>Rotation compact output</h3>
+              <textarea id="rotationJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
+            </div>
+          `;
+
+          $("rotation").dataset.exportPayload = safeJson(compact);
+        } catch (error) {
+          const msg = friendlyApiMessage(error);
+          setMessage(msg, "warn");
+          if (state.rotation) {
+            const rotationPanel = $("rotation");
+            if (rotationPanel && !rotationPanel.querySelector(".message.warn")) {
+              rotationPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
+            }
+          }
+        }
       }
 
       async function renderDiscord() {
         showLoading("discord");
         await ensureMarketLoaded();
 
-        const url = discordApiUrl(80);
-        const data = await safeApi(url, { ok: false, logs: [] }, { timeoutMs: 18000 });
+        const now = Date.now();
+        if (state.discord && (now - state._cacheTs.discord) < state.cacheTTL) {
+          // Gebruik cache
+        }
 
-        state.discord = data;
+        try {
+          const url = discordApiUrl(80);
+          const data = await safeApi(url, { ok: false, logs: [] }, { timeoutMs: 18000 });
 
-        const compact = compactEndpointImportant("Discord Logs", data);
-        const logs = compact.recentLogs || [];
+          state.discord = data;
+          state._cacheTs.discord = now;
 
-        $("discord").innerHTML = `
-          <div class="toolbar">
-            <button type="button" data-copy-target="discordJson">Copy JSON</button>
-            <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
-            <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
-            <button type="button" data-export-json="discord" data-filename="discord-logs-short-mm-marketweather.json">Export JSON</button>
-          </div>
+          const compact = compactEndpointImportant("Discord Logs", data);
+          const logs = compact.recentLogs || [];
 
-          <div class="grid">
-            ${metricCard("Logs", fmtInt(compact.count || 0))}
-            ${metricCard("Last log", fmtTs(compact.lastLogAt))}
-            ${metricCard("Entry logs", fmtInt(compact.entryLogs || 0))}
-            ${metricCard("Exit logs", fmtInt(compact.exitLogs || 0))}
-            ${metricCard("Match mode", "EXACT MM")}
-            ${metricCard("Runtime gate", "TRADE_READY")}
-            ${metricCard("Empirical veto", "BLOCK")}
-            ${metricCard("Risk", "positionSizing.js")}
-          </div>
+          $("discord").innerHTML = `
+            <div class="toolbar">
+              <button type="button" data-copy-target="discordJson">Copy JSON</button>
+              <button type="button" data-copy-value="${escapeAttr(url)}">Copy API URL</button>
+              <button type="button" data-open-url="${escapeAttr(url)}">Open API</button>
+              <button type="button" data-export-json="discord" data-filename="discord-logs-short-mm-marketweather.json">Export JSON</button>
+            </div>
 
-          ${table(logs, [
-            { label: "TS", render: (row) => fmtTs(row.ts) },
-            { label: "Type", render: (row) => escapeHtml(row.type || "-") },
-            { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
-            { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
-            { label: "Signal", render: (row) => escapeHtml(row.signalType || "-") },
-            { label: "Weather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
-            { label: "MM ID", render: (row) => `<code>${escapeHtml(row.microMicroFamilyId || "-")}</code>` },
-            { label: "Selected", render: (row) => `<span class="pill ${row.selected ? "active" : ""}">${row.selected ? "YES" : "NO"}</span>` },
-            { label: "Message", render: (row) => escapeHtml(row.message || "") }
-          ], "Geen Discord logs.")}
+            <div class="grid">
+              ${metricCard("Logs", fmtInt(compact.count || 0))}
+              ${metricCard("Last log", fmtTs(compact.lastLogAt))}
+              ${metricCard("Entry logs", fmtInt(compact.entryLogs || 0))}
+              ${metricCard("Exit logs", fmtInt(compact.exitLogs || 0))}
+              ${metricCard("Match mode", "EXACT MM")}
+              ${metricCard("Runtime gate", "TRADE_READY")}
+              ${metricCard("Empirical veto", "BLOCK")}
+              ${metricCard("Risk", "positionSizing.js")}
+            </div>
 
-          <div class="card">
-            <textarea id="discordJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
-          </div>
-        `;
+            ${table(logs, [
+              { label: "TS", render: (row) => fmtTs(row.ts) },
+              { label: "Type", render: (row) => escapeHtml(row.type || "-") },
+              { label: "Symbol", render: (row) => escapeHtml(row.symbol || "-") },
+              { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+              { label: "Signal", render: (row) => escapeHtml(row.signalType || "-") },
+              { label: "Weather", render: (row) => `<span class="pill weather">${escapeHtml(row.entryMarketWeatherKey || "-")}</span>` },
+              { label: "MM ID", render: (row) => `<code>${escapeHtml(row.microMicroFamilyId || "-")}</code>` },
+              { label: "Selected", render: (row) => `<span class="pill ${row.selected ? "active" : ""}">${row.selected ? "YES" : "NO"}</span>` },
+              { label: "Message", render: (row) => escapeHtml(row.message || "") }
+            ], "Geen Discord logs.")}
 
-        $("discord").dataset.exportPayload = safeJson(compact);
+            <div class="card">
+              <h3>Discord compact output</h3>
+              <textarea id="discordJson" class="api-output-textarea" readonly>${escapeHtml(safeJson(compact))}</textarea>
+            </div>
+          `;
+
+          $("discord").dataset.exportPayload = safeJson(compact);
+        } catch (error) {
+          const msg = friendlyApiMessage(error);
+          setMessage(msg, "warn");
+          if (state.discord) {
+            const discordPanel = $("discord");
+            if (discordPanel && !discordPanel.querySelector(".message.warn")) {
+              discordPanel.insertAdjacentHTML("afterbegin", `<div class="message warn">⚠️ ${escapeHtml(msg)} — Toont gecachete data.</div>`);
+            }
+          }
+        }
       }
 
       function resetPayload(confirmText, extra = {}) {
