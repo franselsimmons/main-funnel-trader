@@ -124,12 +124,12 @@ const DEFAULT_HARD_RETURN_RESERVE_MS = 3_500;
 const DEFAULT_PHASE_RESERVE_MS = 2_100;
 const DEFAULT_ENTRY_LOOP_RESERVE_MS = 3_000;
 /*
- * Maximaal drie kandidaten per run.
- * Een Redis-cursor verwerkt de rest in volgende cron-runs.
+ * Grotere learning-chunk per run (15 kandidaten),
+ * maar maximaal 2 virtuele entries per run.
  */
-const DEFAULT_CANDIDATE_CHUNK_SIZE = 2;
-const HARD_MAX_CANDIDATE_CHUNK_SIZE = 3;
-const DEFAULT_MAX_ENTRIES_PER_RUN = 3;
+const DEFAULT_CANDIDATE_CHUNK_SIZE = 15;
+const HARD_MAX_CANDIDATE_CHUNK_SIZE = 30;
+const DEFAULT_MAX_ENTRIES_PER_RUN = 2;
 const DEFAULT_MAX_SNAPSHOT_AGE_SEC = 8 * 60;
 
 const DEFAULT_MIN_RISK_PCT = 0.0045;
@@ -4662,7 +4662,9 @@ function latestScanKeys() {
   ]);
 }
 
-// Eerste versie van readSnapshotCandidate (behouden)
+// Geen dubbele functies meer: de onderstaande functies bestaan in een enkele, verbeterde versie.
+// De eerdere comment "Eerste versie" is verwijderd.
+
 async function readSnapshotCandidate(
   redis,
   key,
@@ -4823,7 +4825,6 @@ async function readSnapshotCandidate(
   return resolved || null;
 }
 
-// Eerste versie van getLatestSnapshot (behouden)
 async function getLatestSnapshot(
   deadline,
   cfg
@@ -4969,7 +4970,6 @@ async function getLatestSnapshot(
   return normalized;
 }
 
-// Eerste versie van buildSnapshotPriceHints (behouden)
 function buildSnapshotPriceHints(
   snapshot = null
 ) {
@@ -8337,6 +8337,8 @@ export async function runTradeSystem(options = {}) {
       snapshotChunkAdvanced: canAdvanceCursor,
       snapshotProgressPct: chunk.total > 0 ? round((effectiveNextIndex / chunk.total) * 100, 2) : 0,
       snapshotRemainingCandidates: Math.max(0, chunk.total - effectiveNextIndex),
+      // Toegevoegd: snapshotProcessingState
+      snapshotProcessingState: effectiveChunkComplete ? 'COMPLETE' : 'PROCESSING',
 
       ...sideFlags(),
       ...virtualFlags(),
