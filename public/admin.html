@@ -3623,10 +3623,10 @@
           state.market = marketData;
           rememberMarketWeatherFromPayload(marketData);
 
-          const [overview, microData, rotationData, tradeData, scannerData] = await Promise.all([
+          // ===== WIJZIGING: rotation endpoint niet meer ophalen =====
+          const [overview, microData, tradeData, scannerData] = await Promise.all([
             safeApi(overviewApiUrl(), { ok: false }),
             ensureMicrosLoaded(),
-            safeApi(rotationApiUrl(), { ok: false, activeMicroMicroFamilyIds: [] }),
             safeApi(tradeApiUrl(), { ok: false, positions: [], openPositions: [] }),
             safeApi(scannerApiUrl(), { ok: false, rows: [], candidates: [] })
           ]);
@@ -3634,18 +3634,18 @@
           state.overview = overview;
           state.trade = tradeData;
           state.scanner = scannerData;
+
+          // Haal actieve IDs uit overview.counts
+          const activeIds = overview?.counts?.selectedDiscordMicroMicroIds || [];
           state.rotation = {
-            ...(state.rotation || {}),
-            ...rotationData,
-            activeMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData),
-            selectedMicroMicroFamilyIds: extractActiveIdsFromPayload(rotationData)
+            activeMicroMicroFamilyIds: activeIds,
+            selectedMicroMicroFamilyIds: activeIds
           };
           state._cacheTs.overview = now;
 
           rememberMarketWeatherFromPayload(overview);
 
           const rows = microData?.rows || [];
-          const activeIds = activeMicroMicroIds();
           const cleanRows = rows.filter((row) => cleanMeasurementScore(row) === 1).length;
           const legacyRows = rows.length - cleanRows;
           const tradeReadyRows = rows.filter((row) => signalType(row) === SIGNAL_TYPE_TRADE_READY).length;
@@ -3658,15 +3658,15 @@
           const empiricalVetoRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length;
           const policyBlockedRows = rows.filter((row) => runtimeStatus(row) === MICRO_MICRO_STATUS_POLICY_BLOCKED).length;
           const top = rows[0] || null;
-          const playbook = microData.currentMarketPlaybook || rotationData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
+          const playbook = microData.currentMarketPlaybook || overview.currentMarketPlaybook || null;
           const mw = currentMarketWeather();
 
-          const scannerTradeStatus = overview.scannerTradeStatus || rotationData.scannerTradeStatus || tradeData.scannerTradeStatus || "UNKNOWN";
+          const scannerTradeStatus = overview.scannerTradeStatus || tradeData.scannerTradeStatus || "UNKNOWN";
           const scannerTradeStatusLabel = scannerTradeStatus === "COMPLETE" ? "✅ COMPLETE" :
                                           scannerTradeStatus === "PROCESSING" ? "⏳ PROCESSING" :
                                           scannerTradeStatus === "BEHIND" ? "⚠️ BEHIND" : "❓ UNKNOWN";
 
-          const compact = compactOverviewApiOutput(overview, microData, rotationData, marketData, tradeData, scannerData);
+          const compact = compactOverviewApiOutput(overview, microData, {}, marketData, tradeData, scannerData);
           const compactJson = safeJson(compact);
 
           // ====== Systeem audit ======
