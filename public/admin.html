@@ -697,14 +697,14 @@
         apiAudit: null,
         microMode: "currentMarket",
         microSearch: "",
-        apiTimeoutMs: 30000,          // verhoogd van 22000
+        apiTimeoutMs: 60000,          // verhoogd naar 60000
         microLimit: 60,
         bestLimit: 60,
         currentMarketWeatherRegime: "",
         currentMarketWeatherTrendSide: "",
         currentMarketWeatherKey: "",
         lastKnownMarketWeather: null,
-        cacheTTL: 20000,              // verhoogd van 10000
+        cacheTTL: 20000,
         _cacheTs: {
           overview: 0,
           market: 0,
@@ -2657,16 +2657,19 @@
       }
 
       // ================= AANGEPASTE rotationApiUrl =================
-      function rotationApiUrl() {
+      function rotationApiUrl(includeAvailable = false) {
         const params = commonParams({ includeWeather: true });
 
-        params.set("includeAvailable", "1");
         params.set("includeMicroMicro", "1");
         params.set("onlyMicroMicro", "1");
-        params.set("activeRowsLimit", "80");   // verlaagd van 180 → 80
-        params.set("availableLimit", "120");   // verlaagd van 280 → 120
+        params.set("activeRowsLimit", "20");
+        params.set("availableLimit", "10");
         params.set("mode", "currentMarket");
         params.set("uiMode", state.microMode);
+
+        if (includeAvailable) {
+          params.set("includeAvailable", "1");
+        }
 
         return `${endpoints.rotation}?${params.toString()}`;
       }
@@ -4572,7 +4575,8 @@
         }
 
         try {
-          const url = rotationApiUrl();
+          // ⚠️ Hier gebruiken we rotationApiUrl(true) om wél available rijen te laden
+          const url = rotationApiUrl(true);
           const data = await safeApi(url, { ok: false, active: {}, activeRows: [], availableRows: [] }, { timeoutMs: 22000 });
 
           const activeIds = extractActiveIdsFromPayload(data);
