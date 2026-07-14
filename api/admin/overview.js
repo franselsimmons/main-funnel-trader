@@ -2723,7 +2723,7 @@ async function readJsonFromStores({ durable, volatile, key, fallback = null }) {
 
   const fromDurable = await getJsonSafe(durable, key, null);
 
-  if (fromDurable !== null && fromDurable !== undefined) {
+  if (fromDurable !== null && fromVolatile !== undefined) {
     return {
       value: fromDurable,
       source: `DURABLE:${key}`
@@ -4334,7 +4334,7 @@ async function getOpenPositionsSafe(currentMarketWeather = {}) {
 }
 
 // ========================================================================
-// NIEUW: Systeem-Audit
+// NIEUW: Systeem-Audit (async gemaakt)
 // ========================================================================
 
 // Lijst van alle stages in volgorde
@@ -4368,7 +4368,7 @@ const STAGES = [
   { id: 'dataConsistency', name: 'Data Consistency' }
 ];
 
-function buildSystemAudit({
+async function buildSystemAudit({
   latestScan,
   tradeMeta,
   tradeSummary,
@@ -5177,8 +5177,8 @@ export default async function handler(req, res) {
       nextRotationRows: nextRotation?.longMicroFamiliesIgnored || 0
     };
 
-    // ====== BOUW SYSTEM AUDIT ======
-    const systemAudit = buildSystemAudit({
+    // ====== BOUW SYSTEM AUDIT (async) ======
+    const systemAudit = await buildSystemAudit({
       latestScan,
       tradeMeta,
       tradeSummary,
