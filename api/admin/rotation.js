@@ -4016,7 +4016,8 @@ async function handleGet(req, res) {
     MAX_ACTIVE_ROWS_LIMIT
   );
 
-  const includeAvailable = isTrue(firstValue(req.query?.includeAvailable, true), true);
+  // ⚠️ AANPASSING: standaard includeAvailable = false
+  const includeAvailable = isTrue(firstValue(req.query?.includeAvailable, false), false);
   const includeDashboard = isTrue(firstValue(req.query?.includeDashboard, false), false);
   const currentMarket = currentMarketWeatherFromRequest(req);
 
