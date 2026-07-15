@@ -5088,6 +5088,186 @@ async function getLatestSnapshot(
   return debug ? { snapshot: normalized, debugInfo } : { snapshot: normalized, debugInfo: null };
 }
 
+// ===== NIEUWE FUNCTIE: readExplicitScannerLatest =====
+/**
+ * Leest de scanner-latest expliciet via directe GET op de opgegeven key.
+ * Gebruikt GEEN Redis KEYS/SCAN, dus DEFAULT_REDIS_KEY_SCAN_DISABLED is irrelevant.
+ * Retourneert altijd { snapshot, debugInfo }.
+ */
+async function readExplicitScannerLatest(options, cfg, deadline, debug = false) {
+  const explicitKey =
+    options.scannerLatestKey ||
+    options.scanLatestKey ||
+    options.latestScannerSnapshotKey ||
+    options.scannerKeys?.latest ||
+    options.keys?.scanLatest ||
+    options.keys?.scannerLatest ||
+    PRIMARY_LATEST_KEY;
+
+  const debugInfo = {
+    resolvedLatestKey: explicitKey,
+    redisClientType: null,
+    rawValueFound: false,
+    rawValueType: null,
+    payloadParsed: false,
+    candidateContainerPath: null,
+    rawCandidateCount: 0,
+    shortCandidateCountAfterSideFilter: 0,
+    selectedSnapshotId: null,
+    selectedSnapshotCreatedAt: null,
+    selectedSnapshotAgeMs: null,
+    maxSnapshotAgeMs: null,
+    rejectionReason: null
+  };
+
+  const durableRedis = safeGetDurableRedis();
+  if (!durableRedis) {
+    debugInfo.rejectionReason = 'DURABLE_REDIS_UNAVAILABLE';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+  debugInfo.redisClientType = 'DURABLE';
+
+  let rawValue;
+  try {
+    rawValue = await withTimeout(
+      durableRedis.get(explicitKey),
+      Math.min(250, cfg.snapshotTimeoutMs || 250),
+      'EXPLICIT_SCANNER_GET_TIMEOUT'
+    );
+  } catch (err) {
+    debugInfo.rejectionReason = `REDIS_GET_ERROR:${err.message}`;
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  if (isTimeoutResult(rawValue)) {
+    debugInfo.rejectionReason = 'TIMEOUT';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  debugInfo.rawValueFound = rawValue !== null && rawValue !== undefined;
+  debugInfo.rawValueType = typeof rawValue;
+
+  if (!debugInfo.rawValueFound) {
+    debugInfo.rejectionReason = 'NO_VALUE';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  // Parseer JSON indien nodig
+  let parsed;
+  if (typeof rawValue === 'object' && rawValue !== null) {
+    parsed = rawValue;
+  } else if (typeof rawValue === 'string') {
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch (e) {
+      debugInfo.rejectionReason = `JSON_PARSE_ERROR:${e.message}`;
+      return { snapshot: null, debugInfo: debug ? debugInfo : null };
+    }
+  } else {
+    debugInfo.rejectionReason = `UNSUPPORTED_TYPE:${typeof rawValue}`;
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  debugInfo.payloadParsed = true;
+
+  // Probeer candidates te extraheren uit verschillende payloadvormen
+  const containers = [
+    parsed,
+    parsed?.payload,
+    parsed?.result,
+    parsed?.result?.result,
+    parsed?.result?.result?.result,
+    parsed?.data,
+    parsed?.snapshot
+  ];
+
+  let candidateContainer = null;
+  let candidates = [];
+  for (const container of containers) {
+    if (container && Array.isArray(container.candidates)) {
+      candidateContainer = container;
+      candidates = container.candidates;
+      break;
+    }
+  }
+
+  debugInfo.candidateContainerPath = candidateContainer ? 'found' : 'not_found';
+  debugInfo.rawCandidateCount = candidates.length;
+
+  // Filter alleen SHORT-kandidaten (geen vereiste op microFamilyId)
+  const shortCandidates = candidates.filter((cand) => {
+    const side = inferRowTradeSide(cand);
+    return side === TARGET_TRADE_SIDE;
+  });
+
+  debugInfo.shortCandidateCountAfterSideFilter = shortCandidates.length;
+
+  if (shortCandidates.length === 0) {
+    debugInfo.rejectionReason = 'NO_SHORT_CANDIDATES';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  // Haal snapshotId en createdAt uit de container of root
+  const snapshotId =
+    extractSnapshotId(candidateContainer) ||
+    extractSnapshotId(parsed);
+  const createdAt =
+    snapshotCreatedAt(candidateContainer) ||
+    snapshotCreatedAt(parsed);
+
+  if (!snapshotId) {
+    debugInfo.rejectionReason = 'SNAPSHOT_ID_MISSING';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  if (!createdAt) {
+    debugInfo.rejectionReason = 'SNAPSHOT_CREATED_AT_MISSING';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  // Bouw een snapshot object volgens de bestaande structuur
+  const snapshot = normalizeSelectedSnapshot(
+    {
+      ...parsed,
+      snapshotId,
+      createdAt,
+      candidates: shortCandidates
+    },
+    {
+      source: `EXPLICIT_GET:${explicitKey}`,
+      reason: 'EXPLICIT_SCANNER_LATEST_READ'
+    }
+  );
+
+  if (!snapshot.snapshotId || snapshot.candidates.length === 0) {
+    debugInfo.rejectionReason = 'NORMALIZE_FAILED';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  // ---- LEEFTIJDSCHECK (gebruik cfg.maxSnapshotAgeMs) ----
+  const ageMs = Date.now() - snapshot.createdAt;
+  const maxAgeMs = Number.isFinite(Number(cfg.maxSnapshotAgeMs))
+    ? Number(cfg.maxSnapshotAgeMs)
+    : 12 * 60 * 1000; // fallback = 12 minuten
+
+  debugInfo.maxSnapshotAgeMs = maxAgeMs;
+  debugInfo.selectedSnapshotAgeMs = ageMs;
+
+  if (ageMs > maxAgeMs) {
+    debugInfo.selectedSnapshotId = snapshot.snapshotId;
+    debugInfo.selectedSnapshotCreatedAt = snapshot.createdAt;
+    debugInfo.rejectionReason = 'SNAPSHOT_TOO_STALE';
+    return { snapshot: null, debugInfo: debug ? debugInfo : null };
+  }
+
+  debugInfo.selectedSnapshotId = snapshot.snapshotId;
+  debugInfo.selectedSnapshotCreatedAt = snapshot.createdAt;
+  debugInfo.rejectionReason = null;
+
+  return { snapshot, debugInfo: debug ? debugInfo : null };
+}
+// ===== EINDE NIEUWE FUNCTIE =====
+
 function buildSnapshotPriceHints(
   snapshot = null
 ) {
@@ -7584,11 +7764,12 @@ export async function runTradeSystem(options = {}) {
     const startedAt = now();
     const deadline = createDeadline(startedAt, cfg);
 
+    // OUDE RUNTIME WARNINGS: vervangen door dynamische lijst
     const runtimeWarnings = [
       'DEADLINE_SAFE_TRADE_SYSTEM_ACTIVE',
-      'ROUTE_OPTIONS_HONORED_FOR_MONITOR_LIMITS',
-      'DEFAULT_REDIS_KEY_SCAN_DISABLED'
+      'ROUTE_OPTIONS_HONORED_FOR_MONITOR_LIMITS'
     ];
+    // 'DIRECT_REDIS_GET_USED_FOR_SCANNER_LATEST' wordt later toegevoegd
 
     const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
     const monitorOnly = Boolean(options.monitorOnly);
@@ -7629,19 +7810,39 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push('PLAYBOOK_REFRESH_REQUIRED_FOR_CONFIRMED_WEATHER');
     }
 
-    // FIX: snapshot lezen met debug
-    const snapshotResult = await withDeadline(
-      () => getLatestSnapshot(deadline, cfg, debugMode),
-      {
-        deadline,
-        timeoutMs: cfg.snapshotTimeoutMs,
-        label: 'GET_LATEST_SNAPSHOT_TIMEOUT',
-        fallback: () => ({ snapshot: null, debugInfo: null })
-      }
+    // ===== NIEUWE SNAPSHOT-LEESLOGICA =====
+    // Eerst expliciete directe GET proberen
+    const explicitResult = await readExplicitScannerLatest(
+      options,
+      cfg,
+      deadline,
+      debugMode
     );
+    let snapshot = explicitResult.snapshot ?? null;
+    let snapshotDebug = explicitResult.debugInfo ?? null;
 
-    const snapshot = snapshotResult.snapshot || null;
-    const snapshotDebug = snapshotResult.debugInfo || null;
+    runtimeWarnings.push('DIRECT_REDIS_GET_USED_FOR_SCANNER_LATEST');
+
+    // Als expliciete read mislukt, val terug op de oude methode (met KEYS/SCAN)
+    if (!snapshot) {
+      const fallbackResult = await withDeadline(
+        () => getLatestSnapshot(deadline, cfg, debugMode),
+        {
+          deadline,
+          timeoutMs: cfg.snapshotTimeoutMs,
+          label: 'GET_LATEST_SNAPSHOT_TIMEOUT',
+          fallback: () => ({ snapshot: null, debugInfo: null })
+        }
+      );
+      snapshot = fallbackResult?.snapshot ?? null;
+      snapshotDebug = {
+        explicitRead: snapshotDebug,
+        fallbackRead: fallbackResult?.debugInfo ?? null
+      };
+      if (!snapshot) {
+        runtimeWarnings.push('FALLBACK_SNAPSHOT_READ_FAILED');
+      }
+    }
 
     const priceHints = buildSnapshotPriceHints(snapshot || null);
 
