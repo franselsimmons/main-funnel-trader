@@ -481,6 +481,35 @@ function queryValue(
   return undefined;
 }
 
+// ===== NIEUWE FUNCTIE: request metadata =====
+function getRequestMeta(req) {
+  const forwardedFor = String(
+    req.headers?.['x-forwarded-for'] ||
+    req.socket?.remoteAddress ||
+    ''
+  )
+    .split(',')[0]
+    .trim();
+  return {
+    requestId:
+      req.headers?.['x-vercel-id'] ||
+      req.headers?.['x-request-id'] ||
+      `req_${now()}_${Math.random().toString(16).slice(2, 10)}`,
+    method: req.method || null,
+    path: req.url || null,
+    userAgent:
+      String(req.headers?.['user-agent'] || '')
+        .slice(0, 300),
+    vercelCron:
+      String(req.headers?.['x-vercel-cron'] || '') || null,
+    forwardedFor:
+      forwardedFor || null,
+    referer:
+      String(req.headers?.referer || '')
+        .slice(0, 500) || null
+  };
+}
+
 function requestValue(
   req,
   body,
@@ -1060,7 +1089,30 @@ async function readLock(
         Number(ttl)
       )
         ? Number(ttl)
-        : null
+        : null,
+
+    // ===== NIEUWE velden voor eigenaarsdiagnostiek =====
+    requestId:
+      parsed.requestId ||
+      null,
+    requestMethod:
+      parsed.requestMethod ||
+      null,
+    requestPath:
+      parsed.requestPath ||
+      null,
+    requestUserAgent:
+      parsed.requestUserAgent ||
+      null,
+    requestVercelCron:
+      parsed.requestVercelCron ||
+      null,
+    requestForwardedFor:
+      parsed.requestForwardedFor ||
+      null,
+    requestReferer:
+      parsed.requestReferer ||
+      null
   };
 }
 
@@ -1094,10 +1146,12 @@ function isStaleLock(state) {
   );
 }
 
+// ===== AANGEPASTE acquireLock met requestMeta =====
 async function acquireLock(
   redis,
   key,
-  forceUnlock
+  forceUnlock,
+  requestMeta = {}
 ) {
   const runId =
     `short_trade_${now()}_${Math.random()
@@ -1115,6 +1169,28 @@ async function acquireLock(
     token,
     runId,
     createdAt,
+    // ===== NIEUWE metadata =====
+    requestId:
+      requestMeta.requestId ||
+      null,
+    requestMethod:
+      requestMeta.method ||
+      null,
+    requestPath:
+      requestMeta.path ||
+      null,
+    requestUserAgent:
+      requestMeta.userAgent ||
+      null,
+    requestVercelCron:
+      requestMeta.vercelCron ||
+      null,
+    requestForwardedFor:
+      requestMeta.forwardedFor ||
+      null,
+    requestReferer:
+      requestMeta.referer ||
+      null,
 
     expiresAt:
       createdAt +
@@ -2562,6 +2638,7 @@ function routeTimeoutResponse({
   };
 }
 
+// ===== AANGEPASTE lockActiveResponse met owner-diagnostiek =====
 function lockActiveResponse(
   startedAt,
   lockKey,
@@ -2598,6 +2675,35 @@ function lockActiveResponse(
         lock?.state?.ageSec ??
         null,
 
+      // ===== NIEUWE eigenaar-informatie, altijd zichtbaar =====
+      owner: {
+        runId:
+          lock?.state?.runId ||
+          null,
+        requestId:
+          lock?.state?.requestId ||
+          null,
+        method:
+          lock?.state?.requestMethod ||
+          null,
+        path:
+          lock?.state?.requestPath ||
+          null,
+        userAgent:
+          lock?.state?.requestUserAgent ||
+          null,
+        vercelCron:
+          lock?.state?.requestVercelCron ||
+          null,
+        forwardedFor:
+          lock?.state?.requestForwardedFor ||
+          null,
+        referer:
+          lock?.state?.requestReferer ||
+          null
+      },
+
+      // Alleen bij debug de volledige state
       state:
         debug
           ? lock?.state
@@ -2827,6 +2933,10 @@ export default async function handler(
 
     phase = 'ACQUIRE_LOCK';
 
+    // ===== Haal request metadata op en geef mee aan acquireLock =====
+    const requestMeta =
+      getRequestMeta(req);
+
     lock =
       await boundedRequired(
         acquireLock(
@@ -2835,7 +2945,8 @@ export default async function handler(
           shouldForceUnlock(
             req,
             body
-          )
+          ),
+          requestMeta
         ),
         boundedByRoute(
           startedAt,
