@@ -115,7 +115,7 @@ const POSITION_ENGINE_RUNTIME_VERSION =
 
 // ===== TOEGEVOEGD: versie om te bewijzen dat deze module wordt gebruikt =====
 const POSITION_ENGINE_BINDING_FIX_VERSION =
-  'SHORT_POSITION_ENGINE_LOCAL_BINDINGS_V2';
+  'SHORT_POSITION_ENGINE_LOCAL_BINDINGS_V3';
 
 const SIGNAL_TYPE_TRADE_READY = 'TRADE_READY';
 const SIGNAL_TYPE_WATCH_ONLY = 'WATCH_ONLY';
@@ -440,6 +440,90 @@ function isScannerFamilyRow(row = {}) {
     (value) =>
       value.includes('SCANNER') &&
       !value.includes('FIXED_TAXONOMY')
+  );
+}
+
+/**
+ * Controleert of een ID een geldige SHORT micro-family ID
+ * uit de vaste taxonomy van 75 families is.
+ */
+function isExactShortChildTrueMicroId(value) {
+  const id = upper(value);
+  if (!id) {
+    return false;
+  }
+  if (!id.startsWith('MICRO_SHORT_')) {
+    return false;
+  }
+  /*
+   * Een micro-micro ID hoort niet door deze child/micro-75
+   * validator geaccepteerd te worden.
+   */
+  if (id.includes(`_${MICRO_MICRO_SUFFIX}_`)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Controleert of een ID een geldige SHORT micro-micro-family ID is.
+ *
+ * Verwachte structuur:
+ * MICRO_SHORT_<SETUP>_<REGIME>_<CONFIRMATION>_MM_<HASH>
+ */
+function isExactShortMicroMicroId(value) {
+  const id = upper(value);
+  if (!id) {
+    return false;
+  }
+  if (!id.startsWith('MICRO_SHORT_')) {
+    return false;
+  }
+  const marker = `_${MICRO_MICRO_SUFFIX}_`;
+  const markerIndex = id.lastIndexOf(marker);
+  if (markerIndex <= 0) {
+    return false;
+  }
+  const parentId = id.slice(
+    0,
+    markerIndex
+  );
+  const hash = id.slice(
+    markerIndex + marker.length
+  );
+  if (!isExactShortChildTrueMicroId(parentId)) {
+    return false;
+  }
+  return new RegExp(
+    `^[A-F0-9]{${MICRO_MICRO_HASH_LEN}}$`
+  ).test(hash);
+}
+
+/**
+ * Haalt de canonical micro-family ID uit een positie of Analyze-row.
+ */
+function rowMicroId(row = {}) {
+  return upper(
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.childMicroFamilyId ||
+    row.microId ||
+    row.familyId ||
+    ''
+  );
+}
+
+/**
+ * Haalt de canonical micro-micro-family ID uit een positie of Analyze-row.
+ */
+function rowMicroMicroId(row = {}) {
+  return upper(
+    row.microMicroFamilyId ||
+    row.trueMicroMicroFamilyId ||
+    row.learningFamilyId ||
+    row.outcomeFamilyId ||
+    row.microMicroId ||
+    ''
   );
 }
 
