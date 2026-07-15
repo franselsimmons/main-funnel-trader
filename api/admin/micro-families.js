@@ -28,7 +28,7 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_X_EXECUTION_CONTEXT_V1';
 
 const ADMIN_UI_VERSION =
-  'SHORT_ADMIN_MICRO_FAMILIES_V5_BOUNDED_PAGINATED_MEMOIZED';
+  'SHORT_ADMIN_MICRO_FAMILIES_V6_COMPACT_PAGINATED_MEMOIZED';
 const MICRO_MICRO_RUNTIME_GATE_VERSION =
   'SHORT_MM_RUNTIME_GATE_V7_BOUNDED_PAGINATED_MEMOIZED';
 
@@ -84,24 +84,25 @@ const MAX_DISCORD_ACTIVATION_DIRECT_SL_PCT = 0.25;
 
 const MAX_ACTIVE_DISCORD_MICRO_MICRO_FAMILIES = 2;
 
-const DEFAULT_LIMIT = 60;
-const MAX_LIMIT = 150;
-const DEFAULT_BEST_LIMIT = 25;
-const MAX_BEST_LIMIT = 60;
+// ===== AANGEPAST: lagere standaard limit en max =====
+const DEFAULT_LIMIT = 30;
+const MAX_LIMIT = 80;
+const DEFAULT_BEST_LIMIT = 20;
+const MAX_BEST_LIMIT = 40;
 const WEEK_MICROS_TIMEOUT_MS = 7_500;
 const ACTIVE_ROTATION_TIMEOUT_MS = 1_500;
 
-// Verlaagd naar 1000 om de verwerkingslast verder te beperken (was 2000)
-const MAX_SOURCE_MICRO_ROWS = 1_000;
+// Verlaagd naar 500 om de verwerkingslast verder te beperken
+const MAX_SOURCE_MICRO_ROWS = 500;
 
-// Verhoogde cache-TTL naar 3 minuten (was 120s)
+// Cache TTL 3 minuten
 const CACHE_TTL_MS = 180_000;
 
-// Ruimere deadline voor meer ademruimte (was 20s)
+// Ruimere deadline
 const ROUTE_HARD_DEADLINE_MS = 22_000;
 
 const ROUTE_PROCESSING_RESERVE_MS = 1_250;
-const MAX_PLAYBOOK_CANDIDATES = 60;
+const MAX_PLAYBOOK_CANDIDATES = 40;
 
 const CACHE_MAX_KEYS = 8;
 
@@ -2811,6 +2812,68 @@ function compareRowsByMode(a, b, mode = DEFAULT_RANK_MODE) {
   return compareRowsBase(a, b);
 }
 
+// ===== NIEUWE COMPACTE ROW FUNCTIE =====
+function compactMicroMicroRow(row = {}) {
+  // Alleen de essentiële velden voor de lijstweergave
+  return {
+    rank: row.rank || 0,
+    id: row.trueMicroFamilyId || row.id || null,
+    setupType: row.setupType || null,
+    regimeBucket: row.regimeBucket || null,
+    confirmationProfile: row.confirmationProfile || null,
+    microMicroHash: row.microMicroHash || null,
+
+    entryMarketWeatherKey: row.entryMarketWeatherKey || null,
+    currentMarketWeatherKey: row.currentMarketWeatherKey || null,
+    weatherMatched: row.weatherMatched ?? false,
+
+    completed: row.completed || 0,
+    observationSample: row.observationSample || 0,
+    wins: row.wins || 0,
+    losses: row.losses || 0,
+    flats: row.flats || 0,
+
+    fairWinrate: row.fairWinrate || 0,
+    totalR: row.totalR || 0,
+    avgR: row.avgR || 0,
+    lcb95AvgR: row.lcb95AvgR ?? 0,
+    profitFactor: row.profitFactor || 0,
+    avgCostR: row.avgCostR || 0,
+    directSLPct: row.directSLPct || 0,
+
+    status: row.microMicroStatus || row.microMicroRuntimeStatus || 'UNKNOWN',
+    signalType: row.signalType || 'OBSERVE_ONLY',
+    proofTier: row.proofTier || 'OBSERVATION_ONLY',
+    proofSource: row.proofSource || null,
+    marketResolution: row.marketResolution || null,
+
+    policyBlocked: row.policyBlocked || false,
+    empiricalVeto: row.empiricalVeto || false,
+    riskFractionForEntry: row.riskFractionForEntry || 0,
+
+    currentFit: row.currentFit || row.currentFitLabel || 'UNKNOWN',
+    currentFitScore: row.currentFitScore || 0,
+
+    active: row.active || false,
+    activeDiscordEligible: row.activeDiscordEligible || false,
+
+    reason: row.reason || null,
+
+    // Extra voor filters
+    microMicroContext: row.microMicroContext || null,
+
+    // Alleen voor debug/details optie
+    ...(row.__debug ? {
+      childTrueMicroFamilyId: row.childTrueMicroFamilyId || null,
+      parentTrueMicroFamilyId: row.parentTrueMicroFamilyId || null,
+      microMicroFamilyId: row.microMicroFamilyId || null,
+      seen: row.seen || 0,
+      observed: row.observed || 0,
+      netRStatsSource: row.netRStatsSource || null
+    } : {})
+  };
+}
+
 function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), compact = true, currentMarket = null) {
   const id = getExplicitMicroMicroId(row, row.key);
   const parsed = parseShortTaxonomyMicroId(id);
@@ -2841,7 +2904,7 @@ function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), comp
       )
     : null;
 
-  const normalized = {
+  const baseNormalized = {
     ...row,
     __normalizedNetStats: normalizedStats,
 
@@ -3001,8 +3064,24 @@ function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), comp
   };
 
   if (currentMarketCandidate) {
-    Object.assign(normalized, currentMarketCandidate, {
-      currentMarketCandidate: {
+    // Alleen de essentiële velden van currentMarketCandidate toevoegen
+    baseNormalized.weatherMatched = currentMarketCandidate.weatherMatched || false;
+    baseNormalized.signalType = currentMarketCandidate.signalType || baseNormalized.signalType;
+    baseNormalized.proofTier = currentMarketCandidate.proofTier || baseNormalized.proofTier;
+    baseNormalized.marketResolution = currentMarketCandidate.marketResolution || baseNormalized.marketResolution || 'LIFETIME';
+    baseNormalized.proofSource = currentMarketCandidate.proofSource || baseNormalized.proofSource || 'MICRO_MICRO_LIFETIME';
+    baseNormalized.shrunkAvgR = currentMarketCandidate.shrunkAvgR ?? baseNormalized.avgR;
+    baseNormalized.shrunkLCB95AvgR = currentMarketCandidate.shrunkLCB95AvgR ?? baseNormalized.lcb95AvgR;
+    baseNormalized.riskFractionForEntry = currentMarketCandidate.riskFractionForEntry ?? 0;
+    baseNormalized.reason = currentMarketCandidate.reason || baseNormalized.reason;
+    baseNormalized.empiricalVeto = currentMarketCandidate.empiricalVeto || baseNormalized.empiricalVeto;
+    baseNormalized.policyBlocked = currentMarketCandidate.policyBlocked || baseNormalized.policyBlocked;
+    baseNormalized.inheritedForbiddenPolicyIgnored = currentMarketCandidate.inheritedForbiddenPolicyIgnored || false;
+    baseNormalized.inheritedForbiddenPolicyReason = currentMarketCandidate.inheritedForbiddenPolicyReason || null;
+
+    // Bewaar de rest in een apart object voor eventuele debug
+    if (!compact) {
+      baseNormalized.currentMarketCandidate = {
         currentMarketWeatherKey: currentMarketCandidate.currentMarketWeatherKey,
         currentMarketWeatherRegime: currentMarketCandidate.currentMarketWeatherRegime,
         currentMarketWeatherTrendSide: currentMarketCandidate.currentMarketWeatherTrendSide,
@@ -3027,32 +3106,81 @@ function normalizeMicroMicroRow(row = {}, index = 0, activeSet = new Set(), comp
         weatherMatched: currentMarketCandidate.weatherMatched,
         playbookFresh: currentMarketCandidate.playbookFresh,
         fdrPassed: currentMarketCandidate.fdrPassed
-      }
-    });
+      };
+    }
   }
 
+  // Als compact, retourneer alleen de essentiële velden
   if (compact) {
-    delete normalized.recentOutcomes;
-    delete normalized.examples;
-    delete normalized.counters;
-    delete normalized.rawCandles;
-    delete normalized.rawKlines;
-    delete normalized.marketWeatherStats;
-    delete normalized.weatherStats;
-    delete normalized.entryMarketWeatherStats;
-    delete normalized.netRStats;
-    delete normalized.shortNetRStats;
-    delete normalized.outcomeNetRStats;
-    delete normalized.entryMarketWeatherRaw;
-    delete normalized.raw;
-    delete normalized.payload;
-    delete normalized.debug;
-    delete normalized.diagnostics;
-    delete normalized.riskDecision;
-    delete normalized.__normalizedNetStats;
+    // Zet de relevante velden klaar voor compactMicroMicroRow
+    const compactRow = {
+      rank: baseNormalized.rank,
+      id: baseNormalized.id,
+      setupType: baseNormalized.setupType,
+      regimeBucket: baseNormalized.regimeBucket,
+      confirmationProfile: baseNormalized.confirmationProfile,
+      microMicroHash: baseNormalized.microMicroHash,
+      entryMarketWeatherKey: baseNormalized.entryMarketWeatherKey,
+      currentMarketWeatherKey: baseNormalized.currentMarketWeatherKey,
+      weatherMatched: baseNormalized.weatherMatched || false,
+      completed: baseNormalized.completed,
+      observationSample: baseNormalized.observationSample,
+      wins: baseNormalized.wins,
+      losses: baseNormalized.losses,
+      flats: baseNormalized.flats,
+      fairWinrate: baseNormalized.fairWinrate,
+      totalR: baseNormalized.totalR,
+      avgR: baseNormalized.avgR,
+      lcb95AvgR: baseNormalized.lcb95AvgR,
+      profitFactor: baseNormalized.profitFactor,
+      avgCostR: baseNormalized.avgCostR,
+      directSLPct: baseNormalized.directSLPct,
+      status: baseNormalized.microMicroStatus,
+      signalType: baseNormalized.signalType,
+      proofTier: baseNormalized.proofTier,
+      proofSource: baseNormalized.proofSource,
+      marketResolution: baseNormalized.marketResolution,
+      policyBlocked: baseNormalized.policyBlocked,
+      empiricalVeto: baseNormalized.empiricalVeto,
+      riskFractionForEntry: baseNormalized.riskFractionForEntry,
+      currentFit: baseNormalized.currentFit,
+      currentFitScore: baseNormalized.currentFitScore,
+      active: baseNormalized.active,
+      activeDiscordEligible: baseNormalized.activeDiscordEligible,
+      reason: baseNormalized.reason,
+      microMicroContext: baseNormalized.microMicroContext,
+      // Extra voor debug/details optie
+      __debug: baseNormalized.__debug || false
+    };
+    return compactMicroMicroRow(compactRow);
   }
 
-  return normalized;
+  // Anders retourneer de volledige row (zonder recentOutcomes e.d., maar wel alle velden)
+  // We verwijderen nog een paar zware velden die niet nodig zijn in de admin
+  delete baseNormalized.recentOutcomes;
+  delete baseNormalized.examples;
+  delete baseNormalized.counters;
+  delete baseNormalized.rawCandles;
+  delete baseNormalized.rawKlines;
+  delete baseNormalized.marketWeatherStats;
+  delete baseNormalized.weatherStats;
+  delete baseNormalized.entryMarketWeatherStats;
+  delete baseNormalized.netRStats;
+  delete baseNormalized.shortNetRStats;
+  delete baseNormalized.outcomeNetRStats;
+  delete baseNormalized.entryMarketWeatherRaw;
+  delete baseNormalized.raw;
+  delete baseNormalized.payload;
+  delete baseNormalized.debug;
+  delete baseNormalized.diagnostics;
+  delete baseNormalized.riskDecision;
+  delete baseNormalized.__normalizedNetStats;
+  // We laten wel de currentMarketCandidate staan (beperkt)
+  if (!baseNormalized.currentMarketCandidate) {
+    // niets
+  }
+
+  return baseNormalized;
 }
 
 function hiddenLayerCountsFromMicros(micros = {}) {
@@ -3687,7 +3815,7 @@ function methodNotAllowed(res) {
 
 function setHeaders(res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-v5-bounded-paginated-memoized');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-v6-compact-paginated-memoized');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -3879,7 +4007,6 @@ export default async function handler(req, res) {
       )
     ).length;
 
-    // Voeg waarschuwing toe als we de limiet hebben bereikt
     const maxRowsReachedWarning = builtRowsResult.processingTruncated
       ? `MAX_SOURCE_MICRO_ROWS_REACHED:${MAX_SOURCE_MICRO_ROWS}; response may be incomplete`
       : null;
@@ -4291,7 +4418,7 @@ export default async function handler(req, res) {
             activeRotationResult.stale
           ),
         path:
-          'shortOnlyExactMicroMicroV5BoundedPaginatedMemoized',
+          'shortOnlyExactMicroMicroV6CompactPaginatedMemoized',
         compactPayload:
           compact
       },
@@ -4334,7 +4461,7 @@ export default async function handler(req, res) {
         deadlineReached:
           deadlineReached(deadlineAt),
         path:
-          'shortOnlyExactMicroMicroV5Degraded'
+          'shortOnlyExactMicroMicroV6Degraded'
       },
       serverTs: Date.now()
     });
