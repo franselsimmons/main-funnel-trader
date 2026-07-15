@@ -20,6 +20,9 @@ const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 const LEGACY_SHORT_KEY_PREFIX = 'SHORT_';
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
+// FIX: expliciete primaire key voor scanner latest
+const PRIMARY_LATEST_KEY = 'SHORT:SCAN:LATEST';
+
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
@@ -504,12 +507,8 @@ function shortScanSnapshotKey(id) {
 
 const SHORT_KEYS = {
   scan: {
-    latest: namespacedShortKey(
-      KEYS.short?.scan?.latest ||
-        KEYS.scan?.shortLatest ||
-        KEYS.scan?.latest,
-      'SCAN:LATEST'
-    ),
+    // FIX: gebruik expliciet de primaire key; de oude KEYS-resolutie kan fout zijn
+    latest: PRIMARY_LATEST_KEY,
     snapshot: shortScanSnapshotKey
   },
   trade: {
@@ -4617,15 +4616,10 @@ function normalizeSelectedSnapshot(snapshot = null, meta = {}) {
   };
 }
 
+// FIX: gebruik expliciet de primaire key voor scanner latest
 function latestScanKeys() {
-  /*
-   * Volgorde is belangrijk.
-   *
-   * Eerst de meest waarschijnlijke SHORT scanner-keys.
-   * Daarna compatibiliteitskeys en Market Universe als
-   * laatste read-only fallback.
-   */
   return uniqueStrings([
+    PRIMARY_LATEST_KEY,
     SHORT_KEYS.scan.latest,
     `${SHORT_KEY_PREFIX}SCAN:LATEST`,
     `${SHORT_KEY_PREFIX}SCANNER:LATEST`,
@@ -4634,11 +4628,6 @@ function latestScanKeys() {
     `${SHORT_KEY_PREFIX}SCANNER:SNAPSHOT:LATEST`,
     `${SHORT_KEY_PREFIX}SCANNER:FULL:LATEST`,
     `${SHORT_KEY_PREFIX}SCANNER:CURRENT`,
-    /*
-     * Sommige scanner-versies bewaren de nieuwste
-     * volledige kandidatenlijst in Market Universe.
-     * Alleen lezen; TradeSystem schrijft deze key nooit.
-     */
     `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`,
     `${SHORT_KEY_PREFIX}MARKET:UNIVERSE`,
     `${LEGACY_SHORT_KEY_PREFIX}SCAN:LATEST`,
@@ -4662,20 +4651,21 @@ function latestScanKeys() {
   ]);
 }
 
-// Geen dubbele functies meer: de onderstaande functies bestaan in een enkele, verbeterde versie.
-// De eerdere comment "Eerste versie" is verwijderd.
-
+// FIX: readSnapshotCandidate retourneert nu ook debugInfo
 async function readSnapshotCandidate(
   redis,
   key,
   label,
-  timeoutMs = 200
+  timeoutMs = 200,
+  debug = false
 ) {
   if (
     !redis ||
     !key
   ) {
-    return null;
+    return debug
+      ? { value: null, debug: { key, label, redisType: label, reason: 'NO_REDIS_OR_KEY' } }
+      : null;
   }
   const latestValue = await withTimeout(
     getJsonSafe(
@@ -4686,17 +4676,36 @@ async function readSnapshotCandidate(
     timeoutMs,
     `SNAPSHOT_LATEST_READ_TIMEOUT:${label}:${key}`
   );
+  const debugInfo = {
+    key,
+    label,
+    redisType: label,
+    rawValueFound: !!latestValue,
+    rawValueType: typeof latestValue,
+    parsedValueFound: !!latestValue,
+    rawTopLevelKeys: isObjectRecord(latestValue) ? Object.keys(latestValue) : [],
+    parsedTopLevelKeys: isObjectRecord(latestValue) ? Object.keys(latestValue) : [],
+    unwrapPath: null,
+    snapshotIdBeforeValidation: null,
+    createdAtBeforeValidation: 0,
+    candidateFieldUsed: null,
+    rawCandidateCount: 0,
+    shortCandidateCountAfterSideFilter: 0,
+    scannerGateCandidateCount: 0,
+    rejectionStage: null,
+    rejectionReason: null
+  };
+
   if (
     isTimeoutResult(latestValue) ||
     latestValue === null ||
     latestValue === undefined
   ) {
-    return null;
+    debugInfo.rejectionStage = 'TIMEOUT_OR_EMPTY';
+    debugInfo.rejectionReason = 'TIMEOUT_OR_EMPTY';
+    return debug ? { value: null, debug: debugInfo } : null;
   }
-  /*
-   * De latest-key kan direct de volledige snapshot zijn,
-   * of een wrapper met snapshot/data/payload.
-   */
+
   if (hasFullSnapshotShape(latestValue)) {
     const normalized = normalizeSelectedSnapshot(
       latestValue,
@@ -4706,6 +4715,14 @@ async function readSnapshotCandidate(
           'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
       }
     );
+    debugInfo.snapshotIdBeforeValidation = normalized.snapshotId;
+    debugInfo.createdAtBeforeValidation = normalized.createdAt;
+    debugInfo.candidateFieldUsed = 'candidates';
+    debugInfo.rawCandidateCount = normalized.candidates.length;
+    debugInfo.shortCandidateCountAfterSideFilter = normalized.candidates.length;
+    debugInfo.scannerGateCandidateCount = normalized.candidates.length;
+    debugInfo.unwrapPath = 'root';
+
     if (
       normalized.snapshotId &&
       normalized.candidates.length > 0
@@ -4726,25 +4743,36 @@ async function readSnapshotCandidate(
         source:
           `${label}:${key}`,
         reason:
-          'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT'
+          'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT',
+        debugInfo
       };
     }
+    debugInfo.rejectionStage = 'FULL_SHAPE_BUT_NO_CANDIDATES_OR_NO_ID';
+    debugInfo.rejectionReason = 'FULL_SHAPE_BUT_NO_CANDIDATES_OR_NO_ID';
+    return debug ? { value: null, debug: debugInfo } : null;
   }
-  /*
-   * Anders behandelen we de waarde als snapshot-pointer.
-   */
+
+  // fallback: treat as pointer
   const snapshotId = extractSnapshotId(
     latestValue
   );
   if (!snapshotId) {
-    return null;
+    debugInfo.rejectionStage = 'NO_SNAPSHOT_ID';
+    debugInfo.rejectionReason = 'NO_SNAPSHOT_ID';
+    return debug ? { value: null, debug: debugInfo } : null;
   }
+  debugInfo.snapshotIdBeforeValidation = snapshotId;
+  debugInfo.unwrapPath = 'pointer';
+
   const byIdKeys = snapshotKeysForId(
     snapshotId
   ).slice(0, 8);
   if (byIdKeys.length === 0) {
-    return null;
+    debugInfo.rejectionStage = 'NO_BY_ID_KEYS';
+    debugInfo.rejectionReason = 'NO_BY_ID_KEYS';
+    return debug ? { value: null, debug: debugInfo } : null;
   }
+
   /*
    * De oude code las alle snapshot-keys achter elkaar.
    * Dat kon de volledige snapshotfase opeten.
@@ -4801,7 +4829,17 @@ async function readSnapshotCandidate(
         source:
           `${label}:${snapshotKey}`,
         reason:
-          'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
+          'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER',
+        debugInfo: {
+          ...debugInfo,
+          snapshotIdBeforeValidation: normalized.snapshotId || snapshotId,
+          createdAtBeforeValidation: normalized.createdAt,
+          candidateFieldUsed: 'candidates',
+          rawCandidateCount: normalized.candidates.length,
+          shortCandidateCountAfterSideFilter: normalized.candidates.length,
+          scannerGateCandidateCount: normalized.candidates.length,
+          unwrapPath: `pointer->${snapshotKey}`
+        }
       };
     })
   );
@@ -4822,20 +4860,50 @@ async function readSnapshotCandidate(
         n(b.createdAt, 0) -
         n(a.createdAt, 0)
     )[0];
-  return resolved || null;
+
+  if (resolved) {
+    return resolved;
+  }
+  debugInfo.rejectionStage = 'POINTER_NO_VALID_SNAPSHOT';
+  debugInfo.rejectionReason = 'POINTER_NO_VALID_SNAPSHOT';
+  return debug ? { value: null, debug: debugInfo } : null;
 }
 
+// FIX: getLatestSnapshot retourneert { snapshot, debugInfo }
 async function getLatestSnapshot(
   deadline,
-  cfg
+  cfg,
+  debug = false
 ) {
+  const debugInfo = {
+    redisClientType: null,
+    configuredLatestKey: SHORT_KEYS.scan.latest,
+    resolvedLatestKey: null,
+    rawValueFound: false,
+    rawValueType: null,
+    rawTopLevelKeys: [],
+    parsedValueFound: false,
+    parsedTopLevelKeys: [],
+    unwrapPath: null,
+    snapshotIdBeforeValidation: null,
+    createdAtBeforeValidation: 0,
+    candidateFieldUsed: null,
+    rawCandidateCount: 0,
+    shortCandidateCountAfterSideFilter: 0,
+    scannerGateCandidateCount: 0,
+    rejectionStage: null,
+    rejectionReason: null
+  };
+
   if (
     deadlineExceeded(
       deadline,
       DEFAULT_PHASE_RESERVE_MS
     )
   ) {
-    return null;
+    debugInfo.rejectionStage = 'DEADLINE_EXCEEDED';
+    debugInfo.rejectionReason = 'DEADLINE_EXCEEDED';
+    return debug ? { snapshot: null, debugInfo } : null;
   }
   const stores = [
     {
@@ -4851,20 +4919,19 @@ async function getLatestSnapshot(
       Boolean(store.redis)
   );
   if (stores.length === 0) {
-    return null;
+    debugInfo.rejectionStage = 'NO_REDIS_CLIENTS';
+    debugInfo.rejectionReason = 'NO_REDIS_CLIENTS';
+    return debug ? { snapshot: null, debugInfo } : null;
   }
-  /*
-   * Beperkte snelle fan-out.
-   *
-   * De oude versie deed:
-   * store -> key -> pointer-key
-   * volledig achter elkaar.
-   *
-   * Daardoor kon cfg.snapshotTimeoutMs al voorbij zijn
-   * voordat de geldige scanner-key werd bereikt.
-   */
+
+  // gebruik de eerste store die we vinden als redisClientType voor debug
+  debugInfo.redisClientType = stores[0]?.label || 'UNKNOWN';
+
   const keys = latestScanKeys()
     .slice(0, 10);
+  // FIX: zorg dat PRIMARY_LATEST_KEY als eerste wordt geprobeerd
+  // Maar latestScanKeys geeft al de primaire als eerste, dus ok.
+
   const perReadTimeout = Math.max(
     90,
     Math.min(
@@ -4882,7 +4949,8 @@ async function getLatestSnapshot(
           store.redis,
           key,
           store.label,
-          perReadTimeout
+          perReadTimeout,
+          debug
         )
       );
     }
@@ -4890,6 +4958,14 @@ async function getLatestSnapshot(
   const settled = await Promise.allSettled(
     readTasks
   );
+
+  let allDebugInfo = debug ? [] : null;
+  if (debug) {
+    allDebugInfo = settled
+      .filter(r => r.status === 'fulfilled' && r.value && r.value.debug)
+      .map(r => r.value.debug);
+  }
+
   const candidates = settled
     .filter(
       (result) =>
@@ -4903,8 +4979,29 @@ async function getLatestSnapshot(
         result.value
     );
   if (candidates.length === 0) {
-    return null;
+    debugInfo.rejectionStage = 'NO_CANDIDATE_FOUND';
+    debugInfo.rejectionReason = 'NO_CANDIDATE_FOUND';
+    // als we debug hebben, pak dan de eerste debugInfo van de failed reads
+    if (debug && allDebugInfo && allDebugInfo.length > 0) {
+      const last = allDebugInfo[allDebugInfo.length - 1];
+      debugInfo.rawValueFound = last.rawValueFound;
+      debugInfo.rawValueType = last.rawValueType;
+      debugInfo.rawTopLevelKeys = last.rawTopLevelKeys;
+      debugInfo.parsedValueFound = last.parsedValueFound;
+      debugInfo.parsedTopLevelKeys = last.parsedTopLevelKeys;
+      debugInfo.unwrapPath = last.unwrapPath;
+      debugInfo.snapshotIdBeforeValidation = last.snapshotIdBeforeValidation;
+      debugInfo.createdAtBeforeValidation = last.createdAtBeforeValidation;
+      debugInfo.candidateFieldUsed = last.candidateFieldUsed;
+      debugInfo.rawCandidateCount = last.rawCandidateCount;
+      debugInfo.shortCandidateCountAfterSideFilter = last.shortCandidateCountAfterSideFilter;
+      debugInfo.scannerGateCandidateCount = last.scannerGateCandidateCount;
+      debugInfo.rejectionStage = last.rejectionStage || 'NO_CANDIDATE_FOUND';
+      debugInfo.rejectionReason = last.rejectionReason || 'NO_CANDIDATE_FOUND';
+    }
+    return debug ? { snapshot: null, debugInfo } : null;
   }
+
   const uniqueBySnapshot = new Map();
   for (const candidate of candidates) {
     const id =
@@ -4945,8 +5042,26 @@ async function getLatestSnapshot(
     !best ||
     !best.snapshot
   ) {
-    return null;
+    debugInfo.rejectionStage = 'BEST_SNAPSHOT_NULL';
+    debugInfo.rejectionReason = 'BEST_SNAPSHOT_NULL';
+    return debug ? { snapshot: null, debugInfo } : null;
   }
+
+  debugInfo.resolvedLatestKey = best.key;
+  debugInfo.rawValueFound = true;
+  debugInfo.rawValueType = typeof best.snapshot;
+  debugInfo.parsedValueFound = true;
+  debugInfo.parsedTopLevelKeys = isObjectRecord(best.snapshot) ? Object.keys(best.snapshot) : [];
+  debugInfo.unwrapPath = best.reason || 'UNKNOWN';
+  debugInfo.snapshotIdBeforeValidation = best.snapshotId;
+  debugInfo.createdAtBeforeValidation = best.createdAt;
+  debugInfo.candidateFieldUsed = 'candidates';
+  debugInfo.rawCandidateCount = best.targetCount;
+  debugInfo.shortCandidateCountAfterSideFilter = best.targetCount;
+  debugInfo.scannerGateCandidateCount = best.targetCount;
+  debugInfo.rejectionStage = null;
+  debugInfo.rejectionReason = null;
+
   const normalized =
     normalizeSelectedSnapshot(
       best.snapshot,
@@ -4965,9 +5080,12 @@ async function getLatestSnapshot(
     ) ||
     normalized.candidates.length === 0
   ) {
-    return null;
+    debugInfo.rejectionStage = 'NORMALIZED_NO_ID_OR_NO_CANDIDATES';
+    debugInfo.rejectionReason = 'NORMALIZED_NO_ID_OR_NO_CANDIDATES';
+    return debug ? { snapshot: null, debugInfo } : null;
   }
-  return normalized;
+
+  return debug ? { snapshot: normalized, debugInfo } : { snapshot: normalized, debugInfo: null };
 }
 
 function buildSnapshotPriceHints(
@@ -7474,6 +7592,7 @@ export async function runTradeSystem(options = {}) {
 
     const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
     const monitorOnly = Boolean(options.monitorOnly);
+    const debugMode = Boolean(options.debug || options.details || options.full);
 
     const marketContext = await withDeadline(
       () => loadMarketContext().catch(() => fallbackMarketContext('MARKET_CONTEXT_LOAD_FAILED')),
@@ -7510,16 +7629,19 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push('PLAYBOOK_REFRESH_REQUIRED_FOR_CONFIRMED_WEATHER');
     }
 
-    // Snapshot lezen voor priceHints, maar beslissing over entry gebeurt na monitor
-    const snapshot = await withDeadline(
-      () => getLatestSnapshot(deadline, cfg),
+    // FIX: snapshot lezen met debug
+    const snapshotResult = await withDeadline(
+      () => getLatestSnapshot(deadline, cfg, debugMode),
       {
         deadline,
         timeoutMs: cfg.snapshotTimeoutMs,
         label: 'GET_LATEST_SNAPSHOT_TIMEOUT',
-        fallback: null
+        fallback: () => ({ snapshot: null, debugInfo: null })
       }
     );
+
+    const snapshot = snapshotResult.snapshot || null;
+    const snapshotDebug = snapshotResult.debugInfo || null;
 
     const priceHints = buildSnapshotPriceHints(snapshot || null);
 
@@ -7579,7 +7701,7 @@ export async function runTradeSystem(options = {}) {
     }
 
     if (monitorOnly) {
-      return saveRunMeta(baseEarlyReturnPayload({
+      const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
@@ -7598,14 +7720,16 @@ export async function runTradeSystem(options = {}) {
           shadowExitRows: shadowExits.length,
           monitorTimeoutMs: cfg.monitorTimeoutMs,
           monitorBatchSize: cfg.monitorBatchSize,
-          openPositionMonitorLimit: cfg.openPositionMonitorLimit
+          openPositionMonitorLimit: cfg.openPositionMonitorLimit,
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null
         }
-      }));
+      });
+      return saveRunMeta(payload);
     }
 
     // Na monitor: als geen snapshot, dan alleen early return zonder entry
     if (!snapshot?.snapshotId) {
-      return saveRunMeta(baseEarlyReturnPayload({
+      const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
@@ -7620,9 +7744,11 @@ export async function runTradeSystem(options = {}) {
         priceHints,
         extra: {
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length
+          shadowExitRows: shadowExits.length,
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null
         }
-      }));
+      });
+      return saveRunMeta(payload);
     }
 
     const snapshotAgeSec = snapshot.createdAt > 0
@@ -7634,7 +7760,7 @@ export async function runTradeSystem(options = {}) {
         ? snapshot.blockedNonShortCandidates
         : [];
 
-      return saveRunMeta(baseEarlyReturnPayload({
+      const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
@@ -7650,9 +7776,11 @@ export async function runTradeSystem(options = {}) {
         extra: {
           snapshotAgeSec: Math.round(snapshotAgeSec),
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length
+          shadowExitRows: shadowExits.length,
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null
         }
-      }));
+      });
+      return saveRunMeta(payload);
     }
 
     if (sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && !weatherChange.changed) {
@@ -7660,7 +7788,7 @@ export async function runTradeSystem(options = {}) {
         ? snapshot.blockedNonShortCandidates
         : [];
 
-      return saveRunMeta(baseEarlyReturnPayload({
+      const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
@@ -7678,13 +7806,15 @@ export async function runTradeSystem(options = {}) {
           lastProcessedAnalyzedMicroMicroRows: lastProcessed?.analyzedMicroMicroRows || 0,
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
-          sameSnapshotFastReturn: true
+          sameSnapshotFastReturn: true,
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null
         }
-      }));
+      });
+      return saveRunMeta(payload);
     }
 
     if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 1000)) {
-      return saveRunMeta(baseEarlyReturnPayload({
+      const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
@@ -7703,9 +7833,11 @@ export async function runTradeSystem(options = {}) {
         extra: {
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
-          deadlineReached: true
+          deadlineReached: true,
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null
         }
-      }));
+      });
+      return saveRunMeta(payload);
     }
 
     // Verder met entry loop zoals voorheen
@@ -8342,7 +8474,6 @@ export async function runTradeSystem(options = {}) {
       snapshotChunkAdvanced: canAdvanceCursor,
       snapshotProgressPct: chunk.total > 0 ? round((effectiveNextIndex / chunk.total) * 100, 2) : 0,
       snapshotRemainingCandidates: Math.max(0, chunk.total - effectiveNextIndex),
-      // Toegevoegd: snapshotProcessingState
       snapshotProcessingState: effectiveChunkComplete ? 'COMPLETE' : 'PROCESSING',
 
       ...sideFlags(),
@@ -8588,6 +8719,11 @@ export async function runTradeSystem(options = {}) {
         ? actions.filter((row) => row.action === 'WAIT').map(compactActionForResponse)
         : []
     };
+
+    // FIX: voeg scannerSnapshotDebug toe indien debug
+    if (debugMode && snapshotDebug) {
+      baseResult.scannerSnapshotDebug = snapshotDebug;
+    }
 
     return saveRunMeta(baseResult);
   } catch (error) {
