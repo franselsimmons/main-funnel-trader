@@ -113,6 +113,10 @@ const OPEN_POSITION_PRELOAD_VERSION =
 const POSITION_ENGINE_RUNTIME_VERSION =
   'SHORT_POSITION_ENGINE_V18_HARD_DEADLINE_NO_RUNAWAY_WORKERS';
 
+// ===== TOEGEVOEGD: versie om te bewijzen dat deze module wordt gebruikt =====
+const POSITION_ENGINE_BINDING_FIX_VERSION =
+  'SHORT_POSITION_ENGINE_LOCAL_IS_SHORT_POSITION_V1';
+
 const SIGNAL_TYPE_TRADE_READY = 'TRADE_READY';
 const SIGNAL_TYPE_WATCH_ONLY = 'WATCH_ONLY';
 const SIGNAL_TYPE_OBSERVE_ONLY = 'OBSERVE_ONLY';
@@ -3286,3 +3290,7 @@ export async function monitorOpenPositions(
 
   return exits;
 }
+
+// ===== TOEGEVOEGD: export van de versievariabele =====
+export const positionEngineBindingFixVersion =
+  POSITION_ENGINE_BINDING_FIX_VERSION;
