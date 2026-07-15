@@ -35,6 +35,9 @@ const DEFAULT_LOCK_TTL_SEC = 540;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
 
+// ===== NIEUW: Snapshot TTL (15 minuten) =====
+const SNAPSHOT_TTL_SEC = 900;
+
 const SHORT_SETUP_TYPES = [
   'BREAKOUT',
   'RETEST',
@@ -1842,6 +1845,7 @@ function buildScannerOptions(req, body = {}, scannerMarketWeather = {}) {
   };
 }
 
+// ===== AANGEPAST: persistOneScannerPayload met TTL en fallback =====
 async function persistOneScannerPayload(redis, payload = {}, storageRole = 'UNKNOWN') {
   if (!redis) {
     return {
@@ -1851,8 +1855,18 @@ async function persistOneScannerPayload(redis, payload = {}, storageRole = 'UNKN
     };
   }
 
-  const snapshotId = payload?.snapshotId || payload?.id || payload?.scanId || null;
-  const snapshotKey = snapshotId ? SHORT_KEYS.scan.snapshot(snapshotId) : null;
+  // Zorg dat snapshotId en createdAt bestaan
+  let snapshotId = payload?.snapshotId || payload?.id || payload?.scanId || null;
+  if (!snapshotId) {
+    // Genereer een nieuwe op basis van timestamp + hash
+    const timestamp = now();
+    const hash = Math.random().toString(36).substring(2, 8);
+    snapshotId = `scan_short_${timestamp}_${hash}`;
+  }
+
+  const createdAt = payload?.createdAt || payload?.ts || payload?.scanTs || now();
+
+  const snapshotKey = SHORT_KEYS.scan.snapshot(snapshotId);
 
   const marketWeather = normalizeMarketWeatherSnapshot(
     payload.marketWeather || payload.currentMarketWeather || payload.scannerMarketWeather || payload,
@@ -1870,7 +1884,7 @@ async function persistOneScannerPayload(redis, payload = {}, storageRole = 'UNKN
     scannerMarketWeather: marketWeather,
 
     snapshotId,
-
+    createdAt,
     persistedAt: now(),
     persistedBy: 'api/scanner/run.js',
     persistedNamespace: SHORT_NAMESPACE,
@@ -1897,19 +1911,20 @@ async function persistOneScannerPayload(redis, payload = {}, storageRole = 'UNKN
     }
   };
 
-  await setJson(redis, SHORT_KEYS.scan.latest, latestPayload);
-
-  if (snapshotId && snapshotKey) {
-    await setJson(redis, snapshotKey, latestPayload);
-  }
+  // Schrijf met TTL
+  await setJson(redis, SHORT_KEYS.scan.latest, latestPayload, { EX: SNAPSHOT_TTL_SEC });
+  await setJson(redis, snapshotKey, latestPayload, { EX: SNAPSHOT_TTL_SEC });
 
   return {
     storageRole,
     ok: true,
     persistedLatest: true,
-    persistedSnapshot: Boolean(snapshotId && snapshotKey),
+    persistedSnapshot: true,
     scanLatest: SHORT_KEYS.scan.latest,
-    snapshotKey
+    snapshotKey,
+    snapshotId,
+    createdAt,
+    ttlSec: SNAPSHOT_TTL_SEC
   };
 }
 
@@ -1918,6 +1933,18 @@ async function persistShortScannerPayload({
   durableRedis,
   payload = {}
 }) {
+  // Zorg dat payload snapshotId en createdAt heeft
+  let snapshotId = payload?.snapshotId || payload?.id || payload?.scanId || null;
+  if (!snapshotId) {
+    const timestamp = now();
+    const hash = Math.random().toString(36).substring(2, 8);
+    snapshotId = `scan_short_${timestamp}_${hash}`;
+    payload.snapshotId = snapshotId;
+  }
+  if (!payload.createdAt) {
+    payload.createdAt = now();
+  }
+
   const volatileResult = await persistOneScannerPayload(
     volatileRedis,
     payload,
@@ -1938,8 +1965,6 @@ async function persistShortScannerPayload({
     error: error?.message || String(error)
   }));
 
-  const snapshotId = payload?.snapshotId || payload?.id || payload?.scanId || null;
-
   return {
     ok: volatileResult.ok === true || durableResult.ok === true,
 
@@ -1959,6 +1984,7 @@ async function persistShortScannerPayload({
 
     scanLatest: SHORT_KEYS.scan.latest,
     snapshotKey: snapshotId ? SHORT_KEYS.scan.snapshot(snapshotId) : null,
+    snapshotId,
 
     tradeSystemReadsDurableMirror: true,
     tradeSystemScannerLatestKey: SHORT_KEYS.scan.latest,
@@ -2030,6 +2056,16 @@ export default async function handler(req, res) {
     const result = normalizeLockResult(rawResult, scannerMarketWeather);
     const payload = normalizePayload(unwrapPayload(result), scannerMarketWeather);
 
+    // Zorg dat payload een snapshotId en createdAt heeft
+    if (!payload.snapshotId) {
+      const timestamp = now();
+      const hash = Math.random().toString(36).substring(2, 8);
+      payload.snapshotId = `scan_short_${timestamp}_${hash}`;
+    }
+    if (!payload.createdAt) {
+      payload.createdAt = now();
+    }
+
     const persistence = await persistShortScannerPayload({
       volatileRedis,
       durableRedis,
@@ -2062,7 +2098,9 @@ export default async function handler(req, res) {
       persisted: payload?.persisted ?? result?.persisted ?? null,
       shortPersistence: persistence,
 
-      snapshotId: payload?.snapshotId || result?.snapshotId || null,
+      snapshotId: payload.snapshotId,
+      createdAt: payload.createdAt,
+      snapshotAgeMs: now() - payload.createdAt,
 
       candidatesCount: Number(payload?.candidatesCount || 0),
       shortCandidatesCount: Number(payload?.shortCandidatesCount || payload?.candidatesCount || 0),
@@ -2088,7 +2126,8 @@ export default async function handler(req, res) {
         scannerWritesDurable: persistence.durable?.ok === true,
         tradeReadsDurableLatest: true,
         sharedLatestKey: SHORT_KEYS.scan.latest,
-        snapshotKey: payload?.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null
+        snapshotKey: payload.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null,
+        ttlSec: SNAPSHOT_TTL_SEC
       },
 
       scannerMarketWeatherCapture: {
@@ -2111,7 +2150,7 @@ export default async function handler(req, res) {
         scanLock: SHORT_KEYS.scan.lock,
         scanLatest: SHORT_KEYS.scan.latest,
         scanSnapshotPattern: SHORT_KEYS.scan.snapshotPattern,
-        snapshotKey: payload?.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null,
+        snapshotKey: payload.snapshotId ? SHORT_KEYS.scan.snapshot(payload.snapshotId) : null,
 
         volatileScanLatest: SHORT_KEYS.scan.latest,
         durableScanLatest: SHORT_KEYS.scan.latest,
