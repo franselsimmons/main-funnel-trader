@@ -266,6 +266,79 @@ function upper(value) {
     .toUpperCase();
 }
 
+/**
+ * Bepaalt of een opgeslagen positie een geldige SHORT-positie is.
+ *
+ * Expliciete sidevelden hebben voorrang.
+ * Alleen als geen herkenbare side aanwezig is, worden shortOnly
+ * en longDisabled als fallback gebruikt.
+ */
+function isShortPosition(position = {}) {
+  if (
+    !position ||
+    typeof position !== 'object'
+  ) {
+    return false;
+  }
+
+  const sideCandidates = [
+    position.tradeSide,
+    position.positionSide,
+    position.direction,
+    position.analysisSide,
+    position.signalSide,
+    position.entrySide,
+    position.side,
+    position.dashboardSide,
+    position.marketSide
+  ];
+
+  for (const value of sideCandidates) {
+    const side = upper(value);
+    if (!side) {
+      continue;
+    }
+
+    if (
+      SHORT_DIRECT.has(side)
+    ) {
+      return true;
+    }
+
+    if (
+      LONG_DIRECT.has(side)
+    ) {
+      return false;
+    }
+
+    let convertedSide = 'UNKNOWN';
+    try {
+      convertedSide = upper(
+        sideToTradeSide(side)
+      );
+    } catch {
+      convertedSide = 'UNKNOWN';
+    }
+
+    if (
+      convertedSide === TARGET_TRADE_SIDE
+    ) {
+      return true;
+    }
+
+    if (
+      convertedSide === OPPOSITE_TRADE_SIDE
+    ) {
+      return false;
+    }
+  }
+
+  return (
+    position.shortOnly === true ||
+    position.longDisabled === true
+  );
+}
+
 function hasValue(value) {
   return (
     value !== undefined &&
