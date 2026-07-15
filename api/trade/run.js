@@ -53,6 +53,10 @@ const DEFAULT_OPEN_POSITION_LIMIT = 6;
 const DEFAULT_LOCK_TTL_SEC = 50;
 const DEFAULT_STALE_LOCK_AFTER_SEC = 45;
 
+// ===== NIEUW: Snapshot leeftijdsgrenzen =====
+const MAX_SNAPSHOT_AGE_MS = 12 * 60 * 1000; // 12 minuten
+const SNAPSHOT_WARN_AGE_MS = 8 * 60 * 1000; // 8 minuten
+
 const IMPORT_TIMEOUT_MS = 3_500;
 const BODY_TIMEOUT_MS = 1_200;
 const REDIS_TIMEOUT_MS = 500;
@@ -1487,6 +1491,7 @@ function setHeaders(res) {
   );
 }
 
+// ===== AANGEPASTE buildRunOptions =====
 function buildRunOptions(
   req,
   body,
@@ -1682,6 +1687,11 @@ function buildRunOptions(
 
     persistNoPriceFailures:
       false,
+
+    // ===== NIEUW: Snapshot leeftijdsgrenzen =====
+    maxSnapshotAgeMs: MAX_SNAPSHOT_AGE_MS,
+    maxSnapshotWarnAgeMs: SNAPSHOT_WARN_AGE_MS,
+    snapshotDebug: true, // zal tradeSystem vragen om gedetailleerde snapshot-info in response
 
     targetTradeSide:
       TARGET_TRADE_SIDE,
@@ -2126,6 +2136,7 @@ function compactPayload(
       row.durationMs ??
       null,
 
+    // ===== Snapshot details (vanuit tradeSystem) =====
     snapshotId:
       row.snapshotId ||
       null,
@@ -3011,6 +3022,10 @@ export default async function handler(
 
         resetSnapshotCursor:
           runOptions.resetSnapshotCursor,
+
+        // ===== NIEUW: Snapshot leeftijdsgrenzen in response =====
+        maxSnapshotAgeMs: runOptions.maxSnapshotAgeMs,
+        maxSnapshotWarnAgeMs: runOptions.maxSnapshotWarnAgeMs,
 
         lock: {
           key:
