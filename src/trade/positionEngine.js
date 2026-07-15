@@ -115,7 +115,7 @@ const POSITION_ENGINE_RUNTIME_VERSION =
 
 // ===== TOEGEVOEGD: versie om te bewijzen dat deze module wordt gebruikt =====
 const POSITION_ENGINE_BINDING_FIX_VERSION =
-  'SHORT_POSITION_ENGINE_LOCAL_IS_SHORT_POSITION_V1';
+  'SHORT_POSITION_ENGINE_LOCAL_BINDINGS_V2';
 
 const SIGNAL_TYPE_TRADE_READY = 'TRADE_READY';
 const SIGNAL_TYPE_WATCH_ONLY = 'WATCH_ONLY';
@@ -340,6 +340,106 @@ function isShortPosition(position = {}) {
   return (
     position.shortOnly === true ||
     position.longDisabled === true
+  );
+}
+
+/**
+ * Herkent oude scanner-family records die niet als echte
+ * Analyze micro/micro-micro open positie mogen worden behandeld.
+ *
+ * Echte Analyze-posities met geldige MICRO_SHORT_* identifiers
+ * worden niet geblokkeerd.
+ */
+function isScannerFamilyRow(row = {}) {
+  if (
+    !row ||
+    typeof row !== 'object'
+  ) {
+    return false;
+  }
+
+  const microFamilyId = upper(
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.childMicroFamilyId ||
+    row.familyId
+  );
+
+  const microMicroFamilyId = upper(
+    row.microMicroFamilyId ||
+    row.learningFamilyId ||
+    row.outcomeFamilyId
+  );
+
+  /*
+   * Geldige Analyze-identiteiten hebben voorrang.
+   * Deze records zijn geen scanner-family rows.
+   */
+  if (
+    microFamilyId.startsWith('MICRO_SHORT_') ||
+    microMicroFamilyId.startsWith('MICRO_SHORT_')
+  ) {
+    return false;
+  }
+
+  const sourceValues = [
+    row.source,
+    row.positionSource,
+    row.origin,
+    row.createdBy,
+    row.identitySource,
+    row.learningIdentitySource,
+    row.familySource,
+    row.microFamilySource,
+    row.snapshotSource
+  ]
+    .map(upper)
+    .filter(Boolean);
+
+  if (
+    sourceValues.some(
+      (value) =>
+        value === 'SCANNER' ||
+        value === 'SCAN' ||
+        value.startsWith('SCANNER_') ||
+        value.startsWith('SCAN_') ||
+        value.includes('SCANNER_FAMILY')
+    )
+  ) {
+    return true;
+  }
+
+  const explicitScannerFlags = [
+    row.scannerFamily,
+    row.isScannerFamily,
+    row.scannerFamilyRow,
+    row.scannerFingerprintOnly,
+    row.scannerOnly,
+    row.fromScannerFamily
+  ];
+
+  if (
+    explicitScannerFlags.some(
+      (value) => value === true
+    )
+  ) {
+    return true;
+  }
+
+  const schemaValues = [
+    row.schema,
+    row.familySchema,
+    row.microFamilySchema,
+    row.learningSchema,
+    row.identitySchema
+  ]
+    .map(upper)
+    .filter(Boolean);
+
+  return schemaValues.some(
+    (value) =>
+      value.includes('SCANNER') &&
+      !value.includes('FIXED_TAXONOMY')
   );
 }
 
