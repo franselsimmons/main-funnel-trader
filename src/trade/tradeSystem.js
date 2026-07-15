@@ -2362,7 +2362,7 @@ function learningIdentityFields(row = {}) {
     regimeBucket: parsedChild.regimeBucket || row.regimeBucket || null,
     confirmationProfile: parsedChild.confirmationProfile || row.confirmationProfile || null,
 
-    exact75ChildTrueMicro: Boolean(childTrueMicroFamilyId),
+    exact75ChildTrue: Boolean(childTrueMicroFamilyId),
     exactMicroMicro: Boolean(microMicroFamilyId),
     fixedTaxonomyLearningId: Boolean(childTrueMicroFamilyId || microMicroFamilyId),
 
@@ -7715,6 +7715,11 @@ export async function runTradeSystem(options = {}) {
       deadline
     );
     const alertContext = buildSelectedAlertContext(activeRotation, marketContext);
+
+    // ===== NIEUW: VIRTUAL LEARNING GAAT DOOR, OOK ZONDER DISCORD SELECTIE =====
+    if (alertContext.empty) {
+      runtimeWarnings.push('VIRTUAL_LEARNING_CONTINUES_WITHOUT_DISCORD_SELECTION');
+    }
 
     if (alertContext.activeSelectionRuntimeFiltered) {
       runtimeWarnings.push(`ACTIVE_SELECTION_RUNTIME_NET_EDGE_FILTERED:${alertContext.rejectedSelectedMicroMicroCount}`);
