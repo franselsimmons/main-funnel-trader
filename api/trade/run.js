@@ -20,7 +20,7 @@ const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const TRADE_RUN_ROUTE_VERSION =
-  'SHORT_API_TRADE_RUN_V13_ABSOLUTE_24S_RETURN_LOW_REDIS_FANOUT_NO_DUPLICATE_PERSIST';
+  'SHORT_API_TRADE_RUN_V14_ABORT_CONTROLLER_DEADLINE_SAFE';
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
@@ -32,28 +32,32 @@ const MICRO_MICRO_LEARNING_GRANULARITY =
 const MARKET_UNIVERSE_KEY = `${SHORT_KEY_PREFIX}MARKET:UNIVERSE:LATEST`;
 const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 
-const ABSOLUTE_ROUTE_RETURN_MS = 24_000;
+// ===== STRINGERE DEADLINES VOOR ROUTE =====
+const ABSOLUTE_ROUTE_RETURN_MS = 20_000;          // uiterste terugkeer
 const ROUTE_RESPONSE_RESERVE_MS = 1_500;
+const HARD_TRADE_DEADLINE_MS = 14_000;            // interne trade deadline
+const ROUTE_SOFT_TIMEOUT_MS = 17_000;             // wachttijd op tradeTask
+const ABORT_WAIT_MS = 500;                        // wacht na abort
 
-const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 20_000; // verhoogd van 19s naar 20s
+const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 17_000;
 const MIN_ROUTE_SOFT_TIMEOUT_MS = 12_000;
-const MAX_ROUTE_SOFT_TIMEOUT_MS = 21_000;
+const MAX_ROUTE_SOFT_TIMEOUT_MS = 19_000;
 
-const DEFAULT_TRADE_RUNTIME_MS = 16_000; // verhoogd van 13s naar 16s
-const DEFAULT_MONITOR_ONLY_RUNTIME_MS = 10_000;
+const DEFAULT_TRADE_RUNTIME_MS = 13_000;          // iets korter dan deadline
+const DEFAULT_MONITOR_ONLY_RUNTIME_MS = 8_000;
 
 // Learning-batch: 15 kandidaten per run
 const DEFAULT_MAX_CANDIDATES = 15;
 const DEFAULT_CANDIDATE_CHUNK_SIZE = 15;
 const DEFAULT_MAX_ENTRIES = 2; // maximaal 2 virtuele entries per run
-const DEFAULT_MONITOR_TIMEOUT_MS = 1_500; // iets ruimer
+const DEFAULT_MONITOR_TIMEOUT_MS = 1_500;
 const DEFAULT_MONITOR_BATCH_SIZE = 6;
 const DEFAULT_OPEN_POSITION_LIMIT = 6;
 
 const DEFAULT_LOCK_TTL_SEC = 50;
 const DEFAULT_STALE_LOCK_AFTER_SEC = 45;
 
-// ===== NIEUW: Snapshot leeftijdsgrenzen =====
+// ===== Snapshot leeftijdsgrenzen =====
 const MAX_SNAPSHOT_AGE_MS = 12 * 60 * 1000; // 12 minuten
 const SNAPSHOT_WARN_AGE_MS = 8 * 60 * 1000; // 8 minuten
 
@@ -61,7 +65,7 @@ const IMPORT_TIMEOUT_MS = 3_500;
 const BODY_TIMEOUT_MS = 1_200;
 const REDIS_TIMEOUT_MS = 500;
 const LOCK_STAGE_TIMEOUT_MS = 1_800;
-const LOCK_RELEASE_TIMEOUT_MS = 750;
+const LOCK_RELEASE_TIMEOUT_MS = 500;  // strak
 
 const MAX_DEBUG_ROWS = 20;
 
@@ -481,7 +485,7 @@ function queryValue(
   return undefined;
 }
 
-// ===== NIEUWE FUNCTIE: request metadata =====
+// ===== request metadata =====
 function getRequestMeta(req) {
   const forwardedFor = String(
     req.headers?.['x-forwarded-for'] ||
@@ -1091,7 +1095,7 @@ async function readLock(
         ? Number(ttl)
         : null,
 
-    // ===== NIEUWE velden voor eigenaarsdiagnostiek =====
+    // ===== eigenaarsdiagnostiek =====
     requestId:
       parsed.requestId ||
       null,
@@ -1146,7 +1150,7 @@ function isStaleLock(state) {
   );
 }
 
-// ===== AANGEPASTE acquireLock met requestMeta =====
+// ===== acquireLock met requestMeta =====
 async function acquireLock(
   redis,
   key,
@@ -1169,7 +1173,7 @@ async function acquireLock(
     token,
     runId,
     createdAt,
-    // ===== NIEUWE metadata =====
+    // ===== metadata =====
     requestId:
       requestMeta.requestId ||
       null,
@@ -1567,11 +1571,13 @@ function setHeaders(res) {
   );
 }
 
-// ===== AANGEPASTE buildRunOptions =====
+// ===== buildRunOptions nu met signal en deadlineAt =====
 function buildRunOptions(
   req,
   body,
-  debug
+  debug,
+  signal,
+  deadlineAt
 ) {
   const force =
     shouldForce(
@@ -1764,10 +1770,14 @@ function buildRunOptions(
     persistNoPriceFailures:
       false,
 
-    // ===== NIEUW: Snapshot leeftijdsgrenzen =====
+    // ===== Snapshot leeftijdsgrenzen =====
     maxSnapshotAgeMs: MAX_SNAPSHOT_AGE_MS,
     maxSnapshotWarnAgeMs: SNAPSHOT_WARN_AGE_MS,
     snapshotDebug: true, // zal tradeSystem vragen om gedetailleerde snapshot-info in response
+
+    // ===== Abort en deadline =====
+    signal: signal,                 // AbortSignal
+    deadlineAt: deadlineAt,         // absolute deadline voor tradeSystem
 
     targetTradeSide:
       TARGET_TRADE_SIDE,
@@ -2594,7 +2604,7 @@ function routeTimeoutResponse({
       'ROUTE_SOFT_TIMEOUT_BEFORE_VERCEL_504',
 
     message:
-      'De route heeft vóór de Vercel-limiet geantwoord. De lopende TradeSystem-taak krijgt geen extra route-persistence. De eigen SHORT-lock wordt in de taak-finally vrijgegeven of verloopt via TTL.',
+      'De route heeft vóór de Vercel-limiet geantwoord. De TradeSystem-taak is geaborteerd. De lock is vrijgegeven door de route-finally.',
 
     routeSoftTimeoutMs,
 
@@ -2615,10 +2625,10 @@ function routeTimeoutResponse({
       acquired:
         lock?.acquired === true,
 
-      released: false,
+      released: true,
 
       releaseMode:
-        'TRADE_TASK_FINALLY_OR_TTL',
+        'ROUTE_FINALLY',
 
       ttlSec:
         DEFAULT_LOCK_TTL_SEC
@@ -2627,18 +2637,14 @@ function routeTimeoutResponse({
     warnings: [
       'VERCEL_504_PREVENTED_BY_ABSOLUTE_ROUTE_DEADLINE',
       'NO_REDIS_WRITE_WAIT_AFTER_ROUTE_TIMEOUT',
-      'NO_DUPLICATE_ROUTE_PERSISTENCE',
-      'TRADE_TASK_OWNS_FINAL_LOCK_RELEASE',
-      'OPEN_POSITION_MONITOR_LIMIT_REDUCED_TO_6',
-      'MAX_CANDIDATES_REDUCED_TO_15',
-      'SNAPSHOT_CURSOR_NOT_RESET_BY_FORCE'
+      'LOCK_RELEASED_BY_ROUTE_FINALLY',
+      'ABORT_CONTROLLER_USED'
     ],
 
     ...baseFlags()
   };
 }
 
-// ===== AANGEPASTE lockActiveResponse met owner-diagnostiek =====
 function lockActiveResponse(
   startedAt,
   lockKey,
@@ -2675,7 +2681,7 @@ function lockActiveResponse(
         lock?.state?.ageSec ??
         null,
 
-      // ===== NIEUWE eigenaar-informatie, altijd zichtbaar =====
+      // ===== eigenaar-informatie, altijd zichtbaar =====
       owner: {
         runId:
           lock?.state?.runId ||
@@ -2802,6 +2808,9 @@ export default async function handler(
   let redis = null;
   let keys = buildKeys({});
   let lock = null;
+
+  // ===== AbortController om tradeTask te kunnen stoppen =====
+  const controller = new AbortController();
 
   try {
     if (
@@ -3002,39 +3011,27 @@ export default async function handler(
       );
     }
 
+    // ===== Deadline voor tradeSystem =====
+    const hardDeadlineAt = startedAt + HARD_TRADE_DEADLINE_MS;
+
     const runOptions =
       buildRunOptions(
         req,
         body,
-        debug
+        debug,
+        controller.signal,
+        hardDeadlineAt
       );
 
     phase =
       'RUN_TRADE_SYSTEM';
 
     /*
-     * De lock hoort bij de volledige TradeSystem-taak.
-     * Bij een route-soft-timeout blijft de taak zelfstandig afronden.
-     * De taak-finally verwijdert alleen de lock die zij zelf bezit.
+     * Geen detached promise:
+     * runTradeSystem wordt direct aangeroepen en de promise wordt bewaard.
+     * De lock wordt later in de finally vrijgegeven.
      */
-    const tradeTask =
-      (async () => {
-        try {
-          return await runTradeSystem(
-            runOptions
-          );
-        } finally {
-          await bounded(
-            releaseOwnLock(
-              redis,
-              keys.tradeLock,
-              lock.lockValue
-            ),
-            LOCK_RELEASE_TIMEOUT_MS,
-            null
-          );
-        }
-      })();
+    const tradeTask = runTradeSystem(runOptions);
 
     const result =
       await bounded(
@@ -3053,10 +3050,19 @@ export default async function handler(
       phase =
         'ROUTE_SOFT_TIMEOUT';
 
-      tradeTask.catch(
-        () => null
+      // Abort de tradeSystem-taak
+      controller.abort(
+        new Error('ROUTE_DEADLINE_ABORT')
       );
 
+      // Wacht kort totdat de taak de abort heeft verwerkt
+      await bounded(
+        tradeTask.catch(() => null),
+        ABORT_WAIT_MS,
+        null
+      );
+
+      // Lock wordt in finally vrijgegeven
       return res
         .status(200)
         .json(
@@ -3134,7 +3140,6 @@ export default async function handler(
         resetSnapshotCursor:
           runOptions.resetSnapshotCursor,
 
-        // ===== NIEUW: Snapshot leeftijdsgrenzen in response =====
         maxSnapshotAgeMs: runOptions.maxSnapshotAgeMs,
         maxSnapshotWarnAgeMs: runOptions.maxSnapshotWarnAgeMs,
 
@@ -3145,7 +3150,7 @@ export default async function handler(
           acquired: true,
 
           releaseMode:
-            'TRADE_TASK_FINALLY',
+            'ROUTE_FINALLY',
 
           ttlFallbackSec:
             DEFAULT_LOCK_TTL_SEC
@@ -3187,35 +3192,8 @@ export default async function handler(
     phase =
       `${phase}_CAUGHT`;
 
-    try {
-      if (
-        redis &&
-        lock?.acquired &&
-        lock?.lockValue
-      ) {
-        await bounded(
-          releaseOwnLock(
-            redis,
-            keys.tradeLock,
-            lock.lockValue
-          ),
-          Math.min(
-            LOCK_RELEASE_TIMEOUT_MS,
-            Math.max(
-              1,
-              remainingRouteMs(
-                startedAt,
-                200
-              )
-            )
-          ),
-          null
-        );
-      }
-    } catch {
-      // Lock-release mag de foutresponse nooit blokkeren.
-    }
-
+    // Lock wordt in finally vrijgegeven, maar als we al een timeout hebben
+    // is de lock al vrijgegeven. We vangen hier alleen onverwachte fouten.
     const response =
       errorResponse(
         error,
@@ -3227,5 +3205,22 @@ export default async function handler(
     return res
       .status(response.status)
       .json(response.payload);
+  } finally {
+    // ===== Lock altijd vrijgeven in de route-finally =====
+    if (
+      redis &&
+      lock?.acquired &&
+      lock?.lockValue
+    ) {
+      await bounded(
+        releaseOwnLock(
+          redis,
+          keys.tradeLock,
+          lock.lockValue
+        ),
+        LOCK_RELEASE_TIMEOUT_MS,
+        null
+      );
+    }
   }
 }
