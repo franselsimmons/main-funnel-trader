@@ -443,6 +443,9 @@ function throwIfAborted(options = {}) {
   if (Number.isFinite(options.deadlineAt) && Date.now() >= options.deadlineAt) {
     const error = new Error('TRADE_SYSTEM_DEADLINE_REACHED');
     error.code = 'TRADE_SYSTEM_DEADLINE_REACHED';
+    error.deadlineAt = options.deadlineAt;
+    error.now = Date.now();
+    error.deadlineOverrunMs = Date.now() - options.deadlineAt;
     throw error;
   }
 }
@@ -7787,6 +7790,36 @@ export async function runTradeSystem(options = {}) {
   const startedAt = now();
   const lagMonitor = createEventLoopLagMonitor(100);
 
+  // ===== EARLY DEADLINE CHECK =====
+  // Controleer of de deadline al verstreken is vóórdat we ook maar iets doen.
+  // De route moet `deadlineAt` en `preTradeDurationMs` en `routeTimings` meegeven.
+  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Infinity;
+  const nowMs = now();
+  const remainingBudgetMs = deadlineAt - nowMs;
+  if (remainingBudgetMs <= 0) {
+    lagMonitor.stop();
+    const preTradeDurationMs = options.preTradeDurationMs || 0;
+    const routeTimings = options.routeTimings || {};
+    const result = {
+      ok: false,
+      skipped: true,
+      reason: 'INSUFFICIENT_ROUTE_BUDGET_BEFORE_TRADE_SYSTEM',
+      remainingTradeBudgetMs: remainingBudgetMs,
+      preTradeDurationMs,
+      routeTimings,
+      runId,
+      startedAt,
+      deadlineAt,
+      now: nowMs,
+      ...sideFlags(),
+      ...virtualFlags(),
+      ...isolationFlags()
+    };
+    // Sla result op in Redis voor traceerbaarheid
+    const saved = await saveRunMeta(result, options);
+    return saved;
+  }
+
   try {
     phaseLog(runId, 'TRADE_START', startedAt);
 
@@ -7814,6 +7847,8 @@ export async function runTradeSystem(options = {}) {
         candidatesCount: snapshot?.candidates?.length || 0,
         maxEventLoopLagMs: lagStats.maxLagMs,
         durationMs: now() - startedAt,
+        routeTimings: options.routeTimings || {},
+        preTradeDurationMs: options.preTradeDurationMs || 0,
         ...sideFlags(),
         ...isolationFlags(),
         ...virtualFlags()
@@ -7967,6 +8002,8 @@ export async function runTradeSystem(options = {}) {
             virtualExitRows: virtualExits.length,
             maxEventLoopLagMs: lagStats.maxLagMs,
             durationMs: now() - startedAt,
+            routeTimings: options.routeTimings || {},
+            preTradeDurationMs: options.preTradeDurationMs || 0,
             ...sideFlags(),
             ...isolationFlags(),
             ...virtualFlags()
@@ -8007,7 +8044,9 @@ export async function runTradeSystem(options = {}) {
           monitorBatchSize: cfg.monitorBatchSize,
           openPositionMonitorLimit: cfg.openPositionMonitorLimit,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
-          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
+          routeTimings: options.routeTimings || {},
+          preTradeDurationMs: options.preTradeDurationMs || 0
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8034,7 +8073,9 @@ export async function runTradeSystem(options = {}) {
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
-          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
+          routeTimings: options.routeTimings || {},
+          preTradeDurationMs: options.preTradeDurationMs || 0
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8069,7 +8110,9 @@ export async function runTradeSystem(options = {}) {
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
-          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
+          routeTimings: options.routeTimings || {},
+          preTradeDurationMs: options.preTradeDurationMs || 0
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8102,7 +8145,9 @@ export async function runTradeSystem(options = {}) {
           shadowExitRows: shadowExits.length,
           sameSnapshotFastReturn: true,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
-          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
+          routeTimings: options.routeTimings || {},
+          preTradeDurationMs: options.preTradeDurationMs || 0
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8132,7 +8177,9 @@ export async function runTradeSystem(options = {}) {
           shadowExitRows: shadowExits.length,
           deadlineReached: true,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
-          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
+          routeTimings: options.routeTimings || {},
+          preTradeDurationMs: options.preTradeDurationMs || 0
         }
       });
       const lagStats = lagMonitor.stop();
@@ -9000,7 +9047,11 @@ export async function runTradeSystem(options = {}) {
         : [],
       waitRowsList: bool(options.details || options.debug || options.full, false)
         ? actions.filter((row) => row.action === 'WAIT').map(compactActionForResponse)
-        : []
+        : [],
+
+      // ===== TOEGEVOEGD: route-timings en pre-trade duration =====
+      routeTimings: options.routeTimings || {},
+      preTradeDurationMs: options.preTradeDurationMs || 0
     };
 
     if (debugMode && snapshotDebug) {
@@ -9042,6 +9093,8 @@ export async function runTradeSystem(options = {}) {
       marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
       deadlineSafe: true,
       routeLimitsHonored: true,
+      routeTimings: options.routeTimings || {},
+      preTradeDurationMs: options.preTradeDurationMs || 0,
       ...sideFlags(),
       ...virtualFlags(),
       ...isolationFlags()
