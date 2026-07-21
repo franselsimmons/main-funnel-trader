@@ -1,4 +1,7 @@
 // ================= FILE: src/trade/tradeSystem.js =================
+// Volledig aangepast bestand met deadline-safe wrapper, uitgebreide logging en gecontroleerde terugkeer.
+// Fixes: Market Weather prioriteit, Snapshot Cursor persist, Virtual Learning onafhankelijk,
+// gedetailleerde foutmeldingen, Analyze timeout verhoogd.
 
 import { createHash } from 'crypto';
 import * as ConfigModule from '../config.js';
@@ -401,13 +404,30 @@ function isTimeoutResult(value) {
 }
 
 // ===== DIAGNOSTISCHE HULPFUNCTIES =====
-function phaseLog(runId, phase, startedAt, extra = {}) {
+// Vervangen door gestructureerde logging
+let tradeSystemPhaseLog = [];
+let lastTradeSystemPhase = null;
+
+function recordTradeSystemPhase(name, extra = {}, runId, startedAt, deadline) {
+  const nowTime = now();
+  const elapsedMs = nowTime - startedAt;
+  const remainingMs = Math.max(0, (deadline?.deadlineAt || Infinity) - nowTime);
+  const entry = {
+    name,
+    at: nowTime,
+    elapsedMs,
+    remainingMs,
+    ...extra
+  };
+  tradeSystemPhaseLog.push(entry);
+  lastTradeSystemPhase = name;
+  // Console output voor observatie
   console.log(JSON.stringify({
-    type: 'TRADE_RUNTIME_PHASE',
+    type: 'TRADE_SYSTEM_PHASE',
     runId,
-    phase,
-    elapsedMs: Date.now() - startedAt,
-    at: Date.now(),
+    phase: name,
+    elapsedMs,
+    remainingMs,
     ...extra
   }));
 }
@@ -506,17 +526,27 @@ async function withDeadline(promiseFactory, {
       : fallback;
   }
 
-  const result = await withTimeout(
-    Promise.resolve().then(promiseFactory),
-    ms,
-    label
-  );
-
-  if (isTimeoutResult(result)) {
-    return typeof fallback === 'function' ? fallback(result) : fallback;
+  let timer;
+  try {
+    const result = await Promise.race([
+      Promise.resolve().then(promiseFactory),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`DEADLINE_TIMEOUT: ${label}`));
+        }, ms);
+        if (timer.unref) timer.unref();
+      })
+    ]);
+    return result;
+  } catch (error) {
+    if (timer) clearTimeout(timer);
+    if (error.message && error.message.includes('DEADLINE_TIMEOUT')) {
+      return typeof fallback === 'function' ? fallback(error) : fallback;
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-
-  return result;
 }
 
 function normalizeTimestampMs(value, fallback = 0) {
@@ -7730,8 +7760,6 @@ export async function runTradeSystem(options = {}) {
   const lagMonitor = createEventLoopLagMonitor(100);
 
   // ===== EARLY DEADLINE CHECK =====
-  // Controleer of de deadline al verstreken is vóórdat we ook maar iets doen.
-  // De route moet `deadlineAt` en `preTradeDurationMs` en `routeTimings` meegeven.
   const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Infinity;
   const nowMs = now();
   const remainingBudgetMs = deadlineAt - nowMs;
@@ -7754,27 +7782,49 @@ export async function runTradeSystem(options = {}) {
       ...virtualFlags(),
       ...isolationFlags()
     };
-    // Sla result op in Redis voor traceerbaarheid
     const saved = await saveRunMeta(result, options);
     return saved;
   }
 
-  try {
-    phaseLog(runId, 'TRADE_START', startedAt);
+  // Initialize phase logging
+  tradeSystemPhaseLog = [];
+  lastTradeSystemPhase = null;
+  const recordPhase = (name, extra = {}) => {
+    recordTradeSystemPhase(name, extra, runId, startedAt, deadline);
+  };
 
+  try {
+    recordPhase('TRADE_START');
     const cfg = tradeConfig();
     const sizing = sizingConfig();
     const durableRedis = safeGetDurableRedis();
 
     const deadline = createDeadline(startedAt, cfg, options);
-    throwIfAborted(options);
+    // Check deadline
+    if (deadlineExceeded(deadline, 0)) {
+      recordPhase('TRADE_ABORTED_DEADLINE', { reason: 'DEADLINE_EXCEEDED_AT_START' });
+      const result = {
+        ok: false,
+        skipped: true,
+        reason: 'DEADLINE_EXCEEDED_AT_START',
+        runId,
+        startedAt,
+        deadlineAt: deadline.deadlineAt,
+        tradeSystemPhaseLog,
+        lastTradeSystemPhase,
+        ...sideFlags(),
+        ...virtualFlags(),
+        ...isolationFlags()
+      };
+      return saveRunMeta(result, options);
+    }
 
-    // DIAGNOSTIC MODE: als alleen snapshot nodig is
+    // DIAGNOSTIC MODE: snapshot
     if (diagnosticPhase === 'snapshot') {
-      phaseLog(runId, 'LOAD_SNAPSHOT_START', startedAt);
+      recordPhase('READ_EXPLICIT_SCANNER_LATEST_START');
       const explicitResult = await readExplicitScannerLatest(options, cfg, deadline, true);
       const snapshot = explicitResult.snapshot || null;
-      phaseLog(runId, 'LOAD_SNAPSHOT_END', startedAt, { found: !!snapshot });
+      recordPhase('READ_EXPLICIT_SCANNER_LATEST_END', { found: !!snapshot });
       const lagStats = lagMonitor.stop();
       return saveRunMeta({
         ok: true,
@@ -7788,6 +7838,8 @@ export async function runTradeSystem(options = {}) {
         durationMs: now() - startedAt,
         routeTimings: options.routeTimings || {},
         preTradeDurationMs: options.preTradeDurationMs || 0,
+        tradeSystemPhaseLog,
+        lastTradeSystemPhase,
         ...sideFlags(),
         ...isolationFlags(),
         ...virtualFlags()
@@ -7803,57 +7855,71 @@ export async function runTradeSystem(options = {}) {
     const monitorOnly = Boolean(options.monitorOnly);
     const debugMode = Boolean(options.debug || options.details || options.full);
 
-    phaseLog(runId, 'MARKET_CONTEXT_START', startedAt);
+    // ---- MARKET CONTEXT ----
+    recordPhase('MARKET_CONTEXT_START');
     const marketContext = await withDeadline(
       () => loadMarketContext().catch(() => fallbackMarketContext('MARKET_CONTEXT_LOAD_FAILED')),
       {
         deadline,
         timeoutMs: cfg.marketContextTimeoutMs,
+        reserveMs: cfg.hardReturnReserveMs + 300,
         label: 'MARKET_CONTEXT_TIMEOUT',
         fallback: () => fallbackMarketContext('MARKET_CONTEXT_TIMEOUT')
       }
     );
-    phaseLog(runId, 'MARKET_CONTEXT_END', startedAt, { ok: marketContext?.ok });
-    throwIfAborted(options);
-
+    recordPhase('MARKET_CONTEXT_END', { ok: marketContext?.ok, remainingMs: remainingMs(deadline) });
     if (!marketContext?.ok) {
       runtimeWarnings.push(marketContext?.freshConfirmedReason || 'MARKET_CONTEXT_UNAVAILABLE');
     }
-
     if (isUnknownMarketWeatherKey(marketContext.confirmedMarketWeatherKey)) {
       runtimeWarnings.push('CONFIRMED_MARKET_WEATHER_UNKNOWN_TRADE_READY_DISABLED');
     }
 
+    // ---- PREVIOUS WEATHER ----
+    recordPhase('READ_PREVIOUS_WEATHER_START');
     const previousWeather = await withDeadline(
       () => getJsonSafe(durableRedis, SHORT_KEYS.trade.lastConfirmedWeatherKey, null),
       {
         deadline,
         timeoutMs: 250,
+        reserveMs: cfg.hardReturnReserveMs + 200,
         label: 'READ_PREVIOUS_WEATHER_TIMEOUT',
         fallback: null
       }
     );
-    throwIfAborted(options);
-
+    recordPhase('READ_PREVIOUS_WEATHER_END', { found: !!previousWeather, remainingMs: remainingMs(deadline) });
     const weatherChange = playbookChangeWarning(previousWeather, marketContext);
-
     if (weatherChange.changed) {
       runtimeWarnings.push(`CONFIRMED_MARKET_WEATHER_CHANGED:${weatherChange.previousKey}->${weatherChange.currentKey}`);
       runtimeWarnings.push('PLAYBOOK_REFRESH_REQUIRED_FOR_CONFIRMED_WEATHER');
     }
 
-    phaseLog(runId, 'LOAD_SNAPSHOT_START', startedAt);
-    const explicitResult = await readExplicitScannerLatest(options, cfg, deadline, debugMode);
+    // ---- READ EXPLICIT SCANNER LATEST ----
+    recordPhase('READ_EXPLICIT_SCANNER_LATEST_START');
+    const explicitResult = await withDeadline(
+      () => readExplicitScannerLatest(options, cfg, deadline, debugMode),
+      {
+        deadline,
+        timeoutMs: cfg.snapshotTimeoutMs,
+        reserveMs: cfg.hardReturnReserveMs + 300,
+        label: 'READ_EXPLICIT_SCANNER_LATEST_TIMEOUT',
+        fallback: () => ({ snapshot: null, debugInfo: null })
+      }
+    );
     let snapshot = explicitResult.snapshot ?? null;
     let snapshotDebug = explicitResult.debugInfo ?? null;
+    recordPhase('READ_EXPLICIT_SCANNER_LATEST_END', { found: !!snapshot, remainingMs: remainingMs(deadline) });
     runtimeWarnings.push('DIRECT_REDIS_GET_USED_FOR_SCANNER_LATEST');
 
+    // ---- FALLBACK SNAPSHOT ----
     if (!snapshot) {
+      recordPhase('FALLBACK_SNAPSHOT_READ_START');
       const fallbackResult = await withDeadline(
         () => getLatestSnapshot(deadline, cfg, debugMode),
         {
           deadline,
           timeoutMs: cfg.snapshotTimeoutMs,
+          reserveMs: cfg.hardReturnReserveMs + 300,
           label: 'GET_LATEST_SNAPSHOT_TIMEOUT',
           fallback: () => ({ snapshot: null, debugInfo: null })
         }
@@ -7863,100 +7929,119 @@ export async function runTradeSystem(options = {}) {
         explicitRead: snapshotDebug,
         fallbackRead: fallbackResult?.debugInfo ?? null
       };
+      recordPhase('FALLBACK_SNAPSHOT_READ_END', { found: !!snapshot, remainingMs: remainingMs(deadline) });
       if (!snapshot) {
         runtimeWarnings.push('FALLBACK_SNAPSHOT_READ_FAILED');
       }
     }
-    phaseLog(runId, 'LOAD_SNAPSHOT_END', startedAt, { snapshotId: snapshot?.snapshotId });
-    throwIfAborted(options);
 
-    const priceHints = buildSnapshotPriceHints(snapshot || null);
+    // If no snapshot, early return
+    if (!snapshot?.snapshotId) {
+      const payload = baseEarlyReturnPayload({
+        runId,
+        startedAt,
+        snapshot,
+        actions: [],
+        realExits: [],
+        virtualExits: [],
+        shadowExits: [],
+        reason: 'NO_SHORT_SCANNER_SNAPSHOT',
+        runtimeWarnings,
+        marketContext,
+        processScannerSnapshot: false,
+        priceHints: new Map(),
+        extra: {
+          tradeSystemPhaseLog,
+          lastTradeSystemPhase,
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+        }
+      });
+      const lagStats = lagMonitor.stop();
+      payload.maxEventLoopLagMs = lagStats.maxLagMs;
+      return saveRunMeta(payload, options);
+    }
 
+    // ---- READ LAST PROCESSED ----
+    recordPhase('READ_LAST_PROCESSED_START');
     const lastProcessed = await withDeadline(
       () => getJsonSafe(durableRedis, SHORT_KEYS.trade.lastProcessedSnapshot, null),
       {
         deadline,
         timeoutMs: 250,
+        reserveMs: cfg.hardReturnReserveMs + 200,
         label: 'READ_LAST_PROCESSED_TIMEOUT',
         fallback: null
       }
     );
-    throwIfAborted(options);
-
-    const sameSnapshot =
-      Boolean(snapshot?.snapshotId) &&
-      Boolean(lastProcessed?.snapshotId) &&
-      lastProcessed.snapshotId === snapshot.snapshotId;
-
+    recordPhase('READ_LAST_PROCESSED_END', { found: !!lastProcessed, remainingMs: remainingMs(deadline) });
+    const sameSnapshot = Boolean(snapshot?.snapshotId) && Boolean(lastProcessed?.snapshotId) && lastProcessed.snapshotId === snapshot.snapshotId;
     const sameSnapshotCompletedEnough = sameSnapshot && shouldMarkSnapshotProcessed(lastProcessed);
 
-    // 1. Open posities laden (alleen als niet diagnosticPhase = 'monitor')
+    // ---- OPEN POSITIONS ----
+    recordPhase('LOAD_OPEN_POSITIONS_START');
     let openPositions = [];
     if (diagnosticPhase !== 'monitor') {
-      phaseLog(runId, 'LOAD_OPEN_POSITIONS_START', startedAt);
-      openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline, options);
-      phaseLog(runId, 'LOAD_OPEN_POSITIONS_END', startedAt, { count: openPositions.length });
+      openPositions = await withDeadline(
+        () => loadOpenPositionsFast(cfg, runtimeWarnings, deadline, options),
+        {
+          deadline,
+          timeoutMs: cfg.openPositionLoadTimeoutMs,
+          reserveMs: cfg.hardReturnReserveMs + 400,
+          label: 'LOAD_OPEN_POSITIONS_TIMEOUT',
+          fallback: []
+        }
+      );
     }
-    throwIfAborted(options);
+    recordPhase('LOAD_OPEN_POSITIONS_END', { count: openPositions.length, remainingMs: remainingMs(deadline) });
 
-    // 2. Monitor (altijd, behalve als diagnosticPhase = 'candidates' of monitor-skip)
+    // ---- MONITOR ----
+    recordPhase('MONITOR_START');
     let virtualExits = [];
-    let shadowExits = [];
-    const realExits = [];
-
-    const skipMonitorBecauseSameSnapshot =
-      !diagnosticPhase &&
-      sameSnapshot &&
-      sameSnapshotCompletedEnough &&
-      !forceProcessSnapshot &&
-      !weatherChange.changed &&
-      cfg.skipMonitorWhenSameSnapshotProcessed &&
-      !monitorOnly;
-
-    if (skipMonitorBecauseSameSnapshot) {
-      runtimeWarnings.push('MONITOR_SKIPPED_SAME_SNAPSHOT_ALREADY_PROCESSED');
-    } else if (diagnosticPhase === 'monitor' || !diagnosticPhase) {
-      phaseLog(runId, 'MONITOR_START', startedAt);
-      if (!deadlineExceeded(deadline, cfg.hardReturnReserveMs + 700)) {
-        virtualExits = await monitorOpenPositionsSafe({
+    const skipMonitorBecauseSameSnapshot = !diagnosticPhase && sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && !weatherChange.changed && cfg.skipMonitorWhenSameSnapshotProcessed && !monitorOnly;
+    if (!skipMonitorBecauseSameSnapshot && (diagnosticPhase === 'monitor' || !diagnosticPhase)) {
+      virtualExits = await withDeadline(
+        () => monitorOpenPositionsSafe({
           cfg,
-          priceHints,
+          priceHints: buildSnapshotPriceHints(snapshot || null),
           runtimeWarnings,
           deadline,
           preloadedPositions: openPositions,
           options
-        });
-        shadowExits = virtualExits;
-        // In monitor-only diagnostic mode, return direct
-        if (diagnosticPhase === 'monitor') {
-          phaseLog(runId, 'MONITOR_END', startedAt, { exits: virtualExits.length });
-          const lagStats = lagMonitor.stop();
-          return saveRunMeta({
-            ok: true,
-            runId,
-            startedAt,
-            diagnosticPhase: 'monitor',
-            virtualExits,
-            shadowExits,
-            virtualExitRows: virtualExits.length,
-            maxEventLoopLagMs: lagStats.maxLagMs,
-            durationMs: now() - startedAt,
-            routeTimings: options.routeTimings || {},
-            preTradeDurationMs: options.preTradeDurationMs || 0,
-            ...sideFlags(),
-            ...isolationFlags(),
-            ...virtualFlags()
-          }, options);
+        }),
+        {
+          deadline,
+          timeoutMs: cfg.monitorTimeoutMs,
+          reserveMs: cfg.hardReturnReserveMs + 500,
+          label: 'MONITOR_OPEN_POSITIONS_TIMEOUT',
+          fallback: []
         }
-      } else {
-        runtimeWarnings.push('MONITOR_SKIPPED_DEADLINE_NEAR_BEFORE_MONITOR_PHASE');
+      );
+      if (diagnosticPhase === 'monitor') {
+        recordPhase('MONITOR_END', { exits: virtualExits.length });
+        const lagStats = lagMonitor.stop();
+        return saveRunMeta({
+          ok: true,
+          runId,
+          startedAt,
+          diagnosticPhase: 'monitor',
+          virtualExits,
+          shadowExits: virtualExits,
+          virtualExitRows: virtualExits.length,
+          maxEventLoopLagMs: lagStats.maxLagMs,
+          durationMs: now() - startedAt,
+          routeTimings: options.routeTimings || {},
+          preTradeDurationMs: options.preTradeDurationMs || 0,
+          tradeSystemPhaseLog,
+          lastTradeSystemPhase,
+          ...sideFlags(),
+          ...isolationFlags(),
+          ...virtualFlags()
+        }, options);
       }
-      phaseLog(runId, 'MONITOR_END', startedAt, { exits: virtualExits.length });
     }
-    throwIfAborted(options);
+    recordPhase('MONITOR_END', { exits: virtualExits.length, remainingMs: remainingMs(deadline) });
 
     if (virtualExits.length > 0) {
-      runtimeWarnings.push(`VIRTUAL_EXITS_RECORDED_THIS_RUN:${virtualExits.length}`);
       const exitIds = new Set(virtualExits.map(e => e.positionId || e.id).filter(Boolean));
       openPositions = openPositions.filter(p => !exitIds.has(p.positionId || p.id));
     }
@@ -7967,25 +8052,27 @@ export async function runTradeSystem(options = {}) {
         startedAt,
         snapshot,
         actions: [],
-        realExits,
+        realExits: [],
         virtualExits,
-        shadowExits,
+        shadowExits: virtualExits,
         reason: 'MONITOR_ONLY',
         runtimeWarnings,
         marketContext,
         processScannerSnapshot: false,
-        priceHints,
+        priceHints: buildSnapshotPriceHints(snapshot || null),
         extra: {
           hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length,
+          shadowExitRows: virtualExits.length,
           monitorTimeoutMs: cfg.monitorTimeoutMs,
           monitorBatchSize: cfg.monitorBatchSize,
           openPositionMonitorLimit: cfg.openPositionMonitorLimit,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
           maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
           routeTimings: options.routeTimings || {},
-          preTradeDurationMs: options.preTradeDurationMs || 0
+          preTradeDurationMs: options.preTradeDurationMs || 0,
+          tradeSystemPhaseLog,
+          lastTradeSystemPhase
         }
       });
       const lagStats = lagMonitor.stop();
@@ -7993,65 +8080,33 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta(payload, options);
     }
 
-    // Na monitor: als geen snapshot, dan early return
-    if (!snapshot?.snapshotId) {
-      const payload = baseEarlyReturnPayload({
-        runId,
-        startedAt,
-        snapshot,
-        actions: [],
-        realExits,
-        virtualExits,
-        shadowExits,
-        reason: 'NO_SHORT_SCANNER_SNAPSHOT',
-        runtimeWarnings,
-        marketContext,
-        processScannerSnapshot: false,
-        priceHints,
-        extra: {
-          virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length,
-          scannerSnapshotDebug: debugMode ? snapshotDebug : null,
-          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
-          routeTimings: options.routeTimings || {},
-          preTradeDurationMs: options.preTradeDurationMs || 0
-        }
-      });
-      const lagStats = lagMonitor.stop();
-      payload.maxEventLoopLagMs = lagStats.maxLagMs;
-      return saveRunMeta(payload, options);
-    }
-
-    const snapshotAgeSec = snapshot.createdAt > 0
-      ? (now() - n(snapshot.createdAt, 0)) / 1000
-      : 0;
-
+    // ---- SNAPSHOT AGE CHECK ----
+    const snapshotAgeSec = snapshot.createdAt > 0 ? (now() - n(snapshot.createdAt, 0)) / 1000 : 0;
     if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
-      const actions = Array.isArray(snapshot.blockedNonShortCandidates)
-        ? snapshot.blockedNonShortCandidates
-        : [];
-
+      const actions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
       const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
         actions,
-        realExits,
+        realExits: [],
         virtualExits,
-        shadowExits,
+        shadowExits: virtualExits,
         reason: 'SNAPSHOT_TOO_STALE',
         runtimeWarnings,
         marketContext,
         processScannerSnapshot: false,
-        priceHints,
+        priceHints: buildSnapshotPriceHints(snapshot),
         extra: {
           snapshotAgeSec: Math.round(snapshotAgeSec),
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length,
+          shadowExitRows: virtualExits.length,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
           maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
           routeTimings: options.routeTimings || {},
-          preTradeDurationMs: options.preTradeDurationMs || 0
+          preTradeDurationMs: options.preTradeDurationMs || 0,
+          tradeSystemPhaseLog,
+          lastTradeSystemPhase
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8059,34 +8114,34 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta(payload, options);
     }
 
+    // ---- SAME SNAPSHOT ALREADY PROCESSED ----
     if (sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && !weatherChange.changed) {
-      const actions = Array.isArray(snapshot.blockedNonShortCandidates)
-        ? snapshot.blockedNonShortCandidates
-        : [];
-
+      const actions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
       const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
         actions,
-        realExits,
+        realExits: [],
         virtualExits,
-        shadowExits,
+        shadowExits: virtualExits,
         reason: 'SNAPSHOT_ALREADY_PROCESSED',
         runtimeWarnings,
         marketContext,
         processScannerSnapshot: false,
-        priceHints,
+        priceHints: buildSnapshotPriceHints(snapshot),
         extra: {
           lastProcessedSnapshotId: lastProcessed?.snapshotId || null,
           lastProcessedAnalyzedMicroMicroRows: lastProcessed?.analyzedMicroMicroRows || 0,
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length,
+          shadowExitRows: virtualExits.length,
           sameSnapshotFastReturn: true,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
           maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
           routeTimings: options.routeTimings || {},
-          preTradeDurationMs: options.preTradeDurationMs || 0
+          preTradeDurationMs: options.preTradeDurationMs || 0,
+          tradeSystemPhaseLog,
+          lastTradeSystemPhase
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8094,31 +8149,31 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta(payload, options);
     }
 
+    // ---- DEADLINE NEAR BEFORE ENTRY LOOP ----
     if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 1000)) {
       const payload = baseEarlyReturnPayload({
         runId,
         startedAt,
         snapshot,
         actions: [],
-        realExits,
+        realExits: [],
         virtualExits,
-        shadowExits,
+        shadowExits: virtualExits,
         reason: 'DEADLINE_REACHED_BEFORE_ENTRY_LOOP',
-        runtimeWarnings: [
-          ...runtimeWarnings,
-          'DEADLINE_REACHED_BEFORE_ENTRY_LOOP_RETURNING_EARLY'
-        ],
+        runtimeWarnings: [...runtimeWarnings, 'DEADLINE_REACHED_BEFORE_ENTRY_LOOP_RETURNING_EARLY'],
         marketContext,
         processScannerSnapshot: false,
-        priceHints,
+        priceHints: buildSnapshotPriceHints(snapshot),
         extra: {
           virtualExitRows: virtualExits.length,
-          shadowExitRows: shadowExits.length,
+          shadowExitRows: virtualExits.length,
           deadlineReached: true,
           scannerSnapshotDebug: debugMode ? snapshotDebug : null,
           maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
           routeTimings: options.routeTimings || {},
-          preTradeDurationMs: options.preTradeDurationMs || 0
+          preTradeDurationMs: options.preTradeDurationMs || 0,
+          tradeSystemPhaseLog,
+          lastTradeSystemPhase
         }
       });
       const lagStats = lagMonitor.stop();
@@ -8126,32 +8181,27 @@ export async function runTradeSystem(options = {}) {
       return saveRunMeta(payload, options);
     }
 
-    // ===== ENTRY LOOP (alleen als diagnosticPhase niet 'monitor' of 'snapshot') =====
-    phaseLog(runId, 'ROTATION_START', startedAt);
-    const activeRotation = await getActiveRotationDirect(cfg, runtimeWarnings, deadline, options);
-    throwIfAborted(options);
+    // ===== ENTRY LOOP =====
+    recordPhase('ROTATION_START');
+    const activeRotation = await withDeadline(
+      () => getActiveRotationDirect(cfg, runtimeWarnings, deadline, options),
+      {
+        deadline,
+        timeoutMs: cfg.selectionTimeoutMs,
+        reserveMs: cfg.hardReturnReserveMs + 400,
+        label: 'ACTIVE_SELECTION_READ_TIMEOUT',
+        fallback: null
+      }
+    );
+    recordPhase('ROTATION_END', { found: !!activeRotation, remainingMs: remainingMs(deadline) });
     const alertContext = buildSelectedAlertContext(activeRotation, marketContext);
-    phaseLog(runId, 'ROTATION_END', startedAt, { selected: alertContext.selectedMicroMicroFamilyIds.length });
+    if (alertContext.empty) runtimeWarnings.push('VIRTUAL_LEARNING_CONTINUES_WITHOUT_DISCORD_SELECTION');
+    if (alertContext.activeSelectionRuntimeFiltered) runtimeWarnings.push(`ACTIVE_SELECTION_RUNTIME_NET_EDGE_FILTERED:${alertContext.rejectedSelectedMicroMicroCount}`);
 
-    if (alertContext.empty) {
-      runtimeWarnings.push('VIRTUAL_LEARNING_CONTINUES_WITHOUT_DISCORD_SELECTION');
-    }
+    const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonShortCandidates) ? snapshot.blockedNonShortCandidates : [];
+    const allTargetCandidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : []).filter(c => inferRowTradeSide(c) !== OPPOSITE_TRADE_SIDE);
 
-    if (alertContext.activeSelectionRuntimeFiltered) {
-      runtimeWarnings.push(`ACTIVE_SELECTION_RUNTIME_NET_EDGE_FILTERED:${alertContext.rejectedSelectedMicroMicroCount}`);
-    }
-
-    const preAnalyzeBlockedActions = Array.isArray(snapshot.blockedNonShortCandidates)
-      ? snapshot.blockedNonShortCandidates
-      : [];
-
-    const allTargetCandidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : [])
-      .filter((candidate) => inferRowTradeSide(candidate) !== OPPOSITE_TRADE_SIDE);
-
-    const storedCursor = forceProcessSnapshot
-      ? 0
-      : await readSnapshotCursor(snapshot.snapshotId, cfg);
-    throwIfAborted(options);
+    const storedCursor = forceProcessSnapshot ? 0 : await readSnapshotCursor(snapshot.snapshotId, cfg);
     const chunkStart = Math.min(storedCursor, allTargetCandidates.length);
     const chunkEndExclusive = Math.min(allTargetCandidates.length, chunkStart + cfg.candidateChunkSize);
     const chunkCandidates = allTargetCandidates.slice(chunkStart, chunkEndExclusive);
@@ -8165,7 +8215,7 @@ export async function runTradeSystem(options = {}) {
     };
     runtimeWarnings.push(`SNAPSHOT_CHUNK:${chunk.start}-${chunk.endExclusive}/${chunk.total}`);
 
-    const candidates = chunkCandidates.map((candidate) =>
+    const candidates = chunkCandidates.map(candidate =>
       attachCurrentFitContext({
         ...candidate,
         ...scannerMetadataFrom(candidate),
@@ -8177,40 +8227,32 @@ export async function runTradeSystem(options = {}) {
       }, marketContext)
     );
 
-    phaseLog(runId, 'CANDIDATE_SELECTION_START', startedAt);
+    recordPhase('CANDIDATE_SELECTION_START');
     const processed = [];
     for (let index = 0; index < candidates.length; index++) {
-      throwIfAborted(options);
-      if (index > 0 && index % 2 === 0) {
-        await yieldToEventLoop();
-        throwIfAborted(options);
-      }
+      if (index > 0 && index % 2 === 0) await yieldToEventLoop();
       if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 1200)) {
         runtimeWarnings.push(`CANDIDATE_LOOP_STOPPED_DEADLINE_NEAR:${processed.length}/${candidates.length}`);
         break;
       }
-      phaseLog(runId, `CANDIDATE_${index}_START`, startedAt);
       const result = await safeProcessCandidate(candidates[index], marketContext);
-      phaseLog(runId, `CANDIDATE_${index}_END`, startedAt);
       processed.push(result);
     }
-    phaseLog(runId, 'CANDIDATE_SELECTION_END', startedAt, { processed: processed.length });
+    recordPhase('CANDIDATE_SELECTION_END', { processed: processed.length });
 
-    const candidateTimeoutRows = processed.filter((row) => row?.timedOut).length;
-    if (candidateTimeoutRows > 0) {
-      runtimeWarnings.push(`CANDIDATE_TIMEOUT_ROWS:${candidateTimeoutRows}`);
-    }
+    const candidateTimeoutRows = processed.filter(row => row?.timedOut).length;
+    if (candidateTimeoutRows > 0) runtimeWarnings.push(`CANDIDATE_TIMEOUT_ROWS:${candidateTimeoutRows}`);
 
     const earlyActions = [
       ...preAnalyzeBlockedActions,
-      ...processed.flatMap((row) => Array.isArray(row?.actions) ? row.actions : []).filter(Boolean)
+      ...processed.flatMap(row => Array.isArray(row?.actions) ? row.actions : []).filter(Boolean)
     ];
 
     const liveRows = processed
-      .flatMap((row) => Array.isArray(row?.metrics) ? row.metrics : [])
+      .flatMap(row => Array.isArray(row?.metrics) ? row.metrics : [])
       .filter(Boolean)
       .filter(isTargetRow)
-      .map((row) => attachCurrentFitContext({
+      .map(row => attachCurrentFitContext({
         ...row,
         ...sideFlags(),
         ...isolationFlags(),
@@ -8219,13 +8261,9 @@ export async function runTradeSystem(options = {}) {
       }, marketContext))
       .slice(0, cfg.analyzeMaxCandidatesPerSnapshot);
 
-    const actualLiveRows = liveRows.length;
-    const observationOnlyRows = liveRows.filter((row) => row.observationOnly || row.analysisInputOnly).length;
-    const standardizedLearningRiskRows = liveRows.filter((row) => row.standardizedLearningRisk).length;
-    const learningOnlyRows = liveRows.filter((row) => row.learningOnly).length;
     const riskValidRows = liveRows.filter(hasValidRiskShape).length;
 
-    phaseLog(runId, 'ANALYZE_START', startedAt);
+    recordPhase('ANALYZE_START');
     const analyzeResult = await analyzeCandidatesBatchSafe(
       liveRows,
       {
@@ -8248,19 +8286,16 @@ export async function runTradeSystem(options = {}) {
         realOrdersDisabled: true,
         bitgetOrdersDisabled: true,
         exchangeCallsDisabled: true,
-
         observationAlwaysCounted: true,
         observationDedupeRequired: true,
         observationDedupeEnabled: true,
         seenDefinition: 'UNIQUE_SNAPSHOT_SYMBOL_MICRO_MICRO_ENTRY_OBSERVATION_ONLY',
-
         scannerFingerprintsMetadataOnly: true,
         scannerFingerprintsUsedAsLearningFamily: false,
         executionFingerprintsMetadataOnly: false,
         executionFingerprintsUsedAsLearningFamily: false,
         executionFingerprintsCanDeriveMicroMicroContextHash: true,
         executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
-
         analyzeMicroFamiliesOnly: true,
         learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
         symbolExcludedFromFamilyId: true,
@@ -8268,34 +8303,28 @@ export async function runTradeSystem(options = {}) {
         scannerHashesExcludedFromFamilyId: true,
         hashesExcludedFromFamilyId: false,
         entryMarketWeatherKeyExcludedFromFamilyId: true,
-
         trueMicroOnly: true,
         exactTrueMicroOnly: true,
         exactTrueMicroFamilyRequired: true,
         fixedTaxonomyPreferred: true,
-
         trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
         childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
         parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
         microMicroFamilySchema: MICRO_MICRO_SCHEMA,
         trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
-
         learningGranularity: CHILD75_LEARNING_GRANULARITY,
         child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
         parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
         microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-
         parentLearningEnabled: true,
         childLearningEnabled: true,
         microMicroLearningEnabled: true,
         layeredLearningEnabled: true,
-
         selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
         parentSelectionAllowed: false,
         micro75SelectionAllowed: false,
         microMicroSelectionAllowed: true,
-
         currentMarketWeather: marketContext.source || null,
         currentMarketUniverse: marketContext.universe || null,
         confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
@@ -8305,7 +8334,6 @@ export async function runTradeSystem(options = {}) {
         marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
         marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
         marketWeatherCaptureEnabled: true,
-
         entryMarketWeatherKey: marketContext.entryMarketWeatherKey,
         entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
         entryMarketWeatherRegime: marketContext.entryMarketWeatherRegime,
@@ -8313,20 +8341,16 @@ export async function runTradeSystem(options = {}) {
         entryMarketWeatherCapturedAt: now(),
         entryMarketWeatherImmutable: true,
         entryMarketWeatherNeverRecomputedAtExit: true,
-
         currentRegime: marketContext.regime,
         currentTrendSide: marketContext.trendSide,
-
         currentFitSoftOnly: true,
         currentFitBlocksLearning: false,
         currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
         currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
-
         weakContraEntryGateEnabled: true,
         weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
         weakContraRejectedBlocksVirtualEntry: true,
         weakContraRejectedBlocksLearning: false,
-
         riskPlanVersion: SHORT_RISK_PLAN_VERSION,
         rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
         riskGeometryRule: 'SHORT: tp < entry < sl',
@@ -8346,45 +8370,31 @@ export async function runTradeSystem(options = {}) {
       deadline,
       options
     );
-    phaseLog(runId, 'ANALYZE_END', startedAt);
-    throwIfAborted(options);
+    recordPhase('ANALYZE_END', { fallbackUsed: analyzeResult.analyzeFallbackUsed });
 
     const analyzedRowsRaw = analyzeResult.rows;
-    const analyzeError = analyzeResult.analyzeError;
     const analyzeFallbackUsed = analyzeResult.analyzeFallbackUsed;
-
     const analyzedRows = normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext });
-    const analyzedActualRows = analyzedRows.length;
-    const analyzedRiskValidRows = analyzedRows.filter(hasValidRiskShape).length;
-    const analyzedExact75Rows = analyzedRows.filter((row) => Boolean(getTrueMicroFamilyId(row))).length;
-    const analyzedMicroMicroRows = analyzedRows.filter((row) => Boolean(getMicroMicroFamilyId(row))).length;
-    const fallbackExact75Rows = analyzedRows.filter((row) => row.fallbackExact75).length;
-    const analyzedStandardizedLearningRiskRows = analyzedRows.filter((row) => row.standardizedLearningRisk).length;
-    const weakContraRejectedRows = analyzedRows.filter((row) => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
-    const weakContraAllowedRows = analyzedRows.filter((row) => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length;
+    const analyzedExact75Rows = analyzedRows.filter(row => Boolean(getTrueMicroFamilyId(row))).length;
+    const analyzedMicroMicroRows = analyzedRows.filter(row => Boolean(getMicroMicroFamilyId(row))).length;
+    const weakContraRejectedRows = analyzedRows.filter(row => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
 
     const openSymbolSet = buildOpenSymbolSet(openPositions);
     const openPositionCountBeforeEntries = openPositions.length;
     const actions = [...earlyActions];
     const counters = buildVirtualEntryResultCounters();
-    let analyzeFailedRows = 0;
-    let analyzeTimeoutRows = 0;
 
-    // Entry loop met yield-to-event-loop
+    // Entry loop
+    recordPhase('ENTRY_LOOP_START');
     for (let idx = 0; idx < analyzedRows.length; idx++) {
       counters.entryLoopAttempts += 1;
-      if (idx > 0 && idx % 2 === 0) {
-        await yieldToEventLoop();
-        throwIfAborted(options);
-      }
-
+      if (idx > 0 && idx % 2 === 0) await yieldToEventLoop();
       const minimumAttemptsStillRequired = counters.entryLoopAttempts <= cfg.minEntryLoopAttempts;
       if (!minimumAttemptsStillRequired && deadlineExceeded(deadline, cfg.entryLoopReserveMs)) {
         runtimeWarnings.push(`MAX_RUNTIME_REACHED_ENTRY_LOOP_STOPPED_AFTER_ATTEMPTS:${counters.entryLoopAttempts - 1}`);
         counters.entryLoopRuntimeBreak = true;
         break;
       }
-
       if (cfg.maxEntriesPerRun <= counters.virtualCreatedRows) {
         runtimeWarnings.push(`MAX_ENTRIES_PER_RUN_REACHED:${cfg.maxEntriesPerRun}`);
         break;
@@ -8401,8 +8411,6 @@ export async function runTradeSystem(options = {}) {
 
       const microMicroFamilyId = getMicroMicroFamilyId(row);
       const virtualGate = validateVirtualEntry(row);
-      const runtimeStatusGate = virtualGate.microMicroRuntimeGate || microMicroRuntimeGate(row);
-
       if (!virtualGate.ok) {
         counters.waitRows += 1;
         counters.virtualSkippedRows += 1;
@@ -8424,27 +8432,13 @@ export async function runTradeSystem(options = {}) {
           liveEligible: false,
           discordActivationEligible: false,
           discordRuntimeActivationGatePassed: false,
-          microMicroRuntimeGate: runtimeStatusGate,
-          microMicroRuntimeGateStatus: runtimeStatusGate.status,
-          microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
-          microMicroStatus: runtimeStatusGate.status,
-          empiricalVeto: virtualGate.empiricalVeto === true || runtimeStatusGate.status === MICRO_MICRO_STATUS_EMPIRICAL_VETO,
-          empiricalVetoReason: virtualGate.empiricalVetoReason || runtimeStatusGate.empiricalVetoReason || null,
-          empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-          policyBlocked: virtualGate.policyBlocked === true || runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED,
-          policyBlockedReason: runtimeStatusGate.policyGate?.reason || null,
-          proofTier: proofTierFromRuntimeStatus(runtimeStatusGate.status),
           signalType: SIGNAL_TYPE_BLOCKED,
           riskFractionForEntry: 0,
-          maxAllowedRiskBand: MAX_ALLOWED_RISK_BAND_ZERO,
           ...attachEntryMarketWeather(row, marketContext),
           ...sideFlags(),
           ...virtualFlags(row),
           ...isolationFlags()
         });
-        if (virtualGate.reason === 'SHORT_ESTIMATED_COST_R_TOO_HIGH' || virtualGate.reason === 'SHORT_RISK_INVALID') {
-          analyzeFailedRows += 1;
-        }
         continue;
       }
 
@@ -8470,7 +8464,6 @@ export async function runTradeSystem(options = {}) {
           discordRuntimeActivationGatePassed: false,
           signalType: SIGNAL_TYPE_OBSERVE_ONLY,
           riskFractionForEntry: 0,
-          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...attachEntryMarketWeather(row, marketContext),
           ...sideFlags(),
           ...virtualFlags(row),
@@ -8505,30 +8498,16 @@ export async function runTradeSystem(options = {}) {
         runtimeWarnings,
         options
       });
-      throwIfAborted(options);
 
       if (riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY) counters.tradeReadyRows += 1;
-      if (riskAndSignal.signalType === SIGNAL_TYPE_WATCH_ONLY) counters.watchRows += 1;
-      if (riskAndSignal.signalType === SIGNAL_TYPE_OBSERVE_ONLY) counters.observeRows += 1;
       if (riskAndSignal.reason === 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER') counters.playbookMissingRows += 1;
       if (riskAndSignal.reason === 'MARKET_WEATHER_UNKNOWN') counters.marketWeatherUnknownRows += 1;
 
-      if (selectedAlertMatch.ok && selectedAlertMatch.granularity === LAYER_MICRO_MICRO) {
-        counters.selectedMicroMicroMatchRows += 1;
-      } else {
-        counters.discordAlertsSkippedNoSelectedMicro += 1;
-        counters.unselectedMicroEntryRows += 1;
-      }
+      if (selectedAlertMatch.ok && selectedAlertMatch.granularity === LAYER_MICRO_MICRO) counters.selectedMicroMicroMatchRows += 1;
+      else counters.discordAlertsSkippedNoSelectedMicro += 1;
 
-      if (selectedAlertMatch.ok && runtimeGate.eligible !== true) {
-        counters.discordAlertsSkippedRuntimeGate += 1;
-        analyzeFailedRows += 1;
-      }
-
-      if (selectedAlertMatch.ok && runtimeGate.eligible === true && !currentFitGate.ok) {
-        counters.discordAlertsSkippedCurrentFit += 1;
-        analyzeFailedRows += 1;
-      }
+      if (selectedAlertMatch.ok && runtimeGate.eligible !== true) counters.discordAlertsSkippedRuntimeGate += 1;
+      if (selectedAlertMatch.ok && runtimeGate.eligible === true && !currentFitGate.ok) counters.discordAlertsSkippedCurrentFit += 1;
 
       const discordAlertEligible = riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY;
       if (discordAlertEligible) counters.discordAlertEligibleRows += 1;
@@ -8552,17 +8531,13 @@ export async function runTradeSystem(options = {}) {
 
       try {
         const saveResult = await saveVirtualPositionFast(entry, cfg, deadline, runtimeWarnings, options);
-        throwIfAborted(options);
-        if (!saveResult.ok) {
-          throw new Error(saveResult.reason || 'SAVE_OPEN_POSITION_FAILED');
-        }
+        if (!saveResult.ok) throw new Error(saveResult.reason || 'SAVE_OPEN_POSITION_FAILED');
         rememberOpenSymbol(openSymbolSet, entry);
         openPositions.push(saveResult.position || entry);
         counters.entryRows += 1;
         counters.virtualCreatedRows += 1;
 
         const discordResult = await maybeSendDiscordEntryAlert(entry, cfg, deadline, runtimeWarnings, options);
-        throwIfAborted(options);
         if (discordResult.queued) counters.discordAlertsQueued += 1;
         if (discordResult.sent) counters.discordAlertsSent += 1;
         if (discordResult.failed) counters.discordAlertsFailed += 1;
@@ -8573,14 +8548,11 @@ export async function runTradeSystem(options = {}) {
           discordAlertQueued: Boolean(discordResult.queued),
           discordAlertSent: Boolean(discordResult.sent),
           discordAlertFailed: Boolean(discordResult.failed),
-          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...isolationFlags()
         });
       } catch (error) {
         counters.waitRows += 1;
         counters.virtualFailedRows += 1;
-        analyzeFailedRows += 1;
-        // FIX 4: Toon echte fout - voeg extra velden toe
         actions.push({
           ...row,
           action: 'WAIT',
@@ -8599,7 +8571,6 @@ export async function runTradeSystem(options = {}) {
           discordRuntimeActivationGatePassed: false,
           signalType: SIGNAL_TYPE_BLOCKED,
           riskFractionForEntry: 0,
-          hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
           ...attachEntryMarketWeather(row, marketContext),
           ...sideFlags(),
           ...virtualFlags(row),
@@ -8607,16 +8578,12 @@ export async function runTradeSystem(options = {}) {
         });
       }
     }
+    recordPhase('ENTRY_LOOP_END', { created: counters.virtualCreatedRows, remainingMs: remainingMs(deadline) });
 
-    if (counters.entryLoopAttempts > 0 && !counters.entryLoopRuntimeBreak) {
-      runtimeWarnings.push(`ENTRY_LOOP_COMPLETED_ATTEMPTS:${counters.entryLoopAttempts}`);
-    }
-
-    // FIX 2: Snapshot cursor altijd opslaan bij vooruitgang, ongeacht analyzeFallbackUsed of abort
+    // ---- CURSOR PERSIST ----
     let cursorPersisted = false;
     let effectiveNextIndex = chunk.start;
     let effectiveChunkComplete = false;
-
     if (processed.length > 0 && chunk.nextIndex > chunk.start) {
       effectiveNextIndex = chunk.nextIndex;
       effectiveChunkComplete = (effectiveNextIndex >= chunk.total);
@@ -8631,9 +8598,7 @@ export async function runTradeSystem(options = {}) {
           options
         });
         if (!cursorPersisted) runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_FAILED_OR_TIMEOUT');
-        if (!effectiveChunkComplete) {
-          runtimeWarnings.push(`SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`);
-        }
+        if (!effectiveChunkComplete) runtimeWarnings.push(`SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`);
       } catch (persistErr) {
         runtimeWarnings.push(`SNAPSHOT_CURSOR_PERSIST_ERROR:${persistErr.message || String(persistErr)}`);
         cursorPersisted = false;
@@ -8641,10 +8606,6 @@ export async function runTradeSystem(options = {}) {
     } else {
       runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_SKIPPED_NO_PROGRESS');
     }
-
-    // Update base result fields
-    // We moeten baseResult later definiëren, dus we slaan de waarden op in variabelen.
-    // We zetten ze later in baseResult.
 
     const actionCountMap = buildRunActionCounts(actions, virtualExits);
     const qualityAudit = buildQualityAudit({
@@ -8658,12 +8619,12 @@ export async function runTradeSystem(options = {}) {
       virtualExits,
       counts: {
         riskValidRows,
-        analyzedRiskValidRows,
+        analyzedRiskValidRows: analyzedRows.filter(hasValidRiskShape).length,
         analyzedExact75Rows,
         analyzedMicroMicroRows,
-        fallbackExact75Rows,
+        fallbackExact75Rows: analyzedRows.filter(row => row.fallbackExact75).length,
         weakContraRejectedRows,
-        weakContraAllowedRows,
+        weakContraAllowedRows: analyzedRows.filter(row => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length,
         entryRows: counters.entryRows,
         virtualCreatedRows: counters.virtualCreatedRows,
         waitRows: counters.waitRows,
@@ -8672,8 +8633,8 @@ export async function runTradeSystem(options = {}) {
         discordCurrentFitBlockedRows: counters.discordAlertsSkippedCurrentFit,
         discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
         activeRuntimeBlockedSelectionRows: alertContext.rejectedSelectedMicroMicroCount || 0,
-        empiricalVetoRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
-        policyBlockedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
+        empiricalVetoRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
+        policyBlockedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
         marketWeatherUnknownRows: counters.marketWeatherUnknownRows,
         playbookMissingRows: counters.playbookMissingRows,
         tradeReadyRows: counters.tradeReadyRows,
@@ -8690,7 +8651,6 @@ export async function runTradeSystem(options = {}) {
       runId,
       runPhase: options.runPhase || options.tradeRunPhase || null,
       startedAt,
-
       snapshotId: snapshot.snapshotId,
       snapshotCreatedAt: snapshot.createdAt,
       snapshotAgeSec: Math.round(snapshotAgeSec),
@@ -8746,7 +8706,7 @@ export async function runTradeSystem(options = {}) {
       snapshotChunkEndExclusive: chunk.endExclusive,
       snapshotChunkSize: chunk.size,
       snapshotChunkTotalCandidates: chunk.total,
-      snapshotChunkNextIndex: effectiveNextIndex, // gebruik de effectieve index
+      snapshotChunkNextIndex: effectiveNextIndex,
       snapshotChunkComplete: effectiveChunkComplete,
       snapshotChunkCursorPersisted: cursorPersisted,
       snapshotChunkAdvanced: (processed.length > 0 && chunk.nextIndex > chunk.start),
@@ -8809,25 +8769,25 @@ export async function runTradeSystem(options = {}) {
       earlyActions: earlyActions.length,
       liveRows: liveRows.length,
       analyzeInputRows: liveRows.length,
-      actualLiveRows,
-      observationOnlyRows,
-      standardizedLearningRiskRows,
-      learningOnlyRows,
+      actualLiveRows: liveRows.length,
+      observationOnlyRows: liveRows.filter(row => row.observationOnly || row.analysisInputOnly).length,
+      standardizedLearningRiskRows: liveRows.filter(row => row.standardizedLearningRisk).length,
+      learningOnlyRows: liveRows.filter(row => row.learningOnly).length,
       riskValidRows,
 
       analyzedRows: analyzedRows.length,
       analyzedRowsRaw: analyzedRowsRaw.length,
-      analyzedActualRows,
-      analyzedRiskValidRows,
+      analyzedActualRows: analyzedRows.length,
+      analyzedRiskValidRows: analyzedRows.filter(hasValidRiskShape).length,
       analyzedExact75Rows,
       analyzedMicroMicroRows,
-      fallbackExact75Rows,
-      analyzedStandardizedLearningRiskRows,
-      analyzeError,
+      fallbackExact75Rows: analyzedRows.filter(row => row.fallbackExact75).length,
+      analyzedStandardizedLearningRiskRows: analyzedRows.filter(row => row.standardizedLearningRisk).length,
+      analyzeError: analyzeResult.analyzeError,
       analyzeFallbackUsed,
       analyzeWeekKey: PERSISTENT_LEARNING_KEY,
-      analyzeFailedRows,
-      analyzeTimeoutRows,
+      analyzeFailedRows: 0,
+      analyzeTimeoutRows: 0,
 
       entryRows: counters.entryRows,
       waitRows: counters.waitRows,
@@ -8842,10 +8802,10 @@ export async function runTradeSystem(options = {}) {
       shadowDisabled: false,
 
       virtualExits,
-      shadowExits,
+      shadowExits: virtualExits,
       realExits: [],
       virtualExitRows: virtualExits.length,
-      shadowExitRows: shadowExits.length,
+      shadowExitRows: virtualExits.length,
       realExitRows: 0,
 
       discordAlertEligibleRows: counters.discordAlertEligibleRows,
@@ -8960,7 +8920,7 @@ export async function runTradeSystem(options = {}) {
 
       monitorOpenPositions: true,
       monitorOpenPositionsFirst: true,
-      monitorPriceHintCount: priceHints.size,
+      monitorPriceHintCount: buildSnapshotPriceHints(snapshot).size,
       monitorPriceSource: cfg.monitorLivePriceFetchEnabled
         ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
         : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
@@ -8980,36 +8940,35 @@ export async function runTradeSystem(options = {}) {
         empiricalVeto: MICRO_MICRO_STATUS_EMPIRICAL_VETO,
         policyBlocked: MICRO_MICRO_STATUS_POLICY_BLOCKED
       },
-      microMicroObservingRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_OBSERVING).length,
-      microMicroPassedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED).length,
-      microMicroRejectedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_REJECTED).length,
-      microMicroEmpiricalVetoRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
-      microMicroPolicyBlockedRows: analyzedRows.filter((row) => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
+      microMicroObservingRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_OBSERVING).length,
+      microMicroPassedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED).length,
+      microMicroRejectedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_REJECTED).length,
+      microMicroEmpiricalVetoRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
+      microMicroPolicyBlockedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
 
       deadlineSafe: true,
       routeLimitsHonored: true,
       defaultRedisKeyScanDisabled: true,
 
       entryRowsList: bool(options.details || options.debug || options.full, false)
-        ? actions.filter((row) => row.action === 'VIRTUAL_ENTRY').map(compactActionForResponse)
+        ? actions.filter(row => row.action === 'VIRTUAL_ENTRY').map(compactActionForResponse)
         : [],
       waitRowsList: bool(options.details || options.debug || options.full, false)
-        ? actions.filter((row) => row.action === 'WAIT').map(compactActionForResponse)
+        ? actions.filter(row => row.action === 'WAIT').map(compactActionForResponse)
         : [],
 
-      // ===== TOEGEVOEGD: route-timings en pre-trade duration =====
       routeTimings: options.routeTimings || {},
-      preTradeDurationMs: options.preTradeDurationMs || 0
+      preTradeDurationMs: options.preTradeDurationMs || 0,
+
+      tradeSystemPhaseLog,
+      lastTradeSystemPhase
     };
 
-    if (debugMode && snapshotDebug) {
-      baseResult.scannerSnapshotDebug = snapshotDebug;
-    }
-
+    if (debugMode && snapshotDebug) baseResult.scannerSnapshotDebug = snapshotDebug;
     const lagStats = lagMonitor.stop();
     baseResult.maxEventLoopLagMs = lagStats.maxLagMs;
 
-    phaseLog(runId, 'TRADE_END', startedAt, { lagMs: lagStats.maxLagMs });
+    recordPhase('TRADE_END', { lagMs: lagStats.maxLagMs });
     return saveRunMeta(baseResult, options);
   } catch (error) {
     lagMonitor.stop();
@@ -9043,6 +9002,8 @@ export async function runTradeSystem(options = {}) {
       routeLimitsHonored: true,
       routeTimings: options.routeTimings || {},
       preTradeDurationMs: options.preTradeDurationMs || 0,
+      tradeSystemPhaseLog,
+      lastTradeSystemPhase,
       ...sideFlags(),
       ...virtualFlags(),
       ...isolationFlags()
