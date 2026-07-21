@@ -21,7 +21,7 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 // ===== VERSIE VERHOOGD VOOR DIAGNOSTIEK =====
 const TRADE_RUN_ROUTE_VERSION =
-  'SHORT_API_TRADE_RUN_V15_DIAGNOSTIC_20260721';
+  'SHORT_API_TRADE_RUN_V17_ABSOLUTE_DEADLINES_TIMINGS_20260721';
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
@@ -37,7 +37,7 @@ const MARKET_WEATHER_KEY = `${SHORT_KEY_PREFIX}MARKET:WEATHER:LATEST`;
 const ABSOLUTE_ROUTE_RETURN_MS = 20_000;          // uiterste terugkeer
 const ROUTE_RESPONSE_RESERVE_MS = 1_500;
 const HARD_TRADE_DEADLINE_MS = 14_000;            // interne trade deadline
-const ROUTE_SOFT_TIMEOUT_MS = 17_000;             // wachttijd op tradeTask
+const ROUTE_SOFT_TIMEOUT_MS = 17_000;             // wachttijd op tradeTask (ongebruikt, DEFAULT wordt gebruikt)
 const ABORT_WAIT_MS = 500;                        // wacht na abort
 
 const DEFAULT_ROUTE_SOFT_TIMEOUT_MS = 17_000;
@@ -3061,60 +3061,189 @@ export default async function handler(
 
     markPhase(phaseLog, 'LOAD_TRADE_SYSTEM_END', startedAt);
 
-    // ===== Bereken resterende tijd en deadline =====
-    const preTradeDurationMs = now() - startedAt;
-    markPhase(phaseLog, 'PRE_TRADE_COMPLETE', startedAt, { preTradeDurationMs });
-
+    // ===== Bereken resterende tijd en absolute deadlines =====
+    const preTradeDurationMs =
+      now() - startedAt;
+    markPhase(
+      phaseLog,
+      'PRE_TRADE_COMPLETE',
+      startedAt,
+      {
+        preTradeDurationMs
+      }
+    );
     const routeSoftTimeoutMs =
       getRouteSoftTimeoutMs(
         req,
         body,
         core.CONFIG || {}
       );
-
-    const effectiveTradeWaitMs =
-      boundedByRoute(
-        startedAt,
-        routeSoftTimeoutMs,
-        ROUTE_RESPONSE_RESERVE_MS
+    /*
+     * Alle deadlines worden als absolute timestamps berekend.
+     *
+     * Daardoor wordt preTradeDurationMs niet meerdere keren
+     * van dezelfde beschikbare tijd afgetrokken.
+     */
+    const routeSoftDeadlineAt =
+      startedAt +
+      routeSoftTimeoutMs;
+    const absoluteRouteDeadlineAt =
+      startedAt +
+      ABSOLUTE_ROUTE_RETURN_MS -
+      ROUTE_RESPONSE_RESERVE_MS;
+    /*
+     * De vroegste grens bepaalt wanneer de route uiterlijk
+     * moet stoppen met wachten op TradeSystem.
+     */
+    const effectiveRouteDeadlineAt =
+      Math.min(
+        routeSoftDeadlineAt,
+        absoluteRouteDeadlineAt
       );
-
-    const remainingBudget = effectiveTradeWaitMs - preTradeDurationMs;
-
-    if (remainingBudget < 1000) {
-      // Vroegtijdig terugkeren, maar wel de lock vrijgeven in finally
-      phase = 'INSUFFICIENT_BUDGET_EARLY_RETURN';
-      return res.status(200).json({
-        ok: false,
-        skipped: true,
-        reason: 'INSUFFICIENT_ROUTE_BUDGET_BEFORE_TRADE_SYSTEM',
-        remainingTradeBudgetMs: remainingBudget,
-        preTradeDurationMs,
-        routeTimings: null, // we hebben geen routeTimings object, maar phaseLog is er
+    /*
+     * Dit is vanaf dit moment de werkelijk beschikbare wachttijd.
+     * preTradeDurationMs is hierin al verwerkt doordat we Date.now()
+     * van een absolute deadline aftrekken.
+     */
+    const effectiveTradeWaitMs =
+      Math.max(
+        0,
+        effectiveRouteDeadlineAt -
+          now()
+      );
+    if (
+      effectiveTradeWaitMs <
+      1_000
+    ) {
+      phase =
+        'INSUFFICIENT_BUDGET_EARLY_RETURN';
+      markPhase(
         phaseLog,
-        lastPhase: phase,
-        tradeRunRouteVersion: TRADE_RUN_ROUTE_VERSION,
-        routeSoftTimeoutMs,
-        effectiveTradeWaitMs,
-        ...baseFlags()
-      });
+        'INSUFFICIENT_BUDGET',
+        startedAt,
+        {
+          preTradeDurationMs,
+          routeSoftDeadlineAt,
+          absoluteRouteDeadlineAt,
+          effectiveRouteDeadlineAt,
+          effectiveTradeWaitMs
+        }
+      );
+      return res
+        .status(200)
+        .json({
+          ok: false,
+          tradeOk: false,
+          skipped: true,
+          reason:
+            'INSUFFICIENT_ROUTE_BUDGET_BEFORE_TRADE_SYSTEM',
+          remainingTradeBudgetMs:
+            effectiveTradeWaitMs,
+          preTradeDurationMs,
+          routeSoftTimeoutMs,
+          routeSoftDeadlineAt,
+          absoluteRouteDeadlineAt,
+          effectiveRouteDeadlineAt,
+          effectiveTradeWaitMs,
+          phaseLog,
+          lastPhase:
+            phase,
+          ...baseFlags()
+        });
     }
-
-    // Deadline voor tradeSystem: nu + effectieve maxRuntime (beperkt door DEFAULT_TRADE_RUNTIME_MS)
-    const maxTradeRuntime = Math.min(
-      DEFAULT_TRADE_RUNTIME_MS,
-      remainingBudget - 500 // extra veiligheidsmarge
+    /*
+     * TradeSystem krijgt een iets kortere interne deadline dan
+     * de route zelf. Daardoor kan TradeSystem nog een nette response
+     * teruggeven voordat de route moet aborteren.
+     */
+    const monitorOnly =
+      shouldMonitorOnly(
+        req,
+        body
+      );
+    const requestedTradeRuntimeMs =
+      monitorOnly
+        ? DEFAULT_MONITOR_ONLY_RUNTIME_MS
+        : DEFAULT_TRADE_RUNTIME_MS;
+    const tradeRuntimeSafetyReserveMs =
+      Math.max(
+        ABORT_WAIT_MS,
+        750
+      );
+    const maxTradeRuntime =
+      Math.max(
+        1,
+        Math.min(
+          requestedTradeRuntimeMs,
+          HARD_TRADE_DEADLINE_MS,
+          effectiveTradeWaitMs -
+            tradeRuntimeSafetyReserveMs
+        )
+      );
+    if (
+      maxTradeRuntime <
+      1_000
+    ) {
+      phase =
+        'INSUFFICIENT_TRADE_RUNTIME';
+      markPhase(
+        phaseLog,
+        'INSUFFICIENT_TRADE_RUNTIME',
+        startedAt,
+        {
+          preTradeDurationMs,
+          effectiveTradeWaitMs,
+          requestedTradeRuntimeMs,
+          maxTradeRuntime
+        }
+      );
+      return res
+        .status(200)
+        .json({
+          ok: false,
+          tradeOk: false,
+          skipped: true,
+          reason:
+            'INSUFFICIENT_RUNTIME_FOR_TRADE_SYSTEM',
+          preTradeDurationMs,
+          routeSoftTimeoutMs,
+          effectiveTradeWaitMs,
+          requestedTradeRuntimeMs,
+          maxTradeRuntimeMs:
+            maxTradeRuntime,
+          routeSoftDeadlineAt,
+          absoluteRouteDeadlineAt,
+          effectiveRouteDeadlineAt,
+          phaseLog,
+          lastPhase:
+            phase,
+          ...baseFlags()
+        });
+    }
+    const tradeSystemStartedAt =
+      now();
+    const tradeDeadlineAt =
+      tradeSystemStartedAt +
+      maxTradeRuntime;
+    const deadlineBudgetAtTradeStartMs =
+      tradeDeadlineAt -
+      tradeSystemStartedAt;
+    markPhase(
+      phaseLog,
+      'TRADE_SYSTEM_START',
+      startedAt,
+      {
+        tradeSystemStartedAt,
+        deadlineAt:
+          tradeDeadlineAt,
+        deadlineBudgetAtTradeStartMs,
+        routeSoftDeadlineAt,
+        absoluteRouteDeadlineAt,
+        effectiveRouteDeadlineAt,
+        effectiveTradeWaitMs,
+        maxTradeRuntime
+      }
     );
-    const tradeDeadlineAt = now() + maxTradeRuntime;
-    const tradeSystemStartedAt = now();
-    const deadlineBudgetAtTradeStartMs = tradeDeadlineAt - now();
-
-    markPhase(phaseLog, 'TRADE_SYSTEM_START', startedAt, {
-      tradeSystemStartedAt,
-      deadlineAt: tradeDeadlineAt,
-      deadlineBudgetAtTradeStartMs
-    });
-
     const runOptions =
       buildRunOptions(
         req,
@@ -3123,27 +3252,75 @@ export default async function handler(
         controller.signal,
         tradeDeadlineAt,
         preTradeDurationMs,
-        null // routeTimings wordt niet gebruikt in tradeSystem, maar we geven het niet mee
+        {
+          routeStartedAt:
+            startedAt,
+          preTradeDurationMs,
+          routeSoftTimeoutMs,
+          routeSoftDeadlineAt,
+          absoluteRouteDeadlineAt,
+          effectiveRouteDeadlineAt,
+          effectiveTradeWaitMs,
+          tradeSystemStartedAt,
+          tradeDeadlineAt,
+          deadlineBudgetAtTradeStartMs,
+          maxTradeRuntimeMs:
+            maxTradeRuntime
+        }
       );
-
+    /*
+     * Zorg dat maxRuntimeMs exact overeenkomt met de deadline
+     * die deze route aan TradeSystem doorgeeft.
+     */
+    runOptions.maxRuntimeMs =
+      maxTradeRuntime;
     phase =
       'RUN_TRADE_SYSTEM';
-
     /*
-     * Geen detached promise:
-     * runTradeSystem wordt direct aangeroepen en de promise wordt bewaard.
-     * De lock wordt later in de finally vrijgegeven.
+     * runTradeSystem wordt één keer aangeroepen.
+     * De route wacht maximaal tot de absolute effectieve routedeadline.
      */
-    const tradeTask = runTradeSystem(runOptions);
-
+    let tradeTask;
+    try {
+      tradeTask =
+        Promise.resolve(
+          runTradeSystem(
+            runOptions
+          )
+        );
+    } catch (error) {
+      tradeTask =
+        Promise.reject(
+          error
+        );
+    }
+    const tradeWaitStartedAt =
+      now();
+    const tradeWaitBudgetMs =
+      Math.max(
+        1,
+        effectiveRouteDeadlineAt -
+          tradeWaitStartedAt
+      );
+    markPhase(
+      phaseLog,
+      'TRADE_SYSTEM_WAIT_START',
+      startedAt,
+      {
+        tradeWaitStartedAt,
+        tradeWaitBudgetMs,
+        effectiveRouteDeadlineAt,
+        tradeDeadlineAt
+      }
+    );
     const result =
       await bounded(
         tradeTask,
-        effectiveTradeWaitMs - preTradeDurationMs,
+        tradeWaitBudgetMs,
         () =>
           timeoutMarker(
             'RUN_TRADE_SYSTEM',
-            effectiveTradeWaitMs - preTradeDurationMs
+            tradeWaitBudgetMs
           )
       );
 
@@ -3172,7 +3349,7 @@ export default async function handler(
           routeTimeoutResponse({
             startedAt,
             routeSoftTimeoutMs,
-            effectiveTradeWaitMs,
+            effectiveTradeWaitMs: tradeWaitBudgetMs, // gebruik de werkelijke wachttijd
             lockKey:
               keys.tradeLock,
             lock,
@@ -3189,13 +3366,30 @@ export default async function handler(
 
     // Voeg pre-trade timing toe aan result
     if (result && typeof result === 'object') {
-      result.preTradeDurationMs = preTradeDurationMs;
-      result.routeTimings = null; // we hebben geen routeTimings object, maar we kunnen phaseLog meesturen
-      result.phaseLog = phaseLog;
-      result.lastPhase = phase;
-      result.tradeSystemStartedAt = tradeSystemStartedAt;
-      result.deadlineAt = tradeDeadlineAt;
-      result.deadlineBudgetAtTradeStartMs = deadlineBudgetAtTradeStartMs;
+      result.preTradeDurationMs =
+        preTradeDurationMs;
+      /*
+       * Bewaar de routeTimings die aan TradeSystem zijn meegegeven.
+       * Overschrijf eventuele uitgebreidere timings vanuit TradeSystem niet.
+       */
+      result.routeTimings = {
+        ...(runOptions.routeTimings || {}),
+        ...(result.routeTimings || {})
+      };
+      result.phaseLog =
+        phaseLog;
+      result.lastPhase =
+        phase;
+      result.tradeSystemStartedAt =
+        tradeSystemStartedAt;
+      result.deadlineAt =
+        tradeDeadlineAt;
+      result.deadlineBudgetAtTradeStartMs =
+        deadlineBudgetAtTradeStartMs;
+      result.tradeWaitStartedAt =
+        tradeWaitStartedAt;
+      result.tradeWaitBudgetMs =
+        tradeWaitBudgetMs;
     }
 
     const payload =
@@ -3297,8 +3491,16 @@ export default async function handler(
       phaseLog,
       lastPhase: phase,
       tradeSystemStartedAt,
-      deadlineAt: tradeDeadlineAt,
+      deadlineAt:
+        tradeDeadlineAt,
       deadlineBudgetAtTradeStartMs,
+      tradeWaitStartedAt,
+      tradeWaitBudgetMs,
+      routeSoftDeadlineAt,
+      absoluteRouteDeadlineAt,
+      effectiveRouteDeadlineAt,
+      routeTimings:
+        runOptions.routeTimings || {},
 
       durationMs:
         now() - startedAt,
