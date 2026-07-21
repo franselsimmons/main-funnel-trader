@@ -155,7 +155,8 @@ const DEFAULT_SPREAD_COST_MULT = 1;
 const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 500;
 const DEFAULT_SNAPSHOT_TIMEOUT_MS = 850;
 const DEFAULT_SELECTION_TIMEOUT_MS = 450;
-const DEFAULT_ANALYZE_TIMEOUT_MS = 2_100;
+// FIX 5: Verhoog analyze timeout naar 3000 ms (was 2100)
+const DEFAULT_ANALYZE_TIMEOUT_MS = 3000;
 const DEFAULT_ANALYZE_IMPORT_TIMEOUT_MS = 600;
 const DEFAULT_POSITION_IMPORT_TIMEOUT_MS = 600;
 const DEFAULT_DISCORD_IMPORT_TIMEOUT_MS = 450;
@@ -1158,11 +1159,12 @@ function tradeConfig() {
       2000
     ),
 
+    // FIX 5: max 5000 ms (was 3500)
     analyzeTimeoutMs: int(
       first(options.analyzeTimeoutMs, CONFIG.short?.trade?.analyzeTimeoutMs, CONFIG.trade?.analyzeTimeoutMs),
       DEFAULT_ANALYZE_TIMEOUT_MS,
       250,
-      3500
+      5000
     ),
 
     selectionTimeoutMs: int(
@@ -1588,14 +1590,15 @@ function firstKnownWeatherValue(...values) {
   return null;
 }
 
+// FIX 1: Prioriteit: currentMarketWeatherKey > confirmedMarketWeatherKey > entryMarketWeatherKey
 function resolveMarketWeatherFromObjects(...objects) {
   const sources = objects.flat().filter((item) => item && typeof item === 'object');
 
   for (const source of sources) {
     const directKeys = [
-      source.entryMarketWeatherKey,
-      source.confirmedMarketWeatherKey,
-      source.currentMarketWeatherKey,
+      source.currentMarketWeatherKey,   // 1. huidige marktweer (live)
+      source.confirmedMarketWeatherKey, // 2. bevestigd uit scanner snapshot
+      source.entryMarketWeatherKey,     // 3. van de kandidaat
       source.marketWeatherKey,
       source.candidateMarketWeatherKey,
       source.key
@@ -1702,6 +1705,7 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
   };
 }
 
+// FIX 1: Prioriteit: eerst context, dan row
 function attachEntryMarketWeather(row = {}, marketContext = {}) {
   const rowResolved = resolveMarketWeatherFromObjects(row);
   const contextResolved = resolveMarketWeatherFromObjects(
@@ -1711,10 +1715,10 @@ function attachEntryMarketWeather(row = {}, marketContext = {}) {
     marketContext?.confirmedMarketWeather
   );
 
-  const resolved = rowResolved.known
-    ? rowResolved
-    : contextResolved.known
-      ? contextResolved
+  const resolved = contextResolved.known
+    ? contextResolved
+    : rowResolved.known
+      ? rowResolved
       : rowResolved;
 
   return {
@@ -4280,6 +4284,8 @@ function hasValidRiskShape(row = {}) {
   return validShortRiskShape(row);
 }
 
+// FIX 3: Virtual Learning mag NIET afhankelijk zijn van riskFractionForEntry of signalType.
+// Alleen geometrie en micro-families controleren.
 function validateVirtualEntry(row = {}) {
   const tradeSide = inferRowTradeSide(row);
   const trueMicroFamilyId = getTrueMicroFamilyId(row);
@@ -4297,81 +4303,14 @@ function validateVirtualEntry(row = {}) {
     return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_MICRO_MICRO_FAMILY_ID' };
   }
 
-  const runtimeGate = microMicroRuntimeGate(row);
-
-  if (runtimeGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) {
-    return {
-      ok: false,
-      reason: runtimeGate.reason || 'MICRO_MICRO_POLICY_BLOCKED',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status,
-      policyBlocked: true,
-      virtualLearningAllowed: false,
-      virtualEntryAllowed: false
-    };
-  }
-
-  if (runtimeGate.status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) {
-    return {
-      ok: false,
-      reason: runtimeGate.reason || 'EXACT_MICRO_MICRO_EMPIRICAL_VETO',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status,
-      empiricalVeto: true,
-      empiricalVetoReason: runtimeGate.empiricalVetoReason || 'EXACT_MICRO_MICRO_LCB95_NEGATIVE',
-      empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-      virtualLearningAllowed: false,
-      virtualEntryAllowed: false
-    };
-  }
-
-  if (runtimeGate.status === MICRO_MICRO_STATUS_REJECTED) {
-    return {
-      ok: false,
-      reason: runtimeGate.reason || 'MICRO_MICRO_REJECTED_BAD_NET_EDGE',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status,
-      virtualLearningAllowed: false,
-      virtualEntryAllowed: false
-    };
-  }
-
-  if (row.weakContraRejected === true || row.blockVirtualEntry === true) {
-    return {
-      ok: false,
-      reason: row.weakContraRejectReason || row.weakContraEntryGate?.reason || 'E_WEAK_CONTRA_ENTRY_GATE_REJECTED',
-      weakContraEntryGate: row.weakContraEntryGate || null,
-      weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status
-    };
-  }
-
-  if (!hasValidRiskShape(row)) {
-    return {
-      ok: false,
-      reason: row.liveEntryBlockedReason || 'SHORT_RISK_INVALID',
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status
-    };
-  }
-
-  if (n(row.estimatedCostR, 0) > tradeConfig().hardMaxEstimatedCostR) {
-    return {
-      ok: false,
-      reason: 'SHORT_ESTIMATED_COST_R_TOO_HIGH',
-      estimatedCostR: n(row.estimatedCostR, 0),
-      hardMaxEstimatedCostR: tradeConfig().hardMaxEstimatedCostR,
-      microMicroRuntimeGate: runtimeGate,
-      microMicroRuntimeGateStatus: runtimeGate.status
-    };
+  const geometry = hasCompletePositiveGeometry(row);
+  if (!geometry.complete || !geometry.valid) {
+    return { ok: false, reason: 'INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED' };
   }
 
   return {
     ok: true,
-    reason: runtimeGate.status === MICRO_MICRO_STATUS_OBSERVING
-      ? 'SHORT_VIRTUAL_LEARNING_OBSERVING_MICRO_MICRO'
-      : 'SHORT_VIRTUAL_LEARNING_PASSED_MICRO_MICRO',
+    reason: 'SHORT_VIRTUAL_LEARNING_ALLOWED',
     rr: n(row.rr, 0),
     riskPct: n(row.riskPct, 0),
     rewardPct: n(row.rewardPct, 0),
@@ -4380,15 +4319,15 @@ function validateVirtualEntry(row = {}) {
     rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
     weakContraEntryGate: row.weakContraEntryGate || null,
     weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
-    microMicroRuntimeGate: runtimeGate,
-    microMicroRuntimeGateStatus: runtimeGate.status,
+    microMicroRuntimeGate: null,
+    microMicroRuntimeGateStatus: null,
     virtualLearningAllowed: true,
     virtualEntryAllowed: true,
-    discordEligible: runtimeGate.status === MICRO_MICRO_STATUS_PASSED,
+    discordEligible: false,
     empiricalVeto: false,
     empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-    proofTier: runtimeGate.proofTier,
-    maxAllowedRiskBand: runtimeGate.maxAllowedRiskBand
+    proofTier: PROOF_TIER_OBSERVATION_ONLY,
+    maxAllowedRiskBand: MAX_ALLOWED_RISK_BAND_ZERO
   };
 }
 
@@ -8641,11 +8580,14 @@ export async function runTradeSystem(options = {}) {
         counters.waitRows += 1;
         counters.virtualFailedRows += 1;
         analyzeFailedRows += 1;
+        // FIX 4: Toon echte fout - voeg extra velden toe
         actions.push({
           ...row,
           action: 'WAIT',
           reason: 'VIRTUAL_POSITION_CREATE_FAILED',
-          error: error?.message || String(error),
+          virtualPositionCreateStage: 'SAVE_OPEN_POSITION',
+          virtualPositionCreateError: error?.message || String(error),
+          virtualPositionCreateErrorCode: error?.code || null,
           selectedRotationId: alertContext.rotationId,
           activeRotationId: alertContext.rotationId,
           virtualTracked: false,
@@ -8670,33 +8612,39 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push(`ENTRY_LOOP_COMPLETED_ATTEMPTS:${counters.entryLoopAttempts}`);
     }
 
+    // FIX 2: Snapshot cursor altijd opslaan bij vooruitgang, ongeacht analyzeFallbackUsed of abort
     let cursorPersisted = false;
-    try {
-      throwIfAborted(options);
-      const canAdvanceCursor = analyzeResult.analyzeFallbackUsed !== true && processed.length === candidates.length;
-      const effectiveNextIndex = canAdvanceCursor ? chunk.nextIndex : chunk.start;
-      const effectiveChunkComplete = canAdvanceCursor && effectiveNextIndex >= chunk.total;
-      cursorPersisted = await persistSnapshotCursor({
-        snapshotId: snapshot.snapshotId,
-        nextIndex: effectiveNextIndex,
-        totalCandidates: chunk.total,
-        complete: effectiveChunkComplete,
-        runId,
-        cfg,
-        options
-      });
-      if (!cursorPersisted) runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_FAILED_OR_TIMEOUT');
-      if (!effectiveChunkComplete) {
-        runtimeWarnings.push(`SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`);
+    let effectiveNextIndex = chunk.start;
+    let effectiveChunkComplete = false;
+
+    if (processed.length > 0 && chunk.nextIndex > chunk.start) {
+      effectiveNextIndex = chunk.nextIndex;
+      effectiveChunkComplete = (effectiveNextIndex >= chunk.total);
+      try {
+        cursorPersisted = await persistSnapshotCursor({
+          snapshotId: snapshot.snapshotId,
+          nextIndex: effectiveNextIndex,
+          totalCandidates: chunk.total,
+          complete: effectiveChunkComplete,
+          runId,
+          cfg,
+          options
+        });
+        if (!cursorPersisted) runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_FAILED_OR_TIMEOUT');
+        if (!effectiveChunkComplete) {
+          runtimeWarnings.push(`SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`);
+        }
+      } catch (persistErr) {
+        runtimeWarnings.push(`SNAPSHOT_CURSOR_PERSIST_ERROR:${persistErr.message || String(persistErr)}`);
+        cursorPersisted = false;
       }
-      // update base result fields
-      baseResult.snapshotChunkNextIndex = effectiveNextIndex;
-      baseResult.snapshotChunkComplete = effectiveChunkComplete;
-      baseResult.snapshotChunkCursorPersisted = cursorPersisted;
-      baseResult.snapshotChunkAdvanced = canAdvanceCursor;
-    } catch (abortErr) {
-      runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_SKIPPED_DUE_TO_ABORT');
+    } else {
+      runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_SKIPPED_NO_PROGRESS');
     }
+
+    // Update base result fields
+    // We moeten baseResult later definiëren, dus we slaan de waarden op in variabelen.
+    // We zetten ze later in baseResult.
 
     const actionCountMap = buildRunActionCounts(actions, virtualExits);
     const qualityAudit = buildQualityAudit({
@@ -8798,13 +8746,13 @@ export async function runTradeSystem(options = {}) {
       snapshotChunkEndExclusive: chunk.endExclusive,
       snapshotChunkSize: chunk.size,
       snapshotChunkTotalCandidates: chunk.total,
-      snapshotChunkNextIndex: chunk.nextIndex,
-      snapshotChunkComplete: chunk.complete,
-      snapshotChunkCursorPersisted: false,
-      snapshotChunkAdvanced: false,
-      snapshotProgressPct: chunk.total > 0 ? round((chunk.nextIndex / chunk.total) * 100, 2) : 0,
-      snapshotRemainingCandidates: Math.max(0, chunk.total - chunk.nextIndex),
-      snapshotProcessingState: chunk.complete ? 'COMPLETE' : 'PROCESSING',
+      snapshotChunkNextIndex: effectiveNextIndex, // gebruik de effectieve index
+      snapshotChunkComplete: effectiveChunkComplete,
+      snapshotChunkCursorPersisted: cursorPersisted,
+      snapshotChunkAdvanced: (processed.length > 0 && chunk.nextIndex > chunk.start),
+      snapshotProgressPct: chunk.total > 0 ? round((effectiveNextIndex / chunk.total) * 100, 2) : 0,
+      snapshotRemainingCandidates: Math.max(0, chunk.total - effectiveNextIndex),
+      snapshotProcessingState: effectiveChunkComplete ? 'COMPLETE' : 'PROCESSING',
 
       ...sideFlags(),
       ...virtualFlags(),
