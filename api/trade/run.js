@@ -19,8 +19,9 @@ const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
+// ===== VERSIE VERHOOGD VOOR DIAGNOSTIEK =====
 const TRADE_RUN_ROUTE_VERSION =
-  'SHORT_API_TRADE_RUN_V14_ABORT_CONTROLLER_DEADLINE_SAFE';
+  'SHORT_API_TRADE_RUN_V15_DIAGNOSTIC_20260721';
 
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
@@ -1571,7 +1572,7 @@ function setHeaders(res) {
   );
 }
 
-// ===== buildRunOptions nu met signal en deadlineAt =====
+// ===== buildRunOptions nu met signal, deadlineAt, preTradeDurationMs en routeTimings =====
 function buildRunOptions(
   req,
   body,
@@ -2594,7 +2595,9 @@ function routeTimeoutResponse({
   lockKey,
   lock,
   preTradeDurationMs,
-  routeTimings
+  routeTimings,
+  phaseLog,
+  lastPhase
 }) {
   return {
     ok: false,
@@ -2653,9 +2656,11 @@ function routeTimeoutResponse({
       'ABORT_CONTROLLER_USED'
     ],
 
-    // ===== Pre-trade timing =====
+    // ===== Diagnostiek =====
     preTradeDurationMs,
     routeTimings,
+    phaseLog,
+    lastPhase,
 
     ...baseFlags()
   };
@@ -2667,7 +2672,9 @@ function lockActiveResponse(
   lock,
   debug,
   preTradeDurationMs,
-  routeTimings
+  routeTimings,
+  phaseLog,
+  lastPhase
 ) {
   return {
     ok: true,
@@ -2740,9 +2747,11 @@ function lockActiveResponse(
     completedAt:
       now(),
 
-    // ===== Pre-trade timing =====
+    // ===== Diagnostiek =====
     preTradeDurationMs,
     routeTimings,
+    phaseLog,
+    lastPhase,
 
     ...baseFlags()
   };
@@ -2754,7 +2763,9 @@ function errorResponse(
   phase,
   debug,
   preTradeDurationMs,
-  routeTimings
+  routeTimings,
+  phaseLog,
+  lastPhase
 ) {
   const requestedStatus =
     number(
@@ -2813,9 +2824,11 @@ function errorResponse(
       completedAt:
         now(),
 
-      // ===== Pre-trade timing =====
+      // ===== Diagnostiek =====
       preTradeDurationMs,
       routeTimings,
+      phaseLog,
+      lastPhase,
 
       ...baseFlags()
     }
@@ -2823,14 +2836,15 @@ function errorResponse(
 }
 
 // ===== Helper om route-fases te timen =====
-function markPhase(routeTimings, name, startedAt, extra = {}) {
-  if (!routeTimings) routeTimings = {};
-  routeTimings[name] = {
-    elapsedMs: now() - startedAt,
-    at: now(),
+function markPhase(phaseLog, name, startedAt, extra = {}) {
+  const entry = {
+    name,
+    at: Date.now(),
+    elapsedMs: Date.now() - startedAt,
     ...extra
   };
-  return routeTimings;
+  phaseLog.push(entry);
+  return phaseLog;
 }
 
 export default async function handler(
@@ -2847,10 +2861,10 @@ export default async function handler(
   let redis = null;
   let keys = buildKeys({});
   let lock = null;
-  let routeTimings = {};
+  const phaseLog = [];
 
   // ===== Markeer start =====
-  routeTimings = markPhase(routeTimings, 'HANDLER_ENTER', startedAt);
+  markPhase(phaseLog, 'HANDLER_ENTER', startedAt);
 
   // ===== AbortController om tradeTask te kunnen stoppen =====
   const controller = new AbortController();
@@ -2889,7 +2903,7 @@ export default async function handler(
         'READ_BODY'
       );
 
-    routeTimings = markPhase(routeTimings, 'READ_BODY_END', startedAt);
+    markPhase(phaseLog, 'READ_BODY_END', startedAt);
 
     debug =
       shouldDebug(
@@ -2904,7 +2918,7 @@ export default async function handler(
         startedAt
       );
 
-    routeTimings = markPhase(routeTimings, 'LOAD_CORE_END', startedAt);
+    markPhase(phaseLog, 'LOAD_CORE_END', startedAt);
 
     keys =
       buildKeys(
@@ -2956,7 +2970,7 @@ export default async function handler(
           false
         );
 
-      routeTimings = markPhase(routeTimings, 'UNLOCK_ONLY_END', startedAt, { released });
+      markPhase(phaseLog, 'UNLOCK_ONLY_END', startedAt, { released });
 
       return res
         .status(200)
@@ -2984,6 +2998,9 @@ export default async function handler(
 
           completedAt:
             now(),
+
+          phaseLog,
+          lastPhase: phase,
 
           ...baseFlags()
         });
@@ -3013,7 +3030,7 @@ export default async function handler(
         'ACQUIRE_TRADE_LOCK'
       );
 
-    routeTimings = markPhase(routeTimings, 'ACQUIRE_LOCK_END', startedAt, { acquired: lock.acquired });
+    markPhase(phaseLog, 'ACQUIRE_LOCK_END', startedAt, { acquired: lock.acquired });
 
     if (!lock.acquired) {
       return res
@@ -3025,7 +3042,9 @@ export default async function handler(
             lock,
             debug,
             now() - startedAt, // preTradeDurationMs
-            routeTimings
+            null, // routeTimings (nog niet verzameld, maar we kunnen het wel doorgeven)
+            phaseLog,
+            phase
           )
         );
     }
@@ -3040,11 +3059,11 @@ export default async function handler(
         startedAt
       );
 
-    routeTimings = markPhase(routeTimings, 'LOAD_TRADE_SYSTEM_END', startedAt);
+    markPhase(phaseLog, 'LOAD_TRADE_SYSTEM_END', startedAt);
 
     // ===== Bereken resterende tijd en deadline =====
     const preTradeDurationMs = now() - startedAt;
-    routeTimings = markPhase(routeTimings, 'PRE_TRADE_COMPLETE', startedAt, { preTradeDurationMs });
+    markPhase(phaseLog, 'PRE_TRADE_COMPLETE', startedAt, { preTradeDurationMs });
 
     const routeSoftTimeoutMs =
       getRouteSoftTimeoutMs(
@@ -3071,7 +3090,10 @@ export default async function handler(
         reason: 'INSUFFICIENT_ROUTE_BUDGET_BEFORE_TRADE_SYSTEM',
         remainingTradeBudgetMs: remainingBudget,
         preTradeDurationMs,
-        routeTimings,
+        routeTimings: null, // we hebben geen routeTimings object, maar phaseLog is er
+        phaseLog,
+        lastPhase: phase,
+        tradeRunRouteVersion: TRADE_RUN_ROUTE_VERSION,
         routeSoftTimeoutMs,
         effectiveTradeWaitMs,
         ...baseFlags()
@@ -3084,6 +3106,14 @@ export default async function handler(
       remainingBudget - 500 // extra veiligheidsmarge
     );
     const tradeDeadlineAt = now() + maxTradeRuntime;
+    const tradeSystemStartedAt = now();
+    const deadlineBudgetAtTradeStartMs = tradeDeadlineAt - now();
+
+    markPhase(phaseLog, 'TRADE_SYSTEM_START', startedAt, {
+      tradeSystemStartedAt,
+      deadlineAt: tradeDeadlineAt,
+      deadlineBudgetAtTradeStartMs
+    });
 
     const runOptions =
       buildRunOptions(
@@ -3093,7 +3123,7 @@ export default async function handler(
         controller.signal,
         tradeDeadlineAt,
         preTradeDurationMs,
-        routeTimings
+        null // routeTimings wordt niet gebruikt in tradeSystem, maar we geven het niet mee
       );
 
     phase =
@@ -3147,7 +3177,9 @@ export default async function handler(
               keys.tradeLock,
             lock,
             preTradeDurationMs,
-            routeTimings
+            routeTimings: null,
+            phaseLog,
+            lastPhase: phase
           })
         );
     }
@@ -3158,7 +3190,12 @@ export default async function handler(
     // Voeg pre-trade timing toe aan result
     if (result && typeof result === 'object') {
       result.preTradeDurationMs = preTradeDurationMs;
-      result.routeTimings = routeTimings;
+      result.routeTimings = null; // we hebben geen routeTimings object, maar we kunnen phaseLog meesturen
+      result.phaseLog = phaseLog;
+      result.lastPhase = phase;
+      result.tradeSystemStartedAt = tradeSystemStartedAt;
+      result.deadlineAt = tradeDeadlineAt;
+      result.deadlineBudgetAtTradeStartMs = deadlineBudgetAtTradeStartMs;
     }
 
     const payload =
@@ -3167,106 +3204,117 @@ export default async function handler(
         debug
       );
 
+    // Zorg dat de diagnostische velden ook in de root van de response komen
+    const responsePayload = {
+      ok:
+        payload.ok !== false,
+
+      tradeOk:
+        payload.ok !== false,
+
+      routeSoftTimeout:
+        false,
+
+      routeSoftTimeoutBeforeVercel504:
+        false,
+
+      routeSoftTimeoutMs,
+
+      effectiveTradeWaitMs,
+
+      absoluteRouteReturnMs:
+        ABSOLUTE_ROUTE_RETURN_MS,
+
+      maxTradeRuntimeMs:
+        runOptions.maxRuntimeMs,
+
+      monitorTimeoutMs:
+        runOptions.monitorTimeoutMs,
+
+      monitorBatchSize:
+        runOptions.monitorBatchSize,
+
+      openPositionMonitorLimit:
+        runOptions.openPositionMonitorLimit,
+
+      maxCandidatesPerSnapshot:
+        runOptions.maxCandidatesPerSnapshot,
+
+      candidateChunkSize:
+        runOptions.candidateChunkSize,
+
+      maxEntriesPerRun:
+        runOptions.maxEntriesPerRun,
+
+      force:
+        runOptions.force,
+
+      resetSnapshotCursor:
+        runOptions.resetSnapshotCursor,
+
+      maxSnapshotAgeMs: runOptions.maxSnapshotAgeMs,
+      maxSnapshotWarnAgeMs: runOptions.maxSnapshotWarnAgeMs,
+
+      lock: {
+        key:
+          keys.tradeLock,
+
+        acquired: true,
+
+        releaseMode:
+          'ROUTE_FINALLY',
+
+        ttlFallbackSec:
+          DEFAULT_LOCK_TTL_SEC
+      },
+
+      keys: {
+        tradeLock:
+          keys.tradeLock,
+
+        tradeRunMeta:
+          keys.tradeRunMeta,
+
+        lastProcessedSnapshot:
+          keys.lastProcessedSnapshot,
+
+        marketUniverse:
+          MARKET_UNIVERSE_KEY,
+
+        marketWeather:
+          MARKET_WEATHER_KEY
+      },
+
+      run:
+        debug
+          ? payload
+          : undefined,
+
+      ...payload,
+
+      // ===== Diagnostische velden =====
+      tradeRunRouteVersion: TRADE_RUN_ROUTE_VERSION,
+      phaseLog,
+      lastPhase: phase,
+      tradeSystemStartedAt,
+      deadlineAt: tradeDeadlineAt,
+      deadlineBudgetAtTradeStartMs,
+
+      durationMs:
+        now() - startedAt,
+
+      routeCompletedAt:
+        now(),
+
+      ...baseFlags()
+    };
+
     phase =
       'SEND_RESPONSE';
 
     return res
       .status(200)
-      .json({
-        ok:
-          payload.ok !== false,
-
-        tradeOk:
-          payload.ok !== false,
-
-        routeSoftTimeout:
-          false,
-
-        routeSoftTimeoutBeforeVercel504:
-          false,
-
-        routeSoftTimeoutMs,
-
-        effectiveTradeWaitMs,
-
-        absoluteRouteReturnMs:
-          ABSOLUTE_ROUTE_RETURN_MS,
-
-        maxTradeRuntimeMs:
-          runOptions.maxRuntimeMs,
-
-        monitorTimeoutMs:
-          runOptions.monitorTimeoutMs,
-
-        monitorBatchSize:
-          runOptions.monitorBatchSize,
-
-        openPositionMonitorLimit:
-          runOptions.openPositionMonitorLimit,
-
-        maxCandidatesPerSnapshot:
-          runOptions.maxCandidatesPerSnapshot,
-
-        candidateChunkSize:
-          runOptions.candidateChunkSize,
-
-        maxEntriesPerRun:
-          runOptions.maxEntriesPerRun,
-
-        force:
-          runOptions.force,
-
-        resetSnapshotCursor:
-          runOptions.resetSnapshotCursor,
-
-        maxSnapshotAgeMs: runOptions.maxSnapshotAgeMs,
-        maxSnapshotWarnAgeMs: runOptions.maxSnapshotWarnAgeMs,
-
-        lock: {
-          key:
-            keys.tradeLock,
-
-          acquired: true,
-
-          releaseMode:
-            'ROUTE_FINALLY',
-
-          ttlFallbackSec:
-            DEFAULT_LOCK_TTL_SEC
-        },
-
-        keys: {
-          tradeLock:
-            keys.tradeLock,
-
-          tradeRunMeta:
-            keys.tradeRunMeta,
-
-          lastProcessedSnapshot:
-            keys.lastProcessedSnapshot,
-
-          marketUniverse:
-            MARKET_UNIVERSE_KEY,
-
-          marketWeather:
-            MARKET_WEATHER_KEY
-        },
-
-        run:
-          debug
-            ? payload
-            : undefined,
-
-        ...payload,
-
-        durationMs:
-          now() - startedAt,
-
-        routeCompletedAt:
-          now(),
-
-        ...baseFlags()
-      });
+      .json(responsePayload);
   } catch (error) {
     phase =
       `${phase}_CAUGHT`;
@@ -3281,7 +3329,9 @@ export default async function handler(
         phase,
         debug,
         preTradeDurationMs,
-        routeTimings
+        null,
+        phaseLog,
+        phase
       );
 
     return res
