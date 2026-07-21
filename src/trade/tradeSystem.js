@@ -45,7 +45,7 @@ const SELECTION_PARENT_CONTEXT = 'PARENT_15_CONTEXT_ONLY';
 const SELECTION_75_CHILD_CONTEXT = 'MICRO_75_CONTEXT_ONLY';
 const SELECTION_EXACT_MICRO_MICRO = 'EXACT_MICRO_MICRO_ONLY';
 
-const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_V6_ABORT_DEADLINE_SAFE';
+const TRADE_SYSTEM_VERSION = 'SHORT_TRADE_SYSTEM_V7_DIAGNOSTIC_PHASE_DEADLINE_SAFE';
 const SNAPSHOT_CHUNK_VERSION = 'SHORT_SNAPSHOT_CHUNK_CURSOR_V1_MAX_THREE_PER_RUN';
 const DIRECT_SELECTION_READER_VERSION = 'SHORT_DIRECT_MANUAL_SELECTION_READER_V1_NO_ROTATION_ENGINE';
 
@@ -399,7 +399,41 @@ function isTimeoutResult(value) {
   return Boolean(value && typeof value === 'object' && value.__timeout === true);
 }
 
-// ===== NIEUWE HELPERS VOOR ABORT EN DEADLINE =====
+// ===== DIAGNOSTISCHE HULPFUNCTIES =====
+function phaseLog(runId, phase, startedAt, extra = {}) {
+  console.log(JSON.stringify({
+    type: 'TRADE_RUNTIME_PHASE',
+    runId,
+    phase,
+    elapsedMs: Date.now() - startedAt,
+    at: Date.now(),
+    ...extra
+  }));
+}
+
+function createEventLoopLagMonitor(intervalMs = 100) {
+  let expected = Date.now() + intervalMs;
+  let maxLagMs = 0;
+  let lastLagMs = 0;
+  const timer = setInterval(() => {
+    const current = Date.now();
+    lastLagMs = Math.max(0, current - expected);
+    maxLagMs = Math.max(maxLagMs, lastLagMs);
+    expected = current + intervalMs;
+  }, intervalMs);
+  timer.unref?.();
+  return {
+    snapshot() {
+      return { lastLagMs, maxLagMs };
+    },
+    stop() {
+      clearInterval(timer);
+      return { lastLagMs, maxLagMs };
+    }
+  };
+}
+// ===== EINDE DIAGNOSTISCHE HULPFUNCTIES =====
+
 function throwIfAborted(options = {}) {
   if (options.signal?.aborted) {
     const error = new Error('TRADE_SYSTEM_ABORTED');
@@ -435,23 +469,6 @@ function createDeadline(startedAt, cfg, options = {}) {
     startedAt,
     maxRuntimeMs,
     deadlineAt,
-    hardReturnReserveMs: cfg.hardReturnReserveMs
-  };
-}
-// ===== EINDE NIEUWE HELPERS =====
-
-function createDeadline(startedAt, cfg) {
-  const maxRuntimeMs = int(
-    cfg.maxRuntimeMs,
-    DEFAULT_MAX_RUNTIME_MS,
-    8000,
-    HARD_MAX_RUNTIME_MS
-  );
-
-  return {
-    startedAt,
-    maxRuntimeMs,
-    deadlineAt: startedAt + maxRuntimeMs,
     hardReturnReserveMs: cfg.hardReturnReserveMs
   };
 }
@@ -548,7 +565,6 @@ function shortScanSnapshotKey(id) {
 
 const SHORT_KEYS = {
   scan: {
-    // FIX: gebruik expliciet de primaire key; de oude KEYS-resolutie kan fout zijn
     latest: PRIMARY_LATEST_KEY,
     snapshot: shortScanSnapshotKey
   },
@@ -632,11 +648,9 @@ async function persistSnapshotCursor({
   options = {}
 }) {
   if (!snapshotId) return false;
-  // Controleer abort/deadline voordat we schrijven
   try {
     throwIfAborted(options);
   } catch {
-    // Als we geaborteerd zijn, overslaan (cursor blijft staan voor volgende run)
     return false;
   }
   const redis = safeGetDurableRedis();
@@ -763,7 +777,6 @@ async function readJsonFromAnyRedis(keys = [], fallback = null, timeoutMs = 500)
   const volatileRedis = safeGetVolatileRedis();
   const durableRedis = safeGetDurableRedis();
 
-  // Maximaal 3 prioriteitskeys tegelijk proberen
   const maxKeysToTry = 3;
   const priorityKeys = keyList.slice(0, maxKeysToTry);
 
@@ -1619,7 +1632,6 @@ function resolveMarketWeatherFromObjects(...objects) {
       source.trendSide,
       source.marketTrendSide,
       source.market?.trendSide
-      // verwijder side en direction om valse afleiding te voorkomen
     );
 
     const parsed = parseKnownMarketWeatherKey(buildWeatherKeySafe(regime, trendSide));
@@ -1664,7 +1676,6 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
 
   const parsed = parseKnownMarketWeatherKey(resolved.key);
 
-  // Alleen entryMarketWeather* invullen; current/confirmed niet overschrijven
   return {
     entryMarketWeatherKey: parsed.key,
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
@@ -2754,7 +2765,6 @@ function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
     confirmedMarketWeatherAt: confirmedAt,
     confirmedAt,
 
-    // Alleen entryMarketWeather invullen; current/confirmed niet overschrijven
     entryMarketWeatherKey: parsed.key,
     entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
     entryMarketWeatherRegime: parsed.regime,
@@ -3733,7 +3743,6 @@ function aggregateRuntimeRecentOutcomes(row = {}) {
 
 function runtimeCompletedSample(row = {}) {
   const recent = aggregateRuntimeRecentOutcomes(row);
-  // Gebruik max i.p.v. som om dubbeltelling te voorkomen
   const virtual = n(row.virtualCompleted, 0);
   const shadow = n(row.shadowCompleted, 0);
   const completed = Math.max(virtual, shadow, n(row.completed, 0), n(row.outcomeSample, 0), n(row.closed, 0), recent.completed);
@@ -3755,7 +3764,6 @@ function runtimeTotalR(row = {}) {
   const completed = runtimeCompletedSample(row);
   if (completed <= 0) return 0;
 
-  // Voorkeur voor netRStats
   const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
   if (netRStats && typeof netRStats === 'object') {
     const total = n(netRStats.totalR, NaN);
@@ -4419,8 +4427,6 @@ function snapshotContainers(snapshot = null) {
     root.value?.snapshot
   ].filter(isObjectRecord);
 }
-// Helper om candidates uit een snapshot te extraheren.
-// Werkt ook wanneer snapshot null is of genest is.
 function extractCandidatesFromSnapshot(snapshot = null) {
   const containers = snapshotContainers(snapshot);
   for (const source of containers) {
@@ -4554,18 +4560,6 @@ function normalizeSelectedSnapshot(snapshot = null, meta = {}) {
   const nestedSnapshot = isObjectRecord(root.snapshot)
     ? root.snapshot
     : {};
-  /*
-   * Een Redis-key kan een wrapper bevatten:
-   *
-   * {
-   *   snapshotId: "...",
-   *   snapshot: {
-   *     candidates: [...]
-   *   }
-   * }
-   *
-   * Daarom gebruiken we zowel wrapper- als snapshotvelden.
-   */
   const normalizedSource = {
     ...root,
     ...nestedSnapshot
@@ -4665,7 +4659,6 @@ function normalizeSelectedSnapshot(snapshot = null, meta = {}) {
   };
 }
 
-// FIX: gebruik expliciet de primaire key voor scanner latest
 function latestScanKeys() {
   return uniqueStrings([
     PRIMARY_LATEST_KEY,
@@ -4700,7 +4693,6 @@ function latestScanKeys() {
   ]);
 }
 
-// FIX: readSnapshotCandidate retourneert nu ook debugInfo
 async function readSnapshotCandidate(
   redis,
   key,
@@ -4801,7 +4793,6 @@ async function readSnapshotCandidate(
     return debug ? { value: null, debug: debugInfo } : null;
   }
 
-  // fallback: treat as pointer
   const snapshotId = extractSnapshotId(
     latestValue
   );
@@ -4822,13 +4813,6 @@ async function readSnapshotCandidate(
     return debug ? { value: null, debug: debugInfo } : null;
   }
 
-  /*
-   * De oude code las alle snapshot-keys achter elkaar.
-   * Dat kon de volledige snapshotfase opeten.
-   *
-   * Nu worden de beperkte compatibiliteitskeys tegelijk
-   * gelezen en blijft de totale wachttijd begrensd.
-   */
   const settled = await Promise.allSettled(
     byIdKeys.map(async (snapshotKey) => {
       const value = await withTimeout(
@@ -4918,7 +4902,6 @@ async function readSnapshotCandidate(
   return debug ? { value: null, debug: debugInfo } : null;
 }
 
-// FIX: getLatestSnapshot retourneert { snapshot, debugInfo }
 async function getLatestSnapshot(
   deadline,
   cfg,
@@ -4973,13 +4956,10 @@ async function getLatestSnapshot(
     return debug ? { snapshot: null, debugInfo } : null;
   }
 
-  // gebruik de eerste store die we vinden als redisClientType voor debug
   debugInfo.redisClientType = stores[0]?.label || 'UNKNOWN';
 
   const keys = latestScanKeys()
     .slice(0, 10);
-  // FIX: zorg dat PRIMARY_LATEST_KEY als eerste wordt geprobeerd
-  // Maar latestScanKeys geeft al de primaire als eerste, dus ok.
 
   const perReadTimeout = Math.max(
     90,
@@ -5030,7 +5010,6 @@ async function getLatestSnapshot(
   if (candidates.length === 0) {
     debugInfo.rejectionStage = 'NO_CANDIDATE_FOUND';
     debugInfo.rejectionReason = 'NO_CANDIDATE_FOUND';
-    // als we debug hebben, pak dan de eerste debugInfo van de failed reads
     if (debug && allDebugInfo && allDebugInfo.length > 0) {
       const last = allDebugInfo[allDebugInfo.length - 1];
       debugInfo.rawValueFound = last.rawValueFound;
@@ -5137,12 +5116,6 @@ async function getLatestSnapshot(
   return debug ? { snapshot: normalized, debugInfo } : { snapshot: normalized, debugInfo: null };
 }
 
-// ===== NIEUWE FUNCTIE: readExplicitScannerLatest =====
-/**
- * Leest de scanner-latest expliciet via directe GET op de opgegeven key.
- * Gebruikt GEEN Redis KEYS/SCAN, dus DEFAULT_REDIS_KEY_SCAN_DISABLED is irrelevant.
- * Retourneert altijd { snapshot, debugInfo }.
- */
 async function readExplicitScannerLatest(options, cfg, deadline, debug = false) {
   const explicitKey =
     options.scannerLatestKey ||
@@ -5201,7 +5174,6 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
     return { snapshot: null, debugInfo: debug ? debugInfo : null };
   }
 
-  // Parseer JSON indien nodig
   let parsed;
   if (typeof rawValue === 'object' && rawValue !== null) {
     parsed = rawValue;
@@ -5219,7 +5191,6 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
 
   debugInfo.payloadParsed = true;
 
-  // Probeer candidates te extraheren uit verschillende payloadvormen
   const containers = [
     parsed,
     parsed?.payload,
@@ -5243,7 +5214,6 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
   debugInfo.candidateContainerPath = candidateContainer ? 'found' : 'not_found';
   debugInfo.rawCandidateCount = candidates.length;
 
-  // Filter alleen SHORT-kandidaten (geen vereiste op microFamilyId)
   const shortCandidates = candidates.filter((cand) => {
     const side = inferRowTradeSide(cand);
     return side === TARGET_TRADE_SIDE;
@@ -5256,7 +5226,6 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
     return { snapshot: null, debugInfo: debug ? debugInfo : null };
   }
 
-  // Haal snapshotId en createdAt uit de container of root
   const snapshotId =
     extractSnapshotId(candidateContainer) ||
     extractSnapshotId(parsed);
@@ -5274,7 +5243,6 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
     return { snapshot: null, debugInfo: debug ? debugInfo : null };
   }
 
-  // Bouw een snapshot object volgens de bestaande structuur
   const snapshot = normalizeSelectedSnapshot(
     {
       ...parsed,
@@ -5293,11 +5261,10 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
     return { snapshot: null, debugInfo: debug ? debugInfo : null };
   }
 
-  // ---- LEEFTIJDSCHECK (gebruik cfg.maxSnapshotAgeMs) ----
   const ageMs = Date.now() - snapshot.createdAt;
   const maxAgeMs = Number.isFinite(Number(cfg.maxSnapshotAgeMs))
     ? Number(cfg.maxSnapshotAgeMs)
-    : 12 * 60 * 1000; // fallback = 12 minuten
+    : 12 * 60 * 1000;
 
   debugInfo.maxSnapshotAgeMs = maxAgeMs;
   debugInfo.selectedSnapshotAgeMs = ageMs;
@@ -5315,19 +5282,11 @@ async function readExplicitScannerLatest(options, cfg, deadline, debug = false) 
 
   return { snapshot, debugInfo: debug ? debugInfo : null };
 }
-// ===== EINDE NIEUWE FUNCTIE =====
 
 function buildSnapshotPriceHints(
   snapshot = null
 ) {
   const hints = new Map();
-  /*
-   * Null is geldig wanneer de snapshot-read tijdelijk
-   * faalt of de snapshotdeadline wordt bereikt.
-   *
-   * In dat geval moet TradeSystem netjes doorgaan naar
-   * NO_SHORT_SCANNER_SNAPSHOT en niet crashen.
-   */
   const rows =
     extractCandidatesFromSnapshot(
       snapshot
@@ -5372,7 +5331,6 @@ function buildSnapshotPriceHints(
   return hints;
 }
 
-// snapshotKeysForId blijft staan
 function snapshotKeysForId(id) {
   if (!id) return [];
 
@@ -5391,12 +5349,10 @@ function snapshotKeysForId(id) {
   ]);
 }
 
-// priceFromSnapshotRow blijft staan
 function priceFromSnapshotRow(row = {}) {
   return n(row.currentPrice ?? row.markPrice ?? row.lastPrice ?? row.price ?? row.close ?? row.entry, 0);
 }
 
-// priceHintForSymbol blijft staan
 function priceHintForSymbol(symbol, priceHints = new Map()) {
   for (const key of symbolTokensFromAnySymbol(symbol)) {
     const value = n(priceHints.get(key), 0);
@@ -5609,7 +5565,6 @@ async function lazyImportDiscord(deadline, cfg, warnings) {
 }
 
 async function loadOpenPositionsFast(cfg, runtimeWarnings, deadline, options = {}) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return []; }
 
   const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
@@ -5670,7 +5625,6 @@ async function loadOpenPositionsFast(cfg, runtimeWarnings, deadline, options = {
   return Array.isArray(result) ? result : [];
 }
 
-// monitorOpenPositionsSafe aangepast om preloadedPositions door te geven
 async function monitorOpenPositionsSafe({
   cfg,
   priceHints,
@@ -5679,7 +5633,6 @@ async function monitorOpenPositionsSafe({
   preloadedPositions = [],
   options = {}
 }) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return []; }
 
   const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
@@ -5804,7 +5757,6 @@ async function saveVirtualPositionFast(
   runtimeWarnings,
   options = {}
 ) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return { ok: false, reason: 'ABORTED' }; }
 
   const PositionEngine = await lazyImportPositionEngine(deadline, cfg, runtimeWarnings);
@@ -5934,7 +5886,6 @@ async function safeRiskFractionForEntry(
   runtimeWarnings,
   options = {}
 ) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return 0; }
 
   const PositionSizing = await lazyImportPositionSizing(deadline, cfg, runtimeWarnings);
@@ -6070,7 +6021,6 @@ async function getActiveRotationDirect(
   deadline,
   options = {}
 ) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return null; }
 
   if (
@@ -6389,7 +6339,6 @@ async function buildRiskAndSignalDecision({
   runtimeWarnings,
   options = {}
 }) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return { signalType: SIGNAL_TYPE_BLOCKED, reason: 'ABORTED' }; }
 
   const currentMarketWeatherKey = alertContext?.currentMarketWeatherKey || row.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY;
@@ -6756,7 +6705,6 @@ async function maybeSendDiscordEntryAlert(
   runtimeWarnings = [],
   options = {}
 ) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return { sent: false, skipped: true, reason: 'ABORTED' }; }
 
   if (!cfg.discordSendEnabled) {
@@ -7121,7 +7069,6 @@ function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
 }
 
 async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarnings, deadline, runOptions = {}) {
-  // Controleer abort/deadline
   try { throwIfAborted(runOptions); } catch { return { rows: liveRows, analyzeError: 'ABORTED', analyzeFallbackUsed: true }; }
 
   const AnalyzeEngine = await lazyImportAnalyzeEngine(deadline, cfg, runtimeWarnings);
@@ -7201,11 +7148,9 @@ async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarning
   }
 }
 
-// Deze functie is verbeterd: markeer alleen als complete snapshot verwerkt is
 function shouldMarkSnapshotProcessed(result = {}) {
   if (!result.snapshotId) return false;
   if (result.monitorOnly === true) return false;
-  // Alleen markeren als de hele snapshot verwerkt is (cursor compleet)
   return result.snapshotChunkComplete === true;
 }
 
@@ -7576,7 +7521,6 @@ function compactRunForRedis(result = {}) {
 }
 
 async function saveRunMeta(result, options = {}) {
-  // Controleer abort/deadline
   try { throwIfAborted(options); } catch { return { ...result, persistenceWarnings: ['ABORTED'] }; }
 
   const cfg = tradeConfig();
@@ -7838,28 +7782,54 @@ export async function runTradeSystem(options = {}) {
   const previousOptions = ACTIVE_RUN_OPTIONS;
   ACTIVE_RUN_OPTIONS = options || {};
 
+  const diagnosticPhase = options.diagnosticPhase || null;
+  const runId = randomIdSafe('trade_run_short');
+  const startedAt = now();
+  const lagMonitor = createEventLoopLagMonitor(100);
+
   try {
+    phaseLog(runId, 'TRADE_START', startedAt);
+
     const cfg = tradeConfig();
     const sizing = sizingConfig();
     const durableRedis = safeGetDurableRedis();
-    const runId = randomIdSafe('trade_run_short');
-    const startedAt = now();
-    const deadline = createDeadline(startedAt, cfg, options);
 
-    // Controleer abort/deadline bij start
+    const deadline = createDeadline(startedAt, cfg, options);
     throwIfAborted(options);
 
-    // OUDE RUNTIME WARNINGS: vervangen door dynamische lijst
+    // DIAGNOSTIC MODE: als alleen snapshot nodig is
+    if (diagnosticPhase === 'snapshot') {
+      phaseLog(runId, 'LOAD_SNAPSHOT_START', startedAt);
+      const explicitResult = await readExplicitScannerLatest(options, cfg, deadline, true);
+      const snapshot = explicitResult.snapshot || null;
+      phaseLog(runId, 'LOAD_SNAPSHOT_END', startedAt, { found: !!snapshot });
+      const lagStats = lagMonitor.stop();
+      return saveRunMeta({
+        ok: true,
+        runId,
+        startedAt,
+        diagnosticPhase: 'snapshot',
+        snapshotId: snapshot?.snapshotId || null,
+        snapshotCreatedAt: snapshot?.createdAt || null,
+        candidatesCount: snapshot?.candidates?.length || 0,
+        maxEventLoopLagMs: lagStats.maxLagMs,
+        durationMs: now() - startedAt,
+        ...sideFlags(),
+        ...isolationFlags(),
+        ...virtualFlags()
+      }, options);
+    }
+
     const runtimeWarnings = [
       'DEADLINE_SAFE_TRADE_SYSTEM_ACTIVE',
       'ROUTE_OPTIONS_HONORED_FOR_MONITOR_LIMITS'
     ];
-    // 'DIRECT_REDIS_GET_USED_FOR_SCANNER_LATEST' wordt later toegevoegd
 
     const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
     const monitorOnly = Boolean(options.monitorOnly);
     const debugMode = Boolean(options.debug || options.details || options.full);
 
+    phaseLog(runId, 'MARKET_CONTEXT_START', startedAt);
     const marketContext = await withDeadline(
       () => loadMarketContext().catch(() => fallbackMarketContext('MARKET_CONTEXT_LOAD_FAILED')),
       {
@@ -7869,6 +7839,7 @@ export async function runTradeSystem(options = {}) {
         fallback: () => fallbackMarketContext('MARKET_CONTEXT_TIMEOUT')
       }
     );
+    phaseLog(runId, 'MARKET_CONTEXT_END', startedAt, { ok: marketContext?.ok });
     throwIfAborted(options);
 
     if (!marketContext?.ok) {
@@ -7897,21 +7868,12 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push('PLAYBOOK_REFRESH_REQUIRED_FOR_CONFIRMED_WEATHER');
     }
 
-    // ===== NIEUWE SNAPSHOT-LEESLOGICA =====
-    // Eerst expliciete directe GET proberen
-    const explicitResult = await readExplicitScannerLatest(
-      options,
-      cfg,
-      deadline,
-      debugMode
-    );
-    throwIfAborted(options);
+    phaseLog(runId, 'LOAD_SNAPSHOT_START', startedAt);
+    const explicitResult = await readExplicitScannerLatest(options, cfg, deadline, debugMode);
     let snapshot = explicitResult.snapshot ?? null;
     let snapshotDebug = explicitResult.debugInfo ?? null;
-
     runtimeWarnings.push('DIRECT_REDIS_GET_USED_FOR_SCANNER_LATEST');
 
-    // Als expliciete read mislukt, val terug op de oude methode (met KEYS/SCAN)
     if (!snapshot) {
       const fallbackResult = await withDeadline(
         () => getLatestSnapshot(deadline, cfg, debugMode),
@@ -7922,7 +7884,6 @@ export async function runTradeSystem(options = {}) {
           fallback: () => ({ snapshot: null, debugInfo: null })
         }
       );
-      throwIfAborted(options);
       snapshot = fallbackResult?.snapshot ?? null;
       snapshotDebug = {
         explicitRead: snapshotDebug,
@@ -7932,6 +7893,8 @@ export async function runTradeSystem(options = {}) {
         runtimeWarnings.push('FALLBACK_SNAPSHOT_READ_FAILED');
       }
     }
+    phaseLog(runId, 'LOAD_SNAPSHOT_END', startedAt, { snapshotId: snapshot?.snapshotId });
+    throwIfAborted(options);
 
     const priceHints = buildSnapshotPriceHints(snapshot || null);
 
@@ -7953,16 +7916,22 @@ export async function runTradeSystem(options = {}) {
 
     const sameSnapshotCompletedEnough = sameSnapshot && shouldMarkSnapshotProcessed(lastProcessed);
 
-    // 1. Open posities laden
-    let openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline, options);
+    // 1. Open posities laden (alleen als niet diagnosticPhase = 'monitor')
+    let openPositions = [];
+    if (diagnosticPhase !== 'monitor') {
+      phaseLog(runId, 'LOAD_OPEN_POSITIONS_START', startedAt);
+      openPositions = await loadOpenPositionsFast(cfg, runtimeWarnings, deadline, options);
+      phaseLog(runId, 'LOAD_OPEN_POSITIONS_END', startedAt, { count: openPositions.length });
+    }
     throwIfAborted(options);
 
-    // 2. Monitor en sluit verlopen posities (altijd, onafhankelijk van snapshot)
+    // 2. Monitor (altijd, behalve als diagnosticPhase = 'candidates' of monitor-skip)
     let virtualExits = [];
     let shadowExits = [];
     const realExits = [];
 
     const skipMonitorBecauseSameSnapshot =
+      !diagnosticPhase &&
       sameSnapshot &&
       sameSnapshotCompletedEnough &&
       !forceProcessSnapshot &&
@@ -7972,22 +7941,44 @@ export async function runTradeSystem(options = {}) {
 
     if (skipMonitorBecauseSameSnapshot) {
       runtimeWarnings.push('MONITOR_SKIPPED_SAME_SNAPSHOT_ALREADY_PROCESSED');
-    } else if (!deadlineExceeded(deadline, cfg.hardReturnReserveMs + 700)) {
-      virtualExits = await monitorOpenPositionsSafe({
-        cfg,
-        priceHints,
-        runtimeWarnings,
-        deadline,
-        preloadedPositions: openPositions,
-        options
-      });
-      shadowExits = virtualExits;
-    } else {
-      runtimeWarnings.push('MONITOR_SKIPPED_DEADLINE_NEAR_BEFORE_MONITOR_PHASE');
+    } else if (diagnosticPhase === 'monitor' || !diagnosticPhase) {
+      phaseLog(runId, 'MONITOR_START', startedAt);
+      if (!deadlineExceeded(deadline, cfg.hardReturnReserveMs + 700)) {
+        virtualExits = await monitorOpenPositionsSafe({
+          cfg,
+          priceHints,
+          runtimeWarnings,
+          deadline,
+          preloadedPositions: openPositions,
+          options
+        });
+        shadowExits = virtualExits;
+        // In monitor-only diagnostic mode, return direct
+        if (diagnosticPhase === 'monitor') {
+          phaseLog(runId, 'MONITOR_END', startedAt, { exits: virtualExits.length });
+          const lagStats = lagMonitor.stop();
+          return saveRunMeta({
+            ok: true,
+            runId,
+            startedAt,
+            diagnosticPhase: 'monitor',
+            virtualExits,
+            shadowExits,
+            virtualExitRows: virtualExits.length,
+            maxEventLoopLagMs: lagStats.maxLagMs,
+            durationMs: now() - startedAt,
+            ...sideFlags(),
+            ...isolationFlags(),
+            ...virtualFlags()
+          }, options);
+        }
+      } else {
+        runtimeWarnings.push('MONITOR_SKIPPED_DEADLINE_NEAR_BEFORE_MONITOR_PHASE');
+      }
+      phaseLog(runId, 'MONITOR_END', startedAt, { exits: virtualExits.length });
     }
     throwIfAborted(options);
 
-    // Verwijder gesloten posities uit de set
     if (virtualExits.length > 0) {
       runtimeWarnings.push(`VIRTUAL_EXITS_RECORDED_THIS_RUN:${virtualExits.length}`);
       const exitIds = new Set(virtualExits.map(e => e.positionId || e.id).filter(Boolean));
@@ -8015,13 +8006,16 @@ export async function runTradeSystem(options = {}) {
           monitorTimeoutMs: cfg.monitorTimeoutMs,
           monitorBatchSize: cfg.monitorBatchSize,
           openPositionMonitorLimit: cfg.openPositionMonitorLimit,
-          scannerSnapshotDebug: debugMode ? snapshotDebug : null
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null,
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
         }
       });
+      const lagStats = lagMonitor.stop();
+      payload.maxEventLoopLagMs = lagStats.maxLagMs;
       return saveRunMeta(payload, options);
     }
 
-    // Na monitor: als geen snapshot, dan alleen early return zonder entry
+    // Na monitor: als geen snapshot, dan early return
     if (!snapshot?.snapshotId) {
       const payload = baseEarlyReturnPayload({
         runId,
@@ -8039,9 +8033,12 @@ export async function runTradeSystem(options = {}) {
         extra: {
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
-          scannerSnapshotDebug: debugMode ? snapshotDebug : null
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null,
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
         }
       });
+      const lagStats = lagMonitor.stop();
+      payload.maxEventLoopLagMs = lagStats.maxLagMs;
       return saveRunMeta(payload, options);
     }
 
@@ -8071,9 +8068,12 @@ export async function runTradeSystem(options = {}) {
           snapshotAgeSec: Math.round(snapshotAgeSec),
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
-          scannerSnapshotDebug: debugMode ? snapshotDebug : null
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null,
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
         }
       });
+      const lagStats = lagMonitor.stop();
+      payload.maxEventLoopLagMs = lagStats.maxLagMs;
       return saveRunMeta(payload, options);
     }
 
@@ -8101,9 +8101,12 @@ export async function runTradeSystem(options = {}) {
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
           sameSnapshotFastReturn: true,
-          scannerSnapshotDebug: debugMode ? snapshotDebug : null
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null,
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
         }
       });
+      const lagStats = lagMonitor.stop();
+      payload.maxEventLoopLagMs = lagStats.maxLagMs;
       return saveRunMeta(payload, options);
     }
 
@@ -8128,23 +8131,22 @@ export async function runTradeSystem(options = {}) {
           virtualExitRows: virtualExits.length,
           shadowExitRows: shadowExits.length,
           deadlineReached: true,
-          scannerSnapshotDebug: debugMode ? snapshotDebug : null
+          scannerSnapshotDebug: debugMode ? snapshotDebug : null,
+          maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
         }
       });
+      const lagStats = lagMonitor.stop();
+      payload.maxEventLoopLagMs = lagStats.maxLagMs;
       return saveRunMeta(payload, options);
     }
 
-    // Verder met entry loop zoals voorheen
-    const activeRotation = await getActiveRotationDirect(
-      cfg,
-      runtimeWarnings,
-      deadline,
-      options
-    );
+    // ===== ENTRY LOOP (alleen als diagnosticPhase niet 'monitor' of 'snapshot') =====
+    phaseLog(runId, 'ROTATION_START', startedAt);
+    const activeRotation = await getActiveRotationDirect(cfg, runtimeWarnings, deadline, options);
     throwIfAborted(options);
     const alertContext = buildSelectedAlertContext(activeRotation, marketContext);
+    phaseLog(runId, 'ROTATION_END', startedAt, { selected: alertContext.selectedMicroMicroFamilyIds.length });
 
-    // ===== NIEUW: VIRTUAL LEARNING GAAT DOOR, OOK ZONDER DISCORD SELECTIE =====
     if (alertContext.empty) {
       runtimeWarnings.push('VIRTUAL_LEARNING_CONTINUES_WITHOUT_DISCORD_SELECTION');
     }
@@ -8162,35 +8164,21 @@ export async function runTradeSystem(options = {}) {
 
     const storedCursor = forceProcessSnapshot
       ? 0
-      : await readSnapshotCursor(
-          snapshot.snapshotId,
-          cfg
-        );
+      : await readSnapshotCursor(snapshot.snapshotId, cfg);
     throwIfAborted(options);
-    const chunkStart = Math.min(
-      storedCursor,
-      allTargetCandidates.length
-    );
-    const chunkEndExclusive = Math.min(
-      allTargetCandidates.length,
-      chunkStart + cfg.candidateChunkSize
-    );
-    const chunkCandidates = allTargetCandidates.slice(
-      chunkStart,
-      chunkEndExclusive
-    );
+    const chunkStart = Math.min(storedCursor, allTargetCandidates.length);
+    const chunkEndExclusive = Math.min(allTargetCandidates.length, chunkStart + cfg.candidateChunkSize);
+    const chunkCandidates = allTargetCandidates.slice(chunkStart, chunkEndExclusive);
     const chunk = {
       start: chunkStart,
       endExclusive: chunkEndExclusive,
       size: chunkCandidates.length,
       total: allTargetCandidates.length,
       nextIndex: chunkEndExclusive,
-      complete:
-        chunkEndExclusive >= allTargetCandidates.length
+      complete: chunkEndExclusive >= allTargetCandidates.length
     };
-    runtimeWarnings.push(
-      `SNAPSHOT_CHUNK:${chunk.start}-${chunk.endExclusive}/${chunk.total}`
-    );
+    runtimeWarnings.push(`SNAPSHOT_CHUNK:${chunk.start}-${chunk.endExclusive}/${chunk.total}`);
+
     const candidates = chunkCandidates.map((candidate) =>
       attachCurrentFitContext({
         ...candidate,
@@ -8203,27 +8191,26 @@ export async function runTradeSystem(options = {}) {
       }, marketContext)
     );
 
+    phaseLog(runId, 'CANDIDATE_SELECTION_START', startedAt);
     const processed = [];
-
     for (let index = 0; index < candidates.length; index++) {
-      // Controleer abort/deadline
       throwIfAborted(options);
-      // Geef event-loop vrij elke 3 iteraties
-      if (index > 0 && index % 3 === 0) {
+      if (index > 0 && index % 2 === 0) {
         await yieldToEventLoop();
         throwIfAborted(options);
       }
-
       if (deadlineExceeded(deadline, cfg.hardReturnReserveMs + 1200)) {
         runtimeWarnings.push(`CANDIDATE_LOOP_STOPPED_DEADLINE_NEAR:${processed.length}/${candidates.length}`);
         break;
       }
-
-      processed.push(await safeProcessCandidate(candidates[index], marketContext));
+      phaseLog(runId, `CANDIDATE_${index}_START`, startedAt);
+      const result = await safeProcessCandidate(candidates[index], marketContext);
+      phaseLog(runId, `CANDIDATE_${index}_END`, startedAt);
+      processed.push(result);
     }
+    phaseLog(runId, 'CANDIDATE_SELECTION_END', startedAt, { processed: processed.length });
 
     const candidateTimeoutRows = processed.filter((row) => row?.timedOut).length;
-
     if (candidateTimeoutRows > 0) {
       runtimeWarnings.push(`CANDIDATE_TIMEOUT_ROWS:${candidateTimeoutRows}`);
     }
@@ -8252,6 +8239,7 @@ export async function runTradeSystem(options = {}) {
     const learningOnlyRows = liveRows.filter((row) => row.learningOnly).length;
     const riskValidRows = liveRows.filter(hasValidRiskShape).length;
 
+    phaseLog(runId, 'ANALYZE_START', startedAt);
     const analyzeResult = await analyzeCandidatesBatchSafe(
       liveRows,
       {
@@ -8372,6 +8360,7 @@ export async function runTradeSystem(options = {}) {
       deadline,
       options
     );
+    phaseLog(runId, 'ANALYZE_END', startedAt);
     throwIfAborted(options);
 
     const analyzedRowsRaw = analyzeResult.rows;
@@ -8395,11 +8384,15 @@ export async function runTradeSystem(options = {}) {
     let analyzeFailedRows = 0;
     let analyzeTimeoutRows = 0;
 
-    for (const rawRow of analyzedRows) {
+    // Entry loop met yield-to-event-loop
+    for (let idx = 0; idx < analyzedRows.length; idx++) {
       counters.entryLoopAttempts += 1;
+      if (idx > 0 && idx % 2 === 0) {
+        await yieldToEventLoop();
+        throwIfAborted(options);
+      }
 
       const minimumAttemptsStillRequired = counters.entryLoopAttempts <= cfg.minEntryLoopAttempts;
-
       if (!minimumAttemptsStillRequired && deadlineExceeded(deadline, cfg.entryLoopReserveMs)) {
         runtimeWarnings.push(`MAX_RUNTIME_REACHED_ENTRY_LOOP_STOPPED_AFTER_ATTEMPTS:${counters.entryLoopAttempts - 1}`);
         counters.entryLoopRuntimeBreak = true;
@@ -8411,14 +8404,7 @@ export async function runTradeSystem(options = {}) {
         break;
       }
 
-      // Controleer abort/deadline voor elke kandidaat
-      throwIfAborted(options);
-      // Geef event-loop vrij elke 3 iteraties
-      if (counters.entryLoopAttempts > 0 && counters.entryLoopAttempts % 3 === 0) {
-        await yieldToEventLoop();
-        throwIfAborted(options);
-      }
-
+      const rawRow = analyzedRows[idx];
       const row = attachEntryMarketWeather({
         ...rawRow,
         ...learningIdentityFields(rawRow),
@@ -8434,7 +8420,6 @@ export async function runTradeSystem(options = {}) {
       if (!virtualGate.ok) {
         counters.waitRows += 1;
         counters.virtualSkippedRows += 1;
-
         actions.push({
           ...row,
           action: 'WAIT',
@@ -8471,7 +8456,6 @@ export async function runTradeSystem(options = {}) {
           ...virtualFlags(row),
           ...isolationFlags()
         });
-
         if (virtualGate.reason === 'SHORT_ESTIMATED_COST_R_TOO_HIGH' || virtualGate.reason === 'SHORT_RISK_INVALID') {
           analyzeFailedRows += 1;
         }
@@ -8482,7 +8466,6 @@ export async function runTradeSystem(options = {}) {
         counters.waitRows += 1;
         counters.virtualSkippedRows += 1;
         counters.skippedByExistingSymbol += 1;
-
         actions.push({
           ...row,
           action: 'WAIT',
@@ -8507,7 +8490,6 @@ export async function runTradeSystem(options = {}) {
           ...virtualFlags(row),
           ...isolationFlags()
         });
-
         continue;
       }
 
@@ -8563,10 +8545,7 @@ export async function runTradeSystem(options = {}) {
       }
 
       const discordAlertEligible = riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY;
-
-      if (discordAlertEligible) {
-        counters.discordAlertEligibleRows += 1;
-      }
+      if (discordAlertEligible) counters.discordAlertEligibleRows += 1;
 
       const entry = buildVirtualEntryAction({
         row,
@@ -8586,33 +8565,18 @@ export async function runTradeSystem(options = {}) {
       });
 
       try {
-        const saveResult = await saveVirtualPositionFast(
-          entry,
-          cfg,
-          deadline,
-          runtimeWarnings,
-          options
-        );
+        const saveResult = await saveVirtualPositionFast(entry, cfg, deadline, runtimeWarnings, options);
         throwIfAborted(options);
-
         if (!saveResult.ok) {
           throw new Error(saveResult.reason || 'SAVE_OPEN_POSITION_FAILED');
         }
-
         rememberOpenSymbol(openSymbolSet, entry);
         openPositions.push(saveResult.position || entry);
         counters.entryRows += 1;
         counters.virtualCreatedRows += 1;
 
-        const discordResult = await maybeSendDiscordEntryAlert(
-          entry,
-          cfg,
-          deadline,
-          runtimeWarnings,
-          options
-        );
+        const discordResult = await maybeSendDiscordEntryAlert(entry, cfg, deadline, runtimeWarnings, options);
         throwIfAborted(options);
-
         if (discordResult.queued) counters.discordAlertsQueued += 1;
         if (discordResult.sent) counters.discordAlertsSent += 1;
         if (discordResult.failed) counters.discordAlertsFailed += 1;
@@ -8630,7 +8594,6 @@ export async function runTradeSystem(options = {}) {
         counters.waitRows += 1;
         counters.virtualFailedRows += 1;
         analyzeFailedRows += 1;
-
         actions.push({
           ...row,
           action: 'WAIT',
@@ -8660,19 +8623,12 @@ export async function runTradeSystem(options = {}) {
       runtimeWarnings.push(`ENTRY_LOOP_COMPLETED_ATTEMPTS:${counters.entryLoopAttempts}`);
     }
 
-    // Cursor-persistentie alleen als niet geaborteerd en er tijd is
     let cursorPersisted = false;
     try {
       throwIfAborted(options);
-      const canAdvanceCursor =
-        analyzeResult.analyzeFallbackUsed !== true &&
-        processed.length === candidates.length;
-      const effectiveNextIndex = canAdvanceCursor
-        ? chunk.nextIndex
-        : chunk.start;
-      const effectiveChunkComplete =
-        canAdvanceCursor &&
-        effectiveNextIndex >= chunk.total;
+      const canAdvanceCursor = analyzeResult.analyzeFallbackUsed !== true && processed.length === candidates.length;
+      const effectiveNextIndex = canAdvanceCursor ? chunk.nextIndex : chunk.start;
+      const effectiveChunkComplete = canAdvanceCursor && effectiveNextIndex >= chunk.total;
       cursorPersisted = await persistSnapshotCursor({
         snapshotId: snapshot.snapshotId,
         nextIndex: effectiveNextIndex,
@@ -8682,17 +8638,11 @@ export async function runTradeSystem(options = {}) {
         cfg,
         options
       });
-      if (!cursorPersisted) {
-        runtimeWarnings.push(
-          'SNAPSHOT_CURSOR_PERSIST_FAILED_OR_TIMEOUT'
-        );
-      }
+      if (!cursorPersisted) runtimeWarnings.push('SNAPSHOT_CURSOR_PERSIST_FAILED_OR_TIMEOUT');
       if (!effectiveChunkComplete) {
-        runtimeWarnings.push(
-          `SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`
-        );
+        runtimeWarnings.push(`SNAPSHOT_PARTIAL_NEXT_CRON_CONTINUES_AT:${effectiveNextIndex}`);
       }
-      // Update resultaten voor de response
+      // update base result fields
       baseResult.snapshotChunkNextIndex = effectiveNextIndex;
       baseResult.snapshotChunkComplete = effectiveChunkComplete;
       baseResult.snapshotChunkCursorPersisted = cursorPersisted;
@@ -8702,7 +8652,6 @@ export async function runTradeSystem(options = {}) {
     }
 
     const actionCountMap = buildRunActionCounts(actions, virtualExits);
-
     const qualityAudit = buildQualityAudit({
       snapshot,
       candidates,
@@ -8802,8 +8751,8 @@ export async function runTradeSystem(options = {}) {
       snapshotChunkEndExclusive: chunk.endExclusive,
       snapshotChunkSize: chunk.size,
       snapshotChunkTotalCandidates: chunk.total,
-      snapshotChunkNextIndex: chunk.nextIndex, // default, wordt later overschreven
-      snapshotChunkComplete: chunk.complete,   // default, wordt later overschreven
+      snapshotChunkNextIndex: chunk.nextIndex,
+      snapshotChunkComplete: chunk.complete,
       snapshotChunkCursorPersisted: false,
       snapshotChunkAdvanced: false,
       snapshotProgressPct: chunk.total > 0 ? round((chunk.nextIndex / chunk.total) * 100, 2) : 0,
@@ -9054,13 +9003,17 @@ export async function runTradeSystem(options = {}) {
         : []
     };
 
-    // FIX: voeg scannerSnapshotDebug toe indien debug
     if (debugMode && snapshotDebug) {
       baseResult.scannerSnapshotDebug = snapshotDebug;
     }
 
+    const lagStats = lagMonitor.stop();
+    baseResult.maxEventLoopLagMs = lagStats.maxLagMs;
+
+    phaseLog(runId, 'TRADE_END', startedAt, { lagMs: lagStats.maxLagMs });
     return saveRunMeta(baseResult, options);
   } catch (error) {
+    lagMonitor.stop();
     return saveRunMeta({
       ok: false,
       degraded: true,
