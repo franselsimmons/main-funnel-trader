@@ -1577,7 +1577,9 @@ function buildRunOptions(
   body,
   debug,
   signal,
-  deadlineAt
+  deadlineAt,
+  preTradeDurationMs,
+  routeTimings
 ) {
   const force =
     shouldForce(
@@ -1778,6 +1780,10 @@ function buildRunOptions(
     // ===== Abort en deadline =====
     signal: signal,                 // AbortSignal
     deadlineAt: deadlineAt,         // absolute deadline voor tradeSystem
+
+    // ===== Pre-trade timing =====
+    preTradeDurationMs: preTradeDurationMs,
+    routeTimings: routeTimings || {},
 
     targetTradeSide:
       TARGET_TRADE_SIDE,
@@ -2573,6 +2579,10 @@ function compactPayload(
             .map(compactAction)
         : [],
 
+    // ===== Pre-trade timing =====
+    preTradeDurationMs: row.preTradeDurationMs ?? null,
+    routeTimings: row.routeTimings || {},
+
     ...baseFlags()
   };
 }
@@ -2582,7 +2592,9 @@ function routeTimeoutResponse({
   routeSoftTimeoutMs,
   effectiveTradeWaitMs,
   lockKey,
-  lock
+  lock,
+  preTradeDurationMs,
+  routeTimings
 }) {
   return {
     ok: false,
@@ -2641,6 +2653,10 @@ function routeTimeoutResponse({
       'ABORT_CONTROLLER_USED'
     ],
 
+    // ===== Pre-trade timing =====
+    preTradeDurationMs,
+    routeTimings,
+
     ...baseFlags()
   };
 }
@@ -2649,7 +2665,9 @@ function lockActiveResponse(
   startedAt,
   lockKey,
   lock,
-  debug
+  debug,
+  preTradeDurationMs,
+  routeTimings
 ) {
   return {
     ok: true,
@@ -2722,6 +2740,10 @@ function lockActiveResponse(
     completedAt:
       now(),
 
+    // ===== Pre-trade timing =====
+    preTradeDurationMs,
+    routeTimings,
+
     ...baseFlags()
   };
 }
@@ -2730,7 +2752,9 @@ function errorResponse(
   error,
   startedAt,
   phase,
-  debug
+  debug,
+  preTradeDurationMs,
+  routeTimings
 ) {
   const requestedStatus =
     number(
@@ -2789,9 +2813,24 @@ function errorResponse(
       completedAt:
         now(),
 
+      // ===== Pre-trade timing =====
+      preTradeDurationMs,
+      routeTimings,
+
       ...baseFlags()
     }
   };
+}
+
+// ===== Helper om route-fases te timen =====
+function markPhase(routeTimings, name, startedAt, extra = {}) {
+  if (!routeTimings) routeTimings = {};
+  routeTimings[name] = {
+    elapsedMs: now() - startedAt,
+    at: now(),
+    ...extra
+  };
+  return routeTimings;
 }
 
 export default async function handler(
@@ -2808,6 +2847,10 @@ export default async function handler(
   let redis = null;
   let keys = buildKeys({});
   let lock = null;
+  let routeTimings = {};
+
+  // ===== Markeer start =====
+  routeTimings = markPhase(routeTimings, 'HANDLER_ENTER', startedAt);
 
   // ===== AbortController om tradeTask te kunnen stoppen =====
   const controller = new AbortController();
@@ -2846,6 +2889,8 @@ export default async function handler(
         'READ_BODY'
       );
 
+    routeTimings = markPhase(routeTimings, 'READ_BODY_END', startedAt);
+
     debug =
       shouldDebug(
         req,
@@ -2858,6 +2903,8 @@ export default async function handler(
       await loadCoreModules(
         startedAt
       );
+
+    routeTimings = markPhase(routeTimings, 'LOAD_CORE_END', startedAt);
 
     keys =
       buildKeys(
@@ -2908,6 +2955,8 @@ export default async function handler(
           ),
           false
         );
+
+      routeTimings = markPhase(routeTimings, 'UNLOCK_ONLY_END', startedAt, { released });
 
       return res
         .status(200)
@@ -2964,6 +3013,8 @@ export default async function handler(
         'ACQUIRE_TRADE_LOCK'
       );
 
+    routeTimings = markPhase(routeTimings, 'ACQUIRE_LOCK_END', startedAt, { acquired: lock.acquired });
+
     if (!lock.acquired) {
       return res
         .status(200)
@@ -2972,7 +3023,9 @@ export default async function handler(
             startedAt,
             keys.tradeLock,
             lock,
-            debug
+            debug,
+            now() - startedAt, // preTradeDurationMs
+            routeTimings
           )
         );
     }
@@ -2986,6 +3039,12 @@ export default async function handler(
       await loadTradeSystemModule(
         startedAt
       );
+
+    routeTimings = markPhase(routeTimings, 'LOAD_TRADE_SYSTEM_END', startedAt);
+
+    // ===== Bereken resterende tijd en deadline =====
+    const preTradeDurationMs = now() - startedAt;
+    routeTimings = markPhase(routeTimings, 'PRE_TRADE_COMPLETE', startedAt, { preTradeDurationMs });
 
     const routeSoftTimeoutMs =
       getRouteSoftTimeoutMs(
@@ -3001,18 +3060,30 @@ export default async function handler(
         ROUTE_RESPONSE_RESERVE_MS
       );
 
-    if (
-      effectiveTradeWaitMs <
-      1_000
-    ) {
-      throw makeTimeoutError(
-        'ROUTE_BUDGET_EXHAUSTED_BEFORE_TRADE_SYSTEM',
-        effectiveTradeWaitMs
-      );
+    const remainingBudget = effectiveTradeWaitMs - preTradeDurationMs;
+
+    if (remainingBudget < 1000) {
+      // Vroegtijdig terugkeren, maar wel de lock vrijgeven in finally
+      phase = 'INSUFFICIENT_BUDGET_EARLY_RETURN';
+      return res.status(200).json({
+        ok: false,
+        skipped: true,
+        reason: 'INSUFFICIENT_ROUTE_BUDGET_BEFORE_TRADE_SYSTEM',
+        remainingTradeBudgetMs: remainingBudget,
+        preTradeDurationMs,
+        routeTimings,
+        routeSoftTimeoutMs,
+        effectiveTradeWaitMs,
+        ...baseFlags()
+      });
     }
 
-    // ===== Deadline voor tradeSystem =====
-    const hardDeadlineAt = startedAt + HARD_TRADE_DEADLINE_MS;
+    // Deadline voor tradeSystem: nu + effectieve maxRuntime (beperkt door DEFAULT_TRADE_RUNTIME_MS)
+    const maxTradeRuntime = Math.min(
+      DEFAULT_TRADE_RUNTIME_MS,
+      remainingBudget - 500 // extra veiligheidsmarge
+    );
+    const tradeDeadlineAt = now() + maxTradeRuntime;
 
     const runOptions =
       buildRunOptions(
@@ -3020,7 +3091,9 @@ export default async function handler(
         body,
         debug,
         controller.signal,
-        hardDeadlineAt
+        tradeDeadlineAt,
+        preTradeDurationMs,
+        routeTimings
       );
 
     phase =
@@ -3036,11 +3109,11 @@ export default async function handler(
     const result =
       await bounded(
         tradeTask,
-        effectiveTradeWaitMs,
+        effectiveTradeWaitMs - preTradeDurationMs,
         () =>
           timeoutMarker(
             'RUN_TRADE_SYSTEM',
-            effectiveTradeWaitMs
+            effectiveTradeWaitMs - preTradeDurationMs
           )
       );
 
@@ -3070,17 +3143,23 @@ export default async function handler(
             startedAt,
             routeSoftTimeoutMs,
             effectiveTradeWaitMs,
-
             lockKey:
               keys.tradeLock,
-
-            lock
+            lock,
+            preTradeDurationMs,
+            routeTimings
           })
         );
     }
 
     phase =
       'COMPACT_RESPONSE';
+
+    // Voeg pre-trade timing toe aan result
+    if (result && typeof result === 'object') {
+      result.preTradeDurationMs = preTradeDurationMs;
+      result.routeTimings = routeTimings;
+    }
 
     const payload =
       compactPayload(
@@ -3194,12 +3273,15 @@ export default async function handler(
 
     // Lock wordt in finally vrijgegeven, maar als we al een timeout hebben
     // is de lock al vrijgegeven. We vangen hier alleen onverwachte fouten.
+    const preTradeDurationMs = now() - startedAt;
     const response =
       errorResponse(
         error,
         startedAt,
         phase,
-        debug
+        debug,
+        preTradeDurationMs,
+        routeTimings
       );
 
     return res
