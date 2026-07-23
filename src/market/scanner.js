@@ -1,38 +1,30 @@
 // ================= FILE: src/market/scanner.js =================
-//
-// Complete candidate scanner
-// Finds SHORT setup opportunities in USDT perpetuals
-//
+// COMPLEET candidate scanner for SHORT opportunities
 
 import { BitgetClient } from './bitgetClient.js';
-import { calculateRSI, calculateBollingerBands } from './indicators.js';
+import { 
+  calculateRSI, calculateBollingerBands, calculateATR, 
+  calculateMACD, calculateVolatility, calculateMomentum, calculateEMA
+} from './indicators.js';
 import { classifyMicroFamily } from '../analyze/microFamilies.js';
 import { recordObservation } from '../analyze/analyzeEngine.js';
 import { getRedis } from '../redis.js';
 import { keys } from '../keys.js';
-import { now, generateShortId } from '../utils.js';
+import { now, generateShortId, safeNumber } from '../utils.js';
+import { CONFIG } from '../config.js';
 
-const client = new BitgetClient(
-  process.env.BITGET_API_KEY || '',
-  process.env.BITGET_SECRET_KEY || '',
-  process.env.BITGET_PASSPHRASE || ''
-);
+const client = new BitgetClient();
 
-/**
- * Main scan function - finds all qualified candidates
- */
 export async function scanForCandidates() {
   try {
-    console.log('🔍 Starting candidate scan at', new Date().toISOString());
+    console.log('🔍 Scan starting at', new Date().toISOString());
 
-    // Get all USDT perpetuals tickers
+    const redis = getRedis();
+    const startTime = now();
+
     const tickers = await client.getTickers('usdt-futures', 500);
     if (!tickers || tickers.length === 0) {
-      return {
-        ok: false,
-        reason: 'NO_TICKERS',
-        candidatesCount: 0
-      };
+      return { ok: false, reason: 'NO_TICKERS', candidatesCount: 0 };
     }
 
     const candidates = [];
@@ -40,7 +32,6 @@ export async function scanForCandidates() {
     let qualified = 0;
     let errors = 0;
 
-    // Process each symbol
     for (const ticker of tickers) {
       processed++;
 
@@ -48,153 +39,103 @@ export async function scanForCandidates() {
         const symbol = ticker.symbol;
         if (!symbol || !symbol.includes('USDT')) continue;
 
-        // Get 50 1H candles for analysis
         const candles = await client.getCandles(symbol, '1H', 50);
-        if (!candles || candles.length < 30) {
-          continue;
-        }
+        if (!candles || candles.length < 30) continue;
 
-        const closes = candles.map(c => parseFloat(c.close));
-        const highs = candles.map(c => parseFloat(c.high));
-        const lows = candles.map(c => parseFloat(c.low));
-        const volumes = candles.map(c => parseFloat(c.volume));
+        const closes = candles.map(c => c.close);
+        const highs = candles.map(c => c.high);
+        const lows = candles.map(c => c.low);
+        const volumes = candles.map(c => c.volume);
+        const opens = candles.map(c => c.open);
 
-        // Calculate technical indicators
         const rsi = calculateRSI(closes, 14);
         const bb = calculateBollingerBands(closes, 20, 2);
-        
-        if (rsi === null || bb === null) {
-          continue;
-        }
+        const atr = calculateATR(highs, lows, closes, 14);
+        const macd = calculateMACD(closes, 12, 26, 9);
+        const volatility = calculateVolatility(closes, 20);
+        const momentum = calculateMomentum(closes, 12);
+
+        if (!rsi || !bb || !atr) continue;
 
         const lastClose = closes[closes.length - 1];
         const lastHigh = highs[highs.length - 1];
         const lastLow = lows[lows.length - 1];
+        const lastOpen = opens[opens.length - 1];
 
-        // Detect setup, regime, confirmation
-        const setup = detectSetup(closes, highs, lows);
-        const regime = detectRegime(closes);
-        const confirmationProfile = detectConfirmation(closes, rsi, bb, lastClose);
+        const setup = detectSetup(closes, highs, lows, opens, rsi, bb, atr, lastClose);
+        if (setup === 'UNKNOWN') continue;
 
-        // Calculate entry/TP/SL for SHORT positions
-        let entryPrice = null;
-        let tp = null;
-        let sl = null;
+        const regime = detectRegime(closes, volatility, momentum);
 
-        if (setup === 'BREAKOUT') {
-          if (lastClose < bb.lower) {
-            entryPrice = lastClose * 0.998;
-            tp = lastClose * 0.96;
-            sl = lastClose * 1.02;
-          }
-        } else if (setup === 'RETEST') {
-          if (lastClose > bb.middle && lastLow < bb.lower) {
-            entryPrice = lastClose * 0.998;
-            tp = lastLow * 0.98;
-            sl = lastHigh * 1.01;
-          }
-        } else if (setup === 'SWEEP_REVERSAL') {
-          const recent10 = closes.slice(-10);
-          const high10 = Math.max(...recent10);
-          const low10 = Math.min(...recent10);
-          if (lastLow < low10 * 0.99 && lastClose > low10 * 1.005) {
-            entryPrice = lastClose * 0.998;
-            tp = low10 * 0.98;
-            sl = high10 * 1.02;
-          }
-        } else if (setup === 'CONTINUATION') {
-          if (rsi > 60 && lastClose < closes[closes.length - 2]) {
-            entryPrice = lastClose * 0.998;
-            tp = lastClose * 0.97;
-            sl = lastHigh * 1.015;
-          }
-        } else if (setup === 'COMPRESSION') {
-          const recent5 = closes.slice(-5);
-          const range = Math.max(...recent5) - Math.min(...recent5);
-          const avgClose = recent5.reduce((a, b) => a + b, 0) / 5;
-          if (range / avgClose < 0.005 && Math.abs(rsi - 50) > 10) {
-            entryPrice = lastClose * 0.998;
-            tp = lastClose * 0.97;
-            sl = lastClose * 1.025;
-          }
-        }
+        const confirmation = detectConfirmation(closes, rsi, bb, macd, lastClose);
 
-        if (!entryPrice || !tp || !sl) {
-          continue;
-        }
+        const entryResult = calculateEntryGeometry(
+          setup,
+          lastClose,
+          lastHigh,
+          lastLow,
+          bb,
+          atr,
+          rsi
+        );
 
-        // Validate risk/reward
-        const riskPct = (sl - entryPrice) / entryPrice;
-        const rewardPct = (entryPrice - tp) / entryPrice;
-        
-        if (riskPct <= 0 || rewardPct <= 0) {
-          continue;
-        }
+        if (!entryResult.valid) continue;
 
-        const rrRatio = rewardPct / riskPct;
-        
-        // Must have at least 1.5:1 risk/reward
-        if (rrRatio < 1.5) {
-          continue;
-        }
+        const rrRatio = entryResult.reward / entryResult.risk;
+        if (rrRatio < CONFIG.RISK.MIN_RR_RATIO) continue;
+        if (entryResult.risk > CONFIG.RISK.MAX_ACCOUNT_RISK_PERCENT) continue;
 
-        // Risk can't exceed 5%
-        if (riskPct > 0.05) {
-          continue;
-        }
-
-        // Create candidate object
         const candidate = {
           symbol,
           setup,
           regime,
-          confirmationProfile,
-          entryPrice,
-          tp,
-          sl,
-          riskPct: Math.abs(riskPct),
-          rewardPct,
+          confirmationProfile: confirmation,
+          entryPrice: entryResult.entry,
+          tp: entryResult.tp,
+          sl: entryResult.sl,
+          riskPct: entryResult.risk,
+          rewardPct: entryResult.reward,
           rrRatio,
           rsi,
-          lastClose,
           volume: volumes[volumes.length - 1],
+          volatility,
+          momentum,
           timestamp: now(),
-          scanId: generateShortId(8)
+          scanId: generateShortId(8),
+          lastClose,
+          lastHigh,
+          lastLow,
+          atr,
+          entrySize: 1
         };
 
-        // Classify micro-family
         const classification = classifyMicroFamily(candidate);
-        if (!classification.ok) {
-          continue;
-        }
+        if (!classification.ok) continue;
 
         candidate.microFamilyId = classification.childId;
         candidate.parentMicroFamilyId = classification.parentId;
 
-        // Record observation in analytics
         await recordObservation(candidate);
 
         candidates.push(candidate);
         qualified++;
 
       } catch (err) {
-        console.warn(`⚠️  Error processing ${ticker.symbol}:`, err.message);
+        console.warn(`Error processing ${ticker.symbol}:`, err.message);
         errors++;
         continue;
       }
 
-      // Rate limit - pause every 50 symbols
       if (processed % 50 === 0) {
         await new Promise(r => setTimeout(r, 500));
       }
     }
 
-    // Create and save snapshot
     const snapshotId = generateShortId(16);
     const snapshot = {
       snapshotId,
       candidates,
-      timestamp: now(),
+      timestamp: startTime,
       processed,
       qualified,
       errors,
@@ -203,15 +144,15 @@ export async function scanForCandidates() {
         processed,
         qualified,
         errors,
-        qualificationRate: qualified / Math.max(1, processed)
+        qualificationRate: qualified / Math.max(1, processed),
+        durationMs: now() - startTime
       }
     };
 
-    const redis = getRedis();
     await redis.set(keys.scanSnapshot(snapshotId), snapshot);
     await redis.set(keys.scanLatest(), snapshot);
 
-    console.log(`✅ Scan complete: ${qualified} qualified candidates from ${processed} processed (${errors} errors)`);
+    console.log(`✅ Scan complete: ${qualified} candidates from ${processed} symbols in ${now() - startTime}ms`);
 
     return {
       ok: true,
@@ -219,123 +160,146 @@ export async function scanForCandidates() {
       snapshotId,
       processed,
       errors,
-      timestamp: now()
+      timestamp: startTime
     };
 
   } catch (err) {
     console.error('❌ scanForCandidates error:', err);
     return {
       ok: false,
-      reason: 'SCAN_ERROR',
+      reason: 'SYSTEM_ERROR',
       error: err.message,
       candidatesCount: 0
     };
   }
 }
 
-/**
- * Detect setup type from price action
- */
-function detectSetup(closes = [], highs = [], lows = []) {
-  if (!closes || closes.length < 20) {
-    return 'UNKNOWN';
-  }
+function detectSetup(closes = [], highs = [], lows = [], opens = [], rsi = 50, bb = null, atr = 0, lastClose = 0) {
+  if (closes.length < 20) return 'UNKNOWN';
 
   const recent5 = closes.slice(-5).map(c => parseFloat(c));
   const prev15 = closes.slice(-20, -5).map(c => parseFloat(c));
-  const lastClose = closes[closes.length - 1];
+  const recent10 = closes.slice(-10).map(c => parseFloat(c));
 
-  // BREAKOUT: price breaks below recent support
   if (lastClose < Math.min(...prev15) * 0.995) {
     return 'BREAKOUT';
   }
 
-  // RETEST: price touches support and bounces
-  const prev20Low = Math.min(...closes.slice(-20));
-  if (lastClose > prev20Low && Math.max(...recent5.slice(0, 3)) < prev20Low) {
+  const support = Math.min(...closes.slice(-20));
+  if (lastClose > support && lastClose < support * 1.02 && Math.max(...recent5.slice(0, 3)) < support) {
     return 'RETEST';
   }
 
-  // SWEEP_REVERSAL: strong move then reversal
-  const allRecent = closes.slice(-10).map(c => parseFloat(c));
-  const range = Math.max(...allRecent) - Math.min(...allRecent);
-  const avgClose = allRecent.reduce((a, b) => a + b, 0) / allRecent.length;
+  const range = Math.max(...recent10) - Math.min(...recent10);
+  const avgClose = recent10.reduce((a, b) => a + b, 0) / 10;
   if (range > avgClose * 0.04) {
     return 'SWEEP_REVERSAL';
   }
 
-  // CONTINUATION: continuing trend
-  const recent3 = closes.slice(-3).map(c => parseFloat(c));
-  if (recent3[0] > recent3[1] && recent3[1] > recent3[2]) {
+  if (recent5[0] > recent5[1] && recent5[1] > recent5[2] && recent5[2] > recent5[3]) {
     return 'CONTINUATION';
   }
 
-  // COMPRESSION: low volatility before move
-  const rangePct = (Math.max(...recent5) - Math.min(...recent5)) / (closes[closes.length - 2] || 1);
-  if (rangePct < 0.015 && rangePct > 0) {
+  if (range / avgClose < 0.015) {
     return 'COMPRESSION';
   }
 
   return 'UNKNOWN';
 }
 
-/**
- * Detect market regime
- */
-function detectRegime(closes = []) {
-  if (!closes || closes.length < 20) {
-    return 'UNKNOWN';
-  }
+function detectRegime(closes = [], volatility = 0, momentum = 0) {
+  if (closes.length < 20) return 'UNKNOWN';
 
   const recent20 = closes.slice(-20).map(c => parseFloat(c));
   const high = Math.max(...recent20);
   const low = Math.min(...recent20);
-  const avg = recent20.reduce((a, b) => a + b, 0) / 20;
-  const range = (high - low) / avg;
+  const range = (high - low) / (recent20.reduce((a, b) => a + b, 0) / 20);
 
-  // TREND: large range with clear direction
-  if (range > 0.05) {
-    const downCount = recent20.filter((c, i) => i > 0 && c < recent20[i - 1]).length;
-    return downCount > 12 ? 'TREND' : 'TREND';
+  if (range > 0.05 && Math.abs(momentum) > 0.02) {
+    return 'TREND';
   }
 
-  // SQUEEZE: very tight range
   if (range < 0.01) {
     return 'SQUEEZE';
   }
 
-  // CHOP: mid-range, sideways
   return 'CHOP';
 }
 
-/**
- * Detect confirmation profile
- */
-function detectConfirmation(closes = [], rsi = 50, bb = null, lastClose = 0) {
-  // A_STRONG_ALIGN: Strong confluence signals
-  if (rsi > 70 && lastClose < (bb?.lower || 0)) {
+function detectConfirmation(closes = [], rsi = 50, bb = null, macd = null, lastClose = 0) {
+  const rsiVal = safeNumber(rsi, 50);
+
+  if (rsiVal > 70 && bb && lastClose < bb.lower) {
     return 'A_STRONG_ALIGN';
   }
 
-  // B_FLOW_ALIGN: Flow alignment
-  if (rsi > 60 && rsi <= 70) {
+  if (rsiVal > 60 && rsiVal <= 70) {
     return 'B_FLOW_ALIGN';
   }
 
-  // C_VOLUME_ALIGN: Volume confirmation
-  if (rsi > 50 && rsi <= 60) {
+  if (rsiVal > 50 && rsiVal <= 60) {
     return 'C_VOLUME_ALIGN';
   }
 
-  // D_MIXED_OK: Mixed signals but acceptable
-  if (rsi >= 40 && rsi <= 50) {
+  if (rsiVal >= 40 && rsiVal <= 50) {
     return 'D_MIXED_OK';
   }
 
-  // E_WEAK_CONTRA: Weak or contra signals
   return 'E_WEAK_CONTRA';
 }
 
-export default {
-  scanForCandidates
-};
+function calculateEntryGeometry(setup = '', lastClose = 0, lastHigh = 0, lastLow = 0, bb = null, atr = 0, rsi = 50) {
+  const close = safeNumber(lastClose, 0);
+  const high = safeNumber(lastHigh, 0);
+  const low = safeNumber(lastLow, 0);
+
+  if (close <= 0) return { valid: false };
+
+  let entry, tp, sl;
+
+  if (setup === 'BREAKOUT') {
+    entry = close * 0.998;
+    tp = close * 0.96;
+    sl = close * 1.02;
+  } else if (setup === 'RETEST') {
+    entry = close * 0.998;
+    tp = low * 0.98;
+    sl = high * 1.01;
+  } else if (setup === 'SWEEP_REVERSAL') {
+    entry = close * 0.998;
+    tp = low * 0.98;
+    sl = high * 1.02;
+  } else if (setup === 'CONTINUATION') {
+    entry = close * 0.998;
+    tp = close * 0.97;
+    sl = high * 1.015;
+  } else if (setup === 'COMPRESSION') {
+    entry = close * 0.998;
+    tp = close * 0.97;
+    sl = close * 1.025;
+  } else {
+    return { valid: false };
+  }
+
+  if (sl <= entry || tp >= entry) {
+    return { valid: false };
+  }
+
+  const risk = Math.abs(sl - entry) / entry;
+  const reward = Math.abs(entry - tp) / entry;
+
+  if (risk <= 0 || reward <= 0) {
+    return { valid: false };
+  }
+
+  return {
+    valid: true,
+    entry,
+    tp,
+    sl,
+    risk,
+    reward
+  };
+}
+
+export default { scanForCandidates };
