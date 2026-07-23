@@ -1,7 +1,5 @@
 // ================= FILE: src/market/marketKey.js =================
-//
-// Market key management - manages keys for market data storage
-//
+// Market key management
 
 export function getMarketSnapshotKey(symbol = '') {
   return `MARKET:SNAPSHOT:${symbol}`;
@@ -28,10 +26,6 @@ export function getMarketAlertKey(symbol = '') {
 }
 
 export default {
-  getMarketSnapshotKey,
-  getMarketHistoryKey,
-  getMarketCandlesKey,
-  getMarketIndicesKey,
-  getAllMarketsKey,
-  getMarketAlertKey
+  getMarketSnapshotKey, getMarketHistoryKey, getMarketCandlesKey,
+  getMarketIndicesKey, getAllMarketsKey, getMarketAlertKey
 };
