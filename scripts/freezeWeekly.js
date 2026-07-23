@@ -1,74 +1,57 @@
 // ================= FILE: src/analyze/freezeWeekly.js =================
-//
-// Implementation: Close current week
-// CALLED BY: api/analyze/weekly-freeze.js (cron Sunday 22:00 UTC)
-//
+// Weekly freeze (closes all open trades, calculates stats)
 
-import { Redis } from '@upstash/redis';
+import { getRedis } from '../redis.js';
 import { keys } from '../keys.js';
+import { now, getWeekKey } from '../utils.js';
+import { analyzeAllFamilies } from './analyzeEngine.js';
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL || '',
-  token: process.env.UPSTASH_REDIS_REST_TOKEN || ''
-});
-
-/**
- * Freeze the current week
- * 
- * After this:
- *  - No more observations can be added to SHORT_LIVE
- *  - Stats become read-only
- *  - activateRotation will rank these stats
- *  - New week begins
- */
-export async function freezeWeek() {
+export async function freezeWeekly() {
   try {
-    const weekKey = 'SHORT_LIVE';
-    const statsKey = keys.analyzeWeekMicros(weekKey);
-    
-    // Get current stats
-    const stats = await redis.get(statsKey);
-    
-    if (!stats) {
-      return {
-        ok: false,
-        reason: 'NO_STATS_TO_FREEZE',
-        weekKey
-      };
+    const redis = getRedis();
+    const weekKey = getWeekKey();
+
+    // Close all open positions for this week
+    const openPositionPattern = 'SHORT:POSITION:OPEN:*';
+    const openKeys = await redis.keys(openPositionPattern);
+
+    let closed = 0;
+    for (const key of openKeys) {
+      const position = await redis.get(key);
+      if (position && position.weekKey === weekKey) {
+        position.closedAt = now();
+        position.closeReason = 'WEEKLY_FREEZE';
+        await redis.set(key, position);
+        closed++;
+      }
     }
-    
-    // Create frozen copy
-    const freezeKey = `SHORT:ANALYZE:WEEK:${weekKey}:FROZEN:${Date.now()}`;
-    await redis.set(freezeKey, stats);
-    
-    // Mark week as frozen
-    const freezeMarkerKey = `${statsKey}:FROZEN`;
-    await redis.set(freezeMarkerKey, {
-      frozenAt: new Date().toISOString(),
-      frozenTimestamp: Date.now(),
-      familiesCount: Object.keys(stats).length
-    });
-    
-    console.log(`✅ Week frozen: ${Object.keys(stats).length} families`);
-    
+
+    // Analyze all families for this week
+    const analysisResult = await analyzeAllFamilies();
+
+    // Calculate week stats
+    const stats = {
+      weekKey,
+      frozenAt: now(),
+      closedPositions: closed,
+      familiesAnalyzed: analysisResult.analyzed || 0,
+      topFamilies: analysisResult.topFamilies || []
+    };
+
+    await redis.set(keys.weeklyFreeze(weekKey), stats);
+
     return {
       ok: true,
       weekKey,
-      frozenKey: freezeKey,
-      familiesCount: Object.keys(stats).length,
-      timestamp: new Date().toISOString()
+      closedPositions: closed,
+      familiesAnalyzed: analysisResult.analyzed,
+      stats
     };
-    
+
   } catch (err) {
-    console.error('freezeWeek error:', err);
-    return {
-      ok: false,
-      reason: 'FREEZE_FAILED',
-      error: err.message
-    };
+    console.error('freezeWeekly error:', err);
+    return { ok: false, error: err.message };
   }
 }
 
-export default {
-  freezeWeek
-};
+export default { freezeWeekly };
