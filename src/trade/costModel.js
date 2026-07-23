@@ -1,288 +1,90 @@
 // ================= FILE: src/trade/costModel.js =================
-//
-// Calculate Net-R after costs
-// CRITICAL: All outcomes must use NET-R, not GROSS-R
-//
-// Bitget perpetuals costs:
-//  - Maker fee: 0.02% (limit orders)
-//  - Taker fee: 0.05% → but API docs show 0.15% (check!)
-//  - We'll use 0.15% as conservative
-//
+// Trade cost calculations
 
-const BITGET_TAKER_FEE_PCT = 0.0015; // 0.15%
-const BITGET_MAKER_FEE_PCT = 0.0002; // 0.02%
-const ENTRY_SLIPPAGE_PCT = 0.0005;   // 0.05% (market entry)
-const EXIT_SLIPPAGE_PCT = 0.0010;    // 0.10% (market exit)
-const FUNDING_RATE_AVG_PCT = 0.0001; // 0.01% per 8hr avg (negligible)
+import { CONFIG } from '../config.js';
+import { roundTo } from '../utils.js';
 
-/**
- * Calculate costs for a position
- * 
- * Returns: { entryFee, entrySlippage, exitFee, exitSlippage, fundingCost, totalCostPct }
- */
-export function calculatePositionCosts({
-  side = 'SHORT',
-  entryPrice = 0,
-  exitPrice = 0,
-  riskPct = 0.01,
-  durationHours = 24,
-  executionMode = 'market' // market or limit
-} = {}) {
-  
-  const entry = Math.abs(entryPrice || 0);
-  const exit = Math.abs(exitPrice || 0);
-  const risk = Math.abs(riskPct || 0);
-  
-  if (entry <= 0) {
-    return {
-      ok: false,
-      reason: 'INVALID_ENTRY_PRICE',
-      entryFee: 0,
-      entrySlippage: 0,
-      exitFee: 0,
-      exitSlippage: 0,
-      fundingCost: 0,
-      totalCostPct: 0,
-      totalCostR: 0
-    };
-  }
-  
-  // Entry costs
-  const takerFee = executionMode === 'limit' ? BITGET_MAKER_FEE_PCT : BITGET_TAKER_FEE_PCT;
-  const entryFee = entry * takerFee;
-  const entrySlippage = entry * ENTRY_SLIPPAGE_PCT;
-  const totalEntryCost = entryFee + entrySlippage;
-  
-  // Exit costs
-  const exitFee = exit * BITGET_TAKER_FEE_PCT;
-  const exitSlippage = exit * EXIT_SLIPPAGE_PCT;
-  const totalExitCost = exitFee + exitSlippage;
-  
-  // Funding (conservative estimate)
-  const fundingCost = entry * FUNDING_RATE_AVG_PCT * (durationHours / 8);
-  
-  // Total cost as percentage of entry
-  const totalCostPct = (totalEntryCost + totalExitCost + fundingCost) / entry;
-  
-  // Total cost in R units
-  const totalCostR = risk > 0 ? totalCostPct / risk : 0;
+export function calculateOpeningCosts(entryPrice = 0, size = 0) {
+  const takerFeeEntry = entryPrice * size * CONFIG.TRADE.BITGET_TAKER_FEE;
+  const entrySlippage = entryPrice * size * CONFIG.TRADE.ENTRY_SLIPPAGE;
+  const totalCost = takerFeeEntry + entrySlippage;
   
   return {
-    ok: true,
-    entryFee: Number(entryFee.toFixed(8)),
-    entrySlippage: Number(entrySlippage.toFixed(8)),
-    exitFee: Number(exitFee.toFixed(8)),
-    exitSlippage: Number(exitSlippage.toFixed(8)),
-    fundingCost: Number(fundingCost.toFixed(8)),
-    totalCostPct: Number(totalCostPct.toFixed(6)),
-    totalCostR: Number(totalCostR.toFixed(4)),
-    durationHours,
-    executionMode
+    takerFee: roundTo(takerFeeEntry, 8),
+    slippage: roundTo(entrySlippage, 8),
+    total: roundTo(totalCost, 8),
+    costPerContract: roundTo(totalCost / size, 8)
   };
 }
 
-/**
- * Apply costs to an outcome
- * 
- * Input: outcome with grossR (before costs)
- * Output: outcome with netR (after costs)
- */
-export function applyCosts({
-  grossR = 0,
-  riskPct = 0.01,
-  entryPrice = 0,
-  exitPrice = 0,
-  side = 'SHORT',
-  durationHours = 24,
-  executionMode = 'market'
-} = {}) {
-  
-  const costs = calculatePositionCosts({
-    side,
-    entryPrice,
-    exitPrice,
-    riskPct,
-    durationHours,
-    executionMode
-  });
-  
-  if (!costs.ok) {
-    return {
-      ok: false,
-      reason: costs.reason,
-      grossR: Number(grossR.toFixed(4)),
-      costR: 0,
-      netR: Number(grossR.toFixed(4))
-    };
-  }
-  
-  // Net-R = Gross-R - Cost-R
-  const netR = grossR - costs.totalCostR;
+export function calculateClosingCosts(exitPrice = 0, size = 0) {
+  const takerFeeExit = exitPrice * size * CONFIG.TRADE.BITGET_TAKER_FEE;
+  const exitSlippage = exitPrice * size * CONFIG.TRADE.EXIT_SLIPPAGE;
+  const totalCost = takerFeeExit + exitSlippage;
   
   return {
-    ok: true,
-    grossR: Number(grossR.toFixed(4)),
-    costR: Number(costs.totalCostR.toFixed(4)),
-    netR: Number(netR.toFixed(4)),
-    costPct: Number(costs.totalCostPct.toFixed(6)),
-    breakdown: {
-      entryFee: costs.entryFee,
-      entrySlippage: costs.entrySlippage,
-      exitFee: costs.exitFee,
-      exitSlippage: costs.exitSlippage,
-      fundingCost: costs.fundingCost
-    }
+    takerFee: roundTo(takerFeeExit, 8),
+    slippage: roundTo(exitSlippage, 8),
+    total: roundTo(totalCost, 8),
+    costPerContract: roundTo(totalCost / size, 8)
   };
 }
 
-/**
- * Calculate outcome with automatic cost application
- * 
- * Called when position closes
- * Returns: { netR, costR, grossR, pnlPct, outcome }
- */
-export function calculateOutcome({
-  side = 'SHORT',
-  entryPrice = 0,
-  exitPrice = 0,
-  tp = null,
-  sl = null,
-  risk = 0.01,
-  hitTp = false,
-  hitSL = false,
-  durationHours = 24,
-  executionMode = 'market'
-} = {}) {
-  
-  const entry = Math.abs(entryPrice || 0);
-  const exit = Math.abs(exitPrice || 0);
-  
-  if (entry <= 0 || exit <= 0) {
-    return {
-      ok: false,
-      reason: 'INVALID_PRICES'
-    };
-  }
-  
-  // Calculate move
-  let pnlMove = 0;
-  let pnlPct = 0;
-  
-  if (side === 'SHORT') {
-    // SHORT: profit when price goes down
-    pnlMove = entry - exit;
-    pnlPct = pnlMove / entry;
-  } else {
-    // LONG: profit when price goes up
-    pnlMove = exit - entry;
-    pnlPct = pnlMove / entry;
-  }
-  
-  // Gross R (P&L in R units)
-  const riskAmt = Math.abs(risk || 0.01);
-  const grossR = riskAmt > 0 ? pnlPct / riskAmt : 0;
-  
-  // Apply costs
-  const withCosts = applyCosts({
-    grossR,
-    riskPct: riskAmt,
-    entryPrice: entry,
-    exitPrice: exit,
-    side,
-    durationHours,
-    executionMode
-  });
-  
-  // Determine outcome type
-  let outcome = 'UNCLEAR';
-  if (hitTp) outcome = 'TP_HIT';
-  if (hitSL) outcome = 'SL_HIT';
-  if (!hitTp && !hitSL && durationHours > 72) outcome = 'TIME_STOP';
+export function calculateTotalCosts(entryPrice = 0, exitPrice = 0, size = 0) {
+  const openCosts = calculateOpeningCosts(entryPrice, size);
+  const closeCosts = calculateClosingCosts(exitPrice, size);
   
   return {
-    ok: true,
-    pnlMove: Number(pnlMove.toFixed(8)),
-    pnlPct: Number(pnlPct.toFixed(6)),
-    grossR: Number(withCosts.grossR.toFixed(4)),
-    costR: Number(withCosts.costR.toFixed(4)),
-    netR: Number(withCosts.netR.toFixed(4)),
-    outcome,
-    hitTP: hitTp,
-    hitSL,
-    durationHours,
-    costBreakdown: withCosts.breakdown
+    opening: openCosts,
+    closing: closeCosts,
+    totalCosts: roundTo(openCosts.total + closeCosts.total, 8),
+    costPercentOfEntry: roundTo((openCosts.total + closeCosts.total) / (entryPrice * size), 4)
   };
 }
 
-/**
- * Check if outcome hit TP or SL
- * Returns closest metric
- */
-export function checkTPSL({
-  currentPrice = 0,
-  tp = null,
-  sl = null,
-  side = 'SHORT'
-} = {}) {
+export function calculateNetPnL(entryPrice = 0, exitPrice = 0, size = 0, positionType = 'SHORT') {
+  const grossPnL = positionType === 'SHORT' 
+    ? (entryPrice - exitPrice) * size 
+    : (exitPrice - entryPrice) * size;
   
-  const price = Math.abs(currentPrice || 0);
-  const tpPrice = tp ? Math.abs(tp) : null;
-  const slPrice = sl ? Math.abs(sl) : null;
+  const costs = calculateTotalCosts(entryPrice, exitPrice, size);
+  const netPnL = grossPnL - costs.totalCosts;
   
-  const result = {
-    hitTP: false,
-    hitSL: false,
-    nearTP: false,
-    nearSL: false,
-    nearTPPct: 0,
-    nearSLPct: 0
+  return {
+    grossPnL: roundTo(grossPnL, 8),
+    costs: costs.totalCosts,
+    netPnL: roundTo(netPnL, 8),
+    netPercentage: roundTo((netPnL / (entryPrice * size)) * 100, 4)
   };
+}
+
+export function breakEvenPrice(entryPrice = 0, positionType = 'SHORT') {
+  const fullCostRatio = (2 * CONFIG.TRADE.BITGET_TAKER_FEE) + CONFIG.TRADE.ENTRY_SLIPPAGE + CONFIG.TRADE.EXIT_SLIPPAGE;
   
-  if (side === 'SHORT') {
-    // SHORT: TP is below entry, SL is above entry
-    if (tpPrice && price <= tpPrice) {
-      result.hitTP = true;
-    } else if (tpPrice && price > tpPrice) {
-      const distanceToTP = tpPrice - price;
-      const halfWay = tpPrice - (tpPrice * 0.5);
-      if (price > halfWay && price <= tpPrice * 1.005) {
-        result.nearTP = true;
-      }
-      result.nearTPPct = Math.abs(distanceToTP / tpPrice);
-    }
-    
-    if (slPrice && price >= slPrice) {
-      result.hitSL = true;
-    }
-  } else {
-    // LONG: TP is above entry, SL is below entry
-    if (tpPrice && price >= tpPrice) {
-      result.hitTP = true;
-    } else if (tpPrice && price < tpPrice) {
-      const distanceToTP = price - tpPrice;
-      const halfWay = tpPrice + (tpPrice * 0.5);
-      if (price < halfWay && price >= tpPrice * 0.995) {
-        result.nearTP = true;
-      }
-      result.nearTPPct = Math.abs(distanceToTP / tpPrice);
-    }
-    
-    if (slPrice && price <= slPrice) {
-      result.hitSL = true;
-    }
+  if (positionType === 'SHORT') {
+    return roundTo(entryPrice * (1 + fullCostRatio), 8);
   }
+  return roundTo(entryPrice * (1 - fullCostRatio), 8);
+}
+
+export function costAdjustedRiskReward(entryPrice = 0, slPrice = 0, tpPrice = 0, size = 0) {
+  const costs = calculateTotalCosts(entryPrice, (entryPrice + slPrice) / 2, size);
+  const costPerContract = costs.costPercentOfEntry;
   
-  return result;
+  const rawRisk = Math.abs(entryPrice - slPrice) / entryPrice;
+  const rawReward = Math.abs(entryPrice - tpPrice) / entryPrice;
+  
+  const adjustedRisk = rawRisk + costPerContract;
+  const adjustedReward = rawReward - costPerContract;
+  
+  return {
+    rawRR: roundTo(rawReward / rawRisk, 2),
+    costAdjustedRR: roundTo(adjustedReward / adjustedRisk, 2),
+    costImpact: roundTo((1 - (adjustedReward / adjustedRisk) / (rawReward / rawRisk)) * 100, 2)
+  };
 }
 
 export default {
-  calculatePositionCosts,
-  applyCosts,
-  calculateOutcome,
-  checkTPSL,
-  BITGET_TAKER_FEE_PCT,
-  BITGET_MAKER_FEE_PCT,
-  ENTRY_SLIPPAGE_PCT,
-  EXIT_SLIPPAGE_PCT,
-  FUNDING_RATE_AVG_PCT
+  calculateOpeningCosts, calculateClosingCosts, calculateTotalCosts,
+  calculateNetPnL, breakEvenPrice, costAdjustedRiskReward
 };
