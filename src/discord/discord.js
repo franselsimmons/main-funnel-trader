@@ -1,347 +1,323 @@
 // ================= FILE: src/discord/discord.js =================
-//
-// Discord webhook integration
-// Sends alerts for: position entry, position exit, rotation activation
-//
+// COMPLEET Discord webhook integration
 
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
+import axios from 'axios';
+import { CONFIG } from '../config.js';
+import { getRedis } from '../redis.js';
+import { keys } from '../keys.js';
+import { now, formatDuration, formatCurrency, roundTo } from '../utils.js';
 
-/**
- * Send raw message to Discord
- */
-async function sendMessage(content = '') {
+const WEBHOOK_URL = CONFIG.DISCORD.WEBHOOK_URL;
+
+export async function sendDiscordAlert(message = '', alertType = 'INFO', options = {}) {
   try {
-    if (!WEBHOOK_URL) {
-      console.warn('⚠️  Discord webhook not configured');
-      return {
-        ok: false,
-        reason: 'WEBHOOK_NOT_CONFIGURED'
-      };
+    if (!CONFIG.DISCORD.ENABLED || !WEBHOOK_URL) {
+      console.log('Discord disabled or no webhook URL');
+      return { ok: false, reason: 'DISABLED' };
     }
-    
-    const response = await fetch(WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content })
-    });
-    
-    if (!response.ok) {
-      return {
-        ok: false,
-        reason: `HTTP_${response.status}`
-      };
-    }
-    
-    return {
-      ok: true,
-      sent: true
-    };
-    
-  } catch (err) {
-    console.error('Discord send error:', err);
-    return {
-      ok: false,
-      error: err.message
-    };
-  }
-}
 
-/**
- * Send embed message
- */
-async function sendEmbed(embed = {}) {
-  try {
-    if (!WEBHOOK_URL) {
-      console.warn('⚠️  Discord webhook not configured');
-      return {
-        ok: false,
-        reason: 'WEBHOOK_NOT_CONFIGURED'
-      };
-    }
-    
-    const response = await fetch(WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        embeds: [embed]
-      })
-    });
-    
-    if (!response.ok) {
-      return {
-        ok: false,
-        reason: `HTTP_${response.status}`
-      };
-    }
-    
-    return {
-      ok: true,
-      sent: true
+    const typeConfig = CONFIG.DISCORD.ALERT_TYPES[alertType] || {
+      emoji: 'ℹ️',
+      color: 0x0088ff
     };
-    
-  } catch (err) {
-    console.error('Discord embed error:', err);
-    return {
-      ok: false,
-      error: err.message
-    };
-  }
-}
 
-/**
- * Position ENTRY alert
- * CALLED BY: TradeSystem when position is created
- */
-export async function sendEntryAlert({
-  symbol = '',
-  side = 'SHORT',
-  entryPrice = 0,
-  tp = null,
-  sl = null,
-  risk = 0.01,
-  microFamilyId = '',
-  microFamilyScore = 0,
-  size = 0,
-  timestamp = Date.now()
-} = {}) {
-  
-  try {
-    const emoji = side === 'SHORT' ? '📉' : '📈';
-    const riskPoints = (risk * 100).toFixed(2);
-    const scoreStr = microFamilyScore > 0 ? `(Score: ${microFamilyScore.toFixed(1)})` : '';
-    
     const embed = {
-      title: `${emoji} ENTRY ALERT`,
-      description: `${symbol} ${side}`,
-      fields: [
-        {
-          name: 'Entry Price',
-          value: `${entryPrice.toFixed(2)}`,
-          inline: true
-        },
-        {
-          name: 'Take Profit',
-          value: tp ? `${tp.toFixed(2)}` : 'N/A',
-          inline: true
-        },
-        {
-          name: 'Stop Loss',
-          value: sl ? `${sl.toFixed(2)}` : 'N/A',
-          inline: true
-        },
-        {
-          name: 'Risk',
-          value: `${riskPoints}% (1R)`,
-          inline: true
-        },
-        {
-          name: 'Micro Family',
-          value: `${microFamilyId} ${scoreStr}`,
-          inline: false
-        }
-      ],
-      color: side === 'SHORT' ? 16711680 : 65280, // Red for SHORT, Green for LONG
-      timestamp: new Date(timestamp).toISOString()
+      title: `${typeConfig.emoji} ${alertType}`,
+      description: message,
+      color: typeConfig.color,
+      timestamp: new Date().toISOString(),
+      footer: {
+        text: 'ARS-U Platform v2'
+      }
     };
-    
-    return await sendEmbed(embed);
-    
+
+    if (options.fields) {
+      embed.fields = options.fields;
+    }
+
+    if (options.thumbnail) {
+      embed.thumbnail = { url: options.thumbnail };
+    }
+
+    const payload = {
+      username: 'ARS-U Trading System',
+      avatar_url: 'https://cdn-icons-png.flaticon.com/512/1995/1995467.png',
+      embeds: [embed]
+    };
+
+    const response = await axios.post(WEBHOOK_URL, payload, {
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    await logDiscordMessage({
+      type: alertType,
+      message,
+      embed,
+      status: 'SENT',
+      timestamp: now()
+    });
+
+    return {
+      ok: true,
+      sent: true,
+      status: response.status
+    };
+
+  } catch (err) {
+    console.error('❌ Discord alert error:', err.message);
+
+    await logDiscordMessage({
+      type: alertType,
+      message,
+      status: 'FAILED',
+      error: err.message,
+      timestamp: now()
+    });
+
+    return {
+      ok: false,
+      sent: false,
+      error: err.message
+    };
+  }
+}
+
+export async function sendEntryAlert(trade = {}) {
+  try {
+    const fields = [
+      { name: 'Symbol', value: trade.symbol, inline: true },
+      { name: 'Setup', value: trade.setup, inline: true },
+      { name: 'Regime', value: trade.regime, inline: true },
+      { name: 'Entry Price', value: formatCurrency(trade.entryPrice), inline: true },
+      { name: 'Stop Loss', value: formatCurrency(trade.sl), inline: true },
+      { name: 'Take Profit', value: formatCurrency(trade.tp), inline: true },
+      { name: 'R/R Ratio', value: `${roundTo(trade.rrRatio, 2)}:1`, inline: true },
+      { name: 'Position Size', value: `${trade.entrySize} contracts`, inline: true },
+      { name: 'Risk/Reward %', value: `${roundTo(trade.riskPct * 100, 2)}% / ${roundTo(trade.rewardPct * 100, 2)}%`, inline: true }
+    ];
+
+    if (trade.microFamilyId) {
+      fields.push({ name: 'Family', value: trade.microFamilyId, inline: true });
+    }
+
+    return await sendDiscordAlert(
+      `**SHORT ENTRY**\n${trade.symbol} triggered on ${trade.setup} setup`,
+      'ENTRY',
+      { fields }
+    );
+
   } catch (err) {
     console.error('sendEntryAlert error:', err);
-    return {
-      ok: false,
-      error: err.message
-    };
+    return { ok: false, error: err.message };
   }
 }
 
-/**
- * Position EXIT alert
- * CALLED BY: PositionEngine when position closes
- */
-export async function sendExitAlert({
-  symbol = '',
-  side = 'SHORT',
-  entryPrice = 0,
-  exitPrice = 0,
-  netR = 0,
-  costR = 0,
-  pnlPct = 0,
-  outcome = 'UNCLEAR',
-  hitTP = false,
-  hitSL = false,
-  microFamilyId = '',
-  timestamp = Date.now()
-} = {}) {
-  
+export async function sendExitAlert(trade = {}) {
   try {
-    const resultEmoji = netR > 0 ? '✅' : netR < 0 ? '❌' : '⚪';
-    const tpEmoji = hitTP ? '🎯' : '';
-    const slEmoji = hitSL ? '🔴' : '';
-    
-    const pnlStr = netR > 0
-      ? `+${netR.toFixed(2)}R`
-      : `${netR.toFixed(2)}R`;
-    
-    const embed = {
-      title: `${resultEmoji} EXIT ALERT`,
-      description: `${symbol} ${side} ${tpEmoji}${slEmoji}`,
-      fields: [
-        {
-          name: 'Entry → Exit',
-          value: `${entryPrice.toFixed(2)} → ${exitPrice.toFixed(2)}`,
-          inline: true
-        },
-        {
-          name: 'Net R',
-          value: pnlStr,
-          inline: true
-        },
-        {
-          name: 'P&L %',
-          value: `${(pnlPct * 100).toFixed(2)}%`,
-          inline: true
-        },
-        {
-          name: 'Cost',
-          value: `-${costR.toFixed(2)}R`,
-          inline: true
-        },
-        {
-          name: 'Outcome',
-          value: outcome,
-          inline: true
-        },
-        {
-          name: 'Micro Family',
-          value: microFamilyId,
-          inline: false
-        }
-      ],
-      color: netR > 0 ? 65280 : netR < 0 ? 16711680 : 16776960, // Green, Red, Yellow
-      timestamp: new Date(timestamp).toISOString()
-    };
-    
-    return await sendEmbed(embed);
-    
+    const emoji = trade.exitReason === 'TAKE_PROFIT_HIT' ? '🎯' : (trade.exitReason === 'STOP_LOSS_HIT' ? '🛑' : '⚖️');
+    const pnlColor = trade.netPnlR > 0 ? '✅' : '❌';
+
+    const fields = [
+      { name: 'Symbol', value: trade.symbol, inline: true },
+      { name: 'Exit Reason', value: trade.exitReason, inline: true },
+      { name: 'Duration', value: formatDuration(trade.durationSeconds * 1000), inline: true },
+      { name: 'Entry Price', value: formatCurrency(trade.entryPrice), inline: true },
+      { name: 'Exit Price', value: formatCurrency(trade.exitPrice), inline: true },
+      { name: 'P&L', value: `${pnlColor} ${formatCurrency(trade.pnl)} (${roundTo(trade.pnlPercent, 2)}%)`, inline: true },
+      { name: 'Net P&L', value: `${formatCurrency(trade.pnl * (1 - 0.003))} (${roundTo(trade.netPnlPercent, 2)}%)`, inline: true },
+      { name: 'R-value', value: `${roundTo(trade.netPnlR, 3)}R`, inline: true }
+    ];
+
+    if (trade.microFamilyId) {
+      fields.push({ name: 'Family', value: trade.microFamilyId, inline: true });
+    }
+
+    return await sendDiscordAlert(
+      `${emoji} **${trade.exitReason}**\n${trade.symbol} closed at ${formatCurrency(trade.exitPrice)}`,
+      'EXIT',
+      { fields }
+    );
+
   } catch (err) {
     console.error('sendExitAlert error:', err);
-    return {
-      ok: false,
-      error: err.message
-    };
+    return { ok: false, error: err.message };
   }
 }
 
-/**
- * ROTATION ACTIVATION alert
- * CALLED BY: activateRotation when new rotation is activated
- */
-export async function sendRotationAlert({
-  rotationId = '',
-  familiesSelected = 0,
-  topScore = 0,
-  avgScore = 0,
-  topFamilies = [],
-  timestamp = Date.now()
-} = {}) {
-  
+export async function sendScanReport(scanStats = {}) {
   try {
-    const familiesList = topFamilies.length > 0
-      ? topFamilies.slice(0, 3).join('\n')
-      : 'N/A';
-    
-    const embed = {
-      title: '🔄 ROTATION ACTIVATED',
-      description: `Weekly rotation updated`,
-      fields: [
-        {
-          name: 'Families Selected',
-          value: `${familiesSelected}/75 (Top performers)`,
-          inline: true
-        },
-        {
-          name: 'Top Score',
-          value: `${topScore.toFixed(1)}`,
-          inline: true
-        },
-        {
-          name: 'Avg Score',
-          value: `${avgScore.toFixed(1)}`,
-          inline: true
-        },
-        {
-          name: 'Top 3 Families',
-          value: familiesList || 'Computing...',
-          inline: false
-        },
-        {
-          name: 'Rotation ID',
-          value: rotationId,
-          inline: false
-        }
-      ],
-      color: 7419530, // Purple
-      timestamp: new Date(timestamp).toISOString()
-    };
-    
-    return await sendEmbed(embed);
-    
+    const fields = [
+      { name: 'Candidates Found', value: `${scanStats.candidatesCount}`, inline: true },
+      { name: 'Symbols Processed', value: `${scanStats.processed}`, inline: true },
+      { name: 'Qualification Rate', value: `${roundTo((scanStats.candidatesCount / Math.max(1, scanStats.processed)) * 100, 1)}%`, inline: true },
+      { name: 'Market Condition', value: scanStats.weather || 'UNKNOWN', inline: true }
+    ];
+
+    if (scanStats.errors > 0) {
+      fields.push({ name: 'Errors', value: `${scanStats.errors}`, inline: true });
+    }
+
+    return await sendDiscordAlert(
+      `**SCAN REPORT**\nFound ${scanStats.candidatesCount} qualified candidates`,
+      'SCAN_RESULT',
+      { fields }
+    );
+
+  } catch (err) {
+    console.error('sendScanReport error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function sendHaltAlert(reasons = []) {
+  try {
+    const fields = reasons.map((reason, i) => ({
+      name: `Reason ${i + 1}`,
+      value: reason,
+      inline: false
+    }));
+
+    return await sendDiscordAlert(
+      `**TRADING HALTED**\nRisk limits exceeded`,
+      'HALT',
+      { fields }
+    );
+
+  } catch (err) {
+    console.error('sendHaltAlert error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function sendRotationAlert(rotation = {}) {
+  try {
+    const fields = [
+      { name: 'Active Families', value: `${rotation.selectedFamilies?.length || 0}/${rotation.targetFamilies || 42}`, inline: true },
+      { name: 'Activated At', value: new Date(rotation.activatedAt).toISOString(), inline: false }
+    ];
+
+    if (rotation.topFamilies && rotation.topFamilies.length > 0) {
+      const topList = rotation.topFamilies.slice(0, 5).map(f => `• ${f.id}: ${roundTo(f.score, 2)}`).join('\n');
+      fields.push({ name: 'Top 5 Families', value: topList, inline: false });
+    }
+
+    return await sendDiscordAlert(
+      `**ROTATION ACTIVATED**\n${rotation.selectedFamilies?.length || 0} families selected for this week`,
+      'ROTATION',
+      { fields }
+    );
+
   } catch (err) {
     console.error('sendRotationAlert error:', err);
-    return {
-      ok: false,
-      error: err.message
-    };
+    return { ok: false, error: err.message };
   }
 }
 
-/**
- * System status alert
- */
-export async function sendStatusAlert({
-  status = 'UNKNOWN',
-  message = '',
-  details = {}
-} = {}) {
-  
+export async function sendErrorAlert(error = '', context = '') {
   try {
-    const colorMap = {
-      'OK': 65280,
-      'WARNING': 16776960,
-      'ERROR': 16711680
-    };
-    
-    const color = colorMap[status] || 9807270;
-    
-    const embed = {
-      title: `📊 ${status}`,
-      description: message,
-      fields: Object.entries(details).map(([key, value]) => ({
-        name: key,
-        value: String(value),
-        inline: true
-      })),
-      color,
-      timestamp: new Date().toISOString()
-    };
-    
-    return await sendEmbed(embed);
-    
+    const fields = [
+      { name: 'Error', value: error, inline: false },
+      { name: 'Context', value: context || 'N/A', inline: false },
+      { name: 'Time', value: new Date().toISOString(), inline: false }
+    ];
+
+    return await sendDiscordAlert(
+      `**ERROR**\n${error}`,
+      'ERROR',
+      { fields }
+    );
+
   } catch (err) {
-    console.error('sendStatusAlert error:', err);
+    console.error('sendErrorAlert error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function sendDailySummary(summary = {}) {
+  try {
+    const fields = [
+      { name: 'Trades Completed', value: `${summary.completedTrades || 0}`, inline: true },
+      { name: 'Win Rate', value: `${roundTo(summary.winRate || 0, 1)}%`, inline: true },
+      { name: 'Total P&L', value: formatCurrency(summary.totalPnl || 0), inline: true },
+      { name: 'Largest Win', value: formatCurrency(summary.largestWin || 0), inline: true },
+      { name: 'Largest Loss', value: formatCurrency(summary.largestLoss || 0), inline: true },
+      { name: 'Profit Factor', value: `${roundTo(summary.profitFactor || 1, 2)}`, inline: true }
+    ];
+
+    if (summary.drawdown) {
+      fields.push({ name: 'Current Drawdown', value: `${roundTo(summary.drawdown * 100, 2)}%`, inline: true });
+    }
+
+    const message = summary.totalPnl > 0 ? '✅ Daily Summary - Profitable Day!' : (summary.totalPnl < 0 ? '❌ Daily Summary - Losing Day' : '⚪ Daily Summary - Breakeven');
+
+    return await sendDiscordAlert(
+      message,
+      'TRADE_UPDATE',
+      { fields }
+    );
+
+  } catch (err) {
+    console.error('sendDailySummary error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function logDiscordMessage(logData = {}) {
+  try {
+    const redis = getRedis();
+    const timestamp = logData.timestamp || now();
+    const key = keys.discordLog(timestamp);
+
+    await redis.set(key, logData);
+
+    return { ok: true };
+  } catch (err) {
+    console.error('logDiscordMessage error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function testWebhook() {
+  try {
+    if (!WEBHOOK_URL) {
+      return { ok: false, reason: 'NO_WEBHOOK_URL' };
+    }
+
+    const testPayload = {
+      username: 'ARS-U Test',
+      content: '✅ Discord webhook is working!'
+    };
+
+    const response = await axios.post(WEBHOOK_URL, testPayload, {
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    return {
+      ok: true,
+      working: true,
+      status: response.status
+    };
+
+  } catch (err) {
+    console.error('testWebhook error:', err.message);
     return {
       ok: false,
+      working: false,
       error: err.message
     };
   }
 }
 
 export default {
-  sendMessage,
-  sendEmbed,
+  sendDiscordAlert,
   sendEntryAlert,
   sendExitAlert,
+  sendScanReport,
+  sendHaltAlert,
   sendRotationAlert,
-  sendStatusAlert
+  sendErrorAlert,
+  sendDailySummary,
+  testWebhook
 };
