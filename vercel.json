@@ -1,4 +1,4 @@
-
+{
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
   "trailingSlash": false,
@@ -25,10 +25,6 @@
     {
       "path": "/api/scanner/run",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/trade/run",
-      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/analyze/weekly-freeze",
