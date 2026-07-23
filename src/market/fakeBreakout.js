@@ -1,798 +1,304 @@
 // ================= FILE: src/market/fakeBreakout.js =================
+//
+// Fake breakout detection and validation
+// Prevents trading trap moves
+//
 
-import {
-  getRecentRange,
-  calcVolumeExpansion,
-  candleBodyPct
-} from './indicators.js';
-import {
-  safeNumber,
-  sideToTradeSide
-} from '../utils.js';
+import { getRedis } from '../redis.js';
+import { keys } from '../keys.js';
+import { now } from '../utils.js';
 
-const DEFAULT_LOOKBACK = 24;
-
-const TARGET_TRADE_SIDE = 'SHORT';
-const TARGET_SCANNER_SIDE = 'bear';
-const TARGET_DASHBOARD_SIDE = 'bear';
-const OPPOSITE_TRADE_SIDE = 'LONG';
-
-const SHORT_NAMESPACE = 'SHORT';
-const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
-const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
-
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
-const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
-const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
-
-const RETEST_TOLERANCE_PCT = 0.004;
-const BREAKOUT_BUFFER_PCT = 0.0015;
-const WICK_REJECT_THRESHOLD = 0.45;
-const WEAK_BODY_THRESHOLD = 0.35;
-const EXHAUSTION_VOLUME_EXPANSION = 1.4;
-
-const SHORT_TOKENS = new Set([
-  'SHORT',
-  'BEAR',
-  'BEARISH',
-  'SELL',
-  'ASK',
-  'DOWN',
-  'DOWNSIDE',
-  'RED'
-]);
-
-const LONG_TOKENS = new Set([
-  'LONG',
-  'BULL',
-  'BULLISH',
-  'BUY',
-  'BID',
-  'UP',
-  'UPSIDE',
-  'GREEN'
-]);
-
-function now() {
-  return Date.now();
-}
-
-function upper(value) {
-  return String(value || '').trim().toUpperCase();
-}
-
-function shortMachineFlags() {
-  return {
-    targetTradeSide: TARGET_TRADE_SIDE,
-    targetScannerSide: TARGET_SCANNER_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-
-    scannerSide: TARGET_SCANNER_SIDE,
-    actualScannerSide: TARGET_SCANNER_SIDE,
-    analysisSide: TARGET_TRADE_SIDE,
-
-    directionalSide: TARGET_DASHBOARD_SIDE,
-    inferredDirectionalSide: TARGET_DASHBOARD_SIDE,
-    marketSide: TARGET_DASHBOARD_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    virtualLearning: true,
-    virtualOnly: true,
-    virtualTracked: true,
-    shadowOnly: true,
-
-    realTrade: false,
-    realOrder: false,
-    exchangeOrder: false,
-    bitgetOrderPlaced: false,
-
-    noRealOrders: true,
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
-    exchangeOrdersDisabled: true,
-    exchangeCallsDisabled: true,
-
-    scannerBearishOnly: true,
-    scannerDoesNotTrade: true,
-    scannerDoesNotSelectMicroFamilies: true,
-    scannerDoesNotSendDiscord: true,
-    scannerDoesNotWriteLearningFamilies: true,
-
-    scannerFingerprintRole: 'METADATA_ONLY',
-    scannerFingerprintsMetadataOnly: true,
-    scannerFingerprintsUsedAsLearningFamily: false,
-
-    executionFingerprintRole: 'METADATA_ONLY',
-    executionFingerprintsMetadataOnly: true,
-    executionFingerprintsUsedAsLearningFamily: false,
-
-    analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
-    symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: true,
-
-    trueMicroOnly: true,
-    exactTrueMicroOnly: true,
-    exactTrueMicroFamilyRequired: true,
-    fixedTaxonomyPreferred: true,
-
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    parentLearningEnabled: true,
-    childLearningEnabled: true,
-    learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-    selectionGranularity: 'EXACT_75_CHILD',
-    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
-
-    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
-    scoringRSource: 'netR',
-    winsLossesFlatsSource: 'netR',
-    winrateDefinition: 'netR > 0',
-    avgRSource: 'netR',
-    totalRSource: 'netR',
-    avgCostRShown: true,
-
-    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
-    discordOnlyForExactTrueMicroMatch: true,
-
-    bucketGranularity: 'LOW_MID_HIGH',
-    bucketsCoarseOnly: true,
-
-    riskTradeSide: TARGET_TRADE_SIDE,
-    shortRiskShape: 'tp < entry < sl',
-    validShortRiskShape: 'entry > 0 && tp < entry && sl > entry',
-    validShortGeometry: 'tp < entry < sl',
-    riskGeometryRule: 'SHORT: tp < entry < sl',
-    tpHitRule: 'SHORT: price <= tp',
-    slHitRule: 'SHORT: price >= sl',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-    shortExitRules: {
-      tp: 'price <= tp',
-      sl: 'price >= sl',
-      timeStop: 'TIME_STOP'
-    },
-
-    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
-    currentFitSoftOnly: true,
-    currentFitBlocksLearning: false,
-    learningRemainsBroad: true,
-
-    redisNamespace: SHORT_NAMESPACE,
-    redisKeyPrefix: SHORT_KEY_PREFIX,
-    persistentLearningKey: PERSISTENT_LEARNING_KEY,
-    redisKeysSeparatedFromLongRoot: true,
-    longRootTouched: false
-  };
-}
-
-function learningIdentityPlaceholders() {
-  return {
-    trueMicroFamilyId: null,
-    microFamilyId: null,
-    childTrueMicroFamilyId: null,
-    parentTrueMicroFamilyId: null,
-    coarseMicroFamilyId: null,
-    analyzeMicroFamilyId: null,
-    learningMicroFamilyId: null,
-    broadTrueMicroFamilyId: null,
-    fixedTaxonomyMicroFamilyId: null,
-
-    scannerMicroFamilyId: null,
-    scannerFamilyId: null,
-    scannerDefinition: null,
-    scannerDefinitionParts: [],
-
-    executionMicroFamilyId: null,
-    executionFingerprintHash: null,
-    executionFingerprintParts: [],
-    executionFingerprintSchema: null,
-
-    scannerBucketRole: 'DEBUG_METADATA_ONLY',
-    legacy25BucketRole: 'DEBUG_METADATA_ONLY',
-    coinNameRole: 'DEBUG_METADATA_ONLY',
-    hashesRole: 'DEBUG_METADATA_ONLY'
-  };
-}
-
-function cleanSideText(value = '') {
-  return upper(value)
-    .replaceAll('LONG_DISABLED_FALSE', '')
-    .replaceAll('LONGDISABLED_FALSE', '')
-    .replaceAll('BLOCK_LONG_FALSE', '')
-    .replaceAll('LONG_ENABLED_FALSE', '')
-    .replaceAll('LONG_ONLY_FALSE', '')
-    .replaceAll('SHORT_DISABLED_FALSE', '')
-    .replaceAll('SHORTDISABLED_FALSE', '')
-    .replaceAll('SHORT_ENABLED_FALSE', '')
-    .replaceAll('SHORT_ONLY_FALSE', '')
-    .replaceAll('LONG_DISABLED_SHORT_ONLY', 'SHORT')
-    .replaceAll('LONGDISABLED_SHORT_ONLY', 'SHORT')
-    .replaceAll('LONG_DISABLED_TRUE', 'SHORT')
-    .replaceAll('LONGDISABLED_TRUE', 'SHORT')
-    .replaceAll('BLOCK_LONG_TRUE', 'SHORT')
-    .replaceAll('BLOCK_LONG', 'SHORT')
-    .replaceAll('LONG_DISABLED', 'SHORT')
-    .replaceAll('LONGDISABLED', 'SHORT')
-    .replaceAll('SHORT_DISABLED_LONG_ONLY', 'LONG')
-    .replaceAll('SHORTDISABLED_LONG_ONLY', 'LONG')
-    .replaceAll('SHORT_DISABLED_TRUE', 'LONG')
-    .replaceAll('SHORTDISABLED_TRUE', 'LONG')
-    .replaceAll('BLOCK_SHORT_TRUE', 'LONG')
-    .replaceAll('BLOCK_SHORT', 'LONG')
-    .replaceAll('SHORT_DISABLED', 'LONG')
-    .replaceAll('SHORTDISABLED', 'LONG')
-    .replaceAll('SHORT_ONLY_MODE', 'SHORT')
-    .replaceAll('SHORT_ONLY', 'SHORT')
-    .replaceAll('SHORT-ONLY', 'SHORT')
-    .replaceAll('LONG_ONLY_MODE', 'LONG')
-    .replaceAll('LONG_ONLY', 'LONG')
-    .replaceAll('LONG-ONLY', 'LONG');
-}
-
-function normalizedSignalText(value = '') {
-  return cleanSideText(value)
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-function hasSignalPattern(value = '', patterns = []) {
-  const text = normalizedSignalText(value);
-
-  if (!text) return false;
-
-  return patterns.some((pattern) => (
-    text === pattern ||
-    text.startsWith(`${pattern}_`) ||
-    text.endsWith(`_${pattern}`) ||
-    text.includes(`_${pattern}_`)
-  ));
-}
-
-function textHasShortSignal(value = '') {
-  const raw = cleanSideText(value);
-
-  if (!raw) return false;
-  if (SHORT_TOKENS.has(raw)) return true;
-
-  return hasSignalPattern(raw, [
-    'SHORT',
-    'BEAR',
-    'BEARISH',
-    'SELL',
-    'SIDE_SHORT',
-    'TRADE_SIDE_SHORT',
-    'TRADESIDE_SHORT',
-    'POSITION_SIDE_SHORT',
-    'POSITIONSIDE_SHORT',
-    'DIRECTION_SHORT',
-    'SIDE_BEAR',
-    'TRADE_SIDE_BEAR',
-    'DIRECTION_BEAR',
-    'SIDE_SELL',
-    'DIRECTION_SELL',
-    'MICRO_SHORT',
-    'FAMILY_SHORT'
-  ]);
-}
-
-function textHasLongSignal(value = '') {
-  const raw = cleanSideText(value);
-
-  if (!raw) return false;
-  if (LONG_TOKENS.has(raw)) return true;
-
-  return hasSignalPattern(raw, [
-    'LONG',
-    'BULL',
-    'BULLISH',
-    'BUY',
-    'SIDE_LONG',
-    'TRADE_SIDE_LONG',
-    'TRADESIDE_LONG',
-    'POSITION_SIDE_LONG',
-    'POSITIONSIDE_LONG',
-    'DIRECTION_LONG',
-    'SIDE_BULL',
-    'TRADE_SIDE_BULL',
-    'DIRECTION_BULL',
-    'SIDE_BUY',
-    'DIRECTION_BUY',
-    'MICRO_LONG',
-    'FAMILY_LONG'
-  ]);
-}
-
-function normalizeSide(side) {
-  const raw = cleanSideText(side);
-
-  if (!raw) return 'unknown';
-
-  const direct = sideToTradeSide(raw);
-
-  if (direct === TARGET_TRADE_SIDE) return TARGET_SCANNER_SIDE;
-  if (direct === OPPOSITE_TRADE_SIDE) return 'long_disabled';
-
-  const shortHit = textHasShortSignal(raw);
-  const longHit = textHasLongSignal(raw);
-
-  if (shortHit && !longHit) return TARGET_SCANNER_SIDE;
-  if (longHit && !shortHit) return 'long_disabled';
-
-  if (shortHit && longHit) {
-    if (raw.includes('TRADE_SIDE=SHORT') || raw.includes('TRADESIDE=SHORT')) return TARGET_SCANNER_SIDE;
-    if (raw.includes('MICRO_SHORT_')) return TARGET_SCANNER_SIDE;
-    if (raw.includes('TRADE_SIDE=LONG') || raw.includes('TRADESIDE=LONG')) return 'long_disabled';
-    if (raw.includes('MICRO_LONG_')) return 'long_disabled';
-
-    return TARGET_SCANNER_SIDE;
+/**
+ * Detect if a breakout is likely fake
+ */
+export function isFakeBreakout(closes = [], entryPrice = 0, lookbackPeriod = 20) {
+  if (!closes || closes.length < lookbackPeriod + 5) {
+    return false;
   }
 
-  if (raw === TARGET_DASHBOARD_SIDE.toUpperCase()) return TARGET_SCANNER_SIDE;
-
-  return 'unknown';
-}
-
-function normalizeBtcState(btcState) {
-  return upper(btcState || 'NEUTRAL');
-}
-
-function isBtcAgainstBear(btcState) {
-  return ['BULLISH', 'STRONG_BULL', 'BULL', 'UP'].includes(upper(btcState));
-}
-
-function isBtcWithBear(btcState) {
-  return ['BEARISH', 'STRONG_BEAR', 'BEAR', 'DOWN'].includes(upper(btcState));
-}
-
-function scannerBucketFromBreakdown({
-  fake,
-  fakeBreakoutRisk,
-  validBreakdown,
-  sweptLow,
-  retestConfirmed,
-  pullbackConfirmed,
-  volumeExpansion
-}) {
-  if (fake) return 'BEAR_FAKE_BREAKDOWN_LOW_SWEEP';
-  if (fakeBreakoutRisk) return 'BEAR_BREAKDOWN_RISK';
-  if (validBreakdown && retestConfirmed) return 'BEAR_BREAKDOWN_RETEST_CONFIRMED';
-  if (validBreakdown) return 'BEAR_VALID_BREAKDOWN';
-  if (sweptLow) return 'BEAR_LOW_SWEEP';
-  if (pullbackConfirmed) return 'BEAR_PULLBACK_IN_RANGE';
-  if (volumeExpansion >= EXHAUSTION_VOLUME_EXPANSION) return 'BEAR_VOLUME_EXPANSION';
-
-  return 'BEAR_RANGE_NEUTRAL';
-}
-
-function baseResult(reason = null) {
-  return {
-    fakeBreakout: false,
-    fakeBreakdown: false,
-    fakeBreakoutRisk: false,
-    fakeBreakdownRisk: false,
-    fakeBreakoutReason: null,
-    fakeBreakdownReason: null,
-
-    breakoutType: 'UNKNOWN',
-    breakdownType: 'UNKNOWN',
-    breakoutValid: false,
-    breakdownValid: false,
-    longContinuation: false,
-    shortContinuation: false,
-    avoidLong: false,
-    avoidShort: false,
-
-    pullbackConfirmed: false,
-    sweepConfirmed: false,
-    retestConfirmed: false,
-
-    setupTypeHint: null,
-    regimeBucketHint: null,
-    confirmationProfileHint: null,
-    analyzeSetupHintSource: 'MARKET_METADATA_ONLY',
-
-    rangeHigh: null,
-    rangeLow: null,
-    volumeExpansion: 0,
-
-    scannerBucket: reason || 'BEAR_BREAKDOWN_UNCLASSIFIED',
-    legacy25Bucket: null,
-
-    reason,
-    createdAt: now(),
-
-    ...learningIdentityPlaceholders(),
-    ...shortMachineFlags()
-  };
-}
-
-function emptyResult(reason = 'INSUFFICIENT_DATA') {
-  return {
-    ...baseResult(reason),
-    breakoutType: 'NONE',
-    breakdownType: 'NONE',
-    scannerBucket: reason,
-    side: 'unknown',
-    tradeSide: 'UNKNOWN',
-    positionSide: 'UNKNOWN',
-    direction: 'UNKNOWN',
-    scannerSide: 'UNKNOWN',
-    actualScannerSide: 'UNKNOWN',
-    analysisSide: 'UNKNOWN',
-    directionalSide: 'unknown',
-    inferredDirectionalSide: 'unknown',
-    marketSide: 'unknown'
-  };
-}
-
-function pctDistance(a, b) {
-  const x = safeNumber(a, 0);
-  const y = safeNumber(b, 0);
-
-  if (x <= 0 || y <= 0) return Infinity;
-
-  return Math.abs(x - y) / Math.max(x, y);
-}
-
-function normalizeCandle(candle = {}) {
-  return {
-    ...candle,
-    open: safeNumber(candle.open, 0),
-    high: safeNumber(candle.high, 0),
-    low: safeNumber(candle.low, 0),
-    close: safeNumber(candle.close, 0),
-    volume: safeNumber(candle.volume ?? candle.baseVolume ?? candle.vol, 0),
-    ts: safeNumber(candle.ts ?? candle.time ?? candle.timestamp, 0)
-  };
-}
-
-function validCandle(candle = {}) {
-  return (
-    safeNumber(candle.open, 0) > 0 &&
-    safeNumber(candle.high, 0) > 0 &&
-    safeNumber(candle.low, 0) > 0 &&
-    safeNumber(candle.close, 0) > 0 &&
-    safeNumber(candle.high, 0) >= safeNumber(candle.low, 0)
-  );
-}
-
-function lowerWickPct(candle = {}) {
-  const high = safeNumber(candle.high, 0);
-  const low = safeNumber(candle.low, 0);
-  const open = safeNumber(candle.open, 0);
-  const close = safeNumber(candle.close, 0);
-
-  const range = high - low;
-
-  if (range <= 0) return 0;
-
-  const bodyBottom = Math.min(open, close);
-  const wick = Math.max(0, bodyBottom - low);
-
-  return wick / range;
-}
-
-function inferSetupHint({
-  fake,
-  sweptLow,
-  validBreakdown,
-  retestConfirmed,
-  pullbackConfirmed,
-  volumeExpansion
-}) {
-  if (fake || sweptLow) return 'SWEEP_REVERSAL';
-  if (validBreakdown && retestConfirmed) return 'RETEST';
-  if (pullbackConfirmed) return 'RETEST';
-  if (volumeExpansion >= EXHAUSTION_VOLUME_EXPANSION) return 'BREAKOUT';
-
-  return 'BREAKOUT';
-}
-
-function inferRegimeHint({
-  validBreakdown,
-  volumeExpansion,
-  btcWith,
-  btcAgainst,
-  fakeBreakoutRisk
-}) {
-  if (validBreakdown && btcWith && volumeExpansion >= 1.15) return 'TREND';
-  if (fakeBreakoutRisk || btcAgainst) return 'CHOP';
-  if (volumeExpansion < 1.05) return 'SQUEEZE';
-
-  return 'CHOP';
-}
-
-function inferConfirmationProfileHint({
-  validBreakdown,
-  fake,
-  fakeBreakoutRisk,
-  btcWith,
-  btcAgainst,
-  volumeExpansion,
-  wickReject,
-  weakBody,
-  retestConfirmed
-}) {
-  if (validBreakdown && btcWith && volumeExpansion >= 1.4 && retestConfirmed) {
-    return 'A_STRONG_ALIGN';
-  }
-
-  if (validBreakdown && btcWith) {
-    return 'B_FLOW_ALIGN';
-  }
-
-  if (validBreakdown && volumeExpansion >= 1.25) {
-    return 'C_VOLUME_ALIGN';
-  }
-
-  if (!fake && !fakeBreakoutRisk && !btcAgainst && !wickReject && !weakBody) {
-    return 'D_MIXED_OK';
-  }
-
-  return 'E_WEAK_CONTRA';
-}
-
-function analyzeBearBreakdown({
-  last,
-  recentHigh,
-  recentLow,
-  volumeExpansion,
-  btcState
-}) {
-  const close = safeNumber(last.close, 0);
-  const high = safeNumber(last.high, 0);
-  const low = safeNumber(last.low, 0);
-
-  const lowerWick = lowerWickPct(last);
-  const body = candleBodyPct(last);
-
-  const sweptLow = low < recentLow && close > recentLow;
-  const closedBelowRange = close < recentLow * (1 - BREAKOUT_BUFFER_PCT);
-
-  const btcAgainst = isBtcAgainstBear(btcState);
-  const btcWith = isBtcWithBear(btcState);
-
-  const wickReject = lowerWick >= WICK_REJECT_THRESHOLD;
-  const weakBody = body <= WEAK_BODY_THRESHOLD;
-  const volumeExhaustion = volumeExpansion >= EXHAUSTION_VOLUME_EXPANSION;
-
-  const fake =
-    sweptLow &&
-    wickReject &&
-    (
-      volumeExhaustion ||
-      btcAgainst ||
-      weakBody
-    );
-
-  const retestConfirmed =
-    pctDistance(close, recentLow) <= RETEST_TOLERANCE_PCT ||
-    pctDistance(high, recentLow) <= RETEST_TOLERANCE_PCT;
-
-  const pullbackConfirmed =
-    close > recentLow &&
-    close < recentHigh;
-
-  const validBreakdown =
-    closedBelowRange &&
-    !wickReject &&
-    (
-      btcWith ||
-      volumeExpansion >= 1.15
-    );
-
-  const fakeBreakoutRisk = !fake && (
-    sweptLow ||
-    (
-      closedBelowRange &&
-      !btcWith
-    )
-  );
-
-  const setupTypeHint = inferSetupHint({
-    fake,
-    sweptLow,
-    validBreakdown,
-    retestConfirmed,
-    pullbackConfirmed,
-    volumeExpansion
-  });
-
-  const regimeBucketHint = inferRegimeHint({
-    validBreakdown,
-    volumeExpansion,
-    btcWith,
-    btcAgainst,
-    fakeBreakoutRisk
-  });
-
-  const confirmationProfileHint = inferConfirmationProfileHint({
-    validBreakdown,
-    fake,
-    fakeBreakoutRisk,
-    btcWith,
-    btcAgainst,
-    volumeExpansion,
-    wickReject,
-    weakBody,
-    retestConfirmed
-  });
-
-  const scannerBucket = scannerBucketFromBreakdown({
-    fake,
-    fakeBreakoutRisk,
-    validBreakdown,
-    sweptLow,
-    retestConfirmed,
-    pullbackConfirmed,
-    volumeExpansion
-  });
-
-  return {
-    ...baseResult(null),
-
-    fakeBreakout: fake,
-    fakeBreakdown: fake,
-    fakeBreakoutRisk,
-    fakeBreakdownRisk: fakeBreakoutRisk,
-
-    fakeBreakoutReason: fake
-      ? 'LOW_SWEEP_CLOSE_BACK_IN_RANGE'
-      : null,
-
-    fakeBreakdownReason: fake
-      ? 'LOW_SWEEP_CLOSE_BACK_IN_RANGE'
-      : null,
-
-    breakoutType: fake
-      ? 'FAKE_BREAKDOWN'
-      : validBreakdown
-        ? 'VALID_BREAKDOWN'
-        : 'NONE',
-
-    breakdownType: fake
-      ? 'FAKE_BREAKDOWN'
-      : validBreakdown
-        ? 'VALID_BREAKDOWN'
-        : 'NONE',
-
-    breakoutValid: validBreakdown,
-    breakdownValid: validBreakdown,
-    longContinuation: false,
-    shortContinuation: validBreakdown,
-    avoidLong: false,
-    avoidShort: fake || fakeBreakoutRisk,
-
-    pullbackConfirmed,
-    sweepConfirmed: sweptLow,
-    retestConfirmed,
-
-    setupTypeHint,
-    regimeBucketHint,
-    confirmationProfileHint,
-
-    setupType: setupTypeHint,
-    regimeBucket: regimeBucketHint,
-    confirmationProfile: confirmationProfileHint,
-
-    rangeHigh: recentHigh,
-    rangeLow: recentLow,
-    volumeExpansion,
-
-    scannerBucket,
-    legacy25Bucket: scannerBucket,
-
-    details: {
-      recentHigh,
-      recentLow,
-
-      close,
-      high,
-      low,
-
-      lowerWick,
-      body,
-      volumeExpansion,
-
-      btcState,
-      btcAgainst,
-      btcWith,
-
-      sweptLow,
-      closedBelowRange,
-      wickReject,
-      weakBody,
-      volumeExhaustion,
-      validBreakdown,
-      fakeBreakoutRisk,
-      fakeBreakdownRisk: fakeBreakoutRisk,
-
-      scannerBucket,
-      legacy25Bucket: scannerBucket,
-
-      setupTypeHint,
-      regimeBucketHint,
-      confirmationProfileHint,
-
-      ...learningIdentityPlaceholders(),
-      ...shortMachineFlags()
+  const recentClosures = closes.slice(-(lookbackPeriod + 5)).map(c => parseFloat(c));
+  const support = Math.min(...recentClosures.slice(0, lookbackPeriod));
+  const breakPrice = parseFloat(entryPrice);
+
+  // If entry breaks well below support
+  if (breakPrice < support * 0.99) {
+    // Check if already bounced back up
+    const afterBreak = recentClosures.slice(-5);
+    const highAfterBreak = Math.max(...afterBreak);
+
+    if (highAfterBreak > breakPrice * 1.01) {
+      return true; // Fake breakout detected
     }
+  }
+
+  return false;
+}
+
+/**
+ * Validate breakout quality
+ */
+export function validateBreakout(closes = [], setup = '', regime = '') {
+  if (!closes || closes.length < 20) {
+    return {
+      valid: false,
+      confidence: 0,
+      reason: 'INSUFFICIENT_DATA'
+    };
+  }
+
+  let confidence = 0;
+  let reason = '';
+
+  if (setup === 'BREAKOUT') {
+    // BREAKOUT requires strong momentum
+    const recent5 = closes.slice(-5).map(c => parseFloat(c));
+    const avg5 = recent5.reduce((a, b) => a + b, 0) / 5;
+    
+    const prev5 = closes.slice(-10, -5).map(c => parseFloat(c));
+    const avgPrev5 = prev5.length > 0 ? prev5.reduce((a, b) => a + b, 0) / 5 : avg5;
+
+    if (avg5 < avgPrev5 * 0.99) {
+      confidence = 0.85;
+      reason = 'STRONG_MOMENTUM';
+    } else if (avg5 < avgPrev5) {
+      confidence = 0.65;
+      reason = 'WEAK_MOMENTUM';
+    } else {
+      confidence = 0.25;
+      reason = 'NO_MOMENTUM';
+    }
+  } else if (setup === 'RETEST') {
+    // RETEST must touch support level
+    const support = Math.min(...closes.slice(-20));
+    const lastClose = closes[closes.length - 1];
+    
+    if (lastClose > support && lastClose < support * 1.02) {
+      confidence = 0.75;
+      reason = 'VALID_RETEST';
+    } else {
+      confidence = 0.55;
+      reason = 'WEAK_RETEST';
+    }
+  } else if (setup === 'SWEEP_REVERSAL') {
+    // SWEEP_REVERSAL needs reversal after sweep
+    const recent10 = closes.slice(-10).map(c => parseFloat(c));
+    const low10 = Math.min(...recent10);
+    const lastClose = closes[closes.length - 1];
+    
+    if (lastClose > low10 * 1.005) {
+      confidence = 0.7;
+      reason = 'VALID_SWEEP';
+    } else {
+      confidence = 0.4;
+      reason = 'INCOMPLETE_SWEEP';
+    }
+  } else if (setup === 'CONTINUATION') {
+    // CONTINUATION needs momentum
+    const recent3 = closes.slice(-3).map(c => parseFloat(c));
+    const allDown = recent3[0] > recent3[1] && recent3[1] > recent3[2];
+    
+    if (allDown) {
+      confidence = 0.75;
+      reason = 'STRONG_CONTINUATION';
+    } else {
+      confidence = 0.45;
+      reason = 'WEAK_CONTINUATION';
+    }
+  } else if (setup === 'COMPRESSION') {
+    // COMPRESSION needs to break out of range
+    const recent5 = closes.slice(-5).map(c => parseFloat(c));
+    const range = Math.max(...recent5) - Math.min(...recent5);
+    const avg5 = recent5.reduce((a, b) => a + b, 0) / 5;
+    
+    if (range / avg5 < 0.005) {
+      confidence = 0.7;
+      reason = 'TIGHT_COMPRESSION';
+    } else {
+      confidence = 0.5;
+      reason = 'LOOSE_COMPRESSION';
+    }
+  } else {
+    confidence = 0.5;
+    reason = 'UNKNOWN_SETUP';
+  }
+
+  return {
+    valid: confidence > 0.5,
+    confidence,
+    reason,
+    setup,
+    regime
   };
 }
 
-export function detectFakeBreakout({
-  side,
-  candles15m,
-  btcState = 'NEUTRAL',
-  lookback = DEFAULT_LOOKBACK
-} = {}) {
-  const rows = Array.isArray(candles15m)
-    ? candles15m
-      .filter(Boolean)
-      .map(normalizeCandle)
-      .filter(validCandle)
-    : [];
-
-  const lb = Math.max(
-    5,
-    Math.floor(Number(lookback) || DEFAULT_LOOKBACK)
-  );
-
-  if (rows.length < lb + 2) {
-    return emptyResult('INSUFFICIENT_CANDLES');
+/**
+ * Check for reversal risk (likely to reverse)
+ */
+export function checkReversalRisk(closes = [], rsi = 50, bb = null, regime = '') {
+  if (!closes || closes.length < 10) {
+    return {
+      riskLevel: 'UNKNOWN',
+      score: 0,
+      reasons: []
+    };
   }
 
-  const normalizedSide = normalizeSide(side);
+  const reasons = [];
+  let riskScore = 0;
 
-  if (normalizedSide === 'long_disabled') {
-    return emptyResult('LONG_DISABLED_SHORT_ONLY');
+  // Extreme RSI (over-extended)
+  if (rsi > 80) {
+    riskScore += 30;
+    reasons.push('OVERBOUGHT_RSI');
+  } else if (rsi > 70) {
+    riskScore += 15;
+    reasons.push('EXTENDED_RSI');
   }
 
-  if (normalizedSide !== TARGET_SCANNER_SIDE) {
-    return emptyResult('UNKNOWN_OR_NON_BEAR_SIDE');
+  // Extreme price vs BB
+  const lastClose = closes[closes.length - 1];
+  if (bb && lastClose < bb.lower) {
+    riskScore += 20;
+    reasons.push('BELOW_BB_LOWER');
   }
 
-  const last = rows.at(-1);
-  const prior = rows.slice(-(lb + 1), -1);
-  const { recentHigh, recentLow } = getRecentRange(prior, lb);
-
-  if (
-    !last ||
-    recentHigh <= 0 ||
-    recentLow <= 0 ||
-    recentHigh <= recentLow
-  ) {
-    return emptyResult('INVALID_RANGE');
+  // Divergence check
+  const recent5 = closes.slice(-5).map(c => parseFloat(c));
+  const prev5 = closes.slice(-10, -5).map(c => parseFloat(c));
+  
+  if (recent5.reduce((a, b) => a + b) / 5 > prev5.reduce((a, b) => a + b) / 5 && rsi > 70) {
+    riskScore += 15;
+    reasons.push('BEARISH_DIVERGENCE');
   }
 
-  const normalizedBtcState = normalizeBtcState(btcState);
-  const volumeExpansion = calcVolumeExpansion(rows, lb);
+  // Chop regime = higher reversal risk
+  if (regime === 'CHOP') {
+    riskScore += 20;
+    reasons.push('CHOPPY_MARKET');
+  }
 
-  return analyzeBearBreakdown({
-    last,
-    recentHigh,
-    recentLow,
-    volumeExpansion,
-    btcState: normalizedBtcState
-  });
+  // Determine level
+  let riskLevel = 'LOW';
+  if (riskScore > 70) {
+    riskLevel = 'CRITICAL';
+  } else if (riskScore > 50) {
+    riskLevel = 'HIGH';
+  } else if (riskScore > 30) {
+    riskLevel = 'MEDIUM';
+  }
+
+  return {
+    riskLevel,
+    score: riskScore,
+    reasons,
+    maxScore: 100
+  };
 }
+
+/**
+ * Detect trap move / stop hunt pattern
+ */
+export function detectTrapMove(highs = [], lows = [], closes = []) {
+  if (!highs || !lows || !closes || closes.length < 15) {
+    return {
+      isTrap: false,
+      confidence: 0
+    };
+  }
+
+  const recent10 = closes.slice(-10).map(c => parseFloat(c));
+  const recent10Highs = highs.slice(-10).map(h => parseFloat(h));
+  const recent10Lows = lows.slice(-10).map(l => parseFloat(l));
+
+  // Find highest high and lowest low
+  const highestHigh = Math.max(...recent10Highs);
+  const lowestLow = Math.min(...recent10Lows);
+
+  // Check pattern: high -> low -> high or low -> high -> low
+  // Last close should be opposite to initial direction
+  const firstClose = recent10[0];
+  const lastClose = recent10[recent10.length - 1];
+  const midClose = recent10[Math.floor(recent10.length / 2)];
+
+  // Trap if: Started high, went low, came back high (or vice versa)
+  let isTrap = false;
+  let confidence = 0;
+
+  // Bullish trap: price goes up, breaks down, comes back up
+  if (firstClose < highestHigh && lastClose > highestHigh * 0.99) {
+    const touchedLow = Math.min(...recent10Lows);
+    if (touchedLow < firstClose) {
+      isTrap = true;
+      confidence = 0.75;
+    }
+  }
+
+  // Bearish trap: price goes down, bounces up, comes back down
+  if (firstClose > lowestLow && lastClose < lowestLow * 1.01) {
+    const touchedHigh = Math.max(...recent10Highs);
+    if (touchedHigh > firstClose) {
+      isTrap = true;
+      confidence = 0.75;
+    }
+  }
+
+  return {
+    isTrap,
+    confidence,
+    pattern: isTrap ? 'TRAP_MOVE' : 'NORMAL',
+    highestHigh,
+    lowestLow
+  };
+}
+
+/**
+ * Record fake breakout alert
+ */
+export async function recordFakeBreakoutAlert(symbol = '', entryPrice = 0) {
+  try {
+    const redis = getRedis();
+    const key = `FAKE_BREAKOUT:${symbol}`;
+
+    await redis.set(key, {
+      symbol,
+      entryPrice,
+      timestamp: now(),
+      detected: true,
+      expires: now() + (24 * 60 * 60 * 1000) // 24 hours
+    });
+
+    return { ok: true };
+  } catch (err) {
+    console.error('recordFakeBreakoutAlert error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Get fake breakout history
+ */
+export async function getFakeBreakoutHistory(symbol = '') {
+  try {
+    const redis = getRedis();
+    const key = `FAKE_BREAKOUT:${symbol}`;
+    const data = await redis.get(key);
+
+    if (!data) {
+      return { ok: true, found: false };
+    }
+
+    return { ok: true, found: true, alert: data };
+  } catch (err) {
+    console.error('getFakeBreakoutHistory error:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+export default {
+  isFakeBreakout,
+  validateBreakout,
+  checkReversalRisk,
+  detectTrapMove,
+  recordFakeBreakoutAlert,
+  getFakeBreakoutHistory
+};
