@@ -1,11 +1,11 @@
-// ================= FILE: src/trade/tradeSystem.js =================
+// FILE: src/trade/tradeSystem.js
 
 import { createHash } from 'crypto';
-import * as ConfigModule from '../config.js';
-import * as KeysModule from '../keys.js';
-import * as RedisApi from '../redis.js';
-import * as Utils from '../utils.js';
-import * as MarketKeyModule from '../market/marketKey.js';
+import * as ConfigModule from './config.js';
+import * as KeysModule from './keys.js';
+import * as RedisApi from './redis.js';
+import * as Utils from './utils.js';
+import * as MarketKeyModule from './market/marketKey.js';
 
 const CONFIG = ConfigModule.CONFIG || {};
 const KEYS = KeysModule.KEYS || {};
@@ -17,7 +17,7 @@ const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
-const LEGACY_SHORT_KEY_PREFIX = 'SHORT_';
+const LEGACY_SHORT_KEY_PREFIX = 'SHORT';
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
 const PRIMARY_LATEST_KEY = 'SHORT:SCAN:LATEST';
@@ -104,7 +104,6 @@ const MIN_EMPIRICAL_VETO_COMPLETED = 35;
 const BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE = true;
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
-
 const DEFAULT_MAX_RUNTIME_MS = 13000;
 const HARD_MAX_RUNTIME_MS = 21000;
 const FINALIZATION_RESERVE_MS = 1500;
@@ -115,7 +114,6 @@ const DEFAULT_CANDIDATE_CHUNK_SIZE = 15;
 const HARD_MAX_CANDIDATE_CHUNK_SIZE = 30;
 const DEFAULT_MAX_ENTRIES_PER_RUN = 2;
 const DEFAULT_MAX_SNAPSHOT_AGE_SEC = 8 * 60;
-
 const DEFAULT_MIN_RISK_PCT = 0.0045;
 const DEFAULT_MAX_RISK_PCT = 0.035;
 const DEFAULT_FALLBACK_RISK_PCT = 0.0065;
@@ -127,12 +125,10 @@ const DEFAULT_MIN_DISCORD_REWARD_PCT = 0.01;
 const DEFAULT_MAX_RISK_TO_REWARD_DISTANCE_RATIO = 1.05;
 const DEFAULT_MAX_ESTIMATED_COST_R = 0.35;
 const DEFAULT_HARD_MAX_ESTIMATED_COST_R = 0.55;
-
 const DEFAULT_ROUND_TRIP_FEE_PCT = 0.0012;
 const DEFAULT_ROUND_TRIP_SLIPPAGE_PCT = 0.0004;
 const DEFAULT_FALLBACK_SPREAD_PCT = 0.0008;
 const DEFAULT_SPREAD_COST_MULT = 1;
-
 const DEFAULT_MARKET_CONTEXT_TIMEOUT_MS = 500;
 const DEFAULT_SNAPSHOT_TIMEOUT_MS = 700;
 const DEFAULT_SELECTION_TIMEOUT_MS = 250;
@@ -141,7 +137,6 @@ const DEFAULT_ANALYZE_IMPORT_TIMEOUT_MS = 600;
 const DEFAULT_POSITION_IMPORT_TIMEOUT_MS = 600;
 const DEFAULT_DISCORD_IMPORT_TIMEOUT_MS = 450;
 const DEFAULT_SIZING_IMPORT_TIMEOUT_MS = 350;
-
 const DEFAULT_OPEN_POSITION_LOAD_TIMEOUT_MS = 700;
 const DEFAULT_MONITOR_TIMEOUT_MS = 1200;
 const DEFAULT_MONITOR_PRICE_FETCH_TIMEOUT_MS = 150;
@@ -151,11 +146,9 @@ const DEFAULT_SAVE_POSITION_TIMEOUT_MS = 600;
 const DEFAULT_REDIS_WRITE_TIMEOUT_MS = 500;
 const DEFAULT_DISCORD_TIMEOUT_MS = 400;
 const DEFAULT_REDIS_READ_TIMEOUT_MS = 160;
-
 const DEFAULT_ANALYZE_MAX_CANDIDATES_PER_SNAPSHOT = 30;
 const DEFAULT_CANDIDATE_TIMEOUT_MS = 400;
 const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 2;
-
 const DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT = true;
 const DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH = true;
 const DEFAULT_MONITOR_CANDLE_RANGE_ENABLED = true;
@@ -163,9 +156,10 @@ const DEFAULT_MONITOR_CANDLE_RANGE_ENABLED = true;
 const BITGET_BASE_URL = 'https://api.bitget.com';
 const BITGET_PRODUCT_TYPE = 'USDT-FUTURES';
 const LIVE_PRICE_CACHE_TTL_MS = 2500;
-
 const SHORT_MARKET_WEATHER_KEY_VERSION = MarketKeyModule.MARKET_WEATHER_KEY_VERSION || 'SHORT_MARKET_WEATHER_KEY_V1';
-const PLAYBOOK_MAX_AGE_MIN = Number.isFinite(Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN)) ? Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN) : 240;
+const PLAYBOOK_MAX_AGE_MIN =
+  Number.isFinite(Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN)) ?
+  Number(MarketKeyModule.PLAYBOOK_MAX_AGE_MIN) : 240;
 const UNKNOWN_MARKET_WEATHER_KEY = MarketKeyModule.UNKNOWN_MARKET_WEATHER_KEY || 'UNKNOWN|UNKNOWN';
 
 const MARKET_WEATHER_LATEST_KEYS = Object.freeze([
@@ -225,15 +219,17 @@ const CONFIRMATION_SET = new Set(CONFIRMATION_PROFILES);
 const TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on', 'force', 'forced']);
 const FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off', 'disabled', 'skip']);
 
-// ===== GLOBALE STATE (enkel voor immutable caches) =====
+// ==== GLOBALE STATE (enkel voor immutable caches) ====
 const livePriceCache = new Map();
 let ANALYZE_ENGINE_MODULE = null;
 let POSITION_ENGINE_MODULE = null;
 let POSITION_SIZING_MODULE = null;
 let DISCORD_MODULE = null;
 
-// ===== BASIS HULPFUNCTIES =====
-function now() { return Date.now(); }
+// ==== BASIS HULPFUNCTIES ====
+function now() {
+  return Date.now();
+}
 
 function upper(value, fallback = '') {
   const text = String(value ?? '').trim();
@@ -289,7 +285,7 @@ function roundPrice(value) {
 
 function pct(part, total) {
   const t = n(total, 0);
-  return t > 0 ? Number(((n(part, 0) / t) * 100).toFixed(2)) : 0;
+  return t > 0 ? Number((n(part, 0) / t) * 100).toFixed(2) : 0;
 }
 
 function int(value, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
@@ -357,7 +353,7 @@ function createEventLoopLagMonitor(intervalMs = 100) {
   };
 }
 
-// ===== NIEUWE UNIFORME TIMEOUT/DEADLINE INFRASTRUCTUUR =====
+// ===== NIEUWE UNIFORME TIMEOUT/DEADLINE INFRASTRUCTEUR =====
 
 async function runBoundedOperation({
   fn,
@@ -400,24 +396,22 @@ async function runBoundedOperation({
 
   try {
     const resultPromise = fn(controller.signal);
-
     const timerPromise = new Promise((resolve) => {
       timer = setTimeout(() => {
         if (!completed) {
           controller.abort();
           if (onTimeout) onTimeout();
         }
-        resolve({ __timeout: true });
+        resolve({ _timeout: true });
       }, actualTimeout);
       if (timer.unref) timer.unref();
     });
 
     const race = await Promise.race([resultPromise, timerPromise]);
-
     cleanup();
     if (signal) signal.removeEventListener('abort', abortHandler);
 
-    if (race && typeof race === 'object' && race.__timeout === true) {
+    if (race && typeof race === 'object' && race._timeout === true) {
       setTimeout(async () => {
         try { await resultPromise; } catch { /* ignore */ }
       }, 0);
@@ -439,33 +433,17 @@ async function runBoundedOperation({
   }
 }
 
-async function withDeadlineAndAbort({
-  fn,
-  deadlineAt,
-  timeoutMs,
-  label,
-  fallback = null,
-  signal = null,
-  reserveMs = 0
-}) {
+async function withDeadlineAndAbort({ fn, deadlineAt, timeoutMs, label, fallback = null, signal = null, reserveMs = 0 }) {
   const start = now();
   const usable = Math.max(0, deadlineAt - start - reserveMs);
   const actualTimeout = timeoutMs !== undefined ? Math.min(timeoutMs, usable) : usable;
   if (actualTimeout <= 0) {
     return { ok: false, result: fallback, error: new Error('Insufficient budget'), timedOut: true, aborted: false, abortSupported: false, lateSettlement: false };
   }
-  return runBoundedOperation({
-    fn,
-    deadlineAt,
-    timeoutMs: actualTimeout,
-    label,
-    signal,
-    fallback,
-  });
+  return runBoundedOperation({ fn, deadlineAt, timeoutMs: actualTimeout, label, signal, fallback });
 }
 
 // ===== CENTRALE DEADLINE HELPERS =====
-
 function remainingMs(deadlineAt, reserveMs = 0) {
   return Math.max(0, deadlineAt - now() - reserveMs);
 }
@@ -479,8 +457,6 @@ function phaseTimeoutMs(deadlineAt, requestedMs, reserveMs = 0, minMs = 50) {
   if (budget < minMs) return 0;
   return Math.min(requestedMs, budget);
 }
-
-// ===== PHASE LOGGING (lokaal per run) =====
 
 function recordPhase(context, name, extra = {}) {
   const nowTime = now();
@@ -509,8 +485,6 @@ function recordPhase(context, name, extra = {}) {
     ...extra
   }));
 }
-
-// ===== HULPFUNCTIES (volledig) =====
 
 function normalizeTimestampMs(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -651,11 +625,15 @@ async function commitSnapshotChunk({ snapshotId, nextIndex, totalCandidates, com
 }
 
 function safeGetDurableRedis() {
-  try { return typeof RedisApi.getDurableRedis === 'function' ? RedisApi.getDurableRedis() : null; } catch { return null; }
+  try {
+    return typeof RedisApi.getDurableRedis === 'function' ? RedisApi.getDurableRedis() : null;
+  } catch { return null; }
 }
 
 function safeGetVolatileRedis() {
-  try { return typeof RedisApi.getVolatileRedis === 'function' ? RedisApi.getVolatileRedis() : null; } catch { return null; }
+  try {
+    return typeof RedisApi.getVolatileRedis === 'function' ? RedisApi.getVolatileRedis() : null;
+  } catch { return null; }
 }
 
 async function getJsonSafe(redis, key, fallback = null) {
@@ -682,9 +660,9 @@ async function getJsonSafe(redis, key, fallback = null) {
 async function setJsonSafe(redis, key, value, options = {}) {
   if (!redis || !key) return false;
   try {
-    if (typeof KeysModule.assertKeyAllowedForWriteScope === 'function') {
+    if (typeof KeysModule.assetKeyAllowedForWriteScope === 'function') {
       try {
-        KeysModule.assertKeyAllowedForWriteScope(KEYS.scopes?.TRADE_RUN || 'TRADE_RUN', key);
+        KeysModule.assetKeyAllowedForWriteScope(KEYS.scopes?.TRADE_RUN || 'TRADE_RUN', key);
       } catch (error) {
         if (!String(key || '').startsWith(SHORT_KEY_PREFIX)) throw error;
       }
@@ -712,7 +690,7 @@ async function withTimeoutFallback(promise, ms, label) {
     const result = await Promise.race([
       promise,
       new Promise((resolve) => {
-        timer = setTimeout(() => resolve({ __timeout: true, label, timeoutMs: ms }), ms);
+        timer = setTimeout(() => resolve({ _timeout: true, label, timeoutMs: ms }), ms);
         if (timer.unref) timer.unref();
       })
     ]);
@@ -736,7 +714,7 @@ async function readJsonFromAnyRedis(keys = [], fallback = null, timeoutMs = 500)
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result.status === 'fulfilled' && !isTimeoutResult(result.value) && result.value) {
-        return { value: result.value, source: `REDIS:${keyList[i]}`, key: keyList[i] };
+        return { value: result.value, source: `REDIS:${keyList[i]}`, key: null };
       }
     }
   }
@@ -939,8 +917,8 @@ function virtualFlags(row = {}) {
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
     sameCandleBothHitRule: 'CONSERVATIVE_SL_FIRST',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    grossRFormula: ' (entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: ' (entry - currentPrice) / (initialSl - entry)',
     hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
     hardTimeStopNoPriceExit: DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT,
     closeExpiredBeforePriceFetch: DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH,
@@ -982,7 +960,6 @@ function tradeConfig(options = {}) {
     CONFIG.trade?.shortMaxRiskPct,
     CONFIG.trade?.maxRiskPct
   ), DEFAULT_MAX_RISK_PCT);
-
   return {
     maxRuntimeMs,
     hardReturnReserveMs: int(
@@ -1024,7 +1001,7 @@ function tradeConfig(options = {}) {
     minRR: n(first(options.minRR, CONFIG.short?.trade?.minRR, CONFIG.trade?.minRR), DEFAULT_MIN_RR),
     maxRR: n(first(options.maxRR, CONFIG.short?.trade?.maxRR, CONFIG.trade?.maxRR), DEFAULT_MAX_RR),
     minRewardPct: n(first(options.minRewardPct, CONFIG.short?.trade?.minRewardPct, CONFIG.trade?.minRewardPct), DEFAULT_MIN_REWARD_PCT),
-    minDiscordRewardPct: n(first(options.minDiscordRewardPct, CONFIG.short?.trade?.minDiscordRewardPct, CONFIG.trade?.minDiscordRewardPct), DEFAULT_MIN_DISCORD_REWARD_PCT),
+    minDiscordRewardPct: n(first(options.minDiscordRewardPct, CONFIG.short?.trade?.minDiscordRewardPct), DEFAULT_MIN_DISCORD_REWARD_PCT),
     maxRiskToRewardDistanceRatio: n(first(
       options.maxRiskToRewardDistanceRatio,
       CONFIG.short?.trade?.maxRiskToRewardDistanceRatio,
@@ -1041,16 +1018,14 @@ function tradeConfig(options = {}) {
       CONFIG.short?.trade?.hardMaxEstimatedCostR,
       CONFIG.trade?.hardMaxEstimatedCostR
     ), DEFAULT_HARD_MAX_ESTIMATED_COST_R),
-    roundTripFeePct: n(first(options.roundTripFeePct, CONFIG.short?.cost?.roundTripFeePct, CONFIG.cost?.roundTripFeePct), DEFAULT_ROUND_TRIP_FEE_PCT),
-    roundTripSlippagePct: n(first(options.roundTripSlippagePct, CONFIG.short?.cost?.roundTripSlippagePct, CONFIG.cost?.roundTripSlippagePct), DEFAULT_ROUND_TRIP_SLIPPAGE_PCT),
-    fallbackSpreadPct: n(first(options.fallbackSpreadPct, CONFIG.short?.cost?.fallbackSpreadPct, CONFIG.cost?.fallbackSpreadPct), DEFAULT_FALLBACK_SPREAD_PCT),
-    spreadCostMult: n(first(options.spreadCostMult, CONFIG.short?.cost?.spreadCostMult, CONFIG.cost?.spreadCostMult), DEFAULT_SPREAD_COST_MULT),
-    rrVariants: Array.isArray(options.rrVariants) && options.rrVariants.length
-      ? options.rrVariants.map((x) => n(x, 0)).filter((x) => x > 0)
-      : DEFAULT_RR_VARIANTS,
+    roundTripFeePct: n(first(options.roundTripFeePct, CONFIG.short?.cost?.roundTripFeePct), DEFAULT_ROUND_TRIP_FEE_PCT),
+    roundTripSlippagePct: n(first(options.roundTripSlippagePct, CONFIG.short?.cost?.roundTripSlippagePct), DEFAULT_ROUND_TRIP_SLIPPAGE_PCT),
+    fallbackSpreadPct: n(first(options.fallbackSpreadPct, CONFIG.short?.cost?.fallbackSpreadPct), DEFAULT_FALLBACK_SPREAD_PCT),
+    spreadCostMult: n(first(options.spreadCostMult, CONFIG.short?.cost?.spreadCostMult), DEFAULT_SPREAD_COST_MULT),
+    rrVariants: Array.isArray(options.rrVariants) && options.rrVariants.length ? options.rrVariants.map((x) => n(x, 0)).filter((x) => x > 0) : DEFAULT_RR_VARIANTS,
     marketContextTimeoutMs: int(
       first(options.marketContextTimeoutMs, CONFIG.short?.trade?.marketContextTimeoutMs, CONFIG.trade?.marketContextTimeoutMs),
-      DEFAULT_MARKET_CONTEXT_TIMEOUT_MS,
+      500,
       100,
       1500
     ),
@@ -1356,98 +1331,39 @@ function parseKnownMarketWeatherKey(value) {
       const regime = normalizeMarketWeatherRegimeSafe(parsed?.regime);
       const trendSide = normalizeMarketWeatherTrendSideSafe(parsed?.trendSide);
       const key = buildWeatherKeySafe(regime, trendSide);
-      return {
-        known: key !== UNKNOWN_MARKET_WEATHER_KEY,
-        key,
-        regime: key === UNKNOWN_MARKET_WEATHER_KEY ? 'UNKNOWN' : regime,
-        trendSide: key === UNKNOWN_MARKET_WEATHER_KEY ? 'UNKNOWN' : trendSide
-      };
+      return { known: key !== UNKNOWN_MARKET_WEATHER_KEY, key, regime, trendSide };
     } catch {}
   }
-  if (raw.includes('|')) {
-    const [regimeRaw, trendRaw] = raw.split('|');
-    const regime = normalizeMarketWeatherRegimeSafe(regimeRaw);
-    const trendSide = normalizeMarketWeatherTrendSideSafe(trendRaw);
+  const parts = raw.split('|');
+  if (parts.length >= 2) {
+    const regime = normalizeMarketWeatherRegimeSafe(parts[0]);
+    const trendSide = normalizeMarketWeatherTrendSideSafe(parts[1]);
     const key = buildWeatherKeySafe(regime, trendSide);
-    return {
-      known: key !== UNKNOWN_MARKET_WEATHER_KEY,
-      key,
-      regime: key === UNKNOWN_MARKET_WEATHER_KEY ? 'UNKNOWN' : regime,
-      trendSide: key === UNKNOWN_MARKET_WEATHER_KEY ? 'UNKNOWN' : trendSide
-    };
+    return { known: key !== UNKNOWN_MARKET_WEATHER_KEY, key, regime, trendSide };
   }
   return { known: false, key: UNKNOWN_MARKET_WEATHER_KEY, regime: 'UNKNOWN', trendSide: 'UNKNOWN' };
 }
 
-function firstKnownWeatherValue(...values) {
-  for (const value of values) {
-    if (value === undefined || value === null || value === '') continue;
-    if (typeof value === 'object') continue;
-    const raw = String(value).trim();
-    if (!raw) continue;
-    const normalized = upper(raw);
-    if (normalized === 'UNKNOWN') continue;
-    if (normalized === UNKNOWN_MARKET_WEATHER_KEY) continue;
-    if (normalized.startsWith('UNKNOWN|')) continue;
-    if (normalized.endsWith('|UNKNOWN')) continue;
-    if (normalized.includes('[OBJECT OBJECT]')) continue;
-    return raw;
-  }
-  return null;
-}
-
 function resolveMarketWeatherFromObjects(...objects) {
-  const sources = objects.flat().filter((item) => item && typeof item === 'object');
-  for (const source of sources) {
-    const directKeys = [
-      source.currentMarketWeatherKey,
-      source.confirmedMarketWeatherKey,
-      source.entryMarketWeatherKey,
-      source.marketWeatherKey,
-      source.candidateMarketWeatherKey,
-      source.key
-    ];
-    for (const key of directKeys) {
-      if (typeof key === 'object') continue;
+  for (const obj of objects) {
+    if (!obj || typeof obj !== 'object') continue;
+    if (obj.entryMarketWeatherKey || obj.confirmedMarketWeatherKey || obj.currentMarketWeatherKey || obj.marketWeatherKey) {
+      const key = obj.entryMarketWeatherKey || obj.confirmedMarketWeatherKey || obj.currentMarketWeatherKey || obj.marketWeatherKey;
       const parsed = parseKnownMarketWeatherKey(key);
       if (parsed.known) {
-        return { ...parsed, source, sourceReason: 'KNOWN_MARKET_WEATHER_KEY' };
+        return { ...parsed, source: obj, sourceReason: 'RESOLVED_FROM_OBJECT_FIELDS' };
+      }
+    }
+    if (obj.entryMarketWeatherRegime || obj.confirmedMarketWeatherRegime || obj.currentMarketWeatherRegime || obj.marketWeatherRegime) {
+      const regime = obj.entryMarketWeatherRegime || obj.confirmedMarketWeatherRegime || obj.currentMarketWeatherRegime || obj.marketWeatherRegime;
+      const trendSide = obj.entryMarketWeatherTrendSide || obj.confirmedMarketWeatherTrendSide || obj.currentMarketWeatherTrendSide || obj.marketWeatherTrendSide;
+      const parsed = parseKnownMarketWeatherKey(buildWeatherKeySafe(regime, trendSide));
+      if (parsed.known) {
+        return { ...parsed, source: obj, sourceReason: 'RESOLVED_FROM_OBJECT_REGIME_AND_TREND' };
       }
     }
   }
-  for (const source of sources) {
-    const regime = firstKnownWeatherValue(
-      source.entryMarketWeatherRegime,
-      source.confirmedMarketWeatherRegime,
-      source.currentMarketWeatherRegime,
-      source.marketWeatherRegime,
-      source.currentRegime,
-      source.regime,
-      source.market?.regime
-    );
-    const trendSide = firstKnownWeatherValue(
-      source.entryMarketWeatherTrendSide,
-      source.confirmedMarketWeatherTrendSide,
-      source.currentMarketWeatherTrendSide,
-      source.marketWeatherTrendSide,
-      source.currentTrendSide,
-      source.trendSide,
-      source.marketTrendSide,
-      source.market?.trendSide
-    );
-    const parsed = parseKnownMarketWeatherKey(buildWeatherKeySafe(regime, trendSide));
-    if (parsed.known) {
-      return { ...parsed, source, sourceReason: 'KNOWN_MARKET_WEATHER_FIELDS' };
-    }
-  }
-  return {
-    known: false,
-    key: UNKNOWN_MARKET_WEATHER_KEY,
-    regime: 'UNKNOWN',
-    trendSide: 'UNKNOWN',
-    source: null,
-    sourceReason: 'MARKET_WEATHER_UNKNOWN'
-  };
+  return { known: false, key: UNKNOWN_MARKET_WEATHER_KEY, regime: 'UNKNOWN', trendSide: 'UNKNOWN', source: null, sourceReason: 'NO_RESOLVED_WEATHER' };
 }
 
 function isUnknownMarketWeatherKey(key = '') {
@@ -1476,13 +1392,7 @@ function buildResolvedEntryWeatherFields(resolved = {}, row = {}, marketContext 
     entryMarketWeatherTrendSide: parsed.trendSide,
     entryMarketWeatherCapturedAt: capturedAt,
     entryMarketWeatherKnown: parsed.known,
-    entryMarketWeatherRaw:
-      row.entryMarketWeatherRaw ||
-      row.entryMarketWeather ||
-      marketContext.entryMarketWeatherRaw ||
-      marketContext.source ||
-      resolved.source ||
-      null,
+    entryMarketWeatherRaw: row.entryMarketWeatherRaw || row.entryMarketWeather || marketContext.entryMarketWeatherRaw || marketContext.source || resolved.source || null,
     entryMarketWeatherRawAvailableFields: Array.isArray(row.entryMarketWeatherRawAvailableFields)
       ? row.entryMarketWeatherRawAvailableFields
       : Object.keys(resolved.source || {}).slice(0, 80),
@@ -1500,24 +1410,12 @@ function attachEntryMarketWeather(row = {}, marketContext = {}) {
     marketContext?.currentMarketWeather,
     marketContext?.confirmedMarketWeather
   );
-  const resolved = contextResolved.known
-    ? contextResolved
-    : rowResolved.known
-      ? rowResolved
-      : rowResolved;
+  const resolved = contextResolved.known ? contextResolved : rowResolved.known ? rowResolved : rowResolved;
   return {
     ...row,
     ...buildResolvedEntryWeatherFields(resolved, row, marketContext),
-    entryMarketWeather:
-      row.entryMarketWeather ||
-      marketContext.source ||
-      resolved.source ||
-      null,
-    entryMarketWeatherFixedPartialKey: Boolean(
-      row.entryMarketWeatherKey &&
-        !rowResolved.known &&
-        contextResolved.known
-    ),
+    entryMarketWeather: row.entryMarketWeather || marketContext.source || resolved.source || null,
+    entryMarketWeatherFixedPartialKey: Boolean(row.entryMarketWeatherKey && !rowResolved.known && contextResolved.known),
     entryMarketWeatherOriginalKey: row.entryMarketWeatherKey || null,
     entryMarketWeatherResolvedFromContext: Boolean(!rowResolved.known && contextResolved.known)
   };
@@ -1528,7 +1426,7 @@ function marketWeatherFieldsFromRow(row = {}) {
   return buildResolvedEntryWeatherFields(resolved, row, {});
 }
 
-// ===== OVERIGE HELPERS (uit oorspronkelijke code) =====
+// ===== OVERIGE HELPERS =====
 
 function sideToTradeSideSafe(value) {
   if (typeof Utils.sideToTradeSide === 'function') {
@@ -1574,11 +1472,9 @@ function hasSignalPattern(value = '', patterns = []) {
   return patterns.some((pattern) =>
     text === pattern ||
     text.startsWith(`${pattern}_`) ||
-    text.endsWith(`_${pattern}`) ||
     text.includes(`_${pattern}_`) ||
-    text.includes(`=${pattern}`) ||
-    text.includes(`:${pattern}`) ||
-    text.includes(`|${pattern}|`)
+    text.includes(`:${pattern}_`) ||
+    text.includes(`|${pattern}_`)
   );
 }
 
@@ -1713,12 +1609,12 @@ function randomIdSafe(prefix = 'id') {
 function isScannerFingerprintId(id = '') {
   const value = upper(id);
   return (
-    value.startsWith('MICRO_SHORT_SCANNER__') ||
-    value.includes('MICRO_SHORT_SCANNER__') ||
+    value.startsWith('MICRO_SHORT_SCANNER_') ||
+    value.includes('MICRO_SHORT_SCANNER_') ||
     value.startsWith('SHORT_SCANNER_') ||
     value.includes('SHORT_SCANNER_') ||
-    value.startsWith('MICRO_LONG_SCANNER__') ||
-    value.includes('MICRO_LONG_SCANNER__') ||
+    value.startsWith('MICRO_LONG_SCANNER_') ||
+    value.includes('MICRO_LONG_SCANNER_') ||
     value.startsWith('LONG_SCANNER_') ||
     value.includes('LONG_SCANNER_') ||
     value.includes('__SCANNER__') ||
@@ -1806,62 +1702,108 @@ function parseShortTaxonomyMicroId(id = '') {
     trueMicroMicroFamilyId: microMicroFamilyId,
     exactMicroMicroFamilyId: microMicroFamilyId,
     microMicroHash,
-    learningLayer: isMicroMicro
-      ? LAYER_MICRO_MICRO
-      : isChild
-        ? LAYER_MICRO_75
-        : isParent
-          ? LAYER_PARENT_15
-          : 'UNKNOWN'
+    learningLayer: isMicroMicro ? LAYER_MICRO_MICRO : isChild ? LAYER_MICRO_75 : isParent ? LAYER_PARENT_15 : 'UNKNOWN'
   };
-}
-
-function isSelectableTrueMicroId(id = '') {
-  return parseShortTaxonomyMicroId(id).isChild === true;
 }
 
 function isSelectableMicroMicroId(id = '') {
   return parseShortTaxonomyMicroId(id).isMicroMicro === true;
 }
 
-function isParentTrueMicroId(id = '') {
-  return parseShortTaxonomyMicroId(id).isParent === true;
+function isSelectableTrueMicroId(id = '') {
+  return parseShortTaxonomyMicroId(id).isChild === true;
 }
 
-function normalizeSymbolToken(value = '') {
-  return String(value || '')
-    .toUpperCase()
-    .replace(/USDT|USDC|USD|PERP|SWAP|FUTURES|SPOT/g, '')
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+function getTrueMicroFamilyId(row = {}) {
+  const parsed = parseShortTaxonomyMicroId(
+    row.learningFamilyId ||
+    row.learningMicroFamilyId ||
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.childTrueMicroFamilyId ||
+    row.base75ChildTrueMicroFamilyId ||
+    row.analyzeMicroFamilyId ||
+    row.id ||
+    row.key ||
+    ''
+  );
+  return parsed.isChild ? parsed.childTrueMicroFamilyId : '';
 }
 
-function symbolTokensFromAnySymbol(symbol = '') {
-  const contract = normalizeContractSymbolSafe(symbol);
-  const base = normalizeBaseSymbolSafe(symbol || contract);
-  return [
-    symbol,
-    contract,
-    base,
-    normalizeSymbolToken(symbol),
-    normalizeSymbolToken(contract),
-    normalizeSymbolToken(base)
-  ].map((value) => String(value || '').trim().toUpperCase()).filter(Boolean);
+function getParentTrueMicroFamilyId(row = {}) {
+  const parsed = parseShortTaxonomyMicroId(
+    row.learningFamilyId ||
+    row.learningMicroFamilyId ||
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.childTrueMicroFamilyId ||
+    row.analyzeMicroFamilyId ||
+    row.id ||
+    row.key ||
+    ''
+  );
+  return parsed.isParent ? parsed.parentTrueMicroFamilyId : (parsed.parentTrueMicroFamilyId || '');
 }
 
-function symbolKey(value = '') {
-  const base = normalizeBaseSymbolSafe(value);
-  const contract = normalizeContractSymbolSafe(value);
-  const token = normalizeSymbolToken(value);
-  return normalizeSymbolToken(base || contract || token);
+function microMicroHashFromId(id = '') {
+  return parseShortTaxonomyMicroId(id).microMicroHash || null;
+}
+
+function getMicroMicroFamilyId(row = {}) {
+  const parsed = parseShortTaxonomyMicroId(
+    row.learningFamilyId ||
+    row.learningMicroFamilyId ||
+    row.microMicroFamilyId ||
+    row.trueMicroMicroFamilyId ||
+    row.exactMicroMicroFamilyId ||
+    row.microFamilyId ||
+    row.trueMicroFamilyId ||
+    row.childTrueMicroFamilyId ||
+    row.analyzeMicroFamilyId ||
+    row.id ||
+    row.key ||
+    ''
+  );
+  return parsed.isMicroMicro ? parsed.microMicroFamilyId : '';
 }
 
 function rowSymbolKeys(row = {}) {
-  return [
+  const tokens = [
     row.symbol,
     row.baseSymbol,
-    row.contractSymbol
-  ].flatMap(symbolTokensFromAnySymbol).map(symbolKey).filter(Boolean);
+    row.contractSymbol,
+    row.symbolToken,
+    row.asset,
+    row.baseAsset,
+    row.quoteAsset
+  ].map((v) => String(v || '').trim().toUpperCase()).filter(Boolean);
+  const results = new Set();
+  for (const token of tokens) {
+    const clean = token.replace(/[^A-Z0-9]/g, '');
+    if (clean) results.add(clean);
+    if (clean.endsWith('USDT')) results.add(clean);
+    else results.add(`${clean}USDT`);
+  }
+  return [...results];
+}
+
+function symbolTokensFromAnySymbol(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return [];
+  const tokens = [];
+  const clean = raw.replace(/[^A-Z0-9]/g, '');
+  if (clean) tokens.push(clean);
+  if (clean.endsWith('USDT')) tokens.push(clean);
+  else tokens.push(`${clean}USDT`);
+  return tokens;
+}
+
+function normalizeSymbolToken(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function symbolKey(value) {
+  return normalizeSymbolToken(value) || null;
 }
 
 function cleanLearningFamilyId(id = '', row = {}) {
@@ -1881,14 +1823,14 @@ function cleanLearningFamilyId(id = '', row = {}) {
   for (const token of symbolTokens) {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     clean = clean
-      .replace(new RegExp(`(^|[_|:=\\-])${escaped}([_|:=\\-]|$)`, 'gi'), '$1ASSET$2')
-      .replace(new RegExp(`(^|[_|:=\\-])${escaped}USDT([_|:=\\-]|$)`, 'gi'), '$1ASSET$2')
-      .replace(new RegExp(`(^|[_|:=\\-])${escaped}USDC([_|:=\\-]|$)`, 'gi'), '$1ASSET$2');
+      .replace(new RegExp(`^[_-]*${escaped}([_-]|$)`, 'gi'), '$1ASSET$2')
+      .replace(new RegExp(`^[_-]*${escaped}USDT([_-]|$)`, 'gi'), '$1ASSET$2')
+      .replace(new RegExp(`^[_-]*${escaped}USDC([_-]|$)`, 'gi'), '$1ASSET$2');
   }
   clean = clean
-    .replace(/_{2,}/g, '_')
-    .replace(/\|{2,}/g, '|')
-    .replace(/^[_|:=\-\s]+|[_|:=\-\s]+$/g, '');
+    .replace(/_{2}/g, '_')
+    .replace(/\|{2}/g, '|')
+    .replace(/^[_-]+\s*[_-]+$/g, '');
   if (!clean) return '';
   if (isScannerFingerprintId(clean)) return '';
   if (isExecutionFingerprintId(clean)) return '';
@@ -1905,51 +1847,8 @@ function childIdFromAnyLearningId(id = '') {
   return parseShortTaxonomyMicroId(id).childTrueMicroFamilyId || '';
 }
 
-function microMicroHashFromId(id = '') {
-  return parseShortTaxonomyMicroId(id).microMicroHash || '';
-}
-
-function normalizeBucketText(value, fallback = 'NA') {
-  const text = String(value ?? '').trim();
-  if (!text) return fallback;
-  return text
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 64) || fallback;
-}
-
-function getTrueMicroFamilyId(row = {}) {
-  const candidates = [
-    row.childTrueMicroFamilyId,
-    row.base75ChildTrueMicroFamilyId,
-    row.trueMicroFamilyId,
-    row.microFamilyId,
-    row.learningMicroFamilyId,
-    row.learningFamilyId,
-    row.analyzeMicroFamilyId,
-    row.microMicroFamilyId,
-    row.trueMicroMicroFamilyId,
-    row.exactMicroMicroFamilyId
-  ].map((id) => cleanLearningFamilyId(id, row));
-  for (const candidate of candidates) {
-    const parsed = parseShortTaxonomyMicroId(candidate);
-    if (parsed.isChild && parsed.childTrueMicroFamilyId) return parsed.childTrueMicroFamilyId;
-    if (parsed.isMicroMicro && parsed.childTrueMicroFamilyId) return parsed.childTrueMicroFamilyId;
-  }
-  return '';
-}
-
-function getParentTrueMicroFamilyId(row = {}) {
-  const child = getTrueMicroFamilyId(row);
-  if (child) return parentIdFromChild(child);
-  return [
-    row.parentTrueMicroFamilyId,
-    row.coarseMicroFamilyId,
-    row.parentMicroFamilyId,
-    row.parentMacroFamilyId,
-    row.macroFamilyId
-  ].map((id) => cleanLearningFamilyId(id, row)).find(isParentTrueMicroId) || '';
+function normalizeBucketText(value) {
+  return String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_') || 'NA';
 }
 
 function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
@@ -1988,16 +1887,16 @@ function buildExecutionFingerprintParts(row = {}, childTrueMicroFamilyId = '') {
 function executionHashFromRow(row = {}, childTrueMicroFamilyId = '') {
   const direct = String(
     row.microMicroHash ||
-      row.executionFingerprintHash ||
-      row.executionHash ||
-      ''
+    row.executionFingerprintHash ||
+    row.executionHash ||
+    ''
   ).trim().toUpperCase().replace(/[^A-Z0-9]+/g, '');
   if (direct.length >= 6) return direct.slice(0, MICRO_MICRO_HASH_LEN);
   const executionId = String(
     row.executionMicroFamilyId ||
-      row.executionFingerprintMicroFamilyId ||
-      row.refinedExecutionMicroFamilyId ||
-      ''
+    row.executionFingerprintMicroFamilyId ||
+    row.refinedExecutionMicroFamilyId ||
+    ''
   ).trim().toUpperCase();
   const xrMatch = /^(MICRO_SHORT_.+)_XR_([A-Z0-9]{6,24})$/u.exec(executionId);
   if (xrMatch) return xrMatch[2].slice(0, MICRO_MICRO_HASH_LEN);
@@ -2005,11 +1904,7 @@ function executionHashFromRow(row = {}, childTrueMicroFamilyId = '') {
 }
 
 function buildMicroMicroFamilyIdFromExecution(childTrueMicroFamilyId, executionFingerprintHash) {
-  const childId = childIdFromAnyLearningId(childTrueMicroFamilyId) || (
-    isSelectableTrueMicroId(childTrueMicroFamilyId)
-      ? upper(childTrueMicroFamilyId)
-      : ''
-  );
+  const childId = childIdFromAnyLearningId(childTrueMicroFamilyId) || (isSelectableTrueMicroId(childTrueMicroFamilyId) ? upper(childTrueMicroFamilyId) : '');
   const hash = String(executionFingerprintHash || '')
     .trim()
     .toUpperCase()
@@ -2019,26 +1914,6 @@ function buildMicroMicroFamilyIdFromExecution(childTrueMicroFamilyId, executionF
   return `${childId}_${MICRO_MICRO_SUFFIX}_${hash}`;
 }
 
-function getMicroMicroFamilyId(row = {}) {
-  const direct = [
-    row.learningFamilyId,
-    row.learningMicroFamilyId,
-    row.microMicroFamilyId,
-    row.trueMicroMicroFamilyId,
-    row.exactMicroMicroFamilyId,
-    row.trueMicroFamilyId,
-    row.microFamilyId,
-    row.id,
-    row.key
-  ].map((id) => cleanLearningFamilyId(id, row)).find(isSelectableMicroMicroId);
-  if (direct) return direct;
-  const child = getTrueMicroFamilyId(row);
-  if (!child) return '';
-  const hash = executionHashFromRow(row, child);
-  const id = buildMicroMicroFamilyIdFromExecution(child, hash);
-  return isSelectableMicroMicroId(id) ? id : '';
-}
-
 function learningIdentityFields(row = {}) {
   const childTrueMicroFamilyId = getTrueMicroFamilyId(row);
   const microMicroFamilyId = getMicroMicroFamilyId({ ...row, childTrueMicroFamilyId });
@@ -2046,13 +1921,7 @@ function learningIdentityFields(row = {}) {
   const parsedChild = parseShortTaxonomyMicroId(childTrueMicroFamilyId);
   const parsedMicroMicro = parseShortTaxonomyMicroId(microMicroFamilyId);
   return {
-    learningLayer: microMicroFamilyId
-      ? LAYER_MICRO_MICRO
-      : childTrueMicroFamilyId
-        ? LAYER_MICRO_75
-        : parentTrueMicroFamilyId
-          ? LAYER_PARENT_15
-          : 'UNKNOWN',
+    learningLayer: microMicroFamilyId ? LAYER_MICRO_MICRO : childTrueMicroFamilyId ? LAYER_MICRO_75 : parentTrueMicroFamilyId ? LAYER_PARENT_15 : 'UNKNOWN',
     parentTrueMicroFamilyId: parentTrueMicroFamilyId || null,
     parentMicroFamilyId: parentTrueMicroFamilyId || null,
     parentMacroFamilyId: parentTrueMicroFamilyId || null,
@@ -2096,11 +1965,7 @@ function learningIdentityFields(row = {}) {
     parentSelectionAllowed: false,
     micro75SelectionAllowed: false,
     microMicroSelectionAllowed: Boolean(microMicroFamilyId),
-    selectionGranularity: microMicroFamilyId
-      ? SELECTION_EXACT_MICRO_MICRO
-      : childTrueMicroFamilyId
-        ? SELECTION_75_CHILD_CONTEXT
-        : SELECTION_PARENT_CONTEXT,
+    selectionGranularity: microMicroFamilyId ? SELECTION_EXACT_MICRO_MICRO : childTrueMicroFamilyId ? SELECTION_75_CHILD_CONTEXT : SELECTION_PARENT_CONTEXT,
     sampleDoesNotSplitParent: true,
     sampleDoesNotSplitMicro75: true,
     rollupStatsRequired: true,
@@ -2115,12 +1980,7 @@ function scannerMetadataFrom(...rows) {
   const childTrueMicroFamilyId = getTrueMicroFamilyId(merged);
   const microMicroFamilyId = getMicroMicroFamilyId({ ...merged, childTrueMicroFamilyId });
   const microMicroHash = microMicroHashFromId(microMicroFamilyId) || executionHashFromRow(merged, childTrueMicroFamilyId);
-  const learning = learningIdentityFields({
-    ...merged,
-    childTrueMicroFamilyId,
-    microMicroFamilyId,
-    microMicroHash
-  });
+  const learning = learningIdentityFields({ ...merged, childTrueMicroFamilyId, microMicroFamilyId, microMicroHash });
   return {
     ...learning,
     scannerMicroFamilyId: merged.scannerMicroFamilyId || null,
@@ -2128,16 +1988,9 @@ function scannerMetadataFrom(...rows) {
     scannerDefinition: merged.scannerDefinition || null,
     scannerDefinitionParts: Array.isArray(merged.scannerDefinitionParts) ? merged.scannerDefinitionParts : [],
     executionFingerprintHash: microMicroHash || merged.executionFingerprintHash || null,
-    executionFingerprintParts: Array.isArray(merged.executionFingerprintParts)
-      ? merged.executionFingerprintParts
-      : childTrueMicroFamilyId
-        ? buildExecutionFingerprintParts(merged, childTrueMicroFamilyId)
-        : [],
-    executionMicroFamilyId: childTrueMicroFamilyId && microMicroHash
-      ? `${childTrueMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${microMicroHash}`
-      : merged.executionMicroFamilyId || null,
+    executionFingerprintParts: Array.isArray(merged.executionFingerprintParts) ? merged.executionFingerprintParts : (childTrueMicroFamilyId ? buildExecutionFingerprintParts(merged, childTrueMicroFamilyId) : []),
+    executionMicroFamilyId: childTrueMicroFamilyId && microMicroHash ? `${childTrueMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${microMicroHash}` : merged.executionMicroFamilyId || null,
     executionFingerprintRole: microMicroFamilyId ? 'MICRO_MICRO_IDENTITY_HASH_SOURCE' : 'METADATA_ONLY',
-    executionFingerprintOnlyMetadata: !microMicroFamilyId,
     executionFingerprintsMetadataOnly: !microMicroFamilyId,
     executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
@@ -2147,9 +2000,7 @@ function scannerMetadataFrom(...rows) {
     scannerFingerprintsUsedAsLearningFamily: false,
     scannerBucketsMetadataOnly: true,
     legacy25BucketsMetadataOnly: true,
-    learningIdentitySource: microMicroFamilyId
-      ? 'ANALYZE_MICRO_MICRO_FAMILY'
-      : 'ANALYZE_TRUE_MICRO_FAMILY_CONTEXT_ONLY',
+    learningIdentitySource: microMicroFamilyId ? 'ANALYZE_MICRO_MICRO_FAMILY' : 'ANALYZE_TRUE_MICRO_FAMILY_CONTEXT_ONLY',
     exactTrueMicroFamilyRequired: true,
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
@@ -2183,10 +2034,10 @@ function rowText(row = {}) {
 function setupFromRow(row = {}) {
   const parsed = parseShortTaxonomyMicroId(
     row.trueMicroFamilyId ||
-      row.childTrueMicroFamilyId ||
-      row.microFamilyId ||
-      row.microMicroFamilyId ||
-      ''
+    row.childTrueMicroFamilyId ||
+    row.microFamilyId ||
+    row.microMicroFamilyId ||
+    ''
   );
   if (parsed.setupType && SETUP_SET.has(parsed.setupType)) return parsed.setupType;
   const text = rowText(row);
@@ -2198,8 +2049,13 @@ function setupFromRow(row = {}) {
 }
 
 function normalizeMarketRegime(value = '') {
-  const normalized = normalizeMarketWeatherRegimeSafe(value);
-  return REGIME_SET.has(normalized) ? normalized : 'UNKNOWN';
+  const parsed = parseKnownMarketWeatherKey(value);
+  if (parsed.known) return parsed.regime;
+  const raw = upper(value);
+  if (raw.includes('TREND')) return 'TREND';
+  if (raw.includes('CHOP')) return 'CHOP';
+  if (raw.includes('SQUEEZE')) return 'SQUEEZE';
+  return 'UNKNOWN';
 }
 
 function normalizeMarketTrendSide(value = '') {
@@ -2216,18 +2072,14 @@ function normalizeMarketTrendSide(value = '') {
 function regimeFromRow(row = {}, marketContext = {}) {
   const parsed = parseShortTaxonomyMicroId(
     row.trueMicroFamilyId ||
-      row.childTrueMicroFamilyId ||
-      row.microFamilyId ||
-      row.microMicroFamilyId ||
-      ''
+    row.childTrueMicroFamilyId ||
+    row.microFamilyId ||
+    row.microMicroFamilyId ||
+    ''
   );
   if (parsed.regimeBucket && REGIME_SET.has(parsed.regimeBucket)) return parsed.regimeBucket;
   const direct = normalizeMarketRegime(
-    row.regimeBucket ||
-      row.currentRegime ||
-      row.regime ||
-      row.btcRegime ||
-      marketContext.regime
+    row.regimeBucket || row.currentRegime || row.regime || row.btcRegime || marketContext.regime
   );
   return direct !== 'UNKNOWN' ? direct : 'TREND';
 }
@@ -2235,10 +2087,10 @@ function regimeFromRow(row = {}, marketContext = {}) {
 function confirmationFromRow(row = {}, marketContext = {}) {
   const parsed = parseShortTaxonomyMicroId(
     row.trueMicroFamilyId ||
-      row.childTrueMicroFamilyId ||
-      row.microFamilyId ||
-      row.microMicroFamilyId ||
-      ''
+    row.childTrueMicroFamilyId ||
+    row.microFamilyId ||
+    row.microMicroFamilyId ||
+    ''
   );
   if (parsed.confirmationProfile && CONFIRMATION_SET.has(parsed.confirmationProfile)) {
     return parsed.confirmationProfile;
@@ -2313,15 +2165,8 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     confirmationProfile: parsed.confirmationProfile
   };
   const executionHash = existingMicroMicroHash || executionHashFromRow(baseRow, childTrueMicroFamilyId);
-  const microMicroFamilyId = existingMicroMicroFamilyId ||
-    buildMicroMicroFamilyIdFromExecution(childTrueMicroFamilyId, executionHash);
-  const identity = learningIdentityFields({
-    ...baseRow,
-    microMicroFamilyId,
-    trueMicroMicroFamilyId: microMicroFamilyId,
-    exactMicroMicroFamilyId: microMicroFamilyId,
-    microMicroHash: executionHash
-  });
+  const microMicroFamilyId = existingMicroMicroFamilyId || buildMicroMicroFamilyIdFromExecution(childTrueMicroFamilyId, executionHash);
+  const identity = learningIdentityFields({ ...baseRow, microMicroFamilyId, trueMicroMicroFamilyId: microMicroFamilyId, exactMicroMicroFamilyId: microMicroFamilyId, microMicroHash: executionHash });
   return {
     ...baseRow,
     ...identity,
@@ -2330,19 +2175,13 @@ function normalizeExactTrueMicroRow(row = {}, marketContext = {}) {
     fallbackExact75: !getTrueMicroFamilyId(row),
     fixedTaxonomyLearningId: true,
     executionFingerprintHash: executionHash || row.executionFingerprintHash || null,
-    executionFingerprintParts: Array.isArray(row.executionFingerprintParts)
-      ? row.executionFingerprintParts
-      : buildExecutionFingerprintParts(baseRow, childTrueMicroFamilyId),
-    executionMicroFamilyId: executionHash
-      ? `${childTrueMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionHash}`
-      : row.executionMicroFamilyId || null,
+    executionFingerprintParts: Array.isArray(row.executionFingerprintParts) ? row.executionFingerprintParts : buildExecutionFingerprintParts(baseRow, childTrueMicroFamilyId),
+    executionMicroFamilyId: executionHash ? `${childTrueMicroFamilyId}_${EXECUTION_MICRO_SUFFIX}_${executionHash}` : row.executionMicroFamilyId || null,
     executionFingerprintRole: microMicroFamilyId ? 'MICRO_MICRO_IDENTITY_HASH_SOURCE' : 'METADATA_ONLY',
     executionFingerprintsMetadataOnly: !microMicroFamilyId,
     executionFingerprintsUsedAsLearningFamily: false,
     executionFingerprintsCanDeriveMicroMicroContextHash: true,
-    learningIdentitySource: microMicroFamilyId
-      ? 'ANALYZE_MICRO_MICRO_FAMILY'
-      : 'ANALYZE_TRUE_MICRO_FAMILY_CONTEXT_ONLY',
+    learningIdentitySource: microMicroFamilyId ? 'ANALYZE_MICRO_MICRO_FAMILY' : 'ANALYZE_TRUE_MICRO_FAMILY_CONTEXT_ONLY',
     entryMarketWeatherKeyExcludedFromFamilyId: true,
     ...microPolicyFlags()
   };
@@ -2437,8 +2276,6 @@ function resolveCanonicalMarketContext({
     freshConfirmedReason: 'NO_VALID_WEATHER_SOURCE'
   };
 }
-
-// ===== MARKET CONTEXT =====
 
 function currentFitMaxWeatherAgeSec() {
   return int(
@@ -2587,9 +2424,7 @@ function buildConfirmedWeatherSnapshot(source = {}, universe = {}, meta = {}) {
     candidateMarketWeatherRegime: parsed.regime,
     candidateMarketWeatherTrendSide: parsed.trendSide,
     sourceReason: resolved.sourceReason,
-    reason: parsed.known
-      ? 'MARKET_WEATHER_CONFIRMED_FROM_LATEST_CONTEXT'
-      : 'MARKET_WEATHER_UNKNOWN'
+    reason: parsed.known ? 'MARKET_WEATHER_CONFIRMED_FROM_LATEST_CONTEXT' : 'MARKET_WEATHER_UNKNOWN'
   };
 }
 
@@ -2706,7 +2541,7 @@ function discordCurrentFitGate(row = {}) {
   return { ok: false, reason: `DISCORD_BLOCKED_CURRENT_FIT_${fit}`, currentFit: fit, currentFitConfidence: confidence };
 }
 
-// ===== RISK EN RR HELPERS =====
+// ==== RISK EN RR HELPERS ====
 
 function getRowRR(row = {}) {
   return n(first(row.rr, row.primaryRr, row.riskReward, row.rewardRisk), 0);
@@ -2721,14 +2556,7 @@ function getRowSpreadPct(row = {}) {
 }
 
 function getRowDepthUsd1p(row = {}) {
-  return n(first(
-    row.depthMinUsd1p,
-    row.minDepthUsd1p,
-    row.depthUsd1p,
-    row.depthUsd,
-    row.orderbookDepthUsd,
-    row.liquidityDepthUsd
-  ), NaN);
+  return n(first(row.depthMinUsd1p, row.depthUsd1p, row.depthMinUsd, row.depth), NaN);
 }
 
 function getRowConfluence(row = {}) {
@@ -2736,213 +2564,18 @@ function getRowConfluence(row = {}) {
 }
 
 function getRowCostR(row = {}) {
-  return n(first(row.estimatedCostR, row.costR, row.avgCostR), NaN);
-}
-
-function detectStructureSignal(row = {}) {
-  const text = rowText(row);
-  return Boolean(
-    row.retestConfirmed ||
-    row.pullbackConfirmed ||
-    row.sweepConfirmed ||
-    row.breakoutConfirmed ||
-    row.continuationConfirmed ||
-    row.compressionConfirmed ||
-    row.setupConfirmed ||
-    row.structureAlign ||
-    row.structureAligned ||
-    text.includes('RETEST') ||
-    text.includes('PULLBACK') ||
-    text.includes('SWEEP') ||
-    text.includes('STOP_RUN') ||
-    text.includes('BREAKOUT') ||
-    text.includes('BREAKDOWN') ||
-    text.includes('CONTINUATION') ||
-    text.includes('COMPRESSION') ||
-    text.includes('SQUEEZE')
-  );
-}
-
-function detectFlowSignal(row = {}, marketContext = {}) {
-  const text = rowText(row);
-  const obRelation = upper(row.obRelation);
-  const btcRelation = upper(row.btcRelation);
-  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
-  return Boolean(
-    row.flowAlign ||
-    row.flowAligned ||
-    row.momentumAlign ||
-    row.askFlowAlign ||
-    row.bearFlow ||
-    row.sellFlow ||
-    currentTrendSide === TARGET_TRADE_SIDE ||
-    obRelation === 'WITH' ||
-    obRelation === 'ASK_HEAVY' ||
-    btcRelation === 'BTC_WITH' ||
-    text.includes('FLOW_ALIGN') ||
-    text.includes('BEAR_FLOW') ||
-    text.includes('SELL_FLOW') ||
-    text.includes('ASK_FLOW') ||
-    text.includes('TREND')
-  );
-}
-
-function detectVolumeSignal(row = {}) {
-  const text = rowText(row);
-  const relVol = n(first(row.relativeVolume, row.relVolume, row.volumeExpansion, row.volumeScore, row.volumeStrength), NaN);
-  return Boolean(
-    row.volumeSpike ||
-    row.volumeConfirmed ||
-    row.volumeAlign ||
-    row.volumeAligned ||
-    row.volumeSpikeConfirmed ||
-    row.quoteVolumeSpike ||
-    row.obVolumeAlign ||
-    text.includes('VOLUME_ALIGN') ||
-    text.includes('VOL_ALIGN') ||
-    text.includes('VOLUME_SPIKE') ||
-    text.includes('VOL_EXP') ||
-    (Number.isFinite(relVol) && relVol >= 1.4)
-  );
-}
-
-function weakContraGateConfig() {
-  const options = ACTIVE_RUN_OPTIONS || {};
-  return {
-    enabled: bool(first(
-      options.weakContraGateEnabled,
-      CONFIG.short?.weakContra?.enabled,
-      CONFIG.short?.trade?.weakContraGateEnabled,
-      CONFIG.analyze?.weakContra?.enabled,
-      CONFIG.trade?.weakContraGateEnabled
-    ), true),
-    minConfluence: n(first(options.weakContraMinConfluence, CONFIG.short?.weakContra?.minConfluence), 72),
-    minRR: n(first(options.weakContraMinRR, CONFIG.short?.weakContra?.minRR), 1.15),
-    maxSpreadPct: n(first(options.weakContraMaxSpreadPct, CONFIG.short?.weakContra?.maxSpreadPct), 0.0015),
-    minDepthUsd1p: n(first(options.weakContraMinDepthUsd1p, CONFIG.short?.weakContra?.minDepthUsd1p), 100000),
-    maxCostR: n(first(options.weakContraMaxCostR, CONFIG.short?.weakContra?.maxCostR), 0.35),
-    requireStructure: bool(first(options.weakContraRequireStructure, CONFIG.short?.weakContra?.requireStructure), true),
-    requireFlowOrVolume: bool(first(options.weakContraRequireFlowOrVolume, CONFIG.short?.weakContra?.requireFlowOrVolume), true),
-    requireDepthData: bool(first(options.weakContraRequireDepthData, CONFIG.short?.weakContra?.requireDepthData), false),
-    rejectFakeBreakout: bool(first(options.weakContraRejectFakeBreakout, CONFIG.short?.weakContra?.rejectFakeBreakout), true)
-  };
-}
-
-function weakContraApplies(row = {}, marketContext = {}) {
-  const confirmation = confirmationFromRow(row, marketContext);
-  const text = rowText(row);
-  const obRelation = upper(row.obRelation);
-  const btcRelation = upper(row.btcRelation);
-  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
-  return Boolean(
-    confirmation === 'E_WEAK_CONTRA' ||
-    row.weakContra === true ||
-    row.contraSignal === true ||
-    row.bullishDivergence === true ||
-    row.avoidShort === true ||
-    row.doNotShort === true ||
-    row.fakeBreakout === true ||
-    row.fakeBreakoutRisk === true ||
-    currentTrendSide === OPPOSITE_TRADE_SIDE ||
-    obRelation === 'AGAINST' ||
-    btcRelation === 'BTC_AGAINST' ||
-    text.includes('E_WEAK_CONTRA') ||
-    text.includes('WEAK_CONTRA') ||
-    text.includes('CONTRA')
-  );
-}
-
-function buildWeakContraEntryGate(row = {}, marketContext = {}) {
-  const cfg = weakContraGateConfig();
-  const confirmationProfile = confirmationFromRow(row, marketContext);
-  const applies = weakContraApplies(row, marketContext);
-  const structureAligned = detectStructureSignal(row);
-  const flowAligned = detectFlowSignal(row, marketContext);
-  const volumeAligned = detectVolumeSignal(row);
-  const confluence = getRowConfluence(row);
-  const rr = getRowRR(row);
-  const spreadPct = getRowSpreadPct(row);
-  const depthUsd1p = getRowDepthUsd1p(row);
-  const costR = getRowCostR(row);
-  const failures = [];
-  if (!cfg.enabled || !applies) {
-    return {
-      version: WEAK_CONTRA_ENTRY_GATE_VERSION,
-      enabled: Boolean(cfg.enabled),
-      applies: Boolean(applies),
-      passed: true,
-      allowed: true,
-      rejected: false,
-      reason: !cfg.enabled ? 'E_WEAK_CONTRA_GATE_DISABLED' : 'NOT_E_WEAK_CONTRA',
-      failures: [],
-      confirmationProfile,
-      structureAligned,
-      flowAligned,
-      volumeAligned,
-      confluence,
-      rr,
-      spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
-      depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
-      costR: Number.isFinite(costR) ? costR : null
-    };
-  }
-  if (confluence < cfg.minConfluence) failures.push('E_WEAK_CONTRA_CONFLUENCE_BELOW_MIN');
-  if (rr < cfg.minRR) failures.push('E_WEAK_CONTRA_RR_BELOW_MIN');
-  if (!Number.isFinite(spreadPct)) failures.push('E_WEAK_CONTRA_SPREAD_UNKNOWN');
-  else if (spreadPct > cfg.maxSpreadPct) failures.push('E_WEAK_CONTRA_SPREAD_TOO_WIDE');
-  if (cfg.requireDepthData && !Number.isFinite(depthUsd1p)) failures.push('E_WEAK_CONTRA_DEPTH_UNKNOWN');
-  else if (Number.isFinite(depthUsd1p) && depthUsd1p < cfg.minDepthUsd1p) failures.push('E_WEAK_CONTRA_DEPTH_TOO_LOW');
-  if (Number.isFinite(costR) && costR > cfg.maxCostR) failures.push('E_WEAK_CONTRA_COST_R_TOO_HIGH');
-  if (cfg.requireStructure && !structureAligned) failures.push('E_WEAK_CONTRA_STRUCTURE_NOT_CONFIRMED');
-  if (cfg.requireFlowOrVolume && !flowAligned && !volumeAligned) failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
-  if (cfg.rejectFakeBreakout && (row.fakeBreakout === true || row.fakeBreakoutRisk === true)) failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
-  const passed = failures.length === 0;
-  return {
-    version: WEAK_CONTRA_ENTRY_GATE_VERSION,
-    enabled: Boolean(cfg.enabled),
-    applies: true,
-    passed,
-    allowed: passed,
-    rejected: !passed,
-    reason: passed ? 'E_WEAK_CONTRA_GATE_PASSED' : failures[0],
-    failures,
-    confirmationProfile,
-    structureAligned,
-    flowAligned,
-    volumeAligned,
-    confluence,
-    minConfluence: cfg.minConfluence,
-    rr,
-    minRR: cfg.minRR,
-    spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
-    maxSpreadPct: cfg.maxSpreadPct,
-    depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
-    minDepthUsd1p: cfg.minDepthUsd1p,
-    costR: Number.isFinite(costR) ? costR : null,
-    maxCostR: cfg.maxCostR
-  };
+  return n(first(row.costR, row.avgCostR, row.estimatedCostR), 0);
 }
 
 function estimatedCostRForRiskPct(row = {}, riskPct = 0, cfg = tradeConfig()) {
   const spreadPct = n(row.spreadPct, cfg.fallbackSpreadPct);
-  const totalCostPct =
-    n(cfg.roundTripFeePct, DEFAULT_ROUND_TRIP_FEE_PCT) +
-    n(cfg.roundTripSlippagePct, DEFAULT_ROUND_TRIP_SLIPPAGE_PCT) +
-    Math.max(0, spreadPct) * n(cfg.spreadCostMult, DEFAULT_SPREAD_COST_MULT);
+  const totalCostPct = n(cfg.roundTripFeePct, DEFAULT_ROUND_TRIP_FEE_PCT) + n(cfg.roundTripSlippagePct, DEFAULT_ROUND_TRIP_SLIPPAGE_PCT) + Math.max(0, spreadPct) * n(cfg.spreadCostMult, DEFAULT_SPREAD_COST_MULT);
   if (riskPct <= 0) return 999;
   return round(totalCostPct / riskPct, 6);
 }
 
 function candidateFallbackPrice(row = {}, fallback = 0) {
-  return n(
-    row.price ??
-    row.markPrice ??
-    row.currentPrice ??
-    row.lastPrice ??
-    row.close ??
-    row.entry,
-    fallback
-  );
+  return n(row.price ?? row.markPrice ?? row.currentPrice ?? row.lastPrice ?? row.close ?? row.entry, fallback);
 }
 
 function adaptiveShortRr(row = {}, cfg = tradeConfig()) {
@@ -2976,7 +2609,7 @@ function adaptiveShortRiskPct(row = {}, cfg = tradeConfig()) {
   if (confirmation === 'E_WEAK_CONTRA') riskPct -= 0.0004;
   if (spreadPct > 0.0012) riskPct += 0.0007;
   let cleanRiskPct = clamp(riskPct, Math.max(0.0005, cfg.minRiskPct), Math.max(cfg.minRiskPct, cfg.maxRiskPct));
-  while (
+  if (
     cleanRiskPct < cfg.maxRiskPct &&
     estimatedCostRForRiskPct(row, cleanRiskPct, cfg) > cfg.maxEstimatedCostR
   ) {
@@ -3125,13 +2758,13 @@ function applyAdaptiveShortRisk(row = {}, reason = 'ADAPTIVE_SHORT_RR_TP_SL') {
     validShortRiskShape: riskQualityOk,
     shortRiskRule: 'tp < entry < sl',
     shortTpExitRule: 'price <= tp',
-    shortSlExitRule: 'price >= sl',
+    shortSLExitRule: 'price >= sl',
     shortTimeStopExitRule: 'TIME_STOP',
     hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION
   };
 }
 
-function standardizedRiskMetrics(candidate = {}, marketContext = {}) {
+function standardizedRiskMetrics(candidate = {}, marketContext = {}, options = {}) {
   const cfg = tradeConfig();
   const normalized = normalizeCandidate(candidate);
   const mid = candidateFallbackPrice(normalized, 0);
@@ -3185,7 +2818,8 @@ function standardizedRiskMetrics(candidate = {}, marketContext = {}) {
     liveDataTs: now()
   };
   const row = applyAdaptiveShortRisk(baseRow, 'DEADLINE_SAFE_COST_AWARE_RR_GRID_SHORT_LEARNING_TP_SL');
-  const weakContraEntryGate = buildWeakContraEntryGate(row, marketContext);
+  // [REPAIRED] pass options to weak contra gate
+  const weakContraEntryGate = buildWeakContraEntryGate(row, marketContext, options);
   return {
     ...row,
     weakContraEntryGate,
@@ -3200,14 +2834,14 @@ function standardizedRiskMetrics(candidate = {}, marketContext = {}) {
   };
 }
 
-async function safeProcessCandidate(candidate, marketContext = {}) {
+async function safeProcessCandidate(candidate, marketContext = {}, options = {}) {
   const cfg = tradeConfig();
   const normalized = normalizeCandidate(candidate);
   try {
     const result = await withTimeoutFallback(
       Promise.resolve({
         actions: [],
-        metrics: [standardizedRiskMetrics(normalized, marketContext)]
+        metrics: [standardizedRiskMetrics(normalized, marketContext, options)]
       }),
       cfg.candidateTimeoutMs,
       'CANDIDATE_PROCESS_TIMEOUT'
@@ -3215,13 +2849,13 @@ async function safeProcessCandidate(candidate, marketContext = {}) {
     if (!isTimeoutResult(result)) return result;
     return {
       actions: [],
-      metrics: [standardizedRiskMetrics({ ...normalized, timedOut: true }, marketContext)],
+      metrics: [standardizedRiskMetrics({ ...normalized, timedOut: true }, marketContext, options)],
       timedOut: true
     };
   } catch (error) {
     return {
       actions: [waitAction(normalized, 'CANDIDATE_PROCESS_ERROR', { error: error?.message || String(error) })],
-      metrics: [standardizedRiskMetrics({ ...normalized, candidateProcessError: error?.message || String(error) }, marketContext)]
+      metrics: [standardizedRiskMetrics({ ...normalized, candidateProcessError: error?.message || String(error) }, marketContext, options)]
     };
   }
 }
@@ -3341,181 +2975,295 @@ function runtimeCompletedSample(row = {}) {
 }
 
 function runtimeObservationSample(row = {}) {
-  return Math.max(
-    0,
-    n(row.observationSample, 0),
-    n(row.seen, 0),
-    n(row.observations, 0),
-    runtimeCompletedSample(row)
-  );
-}
-
-function runtimeTotalR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  if (completed <= 0) return 0;
-  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
-  if (netRStats && typeof netRStats === 'object') {
-    const total = n(netRStats.totalR, NaN);
-    if (Number.isFinite(total)) return total;
-  }
-  const virtual = n(row.virtualTotalR, 0);
-  const shadow = n(row.shadowTotalR, 0);
-  const total = Math.max(virtual, shadow);
-  if (total !== 0) return total;
-  const recent = aggregateRuntimeRecentOutcomes(row);
-  if (recent.completed > 0) return recent.totalR;
-  return n(
-    row.shortNetTotalR ??
-    row.netShortTotalR ??
-    row.netTotalR ??
-    row.totalNetR ??
-    row.totalR,
-    0
-  );
+  return Math.max(n(row.seen, 0), n(row.observations, 0), n(row.observationCount, 0), 0);
 }
 
 function runtimeAvgR(row = {}) {
   const completed = runtimeCompletedSample(row);
   if (completed <= 0) return 0;
-  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
-  if (netRStats && typeof netRStats === 'object') {
-    const avg = n(netRStats.avgR, NaN);
-    if (Number.isFinite(avg)) return avg;
-  }
-  if (hasValue(row.avgNetR)) return n(row.avgNetR, 0);
-  if (hasValue(row.netAvgR)) return n(row.netAvgR, 0);
-  if (hasValue(row.avgR)) return n(row.avgR, 0);
-  return runtimeTotalR(row) / completed;
-}
-
-function runtimeStdDevR(row = {}) {
-  const explicit = n(row.stdDevR ?? row.standardDeviationR ?? row.rStdDev, NaN);
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
   const recent = aggregateRuntimeRecentOutcomes(row);
-  const completed = runtimeCompletedSample(row);
-  if (recent.completed > 1) {
-    const variance = Math.max(
-      0,
-      (recent.sumSquaredR - (recent.sumR * recent.sumR) / recent.completed) / (recent.completed - 1)
-    );
-    return Math.sqrt(variance);
-  }
-  return completed > 1 ? Math.abs(runtimeAvgR(row)) : 0;
+  const total = n(row.totalR, 0) || n(row.netTotalR, 0) || n(row.virtualTotalR, 0) || n(row.shadowTotalR, 0) || recent.totalR;
+  return total / completed;
 }
 
 function runtimeLcb95AvgR(row = {}) {
-  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
-  if (netRStats && typeof netRStats === 'object') {
-    const lcb = n(netRStats.lcb95AvgR, NaN);
-    if (Number.isFinite(lcb)) return lcb;
-  }
-  const value = first(
-    row.microMicroLcb95AvgR,
-    row.microMicroLCB95AvgR,
-    row.lcb95AvgR,
-    row.lcb95NetAvgR,
-    row.avgRLcb95,
-    row.avgRLCB95,
-    row.netAvgRLCB95,
-    row.avgRLower95,
-    row.avgRLowerBound95,
-    row.avgRLowerConfidenceBound95,
-    row.lowerConfidenceBoundAvgR,
-    row.sampleAdjustedAvgRLowerBound,
-    row.sampleLcb95AvgR,
-    row.fairAvgRLowerBound
-  );
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) return parsed;
   const completed = runtimeCompletedSample(row);
   if (completed <= 1) return 0;
   const avg = runtimeAvgR(row);
-  const sd = runtimeStdDevR(row);
-  return avg - 1.96 * (sd / Math.sqrt(completed));
+  const std = n(row.stdDevR, NaN);
+  const se = Number.isFinite(std) ? std / Math.sqrt(completed) : 1 / Math.sqrt(completed);
+  return avg - 1.96 * se;
 }
 
-function runtimeTotalCostR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  if (completed <= 0) return 0;
-  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
-  if (netRStats && typeof netRStats === 'object') {
-    const totalCost = n(netRStats.totalCostR, NaN);
-    if (Number.isFinite(totalCost)) return Math.max(0, totalCost);
-  }
-  const virtual = Math.max(0, n(row.virtualTotalCostR, 0));
-  const shadow = Math.max(0, n(row.shadowTotalCostR, 0));
-  const cost = Math.max(virtual, shadow);
-  if (cost > 0) return cost;
+function runtimeTotalR(row = {}) {
   const recent = aggregateRuntimeRecentOutcomes(row);
-  if (recent.completed > 0 && recent.totalCostR > 0) return recent.totalCostR;
-  if (hasValue(row.totalCostR)) return Math.max(0, n(row.totalCostR, 0));
-  if (hasValue(row.totalNetCostR)) return Math.max(0, n(row.totalNetCostR, 0));
-  for (const key of ['avgCostR', 'costR', 'netCostR', 'estimatedCostR']) {
-    if (hasValue(row[key]) && n(row[key], 0) > 0) {
-      return Math.max(0, n(row[key], 0)) * completed;
-    }
-  }
-  return 0;
-}
-
-function runtimeAvgCostR(row = {}) {
-  const completed = runtimeCompletedSample(row);
-  return completed > 0 ? runtimeTotalCostR(row) / completed : 0;
-}
-
-function runtimeDirectSLCount(row = {}) {
-  const recent = aggregateRuntimeRecentOutcomes(row);
-  const virtual = n(row.virtualDirectSLCount, 0);
-  const shadow = n(row.shadowDirectSLCount, 0);
-  const direct = Math.max(virtual, shadow, n(row.directSLCount, 0), recent.directSLCount);
-  return Math.max(0, direct);
-}
-
-function runtimeDirectSLPct(row = {}) {
-  if (hasValue(row.directSLPct)) {
-    const pctValue = n(row.directSLPct, 0);
-    return pctValue > 1 ? clamp(pctValue / 100, 0, 1) : clamp(pctValue, 0, 1);
-  }
-  const completed = runtimeCompletedSample(row);
-  return completed > 0 ? clamp(runtimeDirectSLCount(row) / completed, 0, 1) : 0;
+  return n(row.totalR, 0) || n(row.netTotalR, 0) || n(row.virtualTotalR, 0) || n(row.shadowTotalR, 0) || recent.totalR;
 }
 
 function runtimeProfitFactor(row = {}) {
   const recent = aggregateRuntimeRecentOutcomes(row);
-  const netRStats = row.netRStats || row.stats?.netRStats || row.outcomeStats?.netRStats;
-  if (netRStats && typeof netRStats === 'object') {
-    const pf = n(netRStats.profitFactor, NaN);
-    if (Number.isFinite(pf)) return Math.max(0, pf);
-  }
-  const virtualWin = n(row.virtualGrossWinR, 0);
-  const virtualLoss = n(row.virtualGrossLossR, 0);
-  const shadowWin = n(row.shadowGrossWinR, 0);
-  const shadowLoss = n(row.shadowGrossLossR, 0);
-  const winR = Math.max(virtualWin, shadowWin, n(row.grossWinR, 0), recent.grossWinR, 0);
-  const lossR = Math.max(Math.abs(virtualLoss), Math.abs(shadowLoss), Math.abs(n(row.grossLossR, 0)), recent.grossLossR, 0);
-  if (winR > 0 || lossR > 0) {
-    if (lossR <= 0) return 99;
-    return winR / lossR;
-  }
-  const explicit = n(row.netProfitFactor ?? row.profitFactor ?? row.pf, NaN);
-  if (Number.isFinite(explicit)) return Math.max(0, explicit);
-  return 0;
+  const gw = n(row.grossWinR, 0) || n(row.virtualGrossWinR, 0) || n(row.shadowGrossWinR, 0) || recent.grossWinR;
+  const gl = n(row.grossLossR, 0) || n(row.virtualGrossLossR, 0) || n(row.shadowGrossLossR, 0) || recent.grossLossR;
+  return gl > 0 ? gw / gl : gw > 0 ? 99 : 0;
+}
+
+function runtimeAvgCostR(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  if (completed <= 0) return 0;
+  const recent = aggregateRuntimeRecentOutcomes(row);
+  const cost = n(row.totalCostR, 0) || n(row.virtualTotalCostR, 0) || n(row.shadowTotalCostR, 0) || recent.totalCostR;
+  return cost / completed;
+}
+
+function runtimeDirectSLPct(row = {}) {
+  const completed = runtimeCompletedSample(row);
+  if (completed <= 0) return 0;
+  const recent = aggregateRuntimeRecentOutcomes(row);
+  const dsl = n(row.directSLCount, 0) || recent.directSLCount;
+  return dsl / completed;
 }
 
 function runtimeCurrentFitLabel(row = {}) {
-  const directLabel = upper(row.currentFit || row.currentFitLabel || row.entryCurrentFit || '');
-  if (directLabel) {
-    if (directLabel.includes('MISFIT')) return 'MISFIT';
-    if (directLabel.includes('MATCH')) return directLabel.includes('WEAK') ? 'WEAK_MATCH' : 'MATCH';
-    if (directLabel.includes('FIT')) return directLabel;
-    if (directLabel.includes('OK')) return 'OK';
-    if (directLabel.includes('NEUTRAL')) return 'NEUTRAL';
+  return row.currentFit || row.entryCurrentFit || 'UNKNOWN';
+}
+
+// ===== WEAK CONTRA GATE (REPAIRED) =====
+// [REPAIRED] accept options and never read ACTIVE_RUN_OPTIONS
+function weakContraGateConfig(options = {}) {
+  return {
+    enabled: bool(first(
+      options.weakContraGateEnabled,
+      CONFIG.short?.weakContra?.enabled,
+      CONFIG.short?.trade?.weakContraGateEnabled,
+      CONFIG.analyze?.weakContra?.enabled,
+      CONFIG.trade?.weakContraGateEnabled
+    ), true),
+    minConfluence: n(first(options.weakContraMinConfluence, CONFIG.short?.weakContra?.minConfluence), 72),
+    minRR: n(first(options.weakContraMinRR, CONFIG.short?.weakContra?.minRR), 1.15),
+    maxSpreadPct: n(first(options.weakContraMaxSpreadPct, CONFIG.short?.weakContra?.maxSpreadPct), 0.0015),
+    minDepthUsdlp: n(first(options.weakContraMinDepthUsdlp, CONFIG.short?.weakContra?.minDepthUsdlp), 100000),
+    maxCostR: n(first(options.weakContraMaxCostR, CONFIG.short?.weakContra?.maxCostR), 0.35),
+    requireStructure: bool(first(options.weakContraRequireStructure, CONFIG.short?.weakContra?.requireStructure), true),
+    requireFlowOrVolume: bool(first(options.weakContraRequireFlowOrVolume, CONFIG.short?.weakContra?.requireFlowOrVolume), true),
+    requireDepthData: bool(first(options.weakContraRequireDepthData, CONFIG.short?.weakContra?.requireDepthData), false),
+    rejectFakeBreakout: bool(first(options.weakContraRejectFakeBreakout, CONFIG.short?.weakContra?.rejectFakeBreakout), true)
+  };
+}
+
+function weakContraApplies(row = {}, marketContext = {}) {
+  const confirmation = confirmationFromRow(row, marketContext);
+  const text = rowText(row);
+  const obRelation = upper(row.obRelation);
+  const btcRelation = upper(row.btcRelation);
+  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
+  return Boolean(
+    confirmation === 'E_WEAK_CONTRA' ||
+    row.weakContra === true ||
+    row.contraSignal === true ||
+    row.bullishDivergence === true ||
+    row.avoidShort === true ||
+    row.doNotShort === true ||
+    row.fakeBreakout === true ||
+    row.fakeBreakoutRisk === true ||
+    currentTrendSide === OPPOSITE_TRADE_SIDE ||
+    obRelation === 'AGAINST' ||
+    btcRelation === 'BTC_AGAINST' ||
+    text.includes('E_WEAK_CONTRA') ||
+    text.includes('WEAK_CONTRA') ||
+    text.includes('CONTRA')
+  );
+}
+
+// [REPAIRED] accept options and pass to weakContraGateConfig
+function buildWeakContraEntryGate(row = {}, marketContext = {}, options = {}) {
+  const cfg = weakContraGateConfig(options);
+  const confirmationProfile = confirmationFromRow(row, marketContext);
+  const applies = weakContraApplies(row, marketContext);
+  const structureAligned = detectStructureSignal(row);
+  const flowAligned = detectFlowSignal(row, marketContext);
+  const volumeAligned = detectVolumeSignal(row);
+  const confluence = getRowConfluence(row);
+  const rr = getRowRR(row);
+  const spreadPct = getRowSpreadPct(row);
+  const depthUsd1p = getRowDepthUsd1p(row);
+  const costR = getRowCostR(row);
+  const failures = [];
+  if (!cfg.enabled || !applies) {
+    return {
+      version: WEAK_CONTRA_ENTRY_GATE_VERSION,
+      enabled: Boolean(cfg.enabled),
+      applies: Boolean(applies),
+      passed: true,
+      allowed: true,
+      rejected: false,
+      reason: !cfg.enabled ? 'E_WEAK_CONTRA_GATE_DISABLED' : 'NOT_E_WEAK_CONTRA',
+      failures: [],
+      confirmationProfile,
+      structureAligned,
+      flowAligned,
+      volumeAligned,
+      confluence,
+      rr,
+      spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+      depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+      costR: Number.isFinite(costR) ? costR : null
+    };
   }
-  const score = n(row.currentFitScore ?? row.entryCurrentFitScore ?? row.fitScore, 0);
-  if (score <= -20) return 'MISFIT';
-  if (score >= 45) return 'MATCH';
-  if (score >= 18) return 'WEAK_MATCH';
-  return directLabel || 'UNKNOWN';
+  if (confluence < cfg.minConfluence) failures.push('E_WEAK_CONTRA_CONFLUENCE_BELOW_MIN');
+  if (rr < cfg.minRR) failures.push('E_WEAK_CONTRA_RR_BELOW_MIN');
+  if (!Number.isFinite(spreadPct)) failures.push('E_WEAK_CONTRA_SPREAD_UNKNOWN');
+  else if (spreadPct > cfg.maxSpreadPct) failures.push('E_WEAK_CONTRA_SPREAD_TOO_WIDE');
+  if (cfg.requireDepthData && !Number.isFinite(depthUsd1p)) failures.push('E_WEAK_CONTRA_DEPTH_UNKNOWN');
+  else if (Number.isFinite(depthUsd1p) && depthUsd1p < cfg.minDepthUsdlp) failures.push('E_WEAK_CONTRA_DEPTH_TOO_LOW');
+  if (Number.isFinite(costR) && costR > cfg.maxCostR) failures.push('E_WEAK_CONTRA_COST_R_TOO_HIGH');
+  if (cfg.requireStructure && !structureAligned) failures.push('E_WEAK_CONTRA_STRUCTURE_NOT_CONFIRMED');
+  if (cfg.requireFlowOrVolume && !flowAligned && !volumeAligned) failures.push('E_WEAK_CONTRA_NO_FLOW_OR_VOLUME_CONFIRMATION');
+  if (cfg.rejectFakeBreakout && (row.fakeBreakout === true || row.fakeBreakoutRisk === true)) {
+    failures.push('E_WEAK_CONTRA_FAKE_BREAKOUT_RISK');
+  }
+  const passed = failures.length === 0;
+  return {
+    version: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    enabled: Boolean(cfg.enabled),
+    applies: true,
+    passed,
+    allowed: passed,
+    rejected: !passed,
+    reason: passed ? 'E_WEAK_CONTRA_GATE_PASSED' : failures[0],
+    failures,
+    confirmationProfile,
+    structureAligned,
+    flowAligned,
+    volumeAligned,
+    confluence,
+    minConfluence: cfg.minConfluence,
+    rr,
+    minRR: cfg.minRR,
+    spreadPct: Number.isFinite(spreadPct) ? spreadPct : null,
+    maxSpreadPct: cfg.maxSpreadPct,
+    depthUsd1p: Number.isFinite(depthUsd1p) ? depthUsd1p : null,
+    minDepthUsdlp: cfg.minDepthUsdlp,
+    costR: Number.isFinite(costR) ? costR : null,
+    maxCostR: cfg.maxCostR
+  };
+}
+
+function detectStructureSignal(row = {}) {
+  const text = rowText(row);
+  return Boolean(
+    row.retestConfirmed ||
+    row.pullbackConfirmed ||
+    row.sweepConfirmed ||
+    row.breakoutConfirmed ||
+    row.continuationConfirmed ||
+    row.compressionConfirmed ||
+    row.setupConfirmed ||
+    row.structureAlign ||
+    row.structureAligned ||
+    text.includes('RETEST') ||
+    text.includes('PULLBACK') ||
+    text.includes('SWEEP') ||
+    text.includes('BREAKOUT') ||
+    text.includes('BREAKDOWN') ||
+    text.includes('CONTINUATION') ||
+    text.includes('COMPRESSION') ||
+    text.includes('SQUEEZE')
+  );
+}
+
+function detectFlowSignal(row = {}, marketContext = {}) {
+  const text = rowText(row);
+  const obRelation = upper(row.obRelation);
+  const btcRelation = upper(row.btcRelation);
+  const currentTrendSide = normalizeMarketTrendSide(row.currentTrendSide || row.entryCurrentTrendSide || marketContext.trendSide);
+  return Boolean(
+    row.flowAlign ||
+    row.flowAligned ||
+    row.momentumAlign ||
+    row.askFlowAlign ||
+    row.bearFlow ||
+    row.sellFlow ||
+    currentTrendSide === TARGET_TRADE_SIDE ||
+    obRelation === 'WITH' ||
+    obRelation === 'ASK_HEAVY' ||
+    btcRelation === 'BTC_WITH' ||
+    text.includes('FLOW_ALIGN') ||
+    text.includes('BEAR_FLOW') ||
+    text.includes('SELL_FLOW') ||
+    text.includes('ASK_FLOW') ||
+    text.includes('TREND')
+  );
+}
+
+function detectVolumeSignal(row = {}) {
+  const text = rowText(row);
+  const relVol = n(first(row.relativeVolume, row.relVolume, row.volumeExpansion, row.volumeScore, row.volumeStrength), NaN);
+  return Boolean(
+    row.volumeSpike ||
+    row.volumeConfirmed ||
+    row.volumeAlign ||
+    row.volumeAligned ||
+    row.volumeSpikeConfirmed ||
+    row.quoteVolumeSpike ||
+    row.obVolumeAlign ||
+    text.includes('VOLUME_ALIGN') ||
+    text.includes('VOL_ALIGN') ||
+    text.includes('VOLUME_SPIKE') ||
+    text.includes('VOL_EXP') ||
+    (Number.isFinite(relVol) && relVol >= 1.4)
+  );
+}
+
+function hasValidRiskShape(row = {}) {
+  const entry = n(row.entry ?? row.entryPrice, 0);
+  const sl = n(row.sl ?? row.initialSl ?? row.stopLoss, 0);
+  const tp = n(row.tp ?? row.takeProfit, 0);
+  const rr = n(row.rr, 0);
+  if (row.learningOnly === true) return false;
+  if (row.liveRiskValid === false) return false;
+  if (inferRowTradeSide(row) === OPPOSITE_TRADE_SIDE) return false;
+  if (rr <= 0) return false;
+  return entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl;
+}
+
+function validateVirtualEntry(row = {}) {
+  const tradeSide = inferRowTradeSide(row);
+  const trueMicroFamilyId = getTrueMicroFamilyId(row);
+  const microMicroFamilyId = getMicroMicroFamilyId(row);
+  if (tradeSide === OPPOSITE_TRADE_SIDE) {
+    return { ok: false, reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM', tradeSide };
+  }
+  if (!trueMicroFamilyId || !isSelectableTrueMicroId(trueMicroFamilyId)) {
+    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_75_CHILD_TRUE_MICRO_FAMILY' };
+  }
+  if (!microMicroFamilyId || !isSelectableMicroMicroId(microMicroFamilyId)) {
+    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_MICRO_MICRO_FAMILY_ID' };
+  }
+  const geometry = hasCompletePositiveGeometry(row);
+  if (!geometry.complete || !geometry.valid) {
+    return { ok: false, reason: 'INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED' };
+  }
+  return {
+    ok: true,
+    reason: 'SHORT_VIRTUAL_LEARNING_ALLOWED',
+    rr: n(row.rr, 0),
+    riskPct: n(row.riskPct, 0),
+    rewardPct: n(row.rewardPct, 0),
+    estimatedCostR: n(row.estimatedCostR, 0),
+    rrShadowGridEnabled: true,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    weakContraEntryGate: row.weakContraEntryGate || null,
+    weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
+    microMicroRuntimeGate: null,
+    microMicroRuntimeGateStatus: null,
+    virtualLearningAllowed: true,
+    virtualEntryAllowed: true,
+    discordEligible: false,
+    empiricalVeto: false,
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    proofTier: PROOF_TIER_OBSERVATION_ONLY,
+    maxAllowedRiskBand: MAX_ALLOWED_RISK_BAND_ZERO
+  };
 }
 
 function hasCompletePositiveGeometry(row = {}) {
@@ -3525,6 +3273,8 @@ function hasCompletePositiveGeometry(row = {}) {
   const complete = entry !== null && sl !== null && tp !== null && entry > 0 && sl > 0 && tp > 0;
   return { complete, entry, sl, tp, valid: complete && tp < entry && entry < sl };
 }
+
+// ===== RUNTIME GATES =====
 
 function policyBlockedGate(row = {}) {
   const microMicroId = getMicroMicroFamilyId(row);
@@ -3575,19 +3325,10 @@ function exactMicroMicroEmpiricalVeto(row = {}) {
   const microMicroId = getMicroMicroFamilyId(row);
   const lcb95AvgR = runtimeLcb95AvgR(row);
   const completed = runtimeCompletedSample(row);
-  const exactMicroMicro =
-    Boolean(microMicroId) &&
-    isSelectableMicroMicroId(microMicroId) &&
-    inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
+  const exactMicroMicro = Boolean(microMicroId) && isSelectableMicroMicroId(microMicroId) && inferRowTradeSide(row) !== OPPOSITE_TRADE_SIDE;
   const explicitReason = upper(row.empiricalVetoReason);
-  const explicitVeto =
-    row.empiricalVeto === true &&
-    (!explicitReason || explicitReason === 'EXACT_MICRO_MICRO_LCB95_NEGATIVE');
-  const triggered =
-    exactMicroMicro &&
-    completed >= MIN_EMPIRICAL_VETO_COMPLETED &&
-    Number.isFinite(Number(lcb95AvgR)) &&
-    Number(lcb95AvgR) < 0;
+  const explicitVeto = row.empiricalVeto === true && (!explicitReason || explicitReason === 'EXACT_MICRO_MICRO_LCB95_NEGATIVE');
+  const triggered = exactMicroMicro && completed >= MIN_EMPIRICAL_VETO_COMPLETED && Number.isFinite(Number(lcb95AvgR)) && Number(lcb95AvgR) < 0;
   return {
     version: EMPIRICAL_VETO_VERSION,
     triggered: triggered || explicitVeto,
@@ -3612,9 +3353,7 @@ function proofTierFromRuntimeStatus(status, marketResolution = null) {
   if (status === MICRO_MICRO_STATUS_OBSERVING) return PROOF_TIER_OBSERVATION_ONLY;
   if (status === MICRO_MICRO_STATUS_REJECTED) return PROOF_TIER_OBSERVATION_ONLY;
   if (status === MICRO_MICRO_STATUS_PASSED) {
-    return marketResolution && marketResolution !== 'lifetime'
-      ? PROOF_TIER_MICRO_MICRO_MARKET_PROOF
-      : PROOF_TIER_MICRO_MICRO_LIFETIME_PROOF;
+    return marketResolution && marketResolution !== 'lifetime' ? PROOF_TIER_MICRO_MICRO_MARKET_PROOF : PROOF_TIER_MICRO_MICRO_LIFETIME_PROOF;
   }
   return PROOF_TIER_OBSERVATION_ONLY;
 }
@@ -3734,9 +3473,7 @@ function runtimeDiscordActivationGate(row = {}) {
     runtimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
     eligible: gate.status === MICRO_MICRO_STATUS_PASSED,
     blocked: gate.status !== MICRO_MICRO_STATUS_PASSED,
-    reason: gate.status === MICRO_MICRO_STATUS_PASSED
-      ? 'DISCORD_RUNTIME_NET_EDGE_GATE_PASSED'
-      : gate.reason,
+    reason: gate.status === MICRO_MICRO_STATUS_PASSED ? 'DISCORD_RUNTIME_NET_EDGE_GATE_PASSED' : gate.reason,
     discordEligible: gate.status === MICRO_MICRO_STATUS_PASSED,
     discordActivationEligible: gate.status === MICRO_MICRO_STATUS_PASSED,
     discordRuntimeActivationGatePassed: gate.status === MICRO_MICRO_STATUS_PASSED
@@ -3758,62 +3495,6 @@ function compareBestMicroMicroRows(a = {}, b = {}) {
     n(gateB.observed, 0) - n(gateA.observed, 0) ||
     String(gateA.microMicroFamilyId || '').localeCompare(String(gateB.microMicroFamilyId || ''))
   );
-}
-
-function validShortRiskShape(row = {}) {
-  const entry = n(row.entry ?? row.entryPrice, 0);
-  const sl = n(row.sl ?? row.initialSl ?? row.stopLoss, 0);
-  const tp = n(row.tp ?? row.takeProfit, 0);
-  return entry > 0 && sl > 0 && tp > 0 && tp < entry && entry < sl;
-}
-
-function hasValidRiskShape(row = {}) {
-  const rr = n(row.rr, 0);
-  if (row.learningOnly === true) return false;
-  if (row.liveRiskValid === false) return false;
-  if (inferRowTradeSide(row) === OPPOSITE_TRADE_SIDE) return false;
-  if (rr <= 0) return false;
-  return validShortRiskShape(row);
-}
-
-function validateVirtualEntry(row = {}) {
-  const tradeSide = inferRowTradeSide(row);
-  const trueMicroFamilyId = getTrueMicroFamilyId(row);
-  const microMicroFamilyId = getMicroMicroFamilyId(row);
-  if (tradeSide === OPPOSITE_TRADE_SIDE) {
-    return { ok: false, reason: 'LONG_DISABLED_SHORT_ONLY_SYSTEM', tradeSide };
-  }
-  if (!trueMicroFamilyId || !isSelectableTrueMicroId(trueMicroFamilyId)) {
-    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_75_CHILD_TRUE_MICRO_FAMILY' };
-  }
-  if (!microMicroFamilyId || !isSelectableMicroMicroId(microMicroFamilyId)) {
-    return { ok: false, reason: 'ENTRY_REQUIRES_EXACT_MICRO_MICRO_FAMILY_ID' };
-  }
-  const geometry = hasCompletePositiveGeometry(row);
-  if (!geometry.complete || !geometry.valid) {
-    return { ok: false, reason: 'INVALID_SHORT_GEOMETRY_TP_LT_ENTRY_LT_SL_REQUIRED' };
-  }
-  return {
-    ok: true,
-    reason: 'SHORT_VIRTUAL_LEARNING_ALLOWED',
-    rr: n(row.rr, 0),
-    riskPct: n(row.riskPct, 0),
-    rewardPct: n(row.rewardPct, 0),
-    estimatedCostR: n(row.estimatedCostR, 0),
-    rrShadowGridEnabled: true,
-    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
-    weakContraEntryGate: row.weakContraEntryGate || null,
-    weakContraEntryGateVersion: row.weakContraEntryGateVersion || WEAK_CONTRA_ENTRY_GATE_VERSION,
-    microMicroRuntimeGate: null,
-    microMicroRuntimeGateStatus: null,
-    virtualLearningAllowed: true,
-    virtualEntryAllowed: true,
-    discordEligible: false,
-    empiricalVeto: false,
-    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-    proofTier: PROOF_TIER_OBSERVATION_ONLY,
-    maxAllowedRiskBand: MAX_ALLOWED_RISK_BAND_ZERO
-  };
 }
 
 // ===== SNAPSHOT NORMALISATIE =====
@@ -3870,55 +3551,56 @@ function extractCandidatesFromSnapshot(snapshot = null) {
   return [];
 }
 
-function hasFullSnapshotShape(value) {
-  if (!isObjectRecord(value)) return false;
-  const candidates = extractCandidatesFromSnapshot(value);
-  return Array.isArray(candidates) && candidates.length > 0;
+function extractSnapshotId(snapshot = null) {
+  const root = isObjectRecord(snapshot) ? snapshot : {};
+  for (const candidate of [
+    root.snapshotId,
+    root.id,
+    root.runId,
+    root.scanId,
+    root.key,
+    root.snapshot?.snapshotId,
+    root.snapshot?.id,
+    root.payload?.snapshotId,
+    root.payload?.id,
+    root.result?.snapshotId,
+    root.result?.id
+  ]) {
+    if (candidate !== undefined && candidate !== null && String(candidate).trim()) {
+      return String(candidate).trim();
+    }
+  }
+  return null;
 }
 
 function snapshotCreatedAt(snapshot = null) {
-  const containers = snapshotContainers(snapshot);
-  for (const source of containers) {
-    const timestamp = normalizeTimestampMs(
-      first(
-        source.createdAt,
-        source.completedAt,
-        source.updatedAt,
-        source.generatedAt,
-        source.scannedAt,
-        source.scanCompletedAt,
-        source.ts,
-        source.timestamp,
-        source.scannerTs
-      ),
-      0
-    );
-    if (timestamp > 0) return timestamp;
+  const root = isObjectRecord(snapshot) ? snapshot : {};
+  for (const value of [
+    root.createdAt,
+    root.completedAt,
+    root.timestamp,
+    root.ts,
+    root.snapshot?.createdAt,
+    root.snapshot?.completedAt,
+    root.payload?.createdAt,
+    root.payload?.completedAt,
+    root.result?.createdAt,
+    root.result?.completedAt
+  ]) {
+    const ts = normalizeTimestampMs(value, 0);
+    if (ts > 0) return ts;
   }
   return 0;
 }
 
-function extractSnapshotId(latest = null) {
-  if (typeof latest === 'string' || typeof latest === 'number') {
-    const direct = String(latest).trim();
-    return direct || null;
-  }
-  const containers = snapshotContainers(latest);
+function hasFullSnapshotShape(snapshot) {
+  const containers = snapshotContainers(snapshot);
   for (const source of containers) {
-    const id = first(
-      source.snapshotId,
-      source.latestSnapshotId,
-      source.scannerSnapshotId,
-      source.currentSnapshotId,
-      source.scanSnapshotId,
-      source.scanId,
-      source.id
-    );
-    if (id !== undefined && id !== null && String(id).trim()) {
-      return String(id).trim();
-    }
+    if (Array.isArray(source.candidates) && source.candidates.length > 0) return true;
+    if (Array.isArray(source.shortCandidates) && source.shortCandidates.length > 0) return true;
+    if (Array.isArray(source.scannerCandidates) && source.scannerCandidates.length > 0) return true;
   }
-  return null;
+  return false;
 }
 
 function countTargetCandidates(snapshot = null) {
@@ -3935,9 +3617,7 @@ function buildSnapshotWeather(snapshot = null) {
   const root = isObjectRecord(snapshot) ? snapshot : {};
   const nestedSnapshot = isObjectRecord(root.snapshot) ? root.snapshot : {};
   const source = { ...root, ...nestedSnapshot };
-  const universe = source.currentMarketUniverse && typeof source.currentMarketUniverse === 'object'
-    ? source.currentMarketUniverse
-    : {};
+  const universe = source.currentMarketUniverse && typeof source.currentMarketUniverse === 'object' ? source.currentMarketUniverse : {};
   return buildConfirmedWeatherSnapshot(
     source,
     universe,
@@ -3969,46 +3649,33 @@ function normalizeSelectedSnapshot(snapshot = null, meta = {}) {
   const blockedNonShortCandidates = rows
     .filter(candidate => inferRowTradeSide(candidate) === OPPOSITE_TRADE_SIDE)
     .slice(0, 20)
-    .map(candidate =>
-      waitAction(
-        normalizeCandidate(candidate),
-        'LONG_DISABLED_SHORT_ONLY_SYSTEM',
-        {
-          skippedBeforeAnalyze: true,
-          skippedBeforeLiveFetch: true,
-          detectedScannerSide: inferRowTradeSide(candidate)
-        }
-      )
-    );
-  const resolvedSnapshotId = extractSnapshotId(root) || extractSnapshotId(normalizedSource);
-  const resolvedCreatedAt = snapshotCreatedAt(root) || snapshotCreatedAt(normalizedSource);
+    .map(candidate => waitAction(
+      normalizeCandidate(candidate),
+      'LONG_DISABLED_SHORT_ONLY_SYSTEM',
+      { skippedBeforeAnalyze: true, skippedBeforeLiveFetch: true, detectedScannerSide: inferRowTradeSide(candidate) }
+    ));
+  const snapshotId = extractSnapshotId(normalizedSource) || extractSnapshotId(root) || meta.snapshotId || null;
+  const createdAt = snapshotCreatedAt(normalizedSource) || snapshotCreatedAt(root) || meta.createdAt || 0;
   return {
-    ...normalizedSource,
-    snapshotId: resolvedSnapshotId,
-    createdAt: resolvedCreatedAt,
-    selectedSnapshotSource: meta.source || normalizedSource.selectedSnapshotSource || null,
-    selectedSnapshotReason: meta.reason || normalizedSource.selectedSnapshotReason || null,
+    snapshotId,
+    createdAt,
+    selectedSnapshotSource: meta.source || 'NORMALIZED_SELECTED_SNAPSHOT',
+    selectedSnapshotReason: meta.reason || 'NORMALIZED_FROM_SNAPSHOT',
     selectedTargetCandidateCount: targetRows.length,
     selectedShortCandidateCount: targetRows.length,
     selectedOppositeCandidateCount: blockedNonShortCandidates.length,
-    selectedLongCandidateCount: blockedNonShortCandidates.length,
-    blockedNonShortCandidates,
+    selectedLongCandidateCount: 0,
     blockedNonShortCandidatesCount: blockedNonShortCandidates.length,
-    ...sideFlags(),
-    ...isolationFlags(),
-    ...virtualFlags(),
-    ...buildResolvedEntryWeatherFields(
-      resolveMarketWeatherFromObjects(snapshotWeather),
-      normalizedSource,
-      snapshotWeather
-    ),
+    blockedNonShortCandidates,
     candidates: targetRows,
     candidatesCount: targetRows.length,
     shortCandidatesCount: targetRows.length,
     longCandidatesCount: 0,
     topSymbols: targetRows.slice(0, 20).map(row => row.symbol).filter(Boolean),
     snapshotNormalizedNullSafe: true,
-    snapshotNestedWrapperSupported: true
+    snapshotNestedWrapperSupported: true,
+    raw: normalizedSource,
+    snapshotWeather
   };
 }
 
@@ -4050,9 +3717,7 @@ function latestScanKeys() {
 
 async function readSnapshotCandidate(redis, key, label, timeoutMs = 200, debug = false) {
   if (!redis || !key) {
-    return debug
-      ? { value: null, debug: { key, label, redisType: label, reason: 'NO_REDIS_OR_KEY' } }
-      : null;
+    return debug ? { value: null, debug: { key, label, redisType: label, reason: 'NO_REDIS_OR_KEY' } } : null;
   }
   const latestValue = await withTimeoutFallback(
     getJsonSafe(redis, key, null),
@@ -4090,88 +3755,50 @@ async function readSnapshotCandidate(redis, key, label, timeoutMs = 200, debug =
     });
     debugInfo.snapshotIdBeforeValidation = normalized.snapshotId;
     debugInfo.createdAtBeforeValidation = normalized.createdAt;
-    debugInfo.candidateFieldUsed = 'candidates';
     debugInfo.rawCandidateCount = normalized.candidates.length;
     debugInfo.shortCandidateCountAfterSideFilter = normalized.candidates.length;
     debugInfo.scannerGateCandidateCount = normalized.candidates.length;
-    debugInfo.unwrapPath = 'root';
-    if (normalized.snapshotId && normalized.candidates.length > 0) {
-      return {
-        key,
-        latestPointerKey: key,
-        label,
-        snapshot: latestValue,
-        snapshotId: normalized.snapshotId,
-        targetCount: normalized.candidates.length,
-        oppositeCount: normalized.blockedNonShortCandidatesCount,
-        createdAt: normalized.createdAt,
-        source: `${label}:${key}`,
-        reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT',
-        debugInfo
-      };
+    debugInfo.rejectionStage = null;
+    debugInfo.rejectionReason = null;
+    return {
+      snapshot: normalized,
+      key,
+      label,
+      snapshotId: normalized.snapshotId,
+      targetCount: normalized.candidates.length,
+      oppositeCount: normalized.blockedNonShortCandidatesCount,
+      createdAt: normalized.createdAt,
+      source: `${label}:${key}`,
+      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_FULL_OBJECT',
+      debugInfo: debug ? debugInfo : null
+    };
+  }
+  if (isObjectRecord(latestValue) && latestValue.snapshot && hasFullSnapshotShape(latestValue.snapshot)) {
+    const snapshotKey = latestValue.snapshotId || latestValue.id || latestValue.key || null;
+    const normalized = normalizeSelectedSnapshot(latestValue.snapshot, {
+      source: `${label}:${key}`,
+      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
+    });
+    if (normalized.candidates.length <= 0) {
+      debugInfo.rejectionStage = 'POINTER_EMPTY_CANDIDATES';
+      debugInfo.rejectionReason = 'POINTER_EMPTY_CANDIDATES';
+      return debug ? { value: null, debug: debugInfo } : null;
     }
-    debugInfo.rejectionStage = 'FULL_SHAPE_BUT_NO_CANDIDATES_OR_NO_ID';
-    debugInfo.rejectionReason = 'FULL_SHAPE_BUT_NO_CANDIDATES_OR_NO_ID';
-    return debug ? { value: null, debug: debugInfo } : null;
+    return {
+      snapshot: normalized,
+      key: snapshotKey || key,
+      label,
+      snapshotId: normalized.snapshotId || snapshotKey,
+      targetCount: normalized.candidates.length,
+      oppositeCount: normalized.blockedNonShortCandidatesCount,
+      createdAt: normalized.createdAt,
+      source: `${label}:${key}`,
+      reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER',
+      debugInfo: debug ? debugInfo : null
+    };
   }
-  const snapshotId = extractSnapshotId(latestValue);
-  if (!snapshotId) {
-    debugInfo.rejectionStage = 'NO_SNAPSHOT_ID';
-    debugInfo.rejectionReason = 'NO_SNAPSHOT_ID';
-    return debug ? { value: null, debug: debugInfo } : null;
-  }
-  debugInfo.snapshotIdBeforeValidation = snapshotId;
-  debugInfo.unwrapPath = 'pointer';
-  const byIdKeys = snapshotKeysForId(snapshotId).slice(0, 8);
-  if (byIdKeys.length === 0) {
-    debugInfo.rejectionStage = 'NO_BY_ID_KEYS';
-    debugInfo.rejectionReason = 'NO_BY_ID_KEYS';
-    return debug ? { value: null, debug: debugInfo } : null;
-  }
-  const settled = await Promise.allSettled(
-    byIdKeys.map(async (snapshotKey) => {
-      const value = await withTimeoutFallback(
-        getJsonSafe(redis, snapshotKey, null),
-        timeoutMs,
-        `SNAPSHOT_BY_ID_READ_TIMEOUT:${label}:${snapshotKey}`
-      );
-      if (isTimeoutResult(value) || !hasFullSnapshotShape(value)) return null;
-      const normalized = normalizeSelectedSnapshot(value, {
-        source: `${label}:${snapshotKey}`,
-        reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER'
-      });
-      if (normalized.candidates.length <= 0) return null;
-      return {
-        key: snapshotKey,
-        latestPointerKey: key,
-        label,
-        snapshot: value,
-        snapshotId: normalized.snapshotId || snapshotId,
-        targetCount: normalized.candidates.length,
-        oppositeCount: normalized.blockedNonShortCandidatesCount,
-        createdAt: normalized.createdAt,
-        source: `${label}:${snapshotKey}`,
-        reason: 'LATEST_SHORT_SCANNER_SNAPSHOT_BY_POINTER',
-        debugInfo: {
-          ...debugInfo,
-          snapshotIdBeforeValidation: normalized.snapshotId || snapshotId,
-          createdAtBeforeValidation: normalized.createdAt,
-          candidateFieldUsed: 'candidates',
-          rawCandidateCount: normalized.candidates.length,
-          shortCandidateCountAfterSideFilter: normalized.candidates.length,
-          scannerGateCandidateCount: normalized.candidates.length,
-          unwrapPath: `pointer->${snapshotKey}`
-        }
-      };
-    })
-  );
-  const resolved = settled
-    .filter(result => result.status === 'fulfilled' && result.value && result.value.snapshot && result.value.targetCount > 0)
-    .map(result => result.value)
-    .sort((a, b) => n(b.createdAt, 0) - n(a.createdAt, 0))[0];
-  if (resolved) return resolved;
-  debugInfo.rejectionStage = 'POINTER_NO_VALID_SNAPSHOT';
-  debugInfo.rejectionReason = 'POINTER_NO_VALID_SNAPSHOT';
+  debugInfo.rejectionStage = 'NO_VALID_SNAPSHOT';
+  debugInfo.rejectionReason = 'NO_VALID_SNAPSHOT';
   return debug ? { value: null, debug: debugInfo } : null;
 }
 
@@ -4179,11 +3806,10 @@ async function getLatestSnapshot(deadlineAt, cfg, debug = false) {
   const debugInfo = {
     redisClientType: null,
     configuredLatestKey: SHORT_KEYS.scan.latest,
-    resolvedLatestKey: null,
     rawValueFound: false,
     rawValueType: null,
-    rawTopLevelKeys: [],
     parsedValueFound: false,
+    rawTopLevelKeys: [],
     parsedTopLevelKeys: [],
     unwrapPath: null,
     snapshotIdBeforeValidation: null,
@@ -4245,6 +3871,7 @@ async function getLatestSnapshot(deadlineAt, cfg, debug = false) {
       debugInfo.scannerGateCandidateCount = last.scannerGateCandidateCount;
       debugInfo.rejectionStage = last.rejectionStage || 'NO_CANDIDATE_FOUND';
       debugInfo.rejectionReason = last.rejectionReason || 'NO_CANDIDATE_FOUND';
+      return debug ? { snapshot: null, debugInfo } : null;
     }
     return debug ? { snapshot: null, debugInfo } : null;
   }
@@ -4361,10 +3988,11 @@ async function readExplicitScannerLatest(options, cfg, deadlineAt, debug = false
     parsed,
     parsed?.payload,
     parsed?.result,
-    parsed?.result?.result,
-    parsed?.result?.result?.result,
-    parsed?.data,
-    parsed?.snapshot
+    parsed?.snapshot,
+    parsed?.scannerSnapshot,
+    parsed?.latestSnapshot,
+    parsed?.currentSnapshot,
+    parsed?.data
   ];
   let candidateContainer = null;
   let candidates = [];
@@ -4397,12 +4025,7 @@ async function readExplicitScannerLatest(options, cfg, deadlineAt, debug = false
     return { snapshot: null, debugInfo: debug ? debugInfo : null };
   }
   const snapshot = normalizeSelectedSnapshot(
-    {
-      ...parsed,
-      snapshotId,
-      createdAt,
-      candidates: shortCandidates
-    },
+    { ...parsed, snapshotId, createdAt, candidates: shortCandidates },
     {
       source: `EXPLICIT_GET:${explicitKey}`,
       reason: 'EXPLICIT_SCANNER_LATEST_READ'
@@ -4413,9 +4036,7 @@ async function readExplicitScannerLatest(options, cfg, deadlineAt, debug = false
     return { snapshot: null, debugInfo: debug ? debugInfo : null };
   }
   const ageMs = Date.now() - snapshot.createdAt;
-  const maxAgeMs = Number.isFinite(Number(cfg.maxSnapshotAgeMs))
-    ? Number(cfg.maxSnapshotAgeMs)
-    : 12 * 60 * 1000;
+  const maxAgeMs = Number.isFinite(Number(cfg.maxSnapshotAgeMs)) ? Number(cfg.maxSnapshotAgeMs) : 12 * 60 * 1000;
   debugInfo.maxSnapshotAgeMs = maxAgeMs;
   debugInfo.selectedSnapshotAgeMs = ageMs;
   if (ageMs > maxAgeMs) {
@@ -4579,7 +4200,7 @@ function rememberOpenSymbol(openSymbolSet, row = {}) {
   }
 }
 
-// ===== LAZY IMPORTS (met cache reset bij fout) =====
+// ===== LAZY IMPORTS =====
 
 async function lazyImportAnalyzeEngine(deadlineAt, cfg, context) {
   if (ANALYZE_ENGINE_MODULE) return ANALYZE_ENGINE_MODULE;
@@ -4589,12 +4210,12 @@ async function lazyImportAnalyzeEngine(deadlineAt, cfg, context) {
     timeoutMs: cfg.analyzeImportTimeoutMs,
     label: 'IMPORT_ANALYZE_ENGINE',
     signal: context.signal,
-    reserveMs: FINALIZATION_RESERVE_MS + 300,
+    reserveMs: FINALIZATION_RESERVE_MS + 200,
     fallback: null
   });
   if (!result.ok || !result.result) {
     ANALYZE_ENGINE_MODULE = null;
-    context.runtimeWarnings.push('ANALYZE_ENGINE_IMPORT_TIMEOUT_OR_FAILED');
+    context.runtimeWarnings.push('ANALYZE_ENGINE_IMPORT_FAILED');
     return null;
   }
   ANALYZE_ENGINE_MODULE = result.result;
@@ -4604,17 +4225,17 @@ async function lazyImportAnalyzeEngine(deadlineAt, cfg, context) {
 async function lazyImportPositionEngine(deadlineAt, cfg, context) {
   if (POSITION_ENGINE_MODULE) return POSITION_ENGINE_MODULE;
   const result = await withDeadlineAndAbort({
-    fn: (signal) => import('./positionEngine.js'),
+    fn: (signal) => import('./position/positionEngine.js'),
     deadlineAt,
     timeoutMs: cfg.positionImportTimeoutMs,
     label: 'IMPORT_POSITION_ENGINE',
     signal: context.signal,
-    reserveMs: FINALIZATION_RESERVE_MS + 300,
+    reserveMs: FINALIZATION_RESERVE_MS + 200,
     fallback: null
   });
   if (!result.ok || !result.result) {
     POSITION_ENGINE_MODULE = null;
-    context.runtimeWarnings.push('POSITION_ENGINE_IMPORT_TIMEOUT_OR_FAILED');
+    context.runtimeWarnings.push('POSITION_ENGINE_IMPORT_FAILED');
     return null;
   }
   POSITION_ENGINE_MODULE = result.result;
@@ -4624,7 +4245,7 @@ async function lazyImportPositionEngine(deadlineAt, cfg, context) {
 async function lazyImportPositionSizing(deadlineAt, cfg, context) {
   if (POSITION_SIZING_MODULE) return POSITION_SIZING_MODULE;
   const result = await withDeadlineAndAbort({
-    fn: (signal) => import('./positionSizing.js'),
+    fn: (signal) => import('./position/positionSizing.js'),
     deadlineAt,
     timeoutMs: cfg.sizingImportTimeoutMs,
     label: 'IMPORT_POSITION_SIZING',
@@ -4634,7 +4255,7 @@ async function lazyImportPositionSizing(deadlineAt, cfg, context) {
   });
   if (!result.ok || !result.result) {
     POSITION_SIZING_MODULE = null;
-    context.runtimeWarnings.push('POSITION_SIZING_IMPORT_TIMEOUT_OR_FAILED_RISK_ZERO');
+    context.runtimeWarnings.push('POSITION_SIZING_IMPORT_FAILED');
     return null;
   }
   POSITION_SIZING_MODULE = result.result;
@@ -4644,7 +4265,7 @@ async function lazyImportPositionSizing(deadlineAt, cfg, context) {
 async function lazyImportDiscord(deadlineAt, cfg, context) {
   if (DISCORD_MODULE) return DISCORD_MODULE;
   const result = await withDeadlineAndAbort({
-    fn: (signal) => import('../discord/discord.js'),
+    fn: (signal) => import('./discord/discord.js'),
     deadlineAt,
     timeoutMs: cfg.discordImportTimeoutMs,
     label: 'IMPORT_DISCORD',
@@ -4654,7 +4275,7 @@ async function lazyImportDiscord(deadlineAt, cfg, context) {
   });
   if (!result.ok || !result.result) {
     DISCORD_MODULE = null;
-    context.runtimeWarnings.push('DISCORD_IMPORT_TIMEOUT_OR_FAILED_ALERT_SKIPPED');
+    context.runtimeWarnings.push('DISCORD_IMPORT_FAILED');
     return null;
   }
   DISCORD_MODULE = result.result;
@@ -4717,8 +4338,6 @@ async function loadOpenPositionsFast(cfg, runtimeWarnings, deadlineAt, options =
   }
   return Array.isArray(result.result) ? result.result : [];
 }
-
-// ===== MONITOR OPEN POSITIES =====
 
 async function monitorOpenPositionsSafe({
   cfg,
@@ -4785,7 +4404,7 @@ async function monitorOpenPositionsSafe({
       hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
       signal: signal
     }).catch((error) => ({
-      __monitorError: true,
+      _monitorError: true,
       error: error?.message || String(error)
     })),
     deadlineAt,
@@ -4793,13 +4412,13 @@ async function monitorOpenPositionsSafe({
     label: 'MONITOR_OPEN_POSITIONS',
     signal: options.signal,
     reserveMs: FINALIZATION_RESERVE_MS + 300,
-    fallback: { __timeout: true }
+    fallback: { _timeout: true }
   });
   if (!result.ok || isTimeoutResult(result.result) || result.result?.__timeout) {
     runtimeWarnings.push('MONITOR_OPEN_POSITIONS_TIMEOUT_CONTINUING_TO_ENTRY_LOOP');
     return [];
   }
-  if (result.result?.__monitorError) {
+  if (result.result?._monitorError) {
     runtimeWarnings.push(`MONITOR_OPEN_POSITIONS_ERROR_CONTINUING_TO_ENTRY_LOOP:${result.result.error}`);
     return [];
   }
@@ -4808,8 +4427,6 @@ async function monitorOpenPositionsSafe({
   if (Array.isArray(result.result?.closed)) return result.result.closed;
   return [];
 }
-
-// ===== VIRTUAL POSITIE OPSLAAN =====
 
 function fallbackBuildOpenPositionFromEntry(entry = {}) {
   const openedAt = now();
@@ -4880,32 +4497,22 @@ async function saveVirtualPositionFast(entry, cfg, deadlineAt, runtimeWarnings, 
   return { ok: true, position: result.result.position, code: 'SUCCESS' };
 }
 
-// ===== DISCORD / PLAYBOOK =====
+// ===== PLAYBOOK / FRESHNESS =====
 
 function playbookFreshness(row = {}, currentMarketWeatherKey = UNKNOWN_MARKET_WEATHER_KEY) {
-  const selectedKey =
-    row.currentMarketWeatherKey ||
-    row.confirmedMarketWeatherKey ||
-    row.entryMarketWeatherKey ||
-    row.playbookMarketWeatherKey ||
-    row.marketWeatherKey ||
-    null;
+  const selectedKey = row.currentMarketWeatherKey || row.confirmedMarketWeatherKey || row.entryMarketWeatherKey || row.playbookMarketWeatherKey || row.marketWeatherKey || null;
   const selectedParsed = parseKnownMarketWeatherKey(selectedKey);
   const currentParsed = parseKnownMarketWeatherKey(currentMarketWeatherKey);
   const createdAt = normalizeTimestampMs(
     row.playbookCreatedAt ||
-      row.playbookUpdatedAt ||
-      row.rotationCreatedAt ||
-      row.createdAt ||
-      row.updatedAt ||
-      row.selectedAt,
+    row.playbookUpdatedAt ||
+    row.rotationCreatedAt ||
+    row.createdAt ||
+    row.updatedAt ||
     0
   );
   const ageMin = createdAt > 0 ? (now() - createdAt) / 60000 : null;
-  const keyMatches =
-    selectedParsed.key !== UNKNOWN_MARKET_WEATHER_KEY &&
-    currentParsed.key !== UNKNOWN_MARKET_WEATHER_KEY &&
-    selectedParsed.key === currentParsed.key;
+  const keyMatches = selectedParsed.key !== UNKNOWN_MARKET_WEATHER_KEY && currentParsed.key !== UNKNOWN_MARKET_WEATHER_KEY && selectedParsed.key === currentParsed.key;
   const fresh = Boolean(keyMatches && createdAt > 0 && ageMin <= PLAYBOOK_MAX_AGE_MIN);
   return {
     version: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
@@ -4915,13 +4522,7 @@ function playbookFreshness(row = {}, currentMarketWeatherKey = UNKNOWN_MARKET_WE
     selectedKey: selectedParsed.key,
     currentMarketWeatherKey: currentParsed.key,
     keyMatches,
-    reason: fresh
-      ? 'PLAYBOOK_FRESH_FOR_CONFIRMED_WEATHER'
-      : !keyMatches
-        ? 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER'
-        : createdAt <= 0
-          ? 'PLAYBOOK_MISSING_TIMESTAMP'
-          : 'PLAYBOOK_STALE_FOR_CONFIRMED_WEATHER'
+    reason: fresh ? 'PLAYBOOK_FRESH_FOR_CONFIRMED_WEATHER' : !keyMatches ? 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER' : createdAt <= 0 ? 'PLAYBOOK_MISSING_TIMESTAMP' : 'PLAYBOOK_STALE_FOR_CONFIRMED_WEATHER'
   };
 }
 
@@ -4940,8 +4541,6 @@ function selectedRowMarketResolution(row = {}, currentMarketWeatherKey = UNKNOWN
   if (
     rowRegime &&
     currentRegime &&
-    rowRegime !== 'UNKNOWN' &&
-    currentRegime !== 'UNKNOWN' &&
     rowRegime === currentRegime
   ) {
     return 'regime';
@@ -4949,88 +4548,7 @@ function selectedRowMarketResolution(row = {}, currentMarketWeatherKey = UNKNOWN
   return 'lifetime';
 }
 
-async function safeRiskFractionForEntry(input = {}, sizing = sizingConfig(), deadlineAt, cfg, runtimeWarnings, options = {}) {
-  try { if (options.signal?.aborted) return 0; } catch { return 0; }
-  const context = { runtimeWarnings, signal: options.signal };
-  const PositionSizing = await lazyImportPositionSizing(deadlineAt, cfg, context);
-  if (!PositionSizing) return 0;
-  const policyBlocked = input.policyBlocked === true || input.microMicroPolicyBlocked === true;
-  const empiricalVeto = input.empiricalVeto === true || input.microMicroEmpiricalVeto === true;
-  const proofTier = input.proofTier || PROOF_TIER_OBSERVATION_ONLY;
-  const shrunkLCB95AvgR = n(input.shrunkLCB95AvgR ?? input.lcb95AvgR, 0);
-  if (
-    policyBlocked ||
-    empiricalVeto ||
-    proofTier === PROOF_TIER_POLICY_BLOCKED ||
-    proofTier === PROOF_TIER_EMPIRICAL_VETO ||
-    proofTier === PROOF_TIER_OBSERVATION_ONLY
-  ) {
-    return 0;
-  }
-  if (!(shrunkLCB95AvgR > 0)) return 0;
-  if (!sizing.enabled) return 0;
-  if (typeof PositionSizing.riskFractionForEntry === 'function') {
-    try {
-      const value = PositionSizing.riskFractionForEntry({
-        ...input,
-        positionSizingProofInputVersion: POSITION_SIZING_PROOF_INPUT_VERSION,
-        empiricalVeto,
-        policyBlocked,
-        riskSourceOfTruth: 'riskFractionForEntry'
-      });
-      const clean = n(value, 0);
-      return clean > 0 ? clamp(clean, sizing.minRiskPct, sizing.maxRiskPct) : 0;
-    } catch { return 0; }
-  }
-  return clamp(sizing.baseRiskPct, sizing.minRiskPct, sizing.maxRiskPct);
-}
-
-function deriveSignalAfterRisk({
-  runtimeStatusGate,
-  currentMarketWeatherKey,
-  playbookFresh,
-  playbookReason,
-  selectedAlertMatch,
-  currentFitGate,
-  riskFraction,
-  shrunkLCB95AvgR,
-  fdrPass = true
-} = {}) {
-  const reasons = [];
-  if (!runtimeStatusGate || runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) {
-    return { signalType: SIGNAL_TYPE_BLOCKED, reason: 'POLICY_BLOCKED', reasons: ['POLICY_BLOCKED'] };
-  }
-  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) {
-    return { signalType: SIGNAL_TYPE_BLOCKED, reason: 'EMPIRICAL_VETO', reasons: ['EMPIRICAL_VETO'] };
-  }
-  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED) {
-    return { signalType: SIGNAL_TYPE_BLOCKED, reason: runtimeStatusGate.reason || 'REJECTED_BAD_EDGE', reasons: runtimeStatusGate.reasons || [] };
-  }
-  if (isUnknownMarketWeatherKey(currentMarketWeatherKey)) {
-    return { signalType: SIGNAL_TYPE_OBSERVE_ONLY, reason: 'MARKET_WEATHER_UNKNOWN', reasons: ['MARKET_WEATHER_UNKNOWN'] };
-  }
-  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING) {
-    return { signalType: SIGNAL_TYPE_OBSERVE_ONLY, reason: runtimeStatusGate.reason || 'OBSERVING', reasons: runtimeStatusGate.reasons || [] };
-  }
-  if (!selectedAlertMatch?.ok) reasons.push(selectedAlertMatch?.reason || 'NOT_SELECTED_FOR_CURRENT_PLAYBOOK');
-  if (!currentFitGate?.ok) reasons.push(currentFitGate?.reason || 'CURRENT_FIT_NOT_OK');
-  if (!playbookFresh) reasons.push(playbookReason || 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER');
-  if (!(shrunkLCB95AvgR > 0)) reasons.push('SHRUNK_LCB95_NOT_POSITIVE_FOR_CONFIRMED_WEATHER');
-  if (!(riskFraction > 0)) reasons.push('RISK_FRACTION_ZERO');
-  if (!fdrPass) reasons.push('FDR_NOT_PASSED');
-  if (reasons.length === 0) {
-    return {
-      signalType: SIGNAL_TYPE_TRADE_READY,
-      reason: 'TRADE_READY_WEATHER_PLAYBOOK_CONFIRMED',
-      reasons: ['TRADE_READY_WEATHER_PLAYBOOK_CONFIRMED']
-    };
-  }
-  return {
-    signalType: SIGNAL_TYPE_WATCH_ONLY,
-    reason: reasons[0],
-    reasons
-  };
-}
+// ===== SELECTIE CONTEXT =====
 
 function callMaybeKey(value, fallback = null) {
   if (typeof value === 'function') {
@@ -5084,7 +4602,16 @@ async function getActiveRotationDirect(cfg, runtimeWarnings, deadlineAt, options
   return null;
 }
 
-// ===== SELECTIE CONTEXT =====
+function extractRotationRows(activeRotation = {}) {
+  const normalized = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
+  return [
+    ...(Array.isArray(normalized?.microFamilies) ? normalized.microFamilies : []),
+    ...(Array.isArray(normalized?.rows) ? normalized.rows : []),
+    ...(Array.isArray(normalized?.activeRows) ? normalized.activeRows : []),
+    ...(Array.isArray(normalized?.selectedRows) ? normalized.selectedRows : []),
+    ...(Array.isArray(normalized?.candidates) ? normalized.candidates : [])
+  ];
+}
 
 function buildSelectedAlertContext(activeRotation, marketContext = {}) {
   const normalizedRotation = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
@@ -5121,11 +4648,7 @@ function buildSelectedAlertContext(activeRotation, marketContext = {}) {
       exactMicroMicroFamilyId: microMicroId,
       familyResolution: LAYER_MICRO_MICRO,
       marketResolution,
-      proofSource: marketResolution === 'regimeTrend'
-        ? 'MICRO_MICRO_REGIME_TREND'
-        : marketResolution === 'regime'
-          ? 'MICRO_MICRO_REGIME'
-          : 'MICRO_MICRO_LIFETIME',
+      proofSource: marketResolution === 'regimeTrend' ? 'MICRO_MICRO_REGIME_TREND' : marketResolution === 'regime' ? 'MICRO_MICRO_REGIME' : 'MICRO_MICRO_LIFETIME',
       playbookFreshness: freshness,
       playbookFresh: freshness.fresh
     });
@@ -5204,118 +4727,149 @@ function buildSelectedAlertContext(activeRotation, marketContext = {}) {
     selectedRotation: normalizedRotation || null,
     currentMarketWeatherKey,
     currentMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-    selectorMode: 'OBSERVE',
+    allRowsByLearningId,
     configuredMicroMicroFamilyIds,
-    configuredSelectedMicroMicroFamilyIds: configuredMicroMicroFamilyIds,
+    eligibleMicroMicroFamilyIds,
     selectedMicroMicroFamilyIds,
-    selectedTrueMicroMicroFamilyIds: selectedMicroMicroFamilyIds,
-    selectedExactMicroMicroFamilyIds: selectedMicroMicroFamilyIds,
-    selectedMicroMicroSet: new Set(selectedMicroMicroFamilyIds),
-    selectedParentTrueMicroFamilyIds: uniqueStrings(selectedMicroMicroFamilyIds.map(parentIdFromChild)),
-    rejectedSelectedMicroMicroFamilyIds: rejectedSelectedMicroMicroRows.map((row) => row.id),
     rejectedSelectedMicroMicroRows,
     rejectedSelectedMicroMicroCount: rejectedSelectedMicroMicroRows.length,
-    activeSelectionRuntimeFiltered: rejectedSelectedMicroMicroRows.length > 0,
-    activeSelectionRuntimeFilteredReason: rejectedSelectedMicroMicroRows.length > 0
-      ? 'ACTIVE_SELECTION_CONTAINED_MICRO_MICROS_BLOCKED_BY_RUNTIME_NET_EDGE_GATE'
-      : null,
     rowByLearningId,
-    allRowsByLearningId,
-    runtimeGateByLearningId,
-    empty: selectedMicroMicroFamilyIds.length === 0,
-    emptyReason: selectedMicroMicroFamilyIds.length === 0
-      ? configuredMicroMicroFamilyIds.length > 0
-        ? 'NO_SELECTED_MICRO_MICRO_PASSED_RUNTIME_NET_EDGE_GATE'
-        : 'NO_MANUAL_MICRO_MICRO_SELECTED'
-      : null,
-    selectionPurpose: 'DISCORD_ALERT_ONLY',
-    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
-    discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
-    discordActivationRequiresWeatherPlaybook: true,
-    discordActivationRequiresNetEdge: true,
-    discordRuntimeGateRequired: true,
-    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-    ...sideFlags(),
-    ...virtualFlags(),
-    ...isolationFlags()
+    runtimeGateByLearningId
   };
 }
 
 function selectedAlertMatchInfo(alertContext, row = {}) {
-  if (!alertContext || alertContext.empty) {
+  const microMicroId = getMicroMicroFamilyId(row);
+  const exactTrueMicroId = getTrueMicroFamilyId(row);
+  if (!microMicroId || !alertContext?.configuredMicroMicroFamilyIds?.length) {
     return {
       ok: false,
-      reason: alertContext?.emptyReason || 'NO_MANUAL_MICRO_MICRO_SELECTED',
+      reason: 'NO_MICRO_MICRO_ON_ROW_FOR_DISCORD_ALERT',
       granularity: null,
       matchType: null,
       selectedId: null,
+      selectedMicroMicroFamilyId: null,
+      selectedMicroFamilyId: null,
       discordRuntimeActivationGatePassed: false,
       discordRuntimeActivationGate: null,
       playbookFreshness: null
     };
   }
-  const microMicroId = getMicroMicroFamilyId(row);
-  const exactTrueMicroId = getTrueMicroFamilyId(row);
-  if (
-    microMicroId &&
-    isSelectableMicroMicroId(microMicroId) &&
-    alertContext.selectedMicroMicroSet.has(microMicroId)
-  ) {
-    const selectedRow = alertContext.rowByLearningId?.get(microMicroId) ||
-      alertContext.allRowsByLearningId?.get(microMicroId) ||
-      row;
-    const gate = alertContext.runtimeGateByLearningId?.get(microMicroId) ||
-      runtimeDiscordActivationGate(selectedRow);
-    const freshness = selectedRow.playbookFreshness ||
-      playbookFreshness(selectedRow, alertContext.currentMarketWeatherKey);
-    if (!gate.eligible) {
-      return {
-        ok: false,
-        reason: gate.reason || 'SELECTED_MICRO_MICRO_BLOCKED_BY_RUNTIME_NET_EDGE_GATE',
-        granularity: LAYER_MICRO_MICRO,
-        matchType: SELECTION_EXACT_MICRO_MICRO,
-        selectedId: microMicroId,
-        selectedMicroMicroFamilyId: microMicroId,
-        selectedMicroFamilyId: exactTrueMicroId || childIdFromAnyLearningId(microMicroId),
-        discordRuntimeActivationGatePassed: false,
-        discordRuntimeActivationGate: gate,
-        playbookFreshness: freshness
-      };
-    }
+  const selected = alertContext.rowByLearningId.get(microMicroId);
+  if (!selected) {
     return {
-      ok: true,
-      reason: 'SELECTED_SHORT_MICRO_MICRO_EXACT_MATCH_RUNTIME_NET_EDGE_CONFIRMED',
-      granularity: LAYER_MICRO_MICRO,
-      matchType: SELECTION_EXACT_MICRO_MICRO,
-      selectedId: microMicroId,
-      selectedMicroMicroFamilyId: microMicroId,
-      selectedMicroFamilyId: exactTrueMicroId || childIdFromAnyLearningId(microMicroId),
-      discordRuntimeActivationGatePassed: true,
-      discordRuntimeActivationGate: gate,
-      playbookFreshness: freshness
+      ok: false,
+      reason: 'MICRO_MICRO_NOT_SELECTED_FOR_DISCORD_ALERT',
+      granularity: null,
+      matchType: null,
+      selectedId: null,
+      selectedMicroMicroFamilyId: microMicroId || null,
+      selectedMicroFamilyId: exactTrueMicroId || null,
+      discordRuntimeActivationGatePassed: false,
+      discordRuntimeActivationGate: null,
+      playbookFreshness: null
     };
   }
+  const selectedAlert = alertContext.rowByLearningId.get(selected.microMicroFamilyId || selected.id) || selected;
+  const freshness = selectedAlert?.playbookFreshness || playbookFreshness(selected, alertContext.currentMarketWeatherKey);
+  const runtimeGate = alertContext.runtimeGateByLearningId.get(microMicroId) || runtimeDiscordActivationGate(selected);
   return {
-    ok: false,
-    reason: microMicroId
-      ? 'MICRO_MICRO_NOT_SELECTED_FOR_DISCORD_ALERT'
-      : 'NO_MICRO_MICRO_ON_ROW_FOR_DISCORD_ALERT',
-    granularity: null,
-    matchType: null,
-    selectedId: null,
-    selectedMicroMicroFamilyId: microMicroId || null,
+    ok: true,
+    reason: 'SELECTED_FOR_DISCORD_ALERT',
+    granularity: LAYER_MICRO_MICRO,
+    matchType: SELECTION_EXACT_MICRO_MICRO,
+    selectedId: microMicroId,
+    selectedMicroMicroFamilyId: microMicroId,
     selectedMicroFamilyId: exactTrueMicroId || null,
-    discordRuntimeActivationGatePassed: false,
-    discordRuntimeActivationGate: null,
-    playbookFreshness: null
+    discordRuntimeActivationGatePassed: Boolean(runtimeGate.eligible),
+    discordRuntimeActivationGate: runtimeGate,
+    playbookFreshness: freshness
   };
 }
 
 function getSelectedWeeklyStats(alertContext, microMicroFamilyId) {
   if (!alertContext || !microMicroFamilyId) return null;
-  return alertContext.rowByLearningId.get(microMicroFamilyId) ||
-    alertContext.allRowsByLearningId.get(microMicroFamilyId) ||
-    null;
+  return alertContext.rowByLearningId.get(microMicroFamilyId) || alertContext.allRowsByLearningId.get(microMicroFamilyId) || null;
+}
+
+async function safeRiskFractionForEntry(proofInput, sizing, deadlineAt, cfg, runtimeWarnings, options = {}) {
+  try { if (options.signal?.aborted) return 0; } catch { return 0; }
+  if (!sizing || !sizing.enabled) return 0;
+  if (proofInput.maxAllowedRiskBand === MAX_ALLOWED_RISK_BAND_ZERO) return 0;
+  const context = { runtimeWarnings, signal: options.signal };
+  const PositionSizing = await lazyImportPositionSizing(deadlineAt, cfg, context);
+  if (!PositionSizing) {
+    runtimeWarnings.push('POSITION_SIZING_UNAVAILABLE_RISK_FRACTION_ZERO');
+    return 0;
+  }
+  if (typeof PositionSizing.calculateRiskFractionFromProof !== 'function') {
+    runtimeWarnings.push('POSITION_SIZING_CALCULATE_RISK_FRACTION_FUNCTION_MISSING');
+    return 0;
+  }
+  const result = await withDeadlineAndAbort({
+    fn: (signal) => PositionSizing.calculateRiskFractionFromProof({
+      ...proofInput,
+      sizing
+    }).catch(() => 0),
+    deadlineAt,
+    timeoutMs: Math.min(cfg.sizingImportTimeoutMs, 500),
+    label: 'CALCULATE_RISK_FRACTION_FROM_PROOF',
+    signal: options.signal,
+    reserveMs: FINALIZATION_RESERVE_MS + 200,
+    fallback: 0
+  });
+  if (!result.ok || isTimeoutResult(result.result) || typeof result.result !== 'number') {
+    runtimeWarnings.push('POSITION_SIZING_RISK_FRACTION_TIMEOUT_OR_FALLBACK');
+    return 0;
+  }
+  return result.result;
+}
+
+function deriveSignalAfterRisk({
+  runtimeStatusGate,
+  currentMarketWeatherKey,
+  playbookFresh,
+  playbookReason,
+  selectedAlertMatch,
+  currentFitGate,
+  riskFraction,
+  shrunkLCB95AvgR,
+  fdrPass = true
+} = {}) {
+  const reasons = [];
+  if (!runtimeStatusGate || runtimeStatusGate.status === MICRO_MICRO_STATUS_POLICY_BLOCKED) {
+    return { signalType: SIGNAL_TYPE_BLOCKED, reason: 'POLICY_BLOCKED', reasons: ['POLICY_BLOCKED'] };
+  }
+  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_EMPIRICAL_VETO) {
+    return { signalType: SIGNAL_TYPE_BLOCKED, reason: 'EMPIRICAL_VETO', reasons: ['EMPIRICAL_VETO'] };
+  }
+  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_REJECTED) {
+    return { signalType: SIGNAL_TYPE_BLOCKED, reason: runtimeStatusGate.reason || 'REJECTED_BAD_EDGE', reasons: runtimeStatusGate.reasons || [] };
+  }
+  if (isUnknownMarketWeatherKey(currentMarketWeatherKey)) {
+    return { signalType: SIGNAL_TYPE_OBSERVE_ONLY, reason: 'MARKET_WEATHER_UNKNOWN', reasons: ['MARKET_WEATHER_UNKNOWN'] };
+  }
+  if (runtimeStatusGate.status === MICRO_MICRO_STATUS_OBSERVING) {
+    return { signalType: SIGNAL_TYPE_OBSERVE_ONLY, reason: runtimeStatusGate.reason || 'OBSERVING', reasons: runtimeStatusGate.reasons || [] };
+  }
+  if (!selectedAlertMatch?.ok) reasons.push(selectedAlertMatch?.reason || 'NOT_SELECTED_FOR_CURRENT_PLAYBOOK');
+  if (!currentFitGate?.ok) reasons.push(currentFitGate?.reason || 'CURRENT_FIT_NOT_OK');
+  if (!playbookFresh) reasons.push(playbookReason || 'PLAYBOOK_MISSING_FOR_CONFIRMED_WEATHER');
+  if (!(shrunkLCB95AvgR > 0)) reasons.push('SHRUNK_LCB95_NOT_POSITIVE_FOR_CONFIRMED_WEATHER');
+  if (!(riskFraction > 0)) reasons.push('RISK_FRACTION_ZERO');
+  if (!fdrPass) reasons.push('FDR_NOT_PASSED');
+  if (reasons.length === 0) {
+    return {
+      signalType: SIGNAL_TYPE_TRADE_READY,
+      reason: 'TRADE_READY_WEATHER_PLAYBOOK_CONFIRMED',
+      reasons: ['TRADE_READY_WEATHER_PLAYBOOK_CONFIRMED']
+    };
+  }
+  return {
+    signalType: SIGNAL_TYPE_WATCH_ONLY,
+    reason: reasons[0],
+    reasons
+  };
 }
 
 async function buildRiskAndSignalDecision({
@@ -5338,8 +4892,7 @@ async function buildRiskAndSignalDecision({
   const maxAllowedRiskBand = maxAllowedRiskBandFromProof(proofTier);
   const shrunkAvgR = n(row.shrunkAvgR ?? selectedWeeklyStats?.shrunkAvgR ?? runtimeAvgR(selectedWeeklyStats || row), 0);
   const shrunkLCB95AvgR = n(row.shrunkLCB95AvgR ?? selectedWeeklyStats?.shrunkLCB95AvgR ?? runtimeLcb95AvgR(selectedWeeklyStats || row), 0);
-  const freshness = selectedAlertMatch?.playbookFreshness ||
-    playbookFreshness(selectedWeeklyStats || row, currentMarketWeatherKey);
+  const freshness = selectedAlertMatch?.playbookFreshness || playbookFreshness(selectedWeeklyStats || row, currentMarketWeatherKey);
   const riskFraction = await safeRiskFractionForEntry({
     weeklyStats: selectedWeeklyStats || row,
     side: TARGET_DASHBOARD_SIDE,
@@ -5374,11 +4927,7 @@ async function buildRiskAndSignalDecision({
     selectedFamilyId: getMicroMicroFamilyId(row) || null,
     familyResolution: LAYER_MICRO_MICRO,
     marketResolution,
-    proofSource: marketResolution === 'regimeTrend'
-      ? 'MICRO_MICRO_REGIME_TREND'
-      : marketResolution === 'regime'
-        ? 'MICRO_MICRO_REGIME'
-        : 'MICRO_MICRO_LIFETIME',
+    proofSource: marketResolution === 'regimeTrend' ? 'MICRO_MICRO_REGIME_TREND' : marketResolution === 'regime' ? 'MICRO_MICRO_REGIME' : 'MICRO_MICRO_LIFETIME',
     proofTier,
     signalType: derivedSignal.signalType,
     shrunkAvgR,
@@ -5403,55 +4952,28 @@ async function buildRiskAndSignalDecision({
   };
 }
 
-function extractRotationRows(activeRotation = {}) {
-  const normalized = activeRotation?.activeRotation || activeRotation?.rotation || activeRotation?.active || activeRotation || {};
-  return [
-    ...(Array.isArray(normalized?.microFamilies) ? normalized.microFamilies : []),
-    ...(Array.isArray(normalized?.rows) ? normalized.rows : []),
-    ...(Array.isArray(normalized?.activeRows) ? normalized.activeRows : []),
-    ...(Array.isArray(normalized?.selectedRows) ? normalized.selectedRows : []),
-    ...(Array.isArray(normalized?.candidates) ? normalized.candidates : [])
-  ];
-}
-
-function buildVirtualEntryAction({
-  row,
-  alertContext,
-  selectedWeeklyStats,
-  virtualGate,
-  selectedAlertMatch,
-  riskAndSignal,
-  currentFitGate,
-  marketContext
-}) {
+function buildVirtualEntryAction({ row, alertContext, selectedWeeklyStats, virtualGate, selectedAlertMatch, riskAndSignal, currentFitGate, marketContext }) {
   const normalized = normalizeExactTrueMicroRow(row, marketContext);
   const trueMicroFamilyId = getTrueMicroFamilyId(normalized);
   const microMicroFamilyId = getMicroMicroFamilyId(normalized);
   const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
   const runtimeStatusGate = virtualGate.microMicroRuntimeGate || microMicroRuntimeGate(selectedWeeklyStats || row);
-  const runtimeGate = selectedAlertMatch?.discordRuntimeActivationGate ||
-    runtimeDiscordActivationGate({
-      ...(selectedWeeklyStats || row),
-      microMicroRuntimeGate: runtimeStatusGate
-    });
-  const identity = learningIdentityFields({
-    ...normalized,
-    childTrueMicroFamilyId: trueMicroFamilyId,
-    microMicroFamilyId
+  const runtimeGate = selectedAlertMatch?.discordRuntimeActivationGate || runtimeDiscordActivationGate({
+    ...(selectedWeeklyStats || row),
+    microMicroRuntimeGate: runtimeStatusGate
   });
+  const identity = learningIdentityFields({ ...normalized, childTrueMicroFamilyId: trueMicroFamilyId, microMicroFamilyId });
   const finalDiscordAlertEligible = Boolean(
     riskAndSignal.signalType === SIGNAL_TYPE_TRADE_READY &&
-      selectedAlertMatch?.ok &&
-      currentFitGate.ok &&
-      runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED &&
-      runtimeGate.eligible === true &&
-      selectedAlertMatch?.granularity === LAYER_MICRO_MICRO &&
-      microMicroFamilyId &&
-      selectedAlertMatch?.selectedMicroMicroFamilyId === microMicroFamilyId
+    selectedAlertMatch?.ok &&
+    currentFitGate.ok &&
+    runtimeStatusGate.status === MICRO_MICRO_STATUS_PASSED &&
+    runtimeGate.eligible === true &&
+    selectedAlertMatch?.granularity === LAYER_MICRO_MICRO &&
+    microMicroFamilyId &&
+    selectedAlertMatch?.selectedMicroMicroFamilyId === microMicroFamilyId
   );
-  const discordAlertReason = finalDiscordAlertEligible
-    ? 'TRADE_READY_WEATHER_PLAYBOOK_CONFIRMED'
-    : riskAndSignal.reason || 'NOT_TRADE_READY';
+  const discordAlertReason = finalDiscordAlertEligible ? 'TRADE_READY_WEATHER_PLAYBOOK_CONFIRMED' : riskAndSignal.reason || 'NOT_TRADE_READY';
   const weatherFields = attachEntryMarketWeather(row, marketContext);
   return {
     ...normalized,
@@ -5542,17 +5064,17 @@ function buildVirtualEntryAction({
 function buildDiscordEntryAlertPayload(entry = {}) {
   const microId = upper(
     getTrueMicroFamilyId(entry) ||
-      entry.trueMicroFamilyId ||
-      entry.childTrueMicroFamilyId ||
-      entry.microFamilyId ||
-      entry.analyzeMicroFamilyId ||
-      entry.learningMicroFamilyId
+    entry.trueMicroFamilyId ||
+    entry.childTrueMicroFamilyId ||
+    entry.microFamilyId ||
+    entry.analyzeMicroFamilyId ||
+    entry.learningMicroFamilyId
   );
   const microMicroId = upper(
     getMicroMicroFamilyId(entry) ||
-      entry.microMicroFamilyId ||
-      entry.trueMicroMicroFamilyId ||
-      entry.exactMicroMicroFamilyId
+    entry.microMicroFamilyId ||
+    entry.trueMicroMicroFamilyId ||
+    entry.exactMicroMicroFamilyId
   );
   const rotationId = entry.activeRotationId || entry.rotationId || entry.selectedRotationId || `manual_${PERSISTENT_LEARNING_KEY}`;
   return {
@@ -5614,7 +5136,7 @@ function buildDiscordEntryAlertPayload(entry = {}) {
     discordActivationRequiresNetEdge: true,
     discordActivationRequiresWeatherPlaybook: true,
     discordRuntimeActivationGate: entry.discordRuntimeActivationGate || null,
-    discordActivationGate: entry.discordActivationGate || entry.discordRuntimeActivationGate || null,
+    discordActivationGate: entry.discordActivationGate || null,
     selectedForDiscord: true,
     liveEligible: true,
     selectedTrueMicroFamilyId: microId,
@@ -5673,8 +5195,8 @@ async function maybeSendDiscordEntryAlert(entry = {}, cfg = tradeConfig(), deadl
   }
   const runtimeGate = entry.discordRuntimeActivationGate || entry.discordActivationGate || runtimeDiscordActivationGate(
     entry.selectedWeeklyStats ||
-      entry.weeklyStats ||
-      entry
+    entry.weeklyStats ||
+    entry
   );
   if (runtimeGate.eligible !== true) {
     return {
@@ -5777,8 +5299,8 @@ function buildVirtualExitAction(outcome = {}) {
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    grossRFormula: ' (entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: ' (entry - currentPrice) / (initialSl - entry)',
     discordExitAlertSent: Boolean(outcome.discordExitAlertSent),
     realTrade: false,
     realOrdersDisabled: true,
@@ -5842,7 +5364,7 @@ function mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw = [], liveRows = []) {
     if (key && !liveBySymbol.has(key)) liveBySymbol.set(key, row);
   }
   const raw = Array.isArray(analyzedRowsRaw) && analyzedRowsRaw.length ? analyzedRowsRaw : liveRows;
-  return raw.map((row) => {
+  return raw.map(row => {
     const key = symbolKey(row.symbol || row.baseSymbol || row.contractSymbol);
     const live = liveBySymbol.get(key) || {};
     return { ...live, ...row };
@@ -5853,7 +5375,7 @@ function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
   return mergeAnalyzeRowsWithLiveRows(analyzedRowsRaw, liveRows)
     .filter(Boolean)
     .filter(isTargetRow)
-    .map((row) => {
+    .map(row => {
       const withWeather = attachEntryMarketWeather(row, marketContext);
       const exactRow = normalizeExactTrueMicroRow(withWeather, marketContext);
       const contextualRow = attachCurrentFitContext({
@@ -5867,7 +5389,7 @@ function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
         normalizeExactTrueMicroRow(contextualRow, marketContext),
         'ADAPTIVE_SHORT_RR_AFTER_ANALYZE_OR_FALLBACK_EXACT_75'
       );
-      const weakContraEntryGate = buildWeakContraEntryGate(riskRow, marketContext);
+      const weakContraEntryGate = buildWeakContraEntryGate(riskRow, marketContext, {});
       return {
         ...riskRow,
         ...learningIdentityFields(riskRow),
@@ -5882,8 +5404,8 @@ function normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext }) {
         tradeCandidateAllowed: !weakContraEntryGate.rejected
       };
     })
-    .filter((row) => Boolean(getTrueMicroFamilyId(row)))
-    .filter((row) => Boolean(getMicroMicroFamilyId(row)));
+    .filter(row => Boolean(getTrueMicroFamilyId(row)))
+    .filter(row => Boolean(getMicroMicroFamilyId(row)));
 }
 
 async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarnings, deadlineAt, runOptions = {}) {
@@ -5891,15 +5413,15 @@ async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarning
   const context = { runtimeWarnings, signal: runOptions.signal };
   const AnalyzeEngine = await lazyImportAnalyzeEngine(deadlineAt, cfg, context);
   if (!AnalyzeEngine) {
-    runtimeWarnings.push('ANALYZE_ENGINE_UNAVAILABLE_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+    runtimeWarnings.push('ANALYZE_ENGINE_UNAVAILABLE_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO');
     return { rows: liveRows, analyzeError: 'ANALYZE_ENGINE_UNAVAILABLE', analyzeFallbackUsed: true };
   }
   if (!canStartPhase(deadlineAt, 200, FINALIZATION_RESERVE_MS + 300)) {
-    runtimeWarnings.push('ANALYZE_SKIPPED_DEADLINE_NEAR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+    runtimeWarnings.push('ANALYZE_SKIPPED_DEADLINE_NEAR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO');
     return { rows: liveRows, analyzeError: 'ANALYZE_SKIPPED_DEADLINE_NEAR', analyzeFallbackUsed: true };
   }
   if (typeof AnalyzeEngine.analyzeCandidatesBatch !== 'function') {
-    runtimeWarnings.push('ANALYZE_CANDIDATES_FUNCTION_MISSING_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+    runtimeWarnings.push('ANALYZE_CANDIDATES_FUNCTION_MISSING_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO');
     return { rows: liveRows, analyzeError: 'ANALYZE_CANDIDATES_FUNCTION_MISSING', analyzeFallbackUsed: true };
   }
   const effectiveTimeout = Math.min(cfg.analyzeTimeoutMs, 2500);
@@ -5920,18 +5442,18 @@ async function analyzeCandidatesBatchSafe(liveRows, options, cfg, runtimeWarning
       fallback: { __timeout: true }
     });
     if (!analyzeResult.ok || isTimeoutResult(analyzeResult.result) || analyzeResult.result?.__timeout) {
-      runtimeWarnings.push('ANALYZE_CANDIDATES_TIMEOUT_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+      runtimeWarnings.push('ANALYZE_CANDIDATES_TIMEOUT_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO');
       return { rows: liveRows, analyzeError: 'ANALYZE_CANDIDATES_TIMEOUT', analyzeFallbackUsed: true };
     }
     const rows = Array.isArray(analyzeResult.result) ? analyzeResult.result : [];
     if (!rows.length) {
-      runtimeWarnings.push('ANALYZE_RETURNED_EMPTY_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS');
+      runtimeWarnings.push('ANALYZE_RETURNED_EMPTY_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO');
       return { rows: liveRows, analyzeError: null, analyzeFallbackUsed: true };
     }
     return { rows, analyzeError: null, analyzeFallbackUsed: false };
   } catch (error) {
     const message = error?.message || String(error);
-    runtimeWarnings.push(`ANALYZE_CANDIDATES_ERROR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO_ROWS:${message}`);
+    runtimeWarnings.push(`ANALYZE_CANDIDATES_ERROR_USING_FALLBACK_EXACT_75_AND_MICRO_MICRO:${message}`);
     return { rows: liveRows, analyzeError: message, analyzeFallbackUsed: true };
   }
 }
@@ -6019,7 +5541,7 @@ function inferPrimaryBottleneck({
   if (activeRuntimeBlockedSelectionRows > 0 && discordRuntimeGateBlockedRows > 0) return 'ACTIVE_DISCORD_SELECTION_BLOCKED_BY_RUNTIME_NET_EDGE_GATE';
   if (monitorTimeout && openPositionCountBeforeEntries > 0 && virtualExitRows <= 0) return 'MONITOR_TIMEOUT_OPEN_POSITIONS_NOT_FULLY_CLEANED';
   if (openPositionCountBeforeEntries >= 80 && virtualExitRows <= 0) return 'MANY_OPEN_POSITIONS_WAITING_FOR_TP_SL_OR_TIME_STOP';
-  if (virtualExitRows > 0) return 'VIRTUAL_EXITS_RECORDED_LEARNING_UPDATED';
+  if (virtualExitRows > 0) return 'VIRTUAL_EXITS_RECORDED_LEARNING_UPDATE';
   if (processed <= 0) return 'NO_CANDIDATES_PROCESSED';
   if (liveRows <= 0) return 'NO_LIVE_ROWS_OR_NO_FALLBACK_PRICE';
   if (riskValidRows <= 0) return 'NO_COST_AWARE_TP_SL_AVAILABLE';
@@ -6130,8 +5652,8 @@ function buildQualityAudit({
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: candle.low <= tp',
     slHitRule: 'SHORT: candle.high >= sl',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+    grossRFormula: ' (entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: ' (entry - currentPrice) / (initialSl - entry)',
     marketWeather: {
       available: Boolean(marketContext?.ok),
       confirmedMarketWeatherKey: marketContext?.confirmedMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
@@ -6166,7 +5688,7 @@ function buildQualityAudit({
       analyzedRows: analyzedRowsCount,
       analyzedRiskValidRows: counts.analyzedRiskValidRows,
       analyzedExact75Rows: counts.analyzedExact75Rows,
-      analyzedMicroMicroRows: counts.analyzedMicroMicroRows,
+      analyzedMicroRows: counts.analyzedMicroRows,
       fallbackExact75Rows: counts.fallbackExact75Rows || 0,
       weakContraRejectedRows: counts.weakContraRejectedRows || 0,
       weakContraAllowedRows: counts.weakContraAllowedRows || 0,
@@ -6175,8 +5697,12 @@ function buildQualityAudit({
       virtualExitRows,
       waitRows: counts.waitRows,
       skippedByExistingSymbol: counts.skippedByExistingSymbol || 0,
-      selectedAlertMicroMicroMatches: counts.selectedAlertMicroMicroMatches || 0,
-      discordCurrentFitBlockedRows: counts.discordCurrentFitBlockedRows || 0,
+      discordAlertEligibleRows: counts.discordAlertEligibleRows || 0,
+      discordAlertsQueued: counts.discordAlertsQueued || 0,
+      discordAlertsSent: counts.discordAlertsSent || 0,
+      discordAlertsFailed: counts.discordAlertsFailed || 0,
+      discordAlertsSkippedNoSelectedMicro: counts.discordAlertsSkippedNoSelectedMicro || 0,
+      discordAlertsSkippedCurrentFit: counts.discordAlertsSkippedCurrentFit || 0,
       discordRuntimeGateBlockedRows: counts.discordRuntimeGateBlockedRows || 0,
       activeRuntimeBlockedSelectionRows: counts.activeRuntimeBlockedSelectionRows || 0,
       empiricalVetoRows: counts.empiricalVetoRows || 0,
@@ -6222,7 +5748,8 @@ function compactMarketWeather(value) {
   };
 }
 
-function compactRunForRedis(result = {}) {
+// [REPAIRED] compactRunForRedis now receives context and uses context.options
+function compactRunForRedis(result = {}, context = {}) {
   if (!result || typeof result !== 'object') return result;
   const {
     actions,
@@ -6239,7 +5766,8 @@ function compactRunForRedis(result = {}) {
     marketContext,
     ...rest
   } = result;
-  const shouldKeepActions = bool(ACTIVE_RUN_OPTIONS?.keepRunActions, false);
+  const options = context?.options || {};
+  const shouldKeepActions = bool(options.keepRunActions, false);
   return {
     ...rest,
     actions: shouldKeepActions ? actions || [] : [],
@@ -6306,1020 +5834,905 @@ export async function runTradeSystem(options = {}) {
     lastPhaseAt: startedAt,
     lastPhaseName: null,
     runtimeWarnings: [],
-    operationDiagnostics: [],
-    marketContext: null,
     snapshot: null,
-    cursorState: null
+    marketContext: null
   };
 
-  const recordPhaseLocal = (name, extra = {}) => {
+  function recordPhaseLocal(name, extra = {}) {
     recordPhase(context, name, extra);
-  };
+  }
 
-  recordPhaseLocal('TRADE_SYSTEM_ENTER');
+  const lagStats = lagMonitor.snapshot();
 
-  try {
-    if (options.diagnosticPhase === 'snapshot') {
-      recordPhaseLocal('DIAGNOSTIC_SNAPSHOT_START');
-      const explicitResult = await readExplicitScannerLatest(options, cfg, context.deadlineAt, true);
-      const snapshot = explicitResult.snapshot || null;
-      recordPhaseLocal('DIAGNOSTIC_SNAPSHOT_END', { found: !!snapshot });
-      const lagStats = lagMonitor.stop();
-      return {
-        ok: true,
-        runId,
-        startedAt,
-        diagnosticPhase: 'snapshot',
-        snapshotId: snapshot?.snapshotId || null,
-        snapshotCreatedAt: snapshot?.createdAt || null,
-        candidatesCount: snapshot?.candidates?.length || 0,
-        maxEventLoopLagMs: lagStats.maxLagMs,
-        durationMs: now() - startedAt,
-        routeTimings: options.routeTimings || {},
-        preTradeDurationMs: options.preTradeDurationMs || 0,
-        phaseLog: context.phaseLog,
-        lastPhase: context.lastPhaseName,
-        ...sideFlags(),
-        ...isolationFlags(),
-        ...virtualFlags()
-      };
-    }
+  // FASE 1: Market Weather
+  recordPhaseLocal('MARKET_CONTEXT_START');
+  const marketContextRaw = await withDeadlineAndAbort({
+    fn: (signal) => loadMarketContext().catch(() => fallbackMarketContext('MARKET_CONTEXT_LOAD_FAILED')),
+    deadlineAt: context.deadlineAt,
+    timeoutMs: cfg.marketContextTimeoutMs,
+    label: 'MARKET_CONTEXT',
+    signal: context.signal,
+    reserveMs: FINALIZATION_RESERVE_MS + 200,
+    fallback: fallbackMarketContext('MARKET_CONTEXT_TIMEOUT')
+  });
+  const marketContextPre = marketContextRaw.ok && marketContextRaw.result ? marketContextRaw.result : fallbackMarketContext('MARKET_CONTEXT_FAILED');
+  recordPhaseLocal('MARKET_CONTEXT_END', { ok: marketContextPre.ok });
 
-    if (!canStartPhase(context.deadlineAt, 1000, FINALIZATION_RESERVE_MS)) {
-      recordPhaseLocal('TRADE_ABORTED_NO_BUDGET');
-      const lagStats = lagMonitor.stop();
-      return {
-        ok: false,
-        skipped: true,
-        reason: 'INSUFFICIENT_BUDGET_AFTER_RESERVE',
-        runId,
-        startedAt,
-        deadlineAt: context.deadlineAt,
-        remainingMs: remainingMs(context.deadlineAt, FINALIZATION_RESERVE_MS),
-        maxEventLoopLagMs: lagStats.maxLagMs,
-        durationMs: now() - startedAt,
-        phaseLog: context.phaseLog,
-        lastPhase: context.lastPhaseName,
-        ...sideFlags(),
-        ...virtualFlags(),
-        ...isolationFlags()
-      };
-    }
-
-    // FASE 1: Market Weather
-    recordPhaseLocal('MARKET_CONTEXT_START');
-    const marketContextRaw = await withDeadlineAndAbort({
-      fn: (signal) => loadMarketContext().catch(() => fallbackMarketContext('MARKET_CONTEXT_LOAD_FAILED')),
+  let previousWeather = null;
+  if (canStartPhase(context.deadlineAt, 200, FINALIZATION_RESERVE_MS + 100)) {
+    const prev = await withDeadlineAndAbort({
+      fn: () => getJsonSafe(safeGetDurableRedis(), SHORT_KEYS.trade.lastConfirmedWeatherKey, null),
       deadlineAt: context.deadlineAt,
-      timeoutMs: cfg.marketContextTimeoutMs,
-      label: 'MARKET_CONTEXT',
+      timeoutMs: 200,
+      label: 'READ_PREVIOUS_WEATHER',
       signal: context.signal,
-      reserveMs: FINALIZATION_RESERVE_MS + 200,
-      fallback: fallbackMarketContext('MARKET_CONTEXT_TIMEOUT')
+      reserveMs: FINALIZATION_RESERVE_MS + 100,
+      fallback: null
     });
-    const marketContextPre = marketContextRaw.ok && marketContextRaw.result ? marketContextRaw.result : fallbackMarketContext('MARKET_CONTEXT_FAILED');
-    recordPhaseLocal('MARKET_CONTEXT_END', { ok: marketContextPre.ok });
+    previousWeather = prev.ok ? prev.result : null;
+  }
 
-    let previousWeather = null;
-    if (canStartPhase(context.deadlineAt, 200, FINALIZATION_RESERVE_MS + 100)) {
-      const prev = await withDeadlineAndAbort({
-        fn: () => getJsonSafe(safeGetDurableRedis(), SHORT_KEYS.trade.lastConfirmedWeatherKey, null),
-        deadlineAt: context.deadlineAt,
-        timeoutMs: 200,
-        label: 'READ_PREVIOUS_WEATHER',
-        signal: context.signal,
-        reserveMs: FINALIZATION_RESERVE_MS + 100,
-        fallback: null
-      });
-      previousWeather = prev.ok ? prev.result : null;
-    }
-
-    // FASE 2: Snapshot
-    recordPhaseLocal('SCANNER_LATEST_START');
-    const explicitResult = await withDeadlineAndAbort({
-      fn: (signal) => readExplicitScannerLatest(options, cfg, context.deadlineAt, false),
+  // FASE 2: Snapshot
+  recordPhaseLocal('SCANNER_LATEST_START');
+  const explicitResult = await withDeadlineAndAbort({
+    fn: (signal) => readExplicitScannerLatest(options, cfg, context.deadlineAt, false),
+    deadlineAt: context.deadlineAt,
+    timeoutMs: cfg.snapshotTimeoutMs,
+    label: 'READ_EXPLICIT_SCANNER_LATEST',
+    signal: context.signal,
+    reserveMs: FINALIZATION_RESERVE_MS + 300,
+    fallback: { snapshot: null, debugInfo: null }
+  });
+  let snapshot = explicitResult.ok ? explicitResult.result.snapshot : null;
+  if (!snapshot) {
+    const fallbackRes = await withDeadlineAndAbort({
+      fn: (signal) => getLatestSnapshot(context.deadlineAt, cfg, false),
       deadlineAt: context.deadlineAt,
       timeoutMs: cfg.snapshotTimeoutMs,
-      label: 'READ_EXPLICIT_SCANNER_LATEST',
+      label: 'GET_LATEST_SNAPSHOT',
       signal: context.signal,
       reserveMs: FINALIZATION_RESERVE_MS + 300,
       fallback: { snapshot: null, debugInfo: null }
     });
-    let snapshot = explicitResult.ok ? explicitResult.result.snapshot : null;
-    if (!snapshot) {
-      const fallbackRes = await withDeadlineAndAbort({
-        fn: (signal) => getLatestSnapshot(context.deadlineAt, cfg, false),
+    snapshot = fallbackRes.ok ? fallbackRes.result.snapshot : null;
+  }
+  recordPhaseLocal('SCANNER_LATEST_END', { found: !!snapshot });
+
+  if (!snapshot || !snapshot.snapshotId) {
+    const payload = buildEarlyReturnPayload({
+      context,
+      snapshot,
+      reason: 'NO_SHORT_SCANNER_SNAPSHOT',
+      actions: [],
+      virtualExits: [],
+      lagMonitor
+    });
+    return payload;
+  }
+  context.snapshot = snapshot;
+
+  // FASE 3: Canonieke Market Weather
+  const snapshotWeather = buildSnapshotWeather(snapshot);
+  const canonicalWeather = resolveCanonicalMarketContext({
+    redisWeather: marketContextPre,
+    redisUniverse: null,
+    snapshotWeather,
+    previousConfirmedWeather,
+    nowTime: now()
+  });
+
+  const marketContext = {
+    ...marketContextPre,
+    ...canonicalWeather,
+    confirmedMarketWeatherKey: canonicalWeather.confirmedMarketWeatherKey,
+    confirmedMarketWeatherRegime: canonicalWeather.confirmedMarketWeatherRegime,
+    confirmedMarketWeatherTrendSide: canonicalWeather.confirmedMarketWeatherTrendSide,
+    entryMarketWeatherKey: canonicalWeather.entryMarketWeatherKey,
+    entryMarketWeatherRegime: canonicalWeather.entryMarketWeatherRegime,
+    entryMarketWeatherTrendSide: canonicalWeather.entryMarketWeatherTrendSide,
+    regime: canonicalWeather.regime,
+    trendSide: canonicalWeather.trendSide,
+    weatherTrendSide: canonicalWeather.weatherTrendSide,
+    freshConfirmed: canonicalWeather.freshConfirmed,
+    freshConfirmedReason: canonicalWeather.freshConfirmedReason
+  };
+  context.marketContext = marketContext;
+
+  const weatherChange = playbookChangeWarning(previousWeather, marketContext);
+  if (weatherChange.changed) {
+    context.runtimeWarnings.push(`WEATHER_CHANGED:${weatherChange.previousKey}->${weatherChange.currentKey}`);
+  }
+
+  // FASE 4: Last processed check
+  let lastProcessed = null;
+  if (canStartPhase(context.deadlineAt, 200, FINALIZATION_RESERVE_MS + 100)) {
+    const lp = await withDeadlineAndAbort({
+      fn: () => getJsonSafe(safeGetDurableRedis(), SHORT_KEYS.trade.lastProcessedSnapshot, null),
+      deadlineAt: context.deadlineAt,
+      timeoutMs: 200,
+      label: 'READ_LAST_PROCESSED',
+      signal: context.signal,
+      reserveMs: FINALIZATION_RESERVE_MS + 100,
+      fallback: null
+    });
+    lastProcessed = lp.ok ? lp.result : null;
+  }
+  const sameSnapshot = Boolean(lastProcessed?.snapshotId) && lastProcessed.snapshotId === snapshot.snapshotId;
+  const sameSnapshotCompletedEnough = sameSnapshot && shouldMarkSnapshotProcessed(lastProcessed);
+  const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
+  const resetSnapshotCursor = Boolean(options.resetSnapshotCursor);
+  const monitorOnly = Boolean(options.monitorOnly);
+  const debugMode = Boolean(options.debug || options.details || options.full);
+
+  if (sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && !weatherChange.changed) {
+    const payload = buildEarlyReturnPayload({
+      context,
+      snapshot,
+      reason: 'SNAPSHOT_ALREADY_PROCESSED',
+      actions: [],
+      virtualExits: [],
+      lagMonitor,
+      extra: {
+        lastProcessedSnapshotId: lastProcessed?.snapshotId,
+        sameSnapshotFastReturn: true
+      }
+    });
+    return payload;
+  }
+
+  // FASE 5: Open positions
+  let openPositions = [];
+  if (canStartPhase(context.deadlineAt, cfg.openPositionLoadTimeoutMs, FINALIZATION_RESERVE_MS + 300)) {
+    const op = await withDeadlineAndAbort({
+      fn: (signal) => loadOpenPositionsFast(cfg, context.runtimeWarnings, context.deadlineAt, { ...options, signal }),
+      deadlineAt: context.deadlineAt,
+      timeoutMs: cfg.openPositionLoadTimeoutMs,
+      label: 'LOAD_OPEN_POSITIONS',
+      signal: context.signal,
+      reserveMs: FINALIZATION_RESERVE_MS + 300,
+      fallback: []
+    });
+    openPositions = op.ok ? op.result : [];
+  }
+  recordPhaseLocal('OPEN_POSITIONS_LOAD_END', { count: openPositions.length });
+
+  // FASE 6: Monitor
+  let virtualExits = [];
+  if (!monitorOnly && !(sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && cfg.skipMonitorWhenSameSnapshotProcessed)) {
+    recordPhaseLocal('MONITOR_START');
+    const mon = await withDeadlineAndAbort({
+      fn: (signal) => monitorOpenPositionsSafe({
+        cfg,
+        priceHints: buildSnapshotPriceHints(snapshot),
+        runtimeWarnings: context.runtimeWarnings,
         deadlineAt: context.deadlineAt,
-        timeoutMs: cfg.snapshotTimeoutMs,
-        label: 'GET_LATEST_SNAPSHOT',
-        signal: context.signal,
-        reserveMs: FINALIZATION_RESERVE_MS + 300,
-        fallback: { snapshot: null, debugInfo: null }
-      });
-      snapshot = fallbackRes.ok ? fallbackRes.result.snapshot : null;
-    }
-    recordPhaseLocal('SCANNER_LATEST_END', { found: !!snapshot });
+        preloadedPositions: openPositions,
+        options: { ...options, signal }
+      }),
+      deadlineAt: context.deadlineAt,
+      timeoutMs: cfg.monitorTimeoutMs,
+      label: 'MONITOR_OPEN_POSITIONS',
+      signal: context.signal,
+      reserveMs: FINALIZATION_RESERVE_MS + 400,
+      fallback: []
+    });
+    virtualExits = mon.ok ? mon.result : [];
+    recordPhaseLocal('MONITOR_END', { exits: virtualExits.length });
+  }
+  if (virtualExits.length > 0) {
+    const exitIds = new Set(virtualExits.map(e => e.positionId || e.id).filter(Boolean));
+    openPositions = openPositions.filter(p => !exitIds.has(p.positionId || p.id));
+  }
 
-    if (!snapshot || !snapshot.snapshotId) {
-      const payload = buildEarlyReturnPayload({
-        context,
-        snapshot,
-        reason: 'NO_SHORT_SCANNER_SNAPSHOT',
-        actions: [],
-        virtualExits: [],
-        lagMonitor
-      });
-      return payload;
-    }
-    context.snapshot = snapshot;
+  if (monitorOnly) {
+    const payload = buildEarlyReturnPayload({
+      context,
+      snapshot,
+      reason: 'MONITOR_ONLY',
+      actions: [],
+      virtualExits,
+      lagMonitor,
+      extra: { monitorOnly: true }
+    });
+    return payload;
+  }
 
-    // FASE 3: Canonieke Market Weather
-    const snapshotWeather = buildSnapshotWeather(snapshot);
-    const canonicalWeather = resolveCanonicalMarketContext({
-      redisWeather: marketContextPre,
-      redisUniverse: null,
-      snapshotWeather,
-      previousConfirmedWeather,
-      nowTime: now()
+  const snapshotAgeSec = snapshot.createdAt > 0 ? (now() - snapshot.createdAt) / 1000 : 0;
+  if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
+    const payload = buildEarlyReturnPayload({
+      context,
+      snapshot,
+      reason: 'SNAPSHOT_TOO_STALE',
+      actions: [],
+      virtualExits,
+      lagMonitor,
+      extra: { snapshotAgeSec: Math.round(snapshotAgeSec) }
+    });
+    return payload;
+  }
+
+  // FASE 7: Cursor lezen en claimen
+  const storedCursor = resetSnapshotCursor ? 0 : await readSnapshotCursor(snapshot.snapshotId, cfg);
+  const allTargetCandidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : []).filter(c => inferRowTradeSide(c) !== OPPOSITE_TRADE_SIDE);
+  const chunkStart = Math.min(storedCursor, allTargetCandidates.length);
+  const chunkEndExclusive = Math.min(allTargetCandidates.length, chunkStart + cfg.candidateChunkSize);
+  const chunkCandidates = allTargetCandidates.slice(chunkStart, chunkEndExclusive);
+  const chunk = {
+    start: chunkStart,
+    endExclusive: chunkEndExclusive,
+    size: chunkCandidates.length,
+    total: allTargetCandidates.length,
+    nextIndex: chunkEndExclusive,
+    complete: chunkEndExclusive >= allTargetCandidates.length
+  };
+
+  let cursorClaimed = false;
+  if (chunk.size > 0 && canStartPhase(context.deadlineAt, 300, FINALIZATION_RESERVE_MS + 300)) {
+    cursorClaimed = await claimSnapshotChunk({
+      snapshotId: snapshot.snapshotId,
+      startIndex: chunk.start,
+      intendedNextIndex: chunk.nextIndex,
+      runId,
+      cfg,
+      context
+    });
+    if (!cursorClaimed) {
+      context.runtimeWarnings.push('SNAPSHOT_CURSOR_CLAIM_FAILED, continuing anyway');
+    }
+  } else {
+    context.runtimeWarnings.push('SNAPSHOT_CURSOR_CLAIM_SKIPPED_INSUFFICIENT_BUDGET');
+  }
+
+  // FASE 8: Candidate processing
+  recordPhaseLocal('CANDIDATE_PROCESS_START');
+  const processed = [];
+  const candidates = chunkCandidates.map(candidate =>
+    attachCurrentFitContext({
+      ...candidate,
+      ...scannerMetadataFrom(candidate),
+      ...sideFlags(),
+      ...isolationFlags(),
+      ...virtualFlags(candidate),
+      btcState: snapshot.btcState,
+      regime: snapshot.regime
+    }, marketContext)
+  );
+
+  for (let idx = 0; idx < candidates.length; idx++) {
+    if (idx > 0 && idx % 2 === 0) await yieldToEventLoop();
+    if (!canStartPhase(context.deadlineAt, 100, FINALIZATION_RESERVE_MS + 300)) {
+      context.runtimeWarnings.push(`CANDIDATE_LOOP_STOPPED_DEADLINE_NEAR:${processed.length}`);
+      break;
+    }
+    // [REPAIRED] pass options to safeProcessCandidate
+    const result = await safeProcessCandidate(candidates[idx], marketContext, options);
+    processed.push(result);
+  }
+  recordPhaseLocal('CANDIDATE_PROCESS_END', { processed: processed.length });
+
+  const liveRows = processed
+    .flatMap(row => Array.isArray(row?.metrics) ? row.metrics : [])
+    .filter(Boolean)
+    .filter(isTargetRow)
+    .map(row => attachCurrentFitContext({
+      ...row,
+      ...sideFlags(),
+      ...isolationFlags(),
+      ...virtualFlags(row),
+      ...learningIdentityFields(row)
+    }, marketContext))
+    .slice(0, cfg.analyzeMaxCandidatesPerSnapshot);
+
+  const riskValidRows = liveRows.filter(hasValidRiskShape).length;
+
+  // FASE 9: Analyze
+  recordPhaseLocal('ANALYZE_START');
+  const analyzeResult = await analyzeCandidatesBatchSafe(
+    liveRows,
+    {
+      weekKey: PERSISTENT_LEARNING_KEY,
+      persistentLearningKey: PERSISTENT_LEARNING_KEY,
+      targetTradeSide: TARGET_TRADE_SIDE,
+      tradeSide: TARGET_TRADE_SIDE,
+      positionSide: TARGET_TRADE_SIDE,
+      direction: TARGET_TRADE_SIDE,
+      side: TARGET_DASHBOARD_SIDE,
+      scannerSide: TARGET_SCANNER_SIDE,
+      actualScannerSide: TARGET_SCANNER_SIDE,
+      dashboardSide: TARGET_DASHBOARD_SIDE,
+      shortOnly: true,
+      longDisabled: true,
+      longOnly: false,
+      shortDisabled: false,
+      virtualOnly: true,
+      virtualLearning: true,
+      realOrdersDisabled: true,
+      bitgetOrdersDisabled: true,
+      exchangeCallsDisabled: true,
+      observationAlwaysCounted: true,
+      observationDedupRequired: true,
+      observationDedupEnabled: true,
+      seenDefinition: 'UNIQUE_SNAPSHOT_SYMBOL_MICRO_MICRO_ENTRY_OBSERVATION_ONLY',
+      scannerFingerprintsMetadataOnly: true,
+      scannerFingerprintsUsedAsLearningFamily: false,
+      executionFingerprintsMetadataOnly: false,
+      executionFingerprintsUsedAsLearningFamily: false,
+      executionFingerprintsCanDeriveMicroContextHash: true,
+      executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
+      analyzeMicroFamiliesOnly: true,
+      learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
+      symbolExcludedFromFamilyId: true,
+      coinNameExcludedFromFamilyId: true,
+      scannerHashesExcludedFromFamilyId: true,
+      hashesExcludedFromFamilyId: false,
+      entryMarketWeatherKeyExcludedFromFamilyId: true,
+      trueMicroOnly: true,
+      exactTrueMicroOnly: true,
+      exactTrueMicroFamilyRequired: true,
+      fixedTaxonomyPreferred: true,
+      trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
+      childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+      parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+      microMicroFamilySchema: MICRO_MICRO_SCHEMA,
+      trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
+      learningGranularity: CHILD75_LEARNING_GRANULARITY,
+      child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
+      parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+      microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
+      parentLearningEnabled: true,
+      childLearningEnabled: true,
+      microMicroLearningEnabled: true,
+      layeredLearningEnabled: true,
+      selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
+      parentSelectionAllowed: false,
+      micro75SelectionAllowed: false,
+      microMicroSelectionAllowed: true,
+      currentMarketWeather: marketContext.source || null,
+      currentMarketUniverse: marketContext.universe || null,
+      confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
+      confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+      confirmedMarketWeatherRegime: marketContext.confirmedMarketWeatherRegime,
+      confirmedMarketWeatherTrendSide: marketContext.confirmedMarketWeatherTrendSide,
+      marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+      marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
+      marketWeatherCaptureEnabled: true,
+      entryMarketWeatherKey: marketContext.entryMarketWeatherKey,
+      entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+      entryMarketWeatherRegime: marketContext.entryMarketWeatherRegime,
+      entryMarketWeatherTrendSide: marketContext.entryMarketWeatherTrendSide,
+      entryMarketWeatherCapturedAt: now(),
+      entryMarketWeatherImmutable: true,
+      entryMarketWeatherNeverRecomputedAtExit: true,
+      currentRegime: marketContext.regime,
+      currentTrendSide: marketContext.trendSide,
+      currentFitSoftOnly: true,
+      currentFitBlocksLearning: false,
+      currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+      currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
+      weakContraEntryGateEnabled: true,
+      weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+      weakContraRejectedBlocksVirtualEntry: true,
+      weakContraRejectedBlocksLearning: false,
+      riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+      rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+      riskGeometryRule: 'SHORT: tp < entry < sl',
+      tpHitRule: 'SHORT: candle.low <= tp',
+      slHitRule: 'SHORT: candle.high >= sl',
+      grossRFormula: ' (entry - exitPrice) / (initialSl - entry)',
+      currentRFormula: ' (entry - currentPrice) / (initialSl - entry)',
+      microMicroVersion: MICRO_MICRO_VERSION,
+      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+      discordActivationRequiresNetEdge: true,
+      discordActivationRequiresWeatherPlaybook: true
+    },
+    cfg,
+    context.runtimeWarnings,
+    context.deadlineAt,
+    { ...options, signal: context.signal }
+  );
+  const analyzeFallbackUsed = analyzeResult.analyzeFallbackUsed;
+  const analyzedRowsRaw = analyzeResult.rows || [];
+  recordPhaseLocal('ANALYZE_END', { rows: analyzedRowsRaw.length });
+
+  // FASE 10: Normalize analyzed rows
+  const analyzedRows = normalizeAnalyzedRows({
+    analyzedRowsRaw,
+    liveRows,
+    marketContext
+  });
+  const analyzedExact75Rows = analyzedRows.filter(row => row.exact75ChildTrueMicro).length;
+  const analyzedMicroMicroRows = analyzedRows.filter(row => row.exactMicroMicro).length;
+  const weakContraRejectedRows = analyzedRows.filter(row => row.weakContraRejected).length;
+  const weakContraAllowedRows = analyzedRows.filter(row => row.weakContraAllowed).length;
+
+  // FASE 11: Entry loop
+  const openSymbolSet = buildOpenSymbolSet(openPositions);
+  const alertContext = buildSelectedAlertContext(await getActiveRotationDirect(cfg, context.runtimeWarnings, context.deadlineAt, { ...options, signal: context.signal }), marketContext);
+  const openPositionCountBeforeEntries = openPositions.length;
+  const actions = [];
+  const counters = buildVirtualEntryResultCounters();
+
+  recordPhaseLocal('ENTRY_LOOP_START');
+  for (let idx = 0; idx < analyzedRows.length; idx++) {
+    counters.entryLoopAttempts += 1;
+    if (idx > 0 && idx % 2 === 0) await yieldToEventLoop();
+
+    if (!canStartPhase(context.deadlineAt, 800, FINALIZATION_RESERVE_MS + 600)) {
+      context.runtimeWarnings.push(`ENTRY_LOOP_STOPPED_DEADLINE_NEAR:${counters.entryLoopAttempts - 1}`);
+      counters.entryLoopRuntimeBreak = true;
+      break;
+    }
+
+    if (cfg.maxEntriesPerRun <= counters.virtualCreatedRows) {
+      context.runtimeWarnings.push(`MAX_ENTRIES_PER_RUN_REACHED:${cfg.maxEntriesPerRun}`);
+      break;
+    }
+
+    const rawRow = analyzedRows[idx];
+    const row = attachEntryMarketWeather({
+      ...rawRow,
+      ...learningIdentityFields(rawRow),
+      ...sideFlags(),
+      ...virtualFlags(rawRow),
+      ...isolationFlags()
+    }, marketContext);
+
+    const microMicroFamilyId = getMicroMicroFamilyId(row);
+    const virtualGate = validateVirtualEntry(row);
+    if (!virtualGate.ok) {
+      counters.waitRows += 1;
+      counters.virtualSkippedRows += 1;
+      actions.push(waitAction(row, virtualGate.reason, alertContext, microMicroFamilyId));
+      continue;
+    }
+    if (hasOpenSymbol(openSymbolSet, row)) {
+      counters.waitRows += 1;
+      counters.virtualSkippedRows += 1;
+      counters.skippedByExistingSymbol += 1;
+      actions.push(waitAction(row, 'SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION', alertContext, microMicroFamilyId));
+      continue;
+    }
+
+    const selectedAlertMatch = selectedAlertMatchInfo(alertContext, row);
+    const selectedWeeklyStats = getSelectedWeeklyStats(alertContext, selectedAlertMatch.selectedMicroMicroFamilyId || microMicroFamilyId);
+    const selectedRuntimeStatusGate = microMicroRuntimeGate(selectedWeeklyStats || row);
+    const runtimeGate = selectedAlertMatch.discordRuntimeActivationGate || runtimeDiscordActivationGate({
+      ...(selectedWeeklyStats || row),
+      microMicroRuntimeGate: selectedRuntimeStatusGate
+    });
+    const currentFitGate = discordCurrentFitGate(row);
+
+    const riskAndSignal = await buildRiskAndSignalDecision({
+      row,
+      selectedWeeklyStats,
+      selectedAlertMatch: {
+        ...selectedAlertMatch,
+        discordRuntimeActivationGate: runtimeGate
+      },
+      runtimeStatusGate: selectedRuntimeStatusGate,
+      currentFitGate,
+      alertContext,
+      sizing: context.sizing,
+      deadlineAt: context.deadlineAt,
+      cfg,
+      runtimeWarnings: context.runtimeWarnings,
+      options: { ...options, signal: context.signal }
     });
 
-    const marketContext = {
-      ...marketContextPre,
-      ...canonicalWeather,
-      confirmedMarketWeatherKey: canonicalWeather.confirmedMarketWeatherKey,
-      confirmedMarketWeatherRegime: canonicalWeather.confirmedMarketWeatherRegime,
-      confirmedMarketWeatherTrendSide: canonicalWeather.confirmedMarketWeatherTrendSide,
-      entryMarketWeatherKey: canonicalWeather.entryMarketWeatherKey,
-      entryMarketWeatherRegime: canonicalWeather.entryMarketWeatherRegime,
-      entryMarketWeatherTrendSide: canonicalWeather.entryMarketWeatherTrendSide,
-      regime: canonicalWeather.regime,
-      trendSide: canonicalWeather.trendSide,
-      weatherTrendSide: canonicalWeather.weatherTrendSide,
-      freshConfirmed: canonicalWeather.freshConfirmed,
-      freshConfirmedReason: canonicalWeather.freshConfirmedReason
-    };
-    context.marketContext = marketContext;
+    const entry = buildVirtualEntryAction({
+      row,
+      alertContext,
+      selectedWeeklyStats,
+      virtualGate,
+      selectedAlertMatch: {
+        ...selectedAlertMatch,
+        microMicroRuntimeGate: selectedRuntimeStatusGate,
+        microMicroRuntimeGateStatus: selectedRuntimeStatusGate.status,
+        discordRuntimeActivationGate: runtimeGate,
+        discordRuntimeActivationGatePassed: runtimeGate.eligible === true
+      },
+      riskAndSignal,
+      currentFitGate,
+      marketContext
+    });
 
-    const weatherChange = playbookChangeWarning(previousWeather, marketContext);
-    if (weatherChange.changed) {
-      context.runtimeWarnings.push(`WEATHER_CHANGED:${weatherChange.previousKey}->${weatherChange.currentKey}`);
+    const saveResult = await saveVirtualPositionFast(entry, cfg, context.deadlineAt, context.runtimeWarnings, { ...options, signal: context.signal });
+    if (!saveResult.ok) {
+      counters.waitRows += 1;
+      counters.virtualFailedRows += 1;
+      actions.push(waitAction(row, `VIRTUAL_POSITION_CREATE_FAILED:${saveResult.code || 'UNKNOWN'}`, alertContext, microMicroFamilyId, { saveResult }));
+      continue;
     }
 
-    // FASE 4: Last processed check
-    let lastProcessed = null;
-    if (canStartPhase(context.deadlineAt, 200, FINALIZATION_RESERVE_MS + 100)) {
-      const lp = await withDeadlineAndAbort({
-        fn: () => getJsonSafe(safeGetDurableRedis(), SHORT_KEYS.trade.lastProcessedSnapshot, null),
-        deadlineAt: context.deadlineAt,
-        timeoutMs: 200,
-        label: 'READ_LAST_PROCESSED',
-        signal: context.signal,
-        reserveMs: FINALIZATION_RESERVE_MS + 100,
-        fallback: null
-      });
-      lastProcessed = lp.ok ? lp.result : null;
+    rememberOpenSymbol(openSymbolSet, entry);
+    openPositions.push(saveResult.position || entry);
+    counters.entryRows += 1;
+    counters.virtualCreatedRows += 1;
+
+    let discordResult = null;
+    if (canStartPhase(context.deadlineAt, cfg.discordTimeoutMs + 200, FINALIZATION_RESERVE_MS + 300)) {
+      discordResult = await maybeSendDiscordEntryAlert(entry, cfg, context.deadlineAt, context.runtimeWarnings, { ...options, signal: context.signal });
+      if (discordResult.sent) counters.discordAlertsSent += 1;
+      else if (discordResult.failed) counters.discordAlertsFailed += 1;
+      else {
+        discordResult = { sent: false, skipped: true, reason: 'INSUFFICIENT_BUDGET_FOR_DISCORD' };
+      }
+    } else {
+      discordResult = { sent: false, skipped: true, reason: 'INSUFFICIENT_BUDGET_FOR_DISCORD' };
     }
-    const sameSnapshot = Boolean(lastProcessed?.snapshotId) && lastProcessed.snapshotId === snapshot.snapshotId;
-    const sameSnapshotCompletedEnough = sameSnapshot && shouldMarkSnapshotProcessed(lastProcessed);
-    const forceProcessSnapshot = Boolean(options.forceProcessSnapshot || options.force);
-    const resetSnapshotCursor = Boolean(options.resetSnapshotCursor);
-    const monitorOnly = Boolean(options.monitorOnly);
-    const debugMode = Boolean(options.debug || options.details || options.full);
+    actions.push({
+      ...entry,
+      discordAlertResult: discordResult,
+      discordAlertQueued: Boolean(discordResult?.queued),
+      discordAlertSent: Boolean(discordResult?.sent),
+      discordAlertFailed: Boolean(discordResult?.failed),
+      ...isolationFlags()
+    });
+  }
+  recordPhaseLocal('ENTRY_LOOP_END', { created: counters.virtualCreatedRows });
 
-    if (sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && !weatherChange.changed) {
-      const payload = buildEarlyReturnPayload({
-        context,
-        snapshot,
-        reason: 'SNAPSHOT_ALREADY_PROCESSED',
-        actions: [],
-        virtualExits: [],
-        lagMonitor,
-        extra: {
-          lastProcessedSnapshotId: lastProcessed?.snapshotId,
-          sameSnapshotFastReturn: true
-        }
-      });
-      return payload;
-    }
-
-    // FASE 5: Open positions
-    let openPositions = [];
-    if (canStartPhase(context.deadlineAt, cfg.openPositionLoadTimeoutMs, FINALIZATION_RESERVE_MS + 300)) {
-      const op = await withDeadlineAndAbort({
-        fn: (signal) => loadOpenPositionsFast(cfg, context.runtimeWarnings, context.deadlineAt, { ...options, signal }),
-        deadlineAt: context.deadlineAt,
-        timeoutMs: cfg.openPositionLoadTimeoutMs,
-        label: 'LOAD_OPEN_POSITIONS',
-        signal: context.signal,
-        reserveMs: FINALIZATION_RESERVE_MS + 300,
-        fallback: []
-      });
-      openPositions = op.ok ? op.result : [];
-    }
-    recordPhaseLocal('OPEN_POSITIONS_LOAD_END', { count: openPositions.length });
-
-    // FASE 6: Monitor
-    let virtualExits = [];
-    if (!monitorOnly && !(sameSnapshot && sameSnapshotCompletedEnough && !forceProcessSnapshot && cfg.skipMonitorWhenSameSnapshotProcessed)) {
-      recordPhaseLocal('MONITOR_START');
-      const mon = await withDeadlineAndAbort({
-        fn: (signal) => monitorOpenPositionsSafe({
-          cfg,
-          priceHints: buildSnapshotPriceHints(snapshot),
-          runtimeWarnings: context.runtimeWarnings,
-          deadlineAt: context.deadlineAt,
-          preloadedPositions: openPositions,
-          options: { ...options, signal }
-        }),
-        deadlineAt: context.deadlineAt,
-        timeoutMs: cfg.monitorTimeoutMs,
-        label: 'MONITOR_OPEN_POSITIONS',
-        signal: context.signal,
-        reserveMs: FINALIZATION_RESERVE_MS + 400,
-        fallback: []
-      });
-      virtualExits = mon.ok ? mon.result : [];
-      recordPhaseLocal('MONITOR_END', { exits: virtualExits.length });
-    }
-
-    if (virtualExits.length > 0) {
-      const exitIds = new Set(virtualExits.map(e => e.positionId || e.id).filter(Boolean));
-      openPositions = openPositions.filter(p => !exitIds.has(p.positionId || p.id));
-    }
-
-    if (monitorOnly) {
-      const payload = buildEarlyReturnPayload({
-        context,
-        snapshot,
-        reason: 'MONITOR_ONLY',
-        actions: [],
-        virtualExits,
-        lagMonitor,
-        extra: { monitorOnly: true }
-      });
-      return payload;
-    }
-
-    const snapshotAgeSec = snapshot.createdAt > 0 ? (now() - snapshot.createdAt) / 1000 : 0;
-    if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
-      const payload = buildEarlyReturnPayload({
-        context,
-        snapshot,
-        reason: 'SNAPSHOT_TOO_STALE',
-        actions: [],
-        virtualExits,
-        lagMonitor,
-        extra: { snapshotAgeSec: Math.round(snapshotAgeSec) }
-      });
-      return payload;
-    }
-
-    // FASE 7: Cursor lezen en claimen
-    const storedCursor = resetSnapshotCursor ? 0 : await readSnapshotCursor(snapshot.snapshotId, cfg);
-    const allTargetCandidates = (Array.isArray(snapshot.candidates) ? snapshot.candidates : []).filter(c => inferRowTradeSide(c) !== OPPOSITE_TRADE_SIDE);
-    const chunkStart = Math.min(storedCursor, allTargetCandidates.length);
-    const chunkEndExclusive = Math.min(allTargetCandidates.length, chunkStart + cfg.candidateChunkSize);
-    const chunkCandidates = allTargetCandidates.slice(chunkStart, chunkEndExclusive);
-    const chunk = {
-      start: chunkStart,
-      endExclusive: chunkEndExclusive,
-      size: chunkCandidates.length,
-      total: allTargetCandidates.length,
-      nextIndex: chunkEndExclusive,
-      complete: chunkEndExclusive >= allTargetCandidates.length
-    };
-
-    let cursorClaimed = false;
-    if (chunk.size > 0 && canStartPhase(context.deadlineAt, 300, FINALIZATION_RESERVE_MS + 300)) {
-      cursorClaimed = await claimSnapshotChunk({
+  // FASE 12: Cursor commit
+  let cursorPersisted = false;
+  let committedIndex = chunk.start;
+  let complete = chunk.complete;
+  if (processed.length > 0 && chunk.size > 0) {
+    const actualProcessedCount = processed.filter(p => p && p.metrics && p.metrics.length > 0).length;
+    const actualNextIndex = chunk.start + actualProcessedCount;
+    committedIndex = actualNextIndex;
+    complete = actualNextIndex >= chunk.total;
+    if (canStartPhase(context.deadlineAt, 400, FINALIZATION_RESERVE_MS + 200)) {
+      cursorPersisted = await commitSnapshotChunk({
         snapshotId: snapshot.snapshotId,
-        startIndex: chunk.start,
-        intendedNextIndex: chunk.nextIndex,
+        nextIndex: actualNextIndex,
+        totalCandidates: chunk.total,
+        complete,
         runId,
         cfg,
         context
       });
-      if (!cursorClaimed) {
-        context.runtimeWarnings.push('SNAPSHOT_CURSOR_CLAIM_FAILED, continuing anyway');
-      }
     } else {
-      context.runtimeWarnings.push('SNAPSHOT_CURSOR_CLAIM_SKIPPED_INSUFFICIENT_BUDGET');
+      context.runtimeWarnings.push('SNAPSHOT_CURSOR_COMMIT_SKIPPED_INSUFFICIENT_BUDGET');
     }
+  }
 
-    // FASE 8: Candidate processing
-    recordPhaseLocal('CANDIDATE_PROCESS_START');
-    const processed = [];
-    const candidates = chunkCandidates.map(candidate =>
-      attachCurrentFitContext({
-        ...candidate,
-        ...scannerMetadataFrom(candidate),
-        ...sideFlags(),
-        ...isolationFlags(),
-        ...virtualFlags(candidate),
-        btcState: snapshot.btcState,
-        regime: snapshot.regime
-      }, marketContext)
-    );
-
-    for (let idx = 0; idx < candidates.length; idx++) {
-      if (idx > 0 && idx % 2 === 0) await yieldToEventLoop();
-      if (!canStartPhase(context.deadlineAt, 100, FINALIZATION_RESERVE_MS + 300)) {
-        context.runtimeWarnings.push(`CANDIDATE_LOOP_STOPPED_DEADLINE_NEAR:${processed.length}/${candidates.length}`);
-        break;
-      }
-      const result = await safeProcessCandidate(candidates[idx], marketContext);
-      processed.push(result);
-    }
-    recordPhaseLocal('CANDIDATE_PROCESS_END', { processed: processed.length });
-
-    const liveRows = processed
-      .flatMap(row => Array.isArray(row?.metrics) ? row.metrics : [])
-      .filter(Boolean)
-      .filter(isTargetRow)
-      .map(row => attachCurrentFitContext({
-        ...row,
-        ...sideFlags(),
-        ...isolationFlags(),
-        ...virtualFlags(row),
-        ...learningIdentityFields(row)
-      }, marketContext))
-      .slice(0, cfg.analyzeMaxCandidatesPerSnapshot);
-
-    const riskValidRows = liveRows.filter(hasValidRiskShape).length;
-
-    // FASE 9: Analyze
-    recordPhaseLocal('ANALYZE_START');
-    const analyzeResult = await analyzeCandidatesBatchSafe(
-      liveRows,
-      {
-        weekKey: PERSISTENT_LEARNING_KEY,
-        persistentLearningKey: PERSISTENT_LEARNING_KEY,
-        targetTradeSide: TARGET_TRADE_SIDE,
-        tradeSide: TARGET_TRADE_SIDE,
-        positionSide: TARGET_TRADE_SIDE,
-        direction: TARGET_TRADE_SIDE,
-        side: TARGET_DASHBOARD_SIDE,
-        scannerSide: TARGET_SCANNER_SIDE,
-        actualScannerSide: TARGET_SCANNER_SIDE,
-        dashboardSide: TARGET_DASHBOARD_SIDE,
-        shortOnly: true,
-        longDisabled: true,
-        longOnly: false,
-        shortDisabled: false,
-        virtualOnly: true,
-        virtualLearning: true,
-        realOrdersDisabled: true,
-        bitgetOrdersDisabled: true,
-        exchangeCallsDisabled: true,
-        observationAlwaysCounted: true,
-        observationDedupeRequired: true,
-        observationDedupeEnabled: true,
-        seenDefinition: 'UNIQUE_SNAPSHOT_SYMBOL_MICRO_MICRO_ENTRY_OBSERVATION_ONLY',
-        scannerFingerprintsMetadataOnly: true,
-        scannerFingerprintsUsedAsLearningFamily: false,
-        executionFingerprintsMetadataOnly: false,
-        executionFingerprintsUsedAsLearningFamily: false,
-        executionFingerprintsCanDeriveMicroMicroContextHash: true,
-        executionFingerprintRole: 'MICRO_MICRO_IDENTITY_HASH_SOURCE',
-        analyzeMicroFamiliesOnly: true,
-        learningIdentitySource: 'ANALYZE_MICRO_MICRO_FAMILY',
-        symbolExcludedFromFamilyId: true,
-        coinNameExcludedFromFamilyId: true,
-        scannerHashesExcludedFromFamilyId: true,
-        hashesExcludedFromFamilyId: false,
-        entryMarketWeatherKeyExcludedFromFamilyId: true,
-        trueMicroOnly: true,
-        exactTrueMicroOnly: true,
-        exactTrueMicroFamilyRequired: true,
-        fixedTaxonomyPreferred: true,
-        trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-        exactTrueMicroFamilySchema: MICRO_MICRO_SCHEMA,
-        childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-        parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-        microMicroFamilySchema: MICRO_MICRO_SCHEMA,
-        trueMicroMicroFamilySchema: TRUE_MICRO_MICRO_SCHEMA,
-        learningGranularity: CHILD75_LEARNING_GRANULARITY,
-        child75LearningGranularity: CHILD75_LEARNING_GRANULARITY,
-        parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-        microMicroLearningGranularity: MICRO_MICRO_LEARNING_GRANULARITY,
-        parentLearningEnabled: true,
-        childLearningEnabled: true,
-        microMicroLearningEnabled: true,
-        layeredLearningEnabled: true,
-        selectionGranularity: SELECTION_EXACT_MICRO_MICRO,
-        parentSelectionAllowed: false,
-        micro75SelectionAllowed: false,
-        microMicroSelectionAllowed: true,
-        currentMarketWeather: marketContext.source || null,
-        currentMarketUniverse: marketContext.universe || null,
-        confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey,
-        confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-        confirmedMarketWeatherRegime: marketContext.confirmedMarketWeatherRegime,
-        confirmedMarketWeatherTrendSide: marketContext.confirmedMarketWeatherTrendSide,
-        marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-        marketWeatherFeatureFlagsVersion: MARKET_WEATHER_FEATURE_FLAGS_VERSION,
-        marketWeatherCaptureEnabled: true,
-        entryMarketWeatherKey: marketContext.entryMarketWeatherKey,
-        entryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-        entryMarketWeatherRegime: marketContext.entryMarketWeatherRegime,
-        entryMarketWeatherTrendSide: marketContext.entryMarketWeatherTrendSide,
-        entryMarketWeatherCapturedAt: now(),
-        entryMarketWeatherImmutable: true,
-        entryMarketWeatherNeverRecomputedAtExit: true,
-        currentRegime: marketContext.regime,
-        currentTrendSide: marketContext.trendSide,
-        currentFitSoftOnly: true,
-        currentFitBlocksLearning: false,
-        currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-        currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
-        weakContraEntryGateEnabled: true,
-        weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
-        weakContraRejectedBlocksVirtualEntry: true,
-        weakContraRejectedBlocksLearning: false,
-        riskPlanVersion: SHORT_RISK_PLAN_VERSION,
-        rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
-        riskGeometryRule: 'SHORT: tp < entry < sl',
-        tpHitRule: 'SHORT: candle.low <= tp',
-        slHitRule: 'SHORT: candle.high >= sl',
-        grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-        currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-        microMicroVersion: MICRO_MICRO_VERSION,
-        hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
-        discordActivationRequiresNetEdge: true,
-        discordActivationRequiresWeatherPlaybook: true,
-        discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-        deadlineSafeAnalyze: true,
-        analyzeTimeoutMs: 2500
-      },
-      cfg,
-      context.runtimeWarnings,
-      context.deadlineAt,
-      { ...options, signal: context.signal }
-    );
-    recordPhaseLocal('ANALYZE_END', { fallbackUsed: analyzeResult.analyzeFallbackUsed });
-
-    const analyzedRowsRaw = analyzeResult.rows;
-    const analyzeFallbackUsed = analyzeResult.analyzeFallbackUsed;
-    const analyzedRows = normalizeAnalyzedRows({ analyzedRowsRaw, liveRows, marketContext });
-
-    const analyzedExact75Rows = analyzedRows.filter(row => Boolean(getTrueMicroFamilyId(row))).length;
-    const analyzedMicroMicroRows = analyzedRows.filter(row => Boolean(getMicroMicroFamilyId(row))).length;
-    const weakContraRejectedRows = analyzedRows.filter(row => row.weakContraRejected === true || row.blockVirtualEntry === true).length;
-    const weakContraAllowedRows = analyzedRows.filter(row => row.weakContraEntryGate?.applies === true && row.weakContraRejected !== true).length;
-
-    // FASE 10: Active rotation
-    recordPhaseLocal('ROTATION_START');
-    const activeRotation = await withDeadlineAndAbort({
-      fn: (signal) => getActiveRotationDirect(cfg, context.runtimeWarnings, context.deadlineAt, { ...options, signal }),
-      deadlineAt: context.deadlineAt,
-      timeoutMs: cfg.selectionTimeoutMs,
-      label: 'ACTIVE_SELECTION_READ',
-      signal: context.signal,
-      reserveMs: FINALIZATION_RESERVE_MS + 300,
-      fallback: null
-    });
-    const alertContext = activeRotation.ok ? buildSelectedAlertContext(activeRotation.result, marketContext) : buildSelectedAlertContext(null, marketContext);
-    recordPhaseLocal('ROTATION_END', { found: activeRotation.ok });
-
-    // FASE 11: Entry loop
-    const openSymbolSet = buildOpenSymbolSet(openPositions);
-    const openPositionCountBeforeEntries = openPositions.length;
-    const actions = [];
-    const counters = buildVirtualEntryResultCounters();
-
-    recordPhaseLocal('ENTRY_LOOP_START');
-    for (let idx = 0; idx < analyzedRows.length; idx++) {
-      counters.entryLoopAttempts += 1;
-      if (idx > 0 && idx % 2 === 0) await yieldToEventLoop();
-
-      if (!canStartPhase(context.deadlineAt, 800, FINALIZATION_RESERVE_MS + 600)) {
-        context.runtimeWarnings.push(`ENTRY_LOOP_STOPPED_DEADLINE_NEAR:${counters.entryLoopAttempts - 1}`);
-        counters.entryLoopRuntimeBreak = true;
-        break;
-      }
-      if (cfg.maxEntriesPerRun <= counters.virtualCreatedRows) {
-        context.runtimeWarnings.push(`MAX_ENTRIES_PER_RUN_REACHED:${cfg.maxEntriesPerRun}`);
-        break;
-      }
-
-      const rawRow = analyzedRows[idx];
-      const row = attachEntryMarketWeather({
-        ...rawRow,
-        ...learningIdentityFields(rawRow),
-        ...sideFlags(),
-        ...virtualFlags(rawRow),
-        ...isolationFlags()
-      }, marketContext);
-
-      const microMicroFamilyId = getMicroMicroFamilyId(row);
-      const virtualGate = validateVirtualEntry(row);
-      if (!virtualGate.ok) {
-        counters.waitRows += 1;
-        counters.virtualSkippedRows += 1;
-        actions.push(buildWaitAction(row, virtualGate.reason, alertContext, microMicroFamilyId));
-        continue;
-      }
-
-      if (hasOpenSymbol(openSymbolSet, row)) {
-        counters.waitRows += 1;
-        counters.virtualSkippedRows += 1;
-        counters.skippedByExistingSymbol += 1;
-        actions.push(buildWaitAction(row, 'SYMBOL_ALREADY_OPEN_VIRTUAL_POSITION', alertContext, microMicroFamilyId));
-        continue;
-      }
-
-      const selectedAlertMatch = selectedAlertMatchInfo(alertContext, row);
-      const selectedWeeklyStats = getSelectedWeeklyStats(alertContext, selectedAlertMatch.selectedMicroMicroFamilyId || microMicroFamilyId);
-      const selectedRuntimeStatusGate = microMicroRuntimeGate(selectedWeeklyStats || row);
-      const runtimeGate = selectedAlertMatch.discordRuntimeActivationGate ||
-        runtimeDiscordActivationGate({
-          ...(selectedWeeklyStats || row),
-          microMicroRuntimeGate: selectedRuntimeStatusGate
-        });
-      const currentFitGate = discordCurrentFitGate(row);
-
-      const riskAndSignal = await buildRiskAndSignalDecision({
-        row,
-        selectedWeeklyStats,
-        selectedAlertMatch: {
-          ...selectedAlertMatch,
-          discordRuntimeActivationGate: runtimeGate
-        },
-        runtimeStatusGate: selectedRuntimeStatusGate,
-        currentFitGate,
-        alertContext,
-        sizing: context.sizing,
-        deadlineAt: context.deadlineAt,
-        cfg,
-        runtimeWarnings: context.runtimeWarnings,
-        options: { ...options, signal: context.signal }
-      });
-
-      const entry = buildVirtualEntryAction({
-        row,
-        alertContext,
-        selectedWeeklyStats,
-        virtualGate,
-        selectedAlertMatch: {
-          ...selectedAlertMatch,
-          microMicroRuntimeGate: selectedRuntimeStatusGate,
-          microMicroRuntimeGateStatus: selectedRuntimeStatusGate.status,
-          discordRuntimeActivationGate: runtimeGate,
-          discordRuntimeActivationGatePassed: runtimeGate.eligible === true
-        },
-        riskAndSignal,
-        currentFitGate,
-        marketContext
-      });
-
-      const saveResult = await saveVirtualPositionFast(entry, cfg, context.deadlineAt, context.runtimeWarnings, { ...options, signal: context.signal });
-      if (!saveResult.ok) {
-        counters.waitRows += 1;
-        counters.virtualFailedRows += 1;
-        actions.push(buildWaitAction(row, `VIRTUAL_POSITION_CREATE_FAILED:${saveResult.code || 'UNKNOWN'}`, alertContext, microMicroFamilyId, { saveResult }));
-        continue;
-      }
-
-      rememberOpenSymbol(openSymbolSet, entry);
-      openPositions.push(saveResult.position || entry);
-      counters.entryRows += 1;
-      counters.virtualCreatedRows += 1;
-
-      let discordResult = null;
-      if (canStartPhase(context.deadlineAt, cfg.discordTimeoutMs + 200, FINALIZATION_RESERVE_MS + 300)) {
-        discordResult = await maybeSendDiscordEntryAlert(entry, cfg, context.deadlineAt, context.runtimeWarnings, { ...options, signal: context.signal });
-        if (discordResult.sent) counters.discordAlertsSent += 1;
-        else if (discordResult.failed) counters.discordAlertsFailed += 1;
-      } else {
-        discordResult = { sent: false, skipped: true, reason: 'INSUFFICIENT_BUDGET_FOR_DISCORD' };
-      }
-
-      actions.push({
-        ...entry,
-        discordAlertResult: discordResult,
-        discordAlertQueued: Boolean(discordResult?.queued),
-        discordAlertSent: Boolean(discordResult?.sent),
-        discordAlertFailed: Boolean(discordResult?.failed),
-        ...isolationFlags()
-      });
-    }
-    recordPhaseLocal('ENTRY_LOOP_END', { created: counters.virtualCreatedRows });
-
-    // FASE 12: Cursor commit
-    let cursorPersisted = false;
-    let committedIndex = chunk.start;
-    let complete = chunk.complete;
-    if (processed.length > 0 && chunk.size > 0) {
-      const actualProcessedCount = processed.filter(p => p && p.metrics && p.metrics.length > 0).length;
-      const actualNextIndex = chunk.start + actualProcessedCount;
-      committedIndex = actualNextIndex;
-      complete = actualNextIndex >= chunk.total;
-      if (canStartPhase(context.deadlineAt, 400, FINALIZATION_RESERVE_MS + 200)) {
-        cursorPersisted = await commitSnapshotChunk({
-          snapshotId: snapshot.snapshotId,
-          nextIndex: actualNextIndex,
-          totalCandidates: chunk.total,
-          complete,
-          runId,
-          cfg,
-          context
-        });
-      } else {
-        context.runtimeWarnings.push('SNAPSHOT_CURSOR_COMMIT_SKIPPED_INSUFFICIENT_BUDGET');
-      }
-    }
-
-    // FASE 13: Build result
-    const completedAt = now();
-    const durationMs = completedAt - startedAt;
-    const deadlineOverrunMs = Math.max(0, completedAt - context.deadlineAt);
-    const actionCountMap = buildRunActionCounts(actions, virtualExits);
-    const qualityAudit = buildQualityAudit({
-      snapshot,
-      candidates,
-      processed,
-      liveRows,
-      analyzedRowsRaw,
-      analyzedRows,
-      actions,
-      virtualExits,
-      counts: {
-        riskValidRows,
-        analyzedRiskValidRows: analyzedRows.filter(hasValidRiskShape).length,
-        analyzedExact75Rows,
-        analyzedMicroMicroRows,
-        fallbackExact75Rows: analyzedRows.filter(row => row.fallbackExact75).length,
-        weakContraRejectedRows,
-        weakContraAllowedRows,
-        entryRows: counters.entryRows,
-        virtualCreatedRows: counters.virtualCreatedRows,
-        waitRows: counters.waitRows,
-        skippedByExistingSymbol: counters.skippedByExistingSymbol,
-        selectedAlertMicroMicroMatches: counters.selectedMicroMicroMatchRows,
-        discordCurrentFitBlockedRows: counters.discordAlertsSkippedCurrentFit,
-        discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
-        activeRuntimeBlockedSelectionRows: alertContext.rejectedSelectedMicroMicroCount || 0,
-        empiricalVetoRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
-        policyBlockedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
-        marketWeatherUnknownRows: counters.marketWeatherUnknownRows,
-        playbookMissingRows: counters.playbookMissingRows,
-        tradeReadyRows: counters.tradeReadyRows,
-        watchRows: counters.watchRows,
-        observeRows: counters.observeRows
-      },
-      openPositionCountBeforeEntries,
-      openPositionCountAfterEntries: openPositions.length,
-      marketContext,
-      runtimeWarnings: context.runtimeWarnings
-    });
-
-    const timedOut = deadlineOverrunMs > 0 || durationMs > cfg.maxRuntimeMs;
-    const degraded = analyzeFallbackUsed || monitorOnly || virtualExits.length > 0 || !cursorPersisted;
-    const partial = processed.length > 0 && !cursorPersisted;
-
-    const baseResult = {
-      ok: true,
-      runId,
-      startedAt,
-      completedAt,
-      durationMs,
-      deadlineOverrunMs,
-      timedOut,
-      degraded,
-      partial,
-      reason: null,
-      skipped: false,
-      snapshotId: snapshot.snapshotId,
-      snapshotCreatedAt: snapshot.createdAt,
-      snapshotAgeSec: Math.round(snapshotAgeSec),
-      selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
-      selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
-      selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
-      selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
-      selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
-      selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
-      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
-      entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
-      qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
-      scannerWideVirtualLearning: true,
-      tradeEveryScannerCandidateVirtual: true,
-      riskPlanVersion: SHORT_RISK_PLAN_VERSION,
-      rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
-      microMicroVersion: MICRO_MICRO_VERSION,
-      weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
-      weakContraRejectedRows,
-      weakContraAllowedRows,
-      hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
-      hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
-      closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
-      discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
-      discordActivationRequiresNetEdge: true,
-      discordActivationRequiresWeatherPlaybook: true,
-      discordRuntimeGateRequired: true,
-      discordRuntimeNeverTrustsActiveSelectionBlindly: true,
-      candidateChunkSize: cfg.candidateChunkSize,
-      maxEntriesPerRun: cfg.maxEntriesPerRun,
-      analyzeTimeoutMs: cfg.analyzeTimeoutMs,
-      monitorTimeoutMs: cfg.monitorTimeoutMs,
-      monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
-      monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
-      monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
-      monitorBatchSize: cfg.monitorBatchSize,
-      openPositionMonitorLimit: cfg.openPositionMonitorLimit,
-      entryLoopReserveMs: cfg.entryLoopReserveMs,
-      marketContextTimeoutMs: cfg.marketContextTimeoutMs,
-      snapshotTimeoutMs: cfg.snapshotTimeoutMs,
-      maxRuntimeMs: cfg.maxRuntimeMs,
-      hardReturnReserveMs: cfg.hardReturnReserveMs,
-      remainingMsAtReturn: remainingMs(context.deadlineAt, 0),
-      snapshotChunkVersion: SNAPSHOT_CHUNK_VERSION,
-      snapshotChunkStart: chunk.start,
-      snapshotChunkEndExclusive: chunk.endExclusive,
-      snapshotChunkSize: chunk.size,
-      snapshotChunkTotalCandidates: chunk.total,
-      snapshotChunkNextIndex: committedIndex,
-      snapshotChunkComplete: complete,
-      snapshotChunkCursorClaimed: cursorClaimed,
-      snapshotChunkCursorPersisted: cursorPersisted,
-      snapshotChunkAdvanced: cursorPersisted && committedIndex > chunk.start,
-      snapshotChunkCommittedIndex: cursorPersisted ? committedIndex : chunk.start,
-      snapshotChunkProcessedInMemory: processed.length,
-      snapshotChunkAdvancedInMemory: chunk.nextIndex > chunk.start,
-      snapshotNextRunExpectedIndex: cursorPersisted ? committedIndex : chunk.start,
-      snapshotProgressPct: chunk.total > 0 ? round((committedIndex / chunk.total) * 100, 2) : 0,
-      snapshotRemainingCandidates: Math.max(0, chunk.total - committedIndex),
-      snapshotProcessingState: complete ? 'COMPLETE' : (cursorPersisted ? 'PROCESSING' : 'INCOMPLETE'),
-      ...sideFlags(),
-      ...virtualFlags(),
-      ...isolationFlags(),
-      currentMarketWeather: compactMarketWeather(marketContext.source || null),
-      currentMarketUniverse: null,
-      marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
-      marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-      marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION,
-      marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
-      empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
-      positionSizingProofInputVersion: POSITION_SIZING_PROOF_INPUT_VERSION,
-      confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
-      confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-      confirmedMarketWeatherRegime: marketContext.confirmedMarketWeatherRegime || 'UNKNOWN',
-      confirmedMarketWeatherTrendSide: marketContext.confirmedMarketWeatherTrendSide || 'UNKNOWN',
-      confirmedMarketWeatherChanged: weatherChange.changed,
-      confirmedMarketWeatherPreviousKey: weatherChange.previousKey || null,
-      confirmedMarketWeatherChangeReason: weatherChange.reason,
-      currentEntryMarketWeatherKey: marketContext.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
-      currentEntryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-      currentEntryMarketWeatherRegime: marketContext.entryMarketWeatherRegime || 'UNKNOWN',
-      currentEntryMarketWeatherTrendSide: marketContext.entryMarketWeatherTrendSide || 'UNKNOWN',
-      currentEntryMarketWeatherRaw: marketContext.entryMarketWeatherRaw || null,
-      currentEntryMarketWeatherRawAvailableFields: marketContext.entryMarketWeatherRawAvailableFields || [],
-      currentMarketWeatherReadFrom: marketContext.sourceReadFrom || null,
-      currentMarketWeatherAgeSec: marketContext.ageSec,
-      currentMarketWeatherStale: marketContext.stale,
-      currentMarketWeatherFreshConfirmed: marketContext.freshConfirmed,
-      currentMarketWeatherFreshConfirmedReason: marketContext.freshConfirmedReason,
-      currentRegime: marketContext.regime,
-      currentTrendSide: marketContext.trendSide,
-      currentBullishPct: marketContext.bullishPct,
-      currentBearishPct: marketContext.bearishPct,
-      currentSqueezePct: marketContext.squeezePct,
-      marketContext: {
-        ...marketContext,
-        source: compactMarketWeather(marketContext.source || null),
-        universe: null,
-        compactedForRedis: true
-      },
-      candidates: candidates.length,
-      allShortCandidatesBeforeCap: allTargetCandidates.length,
-      cappedCandidateCount: 0,
-      shortCandidateCount: candidates.length,
-      longCandidateCount: 0,
-      nonShortCandidateCount: snapshot.blockedNonShortCandidatesCount || 0,
-      processed: processed.length,
-      earlyActions: 0,
-      liveRows: liveRows.length,
-      analyzeInputRows: liveRows.length,
-      actualLiveRows: liveRows.length,
-      observationOnlyRows: liveRows.filter(row => row.observationOnly || row.analysisInputOnly).length,
-      standardizedLearningRiskRows: liveRows.filter(row => row.standardizedLearningRisk).length,
-      learningOnlyRows: liveRows.filter(row => row.learningOnly).length,
+  // FASE 13: Build result
+  const completedAt = now();
+  const durationMs = completedAt - startedAt;
+  const deadlineOverrunMs = Math.max(0, completedAt - context.deadlineAt);
+  const actionCountMap = buildRunActionCounts(actions, virtualExits);
+  const qualityAudit = buildQualityAudit({
+    snapshot,
+    candidates,
+    processed,
+    liveRows,
+    analyzedRowsRaw,
+    analyzedRows,
+    actions,
+    virtualExits,
+    counts: {
       riskValidRows,
-      analyzedRows: analyzedRows.length,
-      analyzedRowsRaw: analyzedRowsRaw.length,
-      analyzedActualRows: analyzedRows.length,
       analyzedRiskValidRows: analyzedRows.filter(hasValidRiskShape).length,
       analyzedExact75Rows,
       analyzedMicroMicroRows,
       fallbackExact75Rows: analyzedRows.filter(row => row.fallbackExact75).length,
-      analyzedStandardizedLearningRiskRows: analyzedRows.filter(row => row.standardizedLearningRisk).length,
-      analyzeError: analyzeResult.analyzeError,
-      analyzeFallbackUsed,
-      analyzeWeekKey: PERSISTENT_LEARNING_KEY,
-      analyzeFailedRows: 0,
-      analyzeTimeoutRows: 0,
+      weakContraRejectedRows,
+      weakContraAllowedRows,
       entryRows: counters.entryRows,
-      waitRows: counters.waitRows,
       virtualCreatedRows: counters.virtualCreatedRows,
-      virtualSkippedRows: counters.virtualSkippedRows,
-      virtualFailedRows: counters.virtualFailedRows,
+      waitRows: counters.waitRows,
       skippedByExistingSymbol: counters.skippedByExistingSymbol,
-      shadowCreatedRows: counters.virtualCreatedRows,
-      shadowSkippedRows: counters.virtualSkippedRows,
-      shadowFailedRows: counters.virtualFailedRows,
-      shadowDisabled: false,
-      virtualExits,
-      shadowExits: virtualExits,
-      realExits: [],
-      virtualExitRows: virtualExits.length,
-      shadowExitRows: virtualExits.length,
-      realExitRows: 0,
-      discordAlertEligibleRows: counters.discordAlertEligibleRows,
-      discordAlertsQueued: counters.discordAlertsQueued,
-      discordAlertsSent: counters.discordAlertsSent,
-      discordAlertsFailed: counters.discordAlertsFailed,
-      discordAlertsSkippedNoSelectedMicro: counters.discordAlertsSkippedNoSelectedMicro,
-      discordAlertsSkippedCurrentFit: counters.discordAlertsSkippedCurrentFit,
-      discordAlertsSkippedRuntimeGate: counters.discordAlertsSkippedRuntimeGate,
-      discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
-      selectedMicroMatchRows: counters.selectedMicroMicroMatchRows,
-      selectedAlertMicroMatches: counters.selectedMicroMicroMatchRows,
       selectedMicroMicroMatchRows: counters.selectedMicroMicroMatchRows,
-      selectedAlertMicroMicroMatches: counters.selectedMicroMicroMatchRows,
-      selected75ChildMatchRows: 0,
-      selectedAlert75ChildMatches: 0,
-      unselectedMicroEntryRows: counters.unselectedMicroEntryRows,
-      tradeReadyRows: counters.tradeReadyRows,
-      watchRows: counters.watchRows,
-      observeRows: counters.observeRows,
+      discordAlertsSkippedCurrentFit: counters.discordAlertsSkippedCurrentFit,
+      discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
+      activeRuntimeBlockedSelectionRows: alertContext.rejectedSelectedMicroMicroCount || 0,
+      empiricalVetoRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
+      policyBlockedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
       marketWeatherUnknownRows: counters.marketWeatherUnknownRows,
       playbookMissingRows: counters.playbookMissingRows,
-      openPositionCountBeforeEntries,
-      openPositionCountAfterEntries: openPositions.length,
-      entryLoopAttempts: counters.entryLoopAttempts,
-      entryLoopRuntimeBreak: counters.entryLoopRuntimeBreak,
-      actions,
-      virtualActions: actions,
-      actionCounts: actionCountMap,
-      actionsCount: actions.length,
-      rawActionsCount: actions.length,
-      rawExitRowsCount: virtualExits.length,
-      qualityAudit,
-      runtimeWarnings: context.runtimeWarnings,
-      selectedRotationId: alertContext.rotationId,
-      activeRotationId: alertContext.rotationId,
-      activeSelectionRuntimeFiltered: alertContext.activeSelectionRuntimeFiltered,
-      activeSelectionRuntimeFilteredReason: alertContext.activeSelectionRuntimeFilteredReason,
-      rejectedSelectedMicroMicroFamilyIds: alertContext.rejectedSelectedMicroMicroFamilyIds,
-      rejectedSelectedMicroMicroRows: alertContext.rejectedSelectedMicroMicroRows,
-      rejectedSelectedMicroMicroCount: alertContext.rejectedSelectedMicroMicroCount,
-      activeRuntimeBlockedSelectionRows: alertContext.rejectedSelectedMicroMicroCount || 0,
-      configuredSelectedMicroMicroFamilyIds: alertContext.configuredMicroMicroFamilyIds || [],
-      selectedMicroFamilies: 0,
-      selectedTrueMicroFamilies: 0,
-      selectedChildTrueMicroFamilies: 0,
-      selectedMicroFamilyIds: [],
-      selectedTrueMicroFamilyIds: [],
-      selectedChildTrueMicroFamilyIds: [],
-      selectedMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
-      selectedTrueMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
-      selectedExactMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
-      selectedMicroMicroFamilyIds: alertContext.selectedMicroMicroFamilyIds,
-      selectedTrueMicroMicroFamilyIds: alertContext.selectedTrueMicroMicroFamilyIds,
-      selectedExactMicroMicroFamilyIds: alertContext.selectedExactMicroMicroFamilyIds,
-      activeMicroFamilies: 0,
-      activeTrueMicroFamilies: 0,
-      activeChildTrueMicroFamilies: 0,
-      activeMicroFamilyIds: [],
-      activeTrueMicroFamilyIds: [],
-      activeChildTrueMicroFamilyIds: [],
-      activeMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
-      activeTrueMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
-      activeExactMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
-      activeMicroMicroFamilyIds: alertContext.selectedMicroMicroFamilyIds,
-      activeTrueMicroMicroFamilyIds: alertContext.selectedTrueMicroMicroFamilyIds,
-      activeExactMicroMicroFamilyIds: alertContext.selectedExactMicroMicroFamilyIds,
-      activeMacroFamilyIds: [],
-      selectedMacroFamilyIds: [],
-      trueMicroOnly: true,
-      exactTrueMicroOnly: true,
-      exactTrueMicroFamilyRequired: true,
-      microMicroSelectionEnabled: true,
-      microMicroRequiredForVirtualEntry: true,
-      allowCoarseMicroAliasLiveEntries: false,
-      allowCoarseMicroAliasForDiscord: false,
-      selectionPurpose: 'DISCORD_ALERT_ONLY',
-      manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
-      discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
-      scannerSnapshotStats: {
-        candidatesCount: snapshot.candidatesCount || candidates.length,
-        scannerGateCandidatesCount: snapshot.scannerGateCandidatesCount || null,
-        analyzeOnlyCandidatesCount: snapshot.analyzeOnlyCandidatesCount || null,
-        filteredUniverse: snapshot.filteredUniverse || null,
-        rawCount: snapshot.rawCount || null,
-        blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0
-      },
-      scannerLatestPreserved: true,
-      scannerSnapshotPreserved: true,
-      scannerHistoryPreserved: true,
-      microFamiliesAppendOnly: true,
-      analyzePartialOnly: true,
-      analyzeFullOverwriteDisabled: true,
-      rotationPreserved: true,
-      manualSelectionPreserved: true,
-      discordSelectionPreserved: true,
-      monitorOpenPositions: true,
-      monitorOpenPositionsFirst: true,
-      monitorPriceHintCount: buildSnapshotPriceHints(snapshot).size,
-      monitorPriceSource: cfg.monitorLivePriceFetchEnabled
-        ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
-        : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
-      processScannerSnapshot: true,
-      skipped: false,
-      skippedNewEntries: false,
-      reason: null,
-      skipReason: null,
-      microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
-      microMicroRuntimeGateEnabled: true,
-      microMicroRuntimeGateStatuses: {
-        observing: MICRO_MICRO_STATUS_OBSERVING,
-        passed: MICRO_MICRO_STATUS_PASSED,
-        rejected: MICRO_MICRO_STATUS_REJECTED,
-        empiricalVeto: MICRO_MICRO_STATUS_EMPIRICAL_VETO,
-        policyBlocked: MICRO_MICRO_STATUS_POLICY_BLOCKED
-      },
-      microMicroObservingRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_OBSERVING).length,
-      microMicroPassedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED).length,
-      microMicroRejectedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_REJECTED).length,
-      microMicroEmpiricalVetoRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
-      microMicroPolicyBlockedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
-      deadlineSafe: true,
-      routeLimitsHonored: true,
-      defaultRedisKeyScanDisabled: true,
-      entryRowsList: bool(options.details || options.debug || options.full, false)
-        ? actions.filter(row => row.action === 'VIRTUAL_ENTRY').map(compactActionForResponse)
-        : [],
-      waitRowsList: bool(options.details || options.debug || options.full, false)
-        ? actions.filter(row => row.action === 'WAIT').map(compactActionForResponse)
-        : [],
-      routeTimings: options.routeTimings || {},
-      preTradeDurationMs: options.preTradeDurationMs || 0,
-      phaseLog: context.phaseLog,
-      lastPhase: context.lastPhaseName,
-      maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
-    };
+      tradeReadyRows: counters.tradeReadyRows,
+      watchRows: counters.watchRows,
+      observeRows: counters.observeRows
+    },
+    openPositionCountBeforeEntries,
+    openPositionCountAfterEntries: openPositions.length,
+    marketContext,
+    runtimeWarnings: context.runtimeWarnings
+  });
 
-    recordPhaseLocal('TRADE_SYSTEM_RETURN', { remainingMs: remainingMs(context.deadlineAt, 0) });
+  const timedOut = deadlineOverrunMs > 0 || durationMs > cfg.maxRuntimeMs;
+  const degraded = analyzeFallbackUsed || monitorOnly || virtualExits.length > 0 || !cursorPersisted;
+  const partial = processed.length > 0 && !cursorPersisted;
 
-    const runMetaSaved = await saveRunMetaWithBudget(baseResult, context);
-    baseResult.runMetaSaved = runMetaSaved;
+  const baseResult = {
+    ok: true,
+    runId,
+    startedAt,
+    completedAt,
+    durationMs,
+    deadlineOverrunMs,
+    timedOut,
+    degraded,
+    partial,
+    reason: null,
+    skipped: false,
+    snapshotId: snapshot.snapshotId,
+    snapshotCreatedAt: snapshot.createdAt,
+    snapshotAgeSec: Math.round(snapshotAgeSec),
+    selectedSnapshotSource: snapshot.selectedSnapshotSource || null,
+    selectedSnapshotReason: snapshot.selectedSnapshotReason || null,
+    selectedTargetCandidateCount: snapshot.selectedTargetCandidateCount || 0,
+    selectedShortCandidateCount: snapshot.selectedShortCandidateCount || 0,
+    selectedOppositeCandidateCount: snapshot.selectedOppositeCandidateCount || 0,
+    selectedLongCandidateCount: snapshot.selectedLongCandidateCount || 0,
+    blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount || 0,
+    entryRelaxationProfile: ENTRY_RELAXATION_PROFILE,
+    qualityMeasurementProfile: QUALITY_MEASUREMENT_PROFILE,
+    scannerWideVirtualLearning: true,
+    tradeEveryScannerCandidateVirtual: true,
+    riskPlanVersion: SHORT_RISK_PLAN_VERSION,
+    rrShadowGridVersion: RR_SHADOW_GRID_VERSION,
+    microMicroVersion: MICRO_MICRO_VERSION,
+    weakContraEntryGateVersion: WEAK_CONTRA_ENTRY_GATE_VERSION,
+    weakContraRejectedRows,
+    weakContraAllowedRows,
+    hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
+    hardTimeStopNoPriceExit: cfg.hardTimeStopNoPriceExit,
+    closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
+    discordActivationGateVersion: DISCORD_ACTIVATION_GATE_VERSION,
+    discordActivationRequiresNetEdge: true,
+    discordActivationRequiresWeatherPlaybook: true,
+    discordRuntimeGateRequired: true,
+    discordRuntimeNeverTrustsActiveSelectionBlindly: true,
+    candidateChunkSize: cfg.candidateChunkSize,
+    maxEntriesPerRun: cfg.maxEntriesPerRun,
+    analyzeTimeoutMs: cfg.analyzeTimeoutMs,
+    monitorTimeoutMs: cfg.monitorTimeoutMs,
+    monitorPriceFetchTimeoutMs: cfg.monitorPriceFetchTimeoutMs,
+    monitorLivePriceFetchEnabled: cfg.monitorLivePriceFetchEnabled,
+    monitorCandleRangeEnabled: cfg.monitorCandleRangeEnabled,
+    monitorBatchSize: cfg.monitorBatchSize,
+    openPositionMonitorLimit: cfg.openPositionMonitorLimit,
+    entryLoopReserveMs: cfg.entryLoopReserveMs,
+    marketContextTimeoutMs: cfg.marketContextTimeoutMs,
+    snapshotTimeoutMs: cfg.snapshotTimeoutMs,
+    maxRuntimeMs: cfg.maxRuntimeMs,
+    hardReturnReserveMs: cfg.hardReturnReserveMs,
+    remainingMsAtReturn: remainingMs(context.deadlineAt, 0),
+    snapshotChunkVersion: SNAPSHOT_CHUNK_VERSION,
+    snapshotChunkStart: chunk.start,
+    snapshotChunkEndExclusive: chunk.endExclusive,
+    snapshotChunkSize: chunk.size,
+    snapshotChunkTotalCandidates: chunk.total,
+    snapshotChunkNextIndex: committedIndex,
+    snapshotChunkComplete: complete,
+    snapshotChunkCursorClaimed: cursorClaimed,
+    snapshotChunkCursorPersisted: cursorPersisted,
+    snapshotChunkAdvanced: cursorPersisted && committedIndex > chunk.start,
+    snapshotChunkCommittedIndex: cursorPersisted ? committedIndex : chunk.start,
+    snapshotChunkProcessedInMemory: processed.length,
+    snapshotChunkAdvancedInMemory: chunk.nextIndex > chunk.start,
+    snapshotNextRunExpectedIndex: cursorPersisted ? committedIndex : chunk.start,
+    snapshotProgressPct: chunk.total > 0 ? round((committedIndex / chunk.total) * 100, 2) : 0,
+    snapshotRemainingCandidates: Math.max(0, chunk.total - committedIndex),
+    snapshotProcessingState: complete ? 'COMPLETE' : (cursorPersisted ? 'PROCESSING' : 'INCOMPLETE'),
+    ...sideFlags(),
+    ...virtualFlags(),
+    ...isolationFlags(),
+    currentMarketWeather: compactMarketWeather(marketContext.source || null),
+    currentMarketUniverse: null,
+    marketWeatherFeatureFlags: marketWeatherFeatureFlags(),
+    marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    marketWeatherSignalDecisionVersion: MARKET_WEATHER_SIGNAL_DECISION_VERSION,
+    marketWeatherPlaybookFreshnessVersion: MARKET_WEATHER_PLAYBOOK_FRESHNESS_VERSION,
+    empiricalVetoVersion: EMPIRICAL_VETO_VERSION,
+    positionSizingProofInputVersion: POSITION_SIZING_PROOF_INPUT_VERSION,
+    confirmedMarketWeatherKey: marketContext.confirmedMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
+    confirmedMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    confirmedMarketWeatherRegime: marketContext.confirmedMarketWeatherRegime || 'UNKNOWN',
+    confirmedMarketWeatherTrendSide: marketContext.confirmedMarketWeatherTrendSide || 'UNKNOWN',
+    confirmedMarketWeatherChanged: weatherChange.changed,
+    confirmedMarketWeatherPreviousKey: weatherChange.previousKey || null,
+    confirmedMarketWeatherChangeReason: weatherChange.reason,
+    currentEntryMarketWeatherKey: marketContext.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
+    currentEntryMarketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
+    currentEntryMarketWeatherRegime: marketContext.entryMarketWeatherRegime || 'UNKNOWN',
+    currentEntryMarketWeatherTrendSide: marketContext.entryMarketWeatherTrendSide || 'UNKNOWN',
+    currentEntryMarketWeatherRaw: marketContext.entryMarketWeatherRaw || null,
+    currentEntryMarketWeatherRawAvailableFields: marketContext.entryMarketWeatherRawAvailableFields || [],
+    currentMarketWeatherReadFrom: marketContext.sourceReadFrom || null,
+    currentMarketWeatherAgeSec: marketContext.ageSec,
+    currentMarketWeatherStale: marketContext.stale,
+    currentMarketWeatherFreshConfirmed: marketContext.freshConfirmed,
+    currentMarketWeatherFreshConfirmedReason: marketContext.freshConfirmedReason,
+    currentRegime: marketContext.regime,
+    currentTrendSide: marketContext.trendSide,
+    currentBullishPct: marketContext.bullishPct,
+    currentBearishPct: marketContext.bearishPct,
+    currentSqueezePct: marketContext.squeezePct,
+    marketContext: {
+      ...marketContext,
+      source: compactMarketWeather(marketContext.source || null),
+      universe: null,
+      compactedForRedis: true
+    },
+    candidates: candidates.length,
+    allShortCandidatesBeforeCap: allTargetCandidates.length,
+    cappedCandidateCount: 0,
+    shortCandidateCount: candidates.length,
+    longCandidateCount: 0,
+    nonShortCandidateCount: snapshot.blockedNonShortCandidatesCount || 0,
+    processed: processed.length,
+    earlyActions: 0,
+    liveRows: liveRows.length,
+    analyzeInputRows: liveRows.length,
+    actualLiveRows: liveRows.length,
+    observationOnlyRows: liveRows.filter(row => row.observationOnly || row.analysisInputOnly).length,
+    standardizedLearningRiskRows: liveRows.filter(row => row.standardizedLearningRisk).length,
+    learningOnlyRows: liveRows.filter(row => row.learningOnly).length,
+    riskValidRows,
+    analyzedRows: analyzedRows.length,
+    analyzedRowsRaw: analyzedRowsRaw.length,
+    analyzedActualRows: analyzedRows.length,
+    analyzedRiskValidRows: analyzedRows.filter(hasValidRiskShape).length,
+    analyzedExact75Rows,
+    analyzedMicroMicroRows,
+    fallbackExact75Rows: analyzedRows.filter(row => row.fallbackExact75).length,
+    analyzedStandardizedLearningRiskRows: analyzedRows.filter(row => row.standardizedLearningRisk).length,
+    analyzeError: analyzeResult.analyzeError,
+    analyzeFallbackUsed,
+    analyzeWeekKey: PERSISTENT_LEARNING_KEY,
+    analyzeFailedRows: 0,
+    analyzeTimeoutRows: 0,
+    entryRows: counters.entryRows,
+    waitRows: counters.waitRows,
+    virtualCreatedRows: counters.virtualCreatedRows,
+    virtualSkippedRows: counters.virtualSkippedRows,
+    virtualFailedRows: counters.virtualFailedRows,
+    skippedByExistingSymbol: counters.skippedByExistingSymbol,
+    shadowCreatedRows: counters.virtualCreatedRows,
+    shadowSkippedRows: counters.virtualSkippedRows,
+    shadowFailedRows: counters.virtualFailedRows,
+    shadowDisabled: false,
+    virtualExits,
+    shadowExits: virtualExits,
+    realExits: [],
+    virtualExitRows: virtualExits.length,
+    shadowExitRows: virtualExits.length,
+    realExitRows: 0,
+    discordAlertEligibleRows: counters.discordAlertEligibleRows,
+    discordAlertsQueued: counters.discordAlertsQueued,
+    discordAlertsSent: counters.discordAlertsSent,
+    discordAlertsFailed: counters.discordAlertsFailed,
+    discordAlertsSkippedNoSelectedMicro: counters.discordAlertsSkippedNoSelectedMicro,
+    discordAlertsSkippedCurrentFit: counters.discordAlertsSkippedCurrentFit,
+    discordAlertsSkippedRuntimeGate: counters.discordAlertsSkippedRuntimeGate,
+    discordRuntimeGateBlockedRows: counters.discordAlertsSkippedRuntimeGate,
+    selectedMicroMatchRows: counters.selectedMicroMicroMatchRows,
+    selectedAlertMicroMatches: counters.selectedMicroMicroMatchRows,
+    selected75ChildMatchRows: 0,
+    selectedAlert75ChildMatches: 0,
+    unselectedMicroEntryRows: counters.unselectedMicroEntryRows,
+    tradeReadyRows: counters.tradeReadyRows,
+    watchRows: counters.watchRows,
+    observeRows: counters.observeRows,
+    marketWeatherUnknownRows: counters.marketWeatherUnknownRows,
+    playbookMissingRows: counters.playbookMissingRows,
+    openPositionCountBeforeEntries,
+    openPositionCountAfterEntries: openPositions.length,
+    entryLoopAttempts: counters.entryLoopAttempts,
+    entryLoopRuntimeBreak: counters.entryLoopRuntimeBreak,
+    actions,
+    virtualActions: actions,
+    actionCounts: actionCountMap,
+    actionsCount: actions.length,
+    rawActionsCount: actions.length,
+    rawExitRowsCount: virtualExits.length,
+    qualityAudit,
+    runtimeWarnings: context.runtimeWarnings,
+    selectedRotationId: alertContext.rotationId,
+    activeRotationId: alertContext.rotationId,
+    activeSelectionRuntimeFiltered: alertContext.activeSelectionRuntimeFiltered,
+    activeSelectionRuntimeFilteredReason: alertContext.activeSelectionRuntimeFilteredReason,
+    rejectedSelectedMicroMicroFamilyIds: alertContext.rejectedSelectedMicroMicroFamilyIds,
+    rejectedSelectedMicroMicroRows: alertContext.rejectedSelectedMicroMicroRows,
+    rejectedSelectedMicroMicroCount: alertContext.rejectedSelectedMicroMicroCount,
+    activeRuntimeBlockedSelectionRows: alertContext.rejectedSelectedMicroMicroCount || 0,
+    configuredSelectedMicroMicroFamilyIds: alertContext.configuredMicroMicroFamilyIds || [],
+    selectedMicroFamilies: 0,
+    selectedTrueMicroFamilies: 0,
+    selectedChildTrueMicroFamilies: 0,
+    selectedMicroFamilyIds: [],
+    selectedTrueMicroFamilyIds: [],
+    selectedChildTrueMicroFamilyIds: [],
+    selectedMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
+    selectedTrueMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
+    selectedExactMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
+    selectedMicroMicroFamilyIds: alertContext.selectedMicroMicroFamilyIds,
+    selectedTrueMicroMicroFamilyIds: alertContext.selectedTrueMicroMicroFamilyIds,
+    selectedExactMicroMicroFamilyIds: alertContext.selectedExactMicroMicroFamilyIds,
+    activeMicroFamilies: 0,
+    activeTrueMicroFamilies: 0,
+    activeChildTrueMicroFamilies: 0,
+    activeMicroFamilyIds: [],
+    activeTrueMicroFamilyIds: [],
+    activeChildTrueMicroFamilyIds: [],
+    activeMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
+    activeTrueMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
+    activeExactMicroMicroFamilies: alertContext.selectedMicroMicroFamilyIds.length,
+    activeMicroMicroFamilyIds: alertContext.selectedMicroMicroFamilyIds,
+    activeTrueMicroMicroFamilyIds: alertContext.selectedTrueMicroMicroFamilyIds,
+    activeExactMicroMicroFamilyIds: alertContext.selectedExactMicroMicroFamilyIds,
+    trueMicroOnly: true,
+    exactTrueMicroOnly: true,
+    exactTrueMicroFamilyRequired: true,
+    microMicroSelectionEnabled: true,
+    microMicroRequiredForVirtualEntry: true,
+    allowCoarseMicroAliasLiveEntries: false,
+    allowCoarseMicroAliasForDiscord: false,
+    selectionPurpose: 'DISCORD_ALERT_ONLY',
+    manualSelectionMatchMode: 'EXACT_MICRO_MICRO_ID',
+    discordSelectionRule: 'EXACT_MICRO_MICRO_ONLY',
+    scannerSnapshotStats: {
+      candidatesCount: snapshot.candidatesCount || candidates.length,
+      scannerGateCandidatesCount: snapshot.scannerGateCandidatesCount || null,
+      analyzeOnlyCandidatesCount: snapshot.analyzeOnlyCandidatesCount || null,
+      filteredUniverse: snapshot.filteredUniverse || null,
+      rawCount: snapshot.rawCount || null,
+      blockedNonShortCandidatesCount: snapshot.blockedNonShortCandidatesCount
+    },
+    scannerLatestPreserved: true,
+    scannerSnapshotPreserved: true,
+    scannerHistoryPreserved: true,
+    microFamiliesAppendOnly: true,
+    analyzePartialOnly: true,
+    analyzeFullOverwriteDisabled: true,
+    rotationPreserved: true,
+    manualSelectionPreserved: true,
+    discordSelectionPreserved: true,
+    monitorOpenPositions: true,
+    monitorOpenPositionsFirst: true,
+    monitorPriceHintCount: buildSnapshotPriceHints(snapshot).size,
+    monitorPriceSource: cfg.monitorLivePriceFetchEnabled ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS' : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
+    processScannerSnapshot: true,
+    skipped: false,
+    skippedNewEntries: false,
+    reason: null,
+    skipReason: null,
+    microMicroRuntimeGateVersion: MICRO_MICRO_RUNTIME_GATE_VERSION,
+    microMicroRuntimeGateEnabled: true,
+    microMicroRuntimeGateStatuses: {
+      observing: MICRO_MICRO_STATUS_OBSERVING,
+      passed: MICRO_MICRO_STATUS_PASSED,
+      rejected: MICRO_MICRO_STATUS_REJECTED,
+      empiricalVeto: MICRO_MICRO_STATUS_EMPIRICAL_VETO,
+      policyBlocked: MICRO_MICRO_STATUS_POLICY_BLOCKED
+    },
+    microMicroObservingRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_OBSERVING).length,
+    microMicroPassedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_PASSED).length,
+    microMicroRejectedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_REJECTED).length,
+    microMicroEmpiricalVetoRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_EMPIRICAL_VETO).length,
+    microMicroPolicyBlockedRows: analyzedRows.filter(row => microMicroRuntimeGate(row).status === MICRO_MICRO_STATUS_POLICY_BLOCKED).length,
+    deadlineSafe: true,
+    routeLimitsHonored: true,
+    defaultRedisKeyScanDisabled: true,
+    entryRowsList: bool(options.details || options.debug || options.full, false) ? actions.filter(row => row.action === 'VIRTUAL_ENTRY').map(compactActionForResponse) : [],
+    waitRowsList: bool(options.details || options.debug || options.full, false) ? actions.filter(row => row.action === 'WAIT').map(compactActionForResponse) : [],
+    routeTimings: options.routeTimings || {},
+    preTradeDurationMs: options.preTradeDurationMs || 0,
+    phaseLog: context.phaseLog,
+    lastPhase: context.lastPhaseName,
+    maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs
+  };
 
-    lagMonitor.stop();
-    return baseResult;
-  } catch (error) {
-    lagMonitor.stop();
-    const errorResult = {
-      ok: false,
-      degraded: true,
-      runId,
-      startedAt,
-      completedAt: now(),
-      durationMs: now() - startedAt,
-      reason: 'TRADE_SYSTEM_TOP_LEVEL_ERROR',
-      error: error?.message || String(error),
-      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack,
-      actions: [],
-      virtualActions: [],
-      virtualExits: [],
-      shadowExits: [],
-      realExits: [],
-      entryRows: 0,
-      waitRows: 0,
-      virtualCreatedRows: 0,
-      virtualExitRows: 0,
-      shadowExitRows: 0,
-      realExitRows: 0,
-      runtimeWarnings: context.runtimeWarnings || ['TRADE_SYSTEM_DEGRADED_RESPONSE_INSTEAD_OF_THROWING_500'],
-      currentEntryMarketWeatherKey: context.marketContext?.entryMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
-      confirmedMarketWeatherKey: context.marketContext?.confirmedMarketWeatherKey || UNKNOWN_MARKET_WEATHER_KEY,
-      marketWeatherKeyVersion: SHORT_MARKET_WEATHER_KEY_VERSION,
-      deadlineSafe: true,
-      routeLimitsHonored: true,
-      routeTimings: options.routeTimings || {},
-      preTradeDurationMs: options.preTradeDurationMs || 0,
-      phaseLog: context.phaseLog,
-      lastPhase: context.lastPhaseName,
-      maxEventLoopLagMs: lagMonitor.snapshot().maxLagMs,
-      ...sideFlags(),
-      ...virtualFlags(),
-      ...isolationFlags()
-    };
-    await saveRunMetaWithBudget(errorResult, context);
-    return errorResult;
-  }
+  recordPhaseLocal('TRADE_SYSTEM_RETURN', { remainingMs: remainingMs(context.deadlineAt, 0) });
+  const runMetaSaved = await saveRunMetaWithBudget(baseResult, context);
+  baseResult.runMetaSaved = runMetaSaved;
+  lagMonitor.stop();
+  return baseResult;
 }
 
 // ===== HULPFUNCTIES VOOR RESULTAATBOUW =====
-
 function buildEarlyReturnPayload({ context, snapshot, reason, actions = [], virtualExits = [], lagMonitor, extra = {} }) {
   const lagStats = lagMonitor.stop();
   const payload = {
@@ -7374,9 +6787,7 @@ function buildEarlyReturnPayload({ context, snapshot, reason, actions = [], virt
     processScannerSnapshot: false,
     monitorOnly: reason === 'MONITOR_ONLY',
     monitorPriceHintCount: snapshot ? buildSnapshotPriceHints(snapshot).size : 0,
-    monitorPriceSource: context.cfg.monitorLivePriceFetchEnabled
-      ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS'
-      : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
+    monitorPriceSource: context.cfg.monitorLivePriceFetchEnabled ? 'LIVE_BITGET_TICKER_FIRST_THEN_SCANNER_SNAPSHOT_HINTS' : 'SCANNER_SNAPSHOT_HINTS_ONLY_NO_LIVE_FETCH',
     maxRuntimeMs: context.cfg.maxRuntimeMs,
     hardReturnReserveMs: context.cfg.hardReturnReserveMs,
     deadlineSafe: true,
@@ -7413,6 +6824,7 @@ function buildWaitAction(row, reason, alertContext, microMicroFamilyId, extra = 
     exactMicroMicroFamilyId: microMicroFamilyId || null,
     virtualTracked: false,
     liveEligible: false,
+    discordAlertEligible: false,
     discordActivationEligible: false,
     discordRuntimeActivationGatePassed: false,
     signalType: SIGNAL_TYPE_BLOCKED,
@@ -7424,7 +6836,8 @@ function buildWaitAction(row, reason, alertContext, microMicroFamilyId, extra = 
   };
 }
 
-function compactActionForResponse(row = {}) {
+function compactActionForResponse(row) {
+  if (!row || typeof row !== 'object') return row;
   return {
     action: row.action || row.type || null,
     reason: row.reason || row.liveEntryBlockedReason || null,
@@ -7436,41 +6849,36 @@ function compactActionForResponse(row = {}) {
     sl: row.sl ?? row.initialSl ?? row.stopLoss ?? null,
     tp: row.tp ?? row.takeProfit ?? null,
     rr: row.rr ?? null,
-    riskPct: row.riskPct ?? null,
-    rewardPct: row.rewardPct ?? null,
+    riskFractionForEntry: row.riskFractionForEntry ?? null,
     signalType: row.signalType || null,
-    riskFractionForEntry: row.riskFractionForEntry ?? 0,
-    microMicroRuntimeGateStatus: row.microMicroRuntimeGateStatus || row.microMicroRuntimeGate?.status || null,
-    entryMarketWeatherKey: row.entryMarketWeatherKey || null,
-    confirmedMarketWeatherKey: row.confirmedMarketWeatherKey || null,
+    netR: row.netR ?? row.realizedR ?? row.r ?? null,
+    exitReason: row.exitReason || null,
     currentFit: row.currentFit || row.entryCurrentFit || null,
-    discordAlertEligible: Boolean(row.discordAlertEligible),
-    discordAlertReason: row.discordAlertReason || null
+    entryMarketWeatherKey: row.entryMarketWeatherKey || null,
+    currentMarketWeatherKey: row.currentMarketWeatherKey || null,
+    discordAlertEligible: Boolean(row.discordAlertEligible)
   };
 }
 
+// [REPAIRED] saveRunMetaWithBudget now passes context to compactRunForRedis
 async function saveRunMetaWithBudget(result, context) {
-  const cfg = context.cfg || tradeConfig(context.options);
+  const cfg = context.cfg || tradeConfig();
   const durableRedis = safeGetDurableRedis();
-  if (!durableRedis) return false;
-
-  const budget = remainingMs(context.deadlineAt, 0);
-  if (budget < 200) {
-    context.runtimeWarnings.push('SAVE_RUN_META_SKIPPED_INSUFFICIENT_BUDGET');
+  if (!durableRedis || !canStartPhase(context.deadlineAt, 200, FINALIZATION_RESERVE_MS + 100)) {
     return false;
   }
-
+  const budget = remainingMs(context.deadlineAt, FINALIZATION_RESERVE_MS);
+  if (budget < 150) return false;
   const runMetaSaved = await setJsonWithTimeout(
     durableRedis,
     SHORT_KEYS.trade.runMeta,
-    compactRunForRedis(result),
+    compactRunForRedis(result, context),
     Math.min(cfg.redisWriteTimeoutMs, budget - 50),
     'SAVE_RUN_META_TIMEOUT'
   );
   if (!runMetaSaved) {
     context.runtimeWarnings.push('SAVE_RUN_META_TIMEOUT_OR_FAILED');
   }
-
   if (result.snapshotId && result.snapshotChunkCursorPersisted && result.snapshotChunkComplete) {
     await setJsonWithTimeout(
       durableRedis,
@@ -7518,7 +6926,6 @@ async function saveRunMetaWithBudget(result, context) {
       'SAVE_LAST_PROCESSED_SNAPSHOT_TIMEOUT'
     );
   }
-
   if (result.currentEntryMarketWeatherKey && result.currentEntryMarketWeatherKey !== UNKNOWN_MARKET_WEATHER_KEY) {
     await setJsonWithTimeout(
       durableRedis,
@@ -7537,7 +6944,6 @@ async function saveRunMetaWithBudget(result, context) {
       'SAVE_LAST_CONFIRMED_WEATHER_TIMEOUT'
     );
   }
-
   return runMetaSaved;
 }
 
