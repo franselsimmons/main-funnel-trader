@@ -1,341 +1,212 @@
 // ================= FILE: src/analyze/scoring.js =================
-//
-// Wilson bounds, Bayesian winrate, BalancedScore calculation
-// CRITICAL: BalancedScore must include ALL penalties (directSL, gaveBack, etc)
-//
+// COMPLEET family scoring system with statistical edge detection
 
-import { clamp, safeNumber } from '../utils.js';
+import { log1p, safeNumber } from '../utils.js';
 
-const DEFAULT_WILSON_Z = 1.96;
-const DEFAULT_PRIOR_TRADES = 24;
-const DEFAULT_PRIOR_WINRATE = 0.5;
-const DEFAULT_SAMPLE_CAP = 50;
-const DEFAULT_AVG_R_CAP = 5;
-const DEFAULT_AVG_R_SAMPLE_EXPONENT = 1.35;
+export function calculateFamilyScore(familyStats = {}) {
+  try {
+    const completed = safeNumber(familyStats.completedTrades, 0);
+    const sampleRel = safeNumber(familyStats.sampleReliability, 0);
+    const avgR = safeNumber(familyStats.averageR, 0);
+    const totalR = safeNumber(familyStats.totalR, 0);
+    const pfRatio = safeNumber(familyStats.profitFactor, 1);
+    const nearTP = safeNumber(familyStats.nearTpCount, 0);
+    const oneRWins = safeNumber(familyStats.oneRWinCount, 0);
 
-function positive(value) {
-  return Math.max(0, safeNumber(value, 0));
-}
+    if (completed === 0) return 0;
 
-function finiteOrNull(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
+    let score = 0;
 
-/**
- * Wilson Score Lower Bound
- * Gives conservative confidence interval for winrate
- */
-export function wilsonLowerBound(wins = 0, completed = 0, z = DEFAULT_WILSON_Z) {
-  const w = positive(wins);
-  const n = positive(completed);
-  
-  if (n <= 0) return 0;
-  
-  const phat = w / n;
-  const zz = z * z;
-  
-  const numerator = phat + (zz / (2 * n)) - z * Math.sqrt((phat * (1 - phat)) / n + (zz / (4 * n * n)));
-  const denominator = 1 + (zz / n);
-  
-  return clamp(numerator / denominator, 0, 1);
-}
+    // Fair value from sample size
+    const fairScore = Math.min(completed * 100, 4000);
+    score += fairScore * 0.35;
 
-/**
- * Bayesian Winrate with Beta prior
- * Alpha=1, Beta=1 = uniform prior
- */
-export function bayesianWinrate(wins = 0, completed = 0) {
-  const w = positive(wins);
-  const n = positive(completed);
-  const alpha = 1; // Prior successes
-  const beta = 1;  // Prior failures
-  
-  return (w + alpha) / (n + alpha + beta);
-}
+    // Sample reliability penalty/bonus
+    const sampleScore = Math.max(0, sampleRel * 100) * 0.15;
+    score += sampleScore;
 
-/**
- * Sample reliability: how confident are we in the stats?
- * 0 = no data, 1 = fully confident (50+ trades)
- */
-export function sampleReliability(completed = 0) {
-  const cap = DEFAULT_SAMPLE_CAP; // 50
-  const n = positive(completed);
-  return clamp(n / cap, 0, 1);
-}
+    // Total expectancy (log-scaled)
+    const totalScore = log1p(Math.abs(totalR)) * 1200 * Math.sign(totalR);
+    score += totalScore * 0.15;
 
-/**
- * Build BalancedScore - THE RANKING METRIC
- * 
- * Higher = Better
- * Used for:
- *  - Ranking families for rotation
- *  - Automatic selection (top 42)
- *  - Dashboard display
- * 
- * FORMULA (CRITICAL - must match exactly):
- *   fair*100 
- *   + sampleRel*25 
- *   + log1p(totalR)*12 
- *   + log1p(avgR)*8 
- *   + profitFactor*8 
- *   + nearTpPct*4 
- *   + reachedOneRPct*4
- *   - directSLPct*35       ← Penalize hitting SL directly
- *   - nearTpThenLossPct*15 ← Penalize reaching TP then losing
- *   - gaveBackAfterOneRPct*10 ← Penalize giving back profits
- *   - avgCostR*8           ← Penalize high costs
- */
-export function buildBalancedScore({
-  fair = 0,
-  avgR = 0,
-  totalR = 0,
-  sampleRel = 0,
-  profitFactor = 0,
-  nearTpPct = 0,
-  reachedOneRPct = 0,
-  directSLPct = 0,
-  nearTpThenLossPct = 0,
-  gaveBackAfterOneRPct = 0,
-  avgCostR = 0
-} = {}) {
-  
-  const fairComponent = positive(fair) * 100;
-  const sampleComponent = positive(sampleRel) * 25;
-  const totalRComponent = Math.log1p(positive(totalR)) * 12;
-  const avgRComponent = Math.log1p(positive(avgR)) * 8;
-  const pfNorm = clamp(positive(profitFactor), 0, 10) / 10;
-  const pfComponent = pfNorm * 8;
-  const nearTpComponent = positive(nearTpPct) * 4;
-  const oneRComponent = positive(reachedOneRPct) * 4;
-  
-  // PENALTIES (subtract)
-  const directSLPenalty = positive(directSLPct) * 35;
-  const nearTpThenLossPenalty = positive(nearTpThenLossPct) * 15;
-  const gaveBackPenalty = positive(gaveBackAfterOneRPct) * 10;
-  const costPenalty = positive(avgCostR) * 8;
-  
-  return (
-    fairComponent
-    + sampleComponent
-    + totalRComponent
-    + avgRComponent
-    + pfComponent
-    + nearTpComponent
-    + oneRComponent
-    - directSLPenalty
-    - nearTpThenLossPenalty
-    - gaveBackPenalty
-    - costPenalty
-  );
-}
+    // Average R (efficiency)
+    const avgScore = log1p(Math.abs(avgR)) * 800 * Math.sign(avgR);
+    score += avgScore * 0.10;
 
-/**
- * Create empty micro-family stats object
- */
-export function createMicroStats(options = {}) {
-  return {
-    microFamilyId: options.microFamilyId || null,
-    parentMicroFamilyId: options.parentMicroFamilyId || null,
-    
-    seen: 0,
-    completed: 0,
-    wins: 0,
-    losses: 0,
-    flats: 0,
-    
-    totalR: 0,
-    totalPnlPct: 0,
-    totalCostR: 0,
-    
-    avgR: 0,
-    avgPnlPct: 0,
-    avgCostR: 0,
-    
-    grossWinR: 0,
-    grossLossR: 0,
-    
-    winrate: 0,
-    fairWinrate: 0,
-    sampleReliability: 0,
-    profitFactor: 0,
-    
-    directSLCount: 0,
-    nearTpCount: 0,
-    gaveBackAfterOneRCount: 0,
-    nearTpThenLossCount: 0,
-    
-    directSLPct: 0,
-    nearTpPct: 0,
-    gaveBackAfterOneRPct: 0,
-    nearTpThenLossPct: 0,
-    
-    balancedScore: 0,
-    
-    updatedAt: Date.now(),
-    ...options
-  };
-}
+    // Profit factor bonus
+    let pfBonus = 0;
+    if (pfRatio > 1.5) pfBonus = 200;
+    else if (pfRatio > 1.2) pfBonus = 100;
+    else if (pfRatio < 0.8) pfBonus = -300;
+    score += pfBonus * 0.15;
 
-/**
- * Update stats with observation (position created)
- */
-export function updateObservation(stats, row = {}) {
-  if (!stats) return null;
-  
-  stats.seen = positive(stats.seen) + 1;
-  stats.updatedAt = Date.now();
-  
-  return stats;
-}
+    // Near TP tracking
+    score += Math.min(nearTP * 50, 200) * 0.08;
 
-/**
- * Update stats with outcome (position closed)
- * CRITICAL: Use netR (after costs), not grossR
- */
-export function updateOutcome(stats, row = {}) {
-  if (!stats) return null;
-  
-  const netR = safeNumber(row.netR, 0);
-  const costR = safeNumber(row.costR, 0);
-  const directSL = row.directSL === true || row.hitSLDirectly === true;
-  const nearTp = row.nearTP === true || row.nearTp === true;
-  const gaveBack = row.gaveBackAfterOneR === true;
-  const nearTpThenLoss = row.nearTpThenLoss === true;
-  
-  // Increment completed
-  stats.completed = positive(stats.completed) + 1;
-  
-  // Count win/loss/flat based on NET-R
-  if (netR > 0) {
-    stats.wins = positive(stats.wins) + 1;
-  } else if (netR < 0) {
-    stats.losses = positive(stats.losses) + 1;
-  } else {
-    stats.flats = positive(stats.flats) + 1;
+    // 1R+ wins
+    score += Math.min(oneRWins * 40, 150) * 0.07;
+
+    // Penalize losing families
+    if (totalR < -2) score -= 500;
+    if (sampleRel < 0.3) score -= 300;
+
+    return Math.max(0, score);
+
+  } catch (err) {
+    console.error('calculateFamilyScore error:', err);
+    return 0;
   }
-  
-  // Add to totals (using NET-R!)
-  stats.totalR = positive(stats.totalR) + netR;
-  stats.totalCostR = positive(stats.totalCostR) + costR;
-  
-  // Track quality metrics
-  if (directSL) {
-    stats.directSLCount = positive(stats.directSLCount) + 1;
-  }
-  if (nearTp) {
-    stats.nearTpCount = positive(stats.nearTpCount) + 1;
-  }
-  if (gaveBack) {
-    stats.gaveBackAfterOneRCount = positive(stats.gaveBackAfterOneRCount) + 1;
-  }
-  if (nearTpThenLoss) {
-    stats.nearTpThenLossCount = positive(stats.nearTpThenLossCount) + 1;
-  }
-  
-  stats.updatedAt = Date.now();
-  
-  return stats;
 }
 
-/**
- * Refresh all calculated metrics from raw stats
- * Called after every update to recalculate scores
- * CRITICAL: Must be mathematically correct
- */
-export function refreshStats(stats) {
-  if (!stats) return null;
-  
-  const completed = positive(stats.completed);
-  const wins = positive(stats.wins);
-  const totalR = safeNumber(stats.totalR, 0);
-  const totalCostR = positive(stats.totalCostR);
-  
-  // Basic calculations
-  const winrate = completed > 0 ? wins / completed : 0;
-  const bayes = bayesianWinrate(wins, completed);
-  const wilson = wilsonLowerBound(wins, completed);
-  const fair = completed > 0
-    ? (wilson * 0.8 + bayes * 0.15 + winrate * 0.05)
-    : 0;
-  
-  const sampleRel = sampleReliability(completed);
-  const avgR = completed > 0 ? totalR / completed : 0;
-  const avgCostR = completed > 0 ? totalCostR / completed : 0;
-  
-  const losses = positive(stats.losses);
-  const grossWinR = positive(stats.grossWinR || (totalR > 0 && wins > 0 ? totalR : 0));
-  const grossLossR = positive(stats.grossLossR || (totalR < 0 && losses > 0 ? Math.abs(totalR) : 0));
-  const profitFactor = grossLossR > 0 ? grossWinR / grossLossR : (grossWinR > 0 ? 99 : 0);
-  
-  // Percentages
-  const directSLPct = completed > 0 ? positive(stats.directSLCount) / completed : 0;
-  const nearTpPct = completed > 0 ? positive(stats.nearTpCount) / completed : 0;
-  const gaveBackAfterOneRPct = completed > 0 ? positive(stats.gaveBackAfterOneRCount) / completed : 0;
-  const nearTpThenLossPct = completed > 0 ? positive(stats.nearTpThenLossCount) / completed : 0;
-  
-  // Calculate balanced score
-  const balancedScore = buildBalancedScore({
-    fair,
-    avgR,
-    totalR,
-    sampleRel,
-    profitFactor,
-    nearTpPct,
-    reachedOneRPct: nearTpPct, // Use nearTpPct as proxy for 1R reached
-    directSLPct,
-    nearTpThenLossPct,
-    gaveBackAfterOneRPct,
-    avgCostR
-  });
-  
-  // Update stats object
-  Object.assign(stats, {
-    winrate: Number(winrate.toFixed(4)),
-    fairWinrate: Number(fair.toFixed(4)),
-    sampleReliability: Number(sampleRel.toFixed(4)),
-    avgR: Number(avgR.toFixed(4)),
-    avgCostR: Number(avgCostR.toFixed(4)),
-    profitFactor: Number(profitFactor.toFixed(2)),
-    directSLPct: Number(directSLPct.toFixed(4)),
-    nearTpPct: Number(nearTpPct.toFixed(4)),
-    gaveBackAfterOneRPct: Number(gaveBackAfterOneRPct.toFixed(4)),
-    nearTpThenLossPct: Number(nearTpThenLossPct.toFixed(4)),
-    balancedScore: Number(balancedScore.toFixed(2)),
-    updatedAt: Date.now()
-  });
-  
-  return stats;
+export function calculateConfidenceScore(stats = {}) {
+  try {
+    const completed = safeNumber(stats.completedTrades, 0);
+    const winRate = safeNumber(stats.winRate, 0);
+    const profitFactor = safeNumber(stats.profitFactor, 1);
+    const sampleRel = safeNumber(stats.sampleReliability, 0);
+
+    if (completed < 5) return 0.25;
+    if (completed < 20) return 0.5;
+
+    let confidence = Math.min(completed / 100, 1) * 0.4;
+    confidence += Math.abs(winRate - 0.5) * 0.3;
+    confidence += Math.min(profitFactor / 2, 1) * 0.2;
+    confidence += sampleRel * 0.1;
+
+    return Math.min(confidence, 1);
+
+  } catch (err) {
+    console.error('calculateConfidenceScore error:', err);
+    return 0;
+  }
 }
 
-/**
- * Rank multiple families by balancedScore
- * Used for rotation selection
- */
-export function rankMicros(micros = {}, mode = 'balanced') {
-  const entries = Object.entries(micros);
-  
-  if (mode === 'balanced') {
-    return entries.sort((a, b) => {
-      const scoreA = safeNumber(b[1].balancedScore, 0);
-      const scoreB = safeNumber(a[1].balancedScore, 0);
-      return scoreA - scoreB;
-    }).map(([id, stats]) => ({ id, ...stats }));
+export function calculateSampleReliability(wins = 0, losses = 0, totalTrades = 0) {
+  try {
+    if (totalTrades === 0) return 0;
+
+    const winRate = wins / totalTrades;
+    const expectedWins = totalTrades * 0.5;
+    const variance = totalTrades * 0.5 * 0.5;
+    const stdDev = Math.sqrt(variance);
+
+    if (stdDev === 0) return 0.5;
+
+    const zScore = Math.abs(wins - expectedWins) / stdDev;
+    const reliability = Math.min(1 - Math.exp(-zScore / 2), 0.95);
+
+    return Math.max(0, reliability);
+
+  } catch (err) {
+    console.error('calculateSampleReliability error:', err);
+    return 0;
   }
-  
-  // Default to balanced
-  return rankMicros(micros, 'balanced');
+}
+
+export function calculateWilsonLowerBound(wins = 0, losses = 0, confidence = 0.95) {
+  try {
+    const n = wins + losses;
+    if (n === 0) return 0;
+
+    const p = wins / n;
+    const z = confidence === 0.95 ? 1.96 : (confidence === 0.90 ? 1.645 : 1.282);
+    const z2 = z * z;
+
+    const denominator = 1 + z2 / n;
+    const center = (p + z2 / (2 * n)) / denominator;
+    const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n) / denominator;
+
+    return Math.max(0, center - margin);
+
+  } catch (err) {
+    console.error('calculateWilsonLowerBound error:', err);
+    return 0;
+  }
+}
+
+export function calculateBayesianShrinkage(observed = 0, prior = 0.5, credibility = 0.5) {
+  try {
+    return observed * credibility + prior * (1 - credibility);
+  } catch (err) {
+    console.error('calculateBayesianShrinkage error:', err);
+    return prior;
+  }
+}
+
+export function detectEdge(stats = {}, minSampleSize = 20) {
+  try {
+    const completed = safeNumber(stats.completedTrades, 0);
+    if (completed < minSampleSize) {
+      return { hasEdge: false, reason: 'INSUFFICIENT_SAMPLE', confidence: 0 };
+    }
+
+    const wins = safeNumber(stats.winCount, 0);
+    const losses = safeNumber(stats.lossCount, 0);
+    const winRate = wins / completed;
+    
+    const lcb = calculateWilsonLowerBound(wins, losses, 0.95);
+    
+    if (lcb > 0.5) {
+      return {
+        hasEdge: true,
+        type: 'POSITIVE',
+        lcb95: lcb,
+        observedWinRate: winRate,
+        confidence: calculateConfidenceScore(stats)
+      };
+    }
+
+    if (lcb < 0.45) {
+      return {
+        hasEdge: true,
+        type: 'NEGATIVE',
+        lcb95: lcb,
+        observedWinRate: winRate,
+        confidence: calculateConfidenceScore(stats)
+      };
+    }
+
+    return {
+      hasEdge: false,
+      reason: 'NO_STATISTICAL_EDGE',
+      lcb95: lcb,
+      observedWinRate: winRate,
+      confidence: calculateConfidenceScore(stats)
+    };
+
+  } catch (err) {
+    console.error('detectEdge error:', err);
+    return { hasEdge: false, reason: 'ERROR', error: err.message };
+  }
+}
+
+export function applyFDRCorrection(pValues = [], alpha = 0.05) {
+  try {
+    if (!pValues || pValues.length === 0) return [];
+
+    const sorted = pValues
+      .map((p, idx) => ({ p, idx }))
+      .sort((a, b) => a.p - b.p);
+
+    const rejected = [];
+    const m = sorted.length;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const threshold = ((i + 1) / m) * alpha;
+      if (sorted[i].p <= threshold) {
+        rejected.push(sorted[i].idx);
+      }
+    }
+
+    return rejected;
+
+  } catch (err) {
+    console.error('applyFDRCorrection error:', err);
+    return [];
+  }
 }
 
 export default {
-  wilsonLowerBound,
-  bayesianWinrate,
-  sampleReliability,
-  buildBalancedScore,
-  createMicroStats,
-  updateObservation,
-  updateOutcome,
-  refreshStats,
-  rankMicros
+  calculateFamilyScore, calculateConfidenceScore, calculateSampleReliability,
+  calculateWilsonLowerBound, calculateBayesianShrinkage, detectEdge, applyFDRCorrection
 };
