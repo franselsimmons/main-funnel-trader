@@ -1,56 +1,89 @@
 // ================= FILE: src/market/bitgetClient.js =================
-//
-// Complete Bitget API client for USDT perpetuals
-// Handles all market data fetching needed by scanner
-//
+// COMPLEET Bitget API client for USDT perpetuals
 
 import axios from 'axios';
 import { createHmac } from 'node:crypto';
-
-const API_BASE_URL = 'https://api.bitget.com/v2';
+import { CONFIG } from '../config.js';
+import { safeNumber } from '../utils.js';
 
 export class BitgetClient {
   constructor(apiKey = '', secretKey = '', passphrase = '') {
-    this.apiKey = apiKey;
-    this.secretKey = secretKey;
-    this.passphrase = passphrase;
-    
+    this.apiKey = apiKey || CONFIG.API_KEYS.BITGET_API_KEY;
+    this.secretKey = secretKey || CONFIG.API_KEYS.BITGET_SECRET_KEY;
+    this.passphrase = passphrase || CONFIG.API_KEYS.BITGET_PASSPHRASE;
+
+    this.baseURL = CONFIG.API.BITGET_BASE_URL;
+    this.timeout = CONFIG.API.BITGET_TIMEOUT;
+
     this.client = axios.create({
-      baseURL: API_BASE_URL,
-      timeout: 30000,
+      baseURL: this.baseURL,
+      timeout: this.timeout,
       headers: {
         'Content-Type': 'application/json'
       }
     });
   }
 
-  /**
-   * Get all USDT perpetuals tickers
-   */
+  _sign(method, path, body = '') {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const message = timestamp + method + path + body;
+    const signature = createHmac('sha256', this.secretKey)
+      .update(message)
+      .digest('base64');
+
+    return {
+      'ACCESS-KEY': this.apiKey,
+      'ACCESS-SIGN': signature,
+      'ACCESS-TIMESTAMP': timestamp,
+      'ACCESS-PASSPHRASE': this.passphrase
+    };
+  }
+
+  async _get(path, params = {}) {
+    try {
+      const response = await this.client.get(path, { params });
+      return response.data;
+    } catch (err) {
+      console.error(`BitgetClient GET ${path} error:`, err.message);
+      throw err;
+    }
+  }
+
+  async _post(path, body = {}) {
+    try {
+      const bodyStr = JSON.stringify(body);
+      const headers = this._sign('POST', path, bodyStr);
+      
+      const response = await this.client.post(path, body, { headers });
+      return response.data;
+    } catch (err) {
+      console.error(`BitgetClient POST ${path} error:`, err.message);
+      throw err;
+    }
+  }
+
   async getTickers(productType = 'usdt-futures', limit = 500) {
     try {
-      const response = await this.client.get('/public/market/tickers', {
-        params: {
-          productType,
-          limit: Math.min(limit, 500)
-        }
+      const response = await this._get('/public/market/tickers', {
+        productType,
+        limit: Math.min(limit, 500)
       });
 
-      if (!response.data || !response.data.data) {
+      if (!response.data || !Array.isArray(response.data)) {
         return [];
       }
 
-      return response.data.data.map(ticker => ({
-        symbol: ticker.symbol,
-        lastPr: parseFloat(ticker.lastPr || 0),
-        highPr: parseFloat(ticker.highPr || 0),
-        lowPr: parseFloat(ticker.lowPr || 0),
-        openUtc: parseFloat(ticker.openUtc || 0),
-        baseVolume: parseFloat(ticker.baseVolume || 0),
-        quoteVolume: parseFloat(ticker.quoteVolume || 0),
+      return response.data.map(ticker => ({
+        symbol: ticker.symbol || '',
+        lastPr: safeNumber(ticker.lastPr, 0),
+        highPr: safeNumber(ticker.highPr, 0),
+        lowPr: safeNumber(ticker.lowPr, 0),
+        openUtc: safeNumber(ticker.openUtc, 0),
+        baseVolume: safeNumber(ticker.baseVolume, 0),
+        quoteVolume: safeNumber(ticker.quoteVolume, 0),
         ts: parseInt(ticker.ts || Date.now()),
-        fundingRate: parseFloat(ticker.fundingRate || 0),
-        change24h: parseFloat(ticker.change24h || 0)
+        fundingRate: safeNumber(ticker.fundingRate, 0),
+        change24h: safeNumber(ticker.change24h, 0)
       }));
     } catch (err) {
       console.error('getTickers error:', err.message);
@@ -58,9 +91,6 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get OHLCV candles for a symbol
-   */
   async getCandles(symbol = '', granularity = '1H', limit = 100, endTime = null) {
     try {
       if (!symbol) return [];
@@ -75,20 +105,20 @@ export class BitgetClient {
         params.endTime = endTime;
       }
 
-      const response = await this.client.get('/public/market/candles', { params });
+      const response = await this._get('/public/market/candles', params);
 
-      if (!response.data || !response.data.data) {
+      if (!response.data || !Array.isArray(response.data)) {
         return [];
       }
 
-      return response.data.data.map(candle => ({
+      return response.data.map(candle => ({
         ts: candle[0],
-        open: parseFloat(candle[1]),
-        high: parseFloat(candle[2]),
-        low: parseFloat(candle[3]),
-        close: parseFloat(candle[4]),
-        volume: parseFloat(candle[5]),
-        quoteVolume: parseFloat(candle[6] || 0)
+        open: safeNumber(candle[1], 0),
+        high: safeNumber(candle[2], 0),
+        low: safeNumber(candle[3], 0),
+        close: safeNumber(candle[4], 0),
+        volume: safeNumber(candle[5], 0),
+        quoteVolume: safeNumber(candle[6], 0)
       }));
     } catch (err) {
       console.error(`getCandles error for ${symbol}:`, err.message);
@@ -96,34 +126,29 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get order book for a symbol
-   */
   async getOrderBook(symbol = '', limit = 20) {
     try {
       if (!symbol) return null;
 
-      const response = await this.client.get('/public/market/books', {
-        params: {
-          symbol,
-          limit: Math.min(limit, 100)
-        }
+      const response = await this._get('/public/market/books', {
+        symbol,
+        limit: Math.min(limit, 100)
       });
 
-      if (!response.data || !response.data.data) {
+      if (!response.data) {
         return null;
       }
 
-      const data = response.data.data;
+      const data = response.data;
       return {
         symbol,
         asks: (data.asks || []).map(a => ({
-          price: parseFloat(a[0]),
-          size: parseFloat(a[1])
+          price: safeNumber(a[0], 0),
+          size: safeNumber(a[1], 0)
         })),
         bids: (data.bids || []).map(b => ({
-          price: parseFloat(b[0]),
-          size: parseFloat(b[1])
+          price: safeNumber(b[0], 0),
+          size: safeNumber(b[1], 0)
         })),
         ts: parseInt(data.ts || Date.now())
       };
@@ -133,31 +158,26 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get current price for a symbol
-   */
   async getPrice(symbol = '') {
     try {
       if (!symbol) return null;
 
-      const response = await this.client.get('/public/market/tickers', {
-        params: { symbol }
-      });
+      const response = await this._get('/public/market/tickers', { symbol });
 
-      if (!response.data || !response.data.data || response.data.data.length === 0) {
+      if (!response.data || response.data.length === 0) {
         return null;
       }
 
-      const ticker = response.data.data[0];
+      const ticker = response.data[0];
       return {
         symbol,
-        last: parseFloat(ticker.lastPr || 0),
-        high: parseFloat(ticker.highPr || 0),
-        low: parseFloat(ticker.lowPr || 0),
-        open: parseFloat(ticker.openUtc || 0),
-        volume: parseFloat(ticker.baseVolume || 0),
-        change24h: parseFloat(ticker.change24h || 0),
-        fundingRate: parseFloat(ticker.fundingRate || 0),
+        last: safeNumber(ticker.lastPr, 0),
+        high: safeNumber(ticker.highPr, 0),
+        low: safeNumber(ticker.lowPr, 0),
+        open: safeNumber(ticker.openUtc, 0),
+        volume: safeNumber(ticker.baseVolume, 0),
+        change24h: safeNumber(ticker.change24h, 0),
+        fundingRate: safeNumber(ticker.fundingRate, 0),
         timestamp: parseInt(ticker.ts || Date.now())
       };
     } catch (err) {
@@ -166,9 +186,6 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get 24h statistics for a symbol
-   */
   async get24hStats(symbol = '') {
     try {
       if (!symbol) return null;
@@ -196,30 +213,25 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get recent trades for a symbol
-   */
   async getRecentTrades(symbol = '', limit = 50) {
     try {
       if (!symbol) return [];
 
-      const response = await this.client.get('/public/market/trades', {
-        params: {
-          symbol,
-          limit: Math.min(limit, 100)
-        }
+      const response = await this._get('/public/market/trades', {
+        symbol,
+        limit: Math.min(limit, 100)
       });
 
-      if (!response.data || !response.data.data) {
+      if (!response.data || !Array.isArray(response.data)) {
         return [];
       }
 
-      return response.data.data.map(trade => ({
+      return response.data.map(trade => ({
         tradeId: trade.tradeId,
-        price: parseFloat(trade.price),
-        size: parseFloat(trade.size),
+        price: safeNumber(trade.price, 0),
+        size: safeNumber(trade.size, 0),
         side: trade.side,
-        ts: parseInt(trade.ts)
+        ts: parseInt(trade.ts || Date.now())
       }));
     } catch (err) {
       console.error(`getRecentTrades error for ${symbol}:`, err.message);
@@ -227,29 +239,24 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get funding rate history for a symbol
-   */
   async getFundingRateHistory(symbol = '', limit = 100) {
     try {
       if (!symbol) return [];
 
-      const response = await this.client.get('/public/market/funding-rates', {
-        params: {
-          symbol,
-          limit: Math.min(limit, 500)
-        }
+      const response = await this._get('/public/market/funding-rates', {
+        symbol,
+        limit: Math.min(limit, 500)
       });
 
-      if (!response.data || !response.data.data) {
+      if (!response.data || !Array.isArray(response.data)) {
         return [];
       }
 
-      return response.data.data.map(rate => ({
+      return response.data.map(rate => ({
         symbol: rate.symbol,
-        fundingRate: parseFloat(rate.fundingRate),
-        fundingTime: parseInt(rate.fundingTime),
-        predictedRate: parseFloat(rate.predictedRate || 0)
+        fundingRate: safeNumber(rate.fundingRate, 0),
+        fundingTime: parseInt(rate.fundingTime || 0),
+        predictedRate: safeNumber(rate.predictedRate, 0)
       }));
     } catch (err) {
       console.error(`getFundingRateHistory error for ${symbol}:`, err.message);
@@ -257,26 +264,23 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get open interest for a symbol
-   */
   async getOpenInterest(symbol = '') {
     try {
       if (!symbol) return null;
 
-      const response = await this.client.get('/public/market/open-interest', {
-        params: { symbol }
+      const response = await this._get('/public/market/open-interest', {
+        symbol
       });
 
-      if (!response.data || !response.data.data) {
+      if (!response.data) {
         return null;
       }
 
-      const data = response.data.data;
+      const data = response.data;
       return {
         symbol,
-        openInterest: parseFloat(data.openInterest || 0),
-        openInterestValue: parseFloat(data.openInterestValue || 0),
+        openInterest: safeNumber(data.openInterest, 0),
+        openInterestValue: safeNumber(data.openInterestValue, 0),
         timestamp: parseInt(data.timestamp || Date.now())
       };
     } catch (err) {
@@ -285,27 +289,24 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get mark price for a symbol
-   */
   async getMarkPrice(symbol = '') {
     try {
       if (!symbol) return null;
 
-      const response = await this.client.get('/public/market/mark-price', {
-        params: { symbol }
+      const response = await this._get('/public/market/mark-price', {
+        symbol
       });
 
-      if (!response.data || !response.data.data) {
+      if (!response.data || response.data.length === 0) {
         return null;
       }
 
-      const data = response.data.data[0];
+      const data = response.data[0];
       return {
         symbol,
-        markPrice: parseFloat(data.markPrice || 0),
-        indexPrice: parseFloat(data.indexPrice || 0),
-        lastFundingRate: parseFloat(data.lastFundingRate || 0),
+        markPrice: safeNumber(data.markPrice, 0),
+        indexPrice: safeNumber(data.indexPrice, 0),
+        lastFundingRate: safeNumber(data.lastFundingRate, 0),
         nextFundingTime: parseInt(data.nextFundingTime || 0),
         timestamp: parseInt(data.timestamp || Date.now())
       };
@@ -315,12 +316,19 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Verify API connection
-   */
+  async getAllSymbols() {
+    try {
+      const tickers = await this.getTickers('usdt-futures', 500);
+      return tickers.map(t => t.symbol).filter(s => s.includes('USDT'));
+    } catch (err) {
+      console.error('getAllSymbols error:', err.message);
+      return [];
+    }
+  }
+
   async healthCheck() {
     try {
-      const response = await this.client.get('/public/system-status');
+      const response = await this._get('/public/system-status');
       return {
         ok: true,
         status: response.data?.code === '00000' ? 'healthy' : 'degraded'
@@ -334,16 +342,43 @@ export class BitgetClient {
     }
   }
 
-  /**
-   * Get all USDT futures symbols
-   */
-  async getAllSymbols() {
+  async getPrices(symbols = []) {
     try {
-      const tickers = await this.getTickers('usdt-futures', 500);
-      return tickers.map(t => t.symbol).filter(s => s.includes('USDT'));
+      const prices = {};
+      const results = await Promise.all(
+        symbols.map(symbol => this.getPrice(symbol).catch(() => null))
+      );
+
+      for (let i = 0; i < symbols.length; i++) {
+        if (results[i]) {
+          prices[symbols[i]] = results[i];
+        }
+      }
+
+      return prices;
     } catch (err) {
-      console.error('getAllSymbols error:', err.message);
-      return [];
+      console.error('getPrices error:', err.message);
+      return {};
+    }
+  }
+
+  async getMultipleCandles(symbols = [], granularity = '1H', limit = 100) {
+    try {
+      const candles = {};
+      const results = await Promise.all(
+        symbols.map(symbol => this.getCandles(symbol, granularity, limit).catch(() => []))
+      );
+
+      for (let i = 0; i < symbols.length; i++) {
+        if (results[i] && results[i].length > 0) {
+          candles[symbols[i]] = results[i];
+        }
+      }
+
+      return candles;
+    } catch (err) {
+      console.error('getMultipleCandles error:', err.message);
+      return {};
     }
   }
 }
