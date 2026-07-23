@@ -1,764 +1,362 @@
 // ================= FILE: src/redis.js =================
+// COMPLEET Redis client wrapper
 
-import { Redis } from '@upstash/redis';
+import redis from 'redis';
+import { CONFIG } from './config.js';
 
-const DEFAULT_SCAN_COUNT = 100;
-const DEFAULT_DELETE_BATCH_SIZE = 100;
-const DEFAULT_LOG_LIMIT = 250;
+let redisClient = null;
+let isConnected = false;
 
-const TARGET_TRADE_SIDE = 'SHORT';
-const TARGET_DASHBOARD_SIDE = 'bear';
-const TARGET_SCANNER_SIDE = 'bear';
-const OPPOSITE_TRADE_SIDE = 'LONG';
-
-const SHORT_NAMESPACE = 'SHORT';
-const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
-const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
-
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
-const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
-const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
-
-const ROOT_KEY_PREFIXES = [
-  'SCAN:',
-  'LIVE:',
-  'TRADE:',
-  'ANALYZE:',
-  'CIRCUIT:',
-  'DISCORD:',
-  'RESET:'
-];
-
-const PUBLIC_MARKET_KEY_PREFIXES = [
-  'MARKET:WEATHER',
-  'MARKET:UNIVERSE',
-  'MARKET:SCANNER:UNIVERSE'
-];
-
-const BLOCKED_KEY_PREFIXES = [
-  `${OPPOSITE_TRADE_SIDE}:`,
-  'LONG:',
-  'LONG_SCAN:',
-  'LONG_TRADE:',
-  'LONG_ANALYZE:',
-  'LONG_DISCORD:',
-  'LONG_RESET:',
-  'LONG_LIVE:',
-  'BULL:',
-  'BULLISH:',
-  'BUY:'
-];
-
-const SHORT_FIXED_SETUP_TYPES = Object.freeze([
-  'BREAKOUT',
-  'RETEST',
-  'SWEEP_REVERSAL',
-  'CONTINUATION',
-  'COMPRESSION'
-]);
-
-const SHORT_FIXED_REGIME_BUCKETS = Object.freeze([
-  'TREND',
-  'CHOP',
-  'SQUEEZE'
-]);
-
-const SHORT_CONFIRMATION_PROFILES = Object.freeze([
-  'A_STRONG_ALIGN',
-  'B_FLOW_ALIGN',
-  'C_VOLUME_ALIGN',
-  'D_MIXED_OK',
-  'E_WEAK_CONTRA'
-]);
-
-function taxonomyFlags() {
-  return {
-    trueMicroSchema: TRUE_MICRO_SCHEMA,
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-
-    parentTrueMicroSchema: PARENT_TRUE_MICRO_SCHEMA,
-    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-
-    childTrueMicroSchema: CHILD_TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
-
-    learningGranularity: LEARNING_GRANULARITY,
-    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
-
-    fixedTaxonomyPreferred: true,
-    trueMicroOnly: true,
-    exactTrueMicroOnly: true,
-    exactTrueMicroFamilyRequired: true,
-
-    parentLearningEnabled: true,
-    childLearningEnabled: true,
-    selectionGranularity: 'EXACT_75_CHILD',
-    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
-
-    selectableFamilyCount: 75,
-    parentFamilyCount: 15,
-    parentSelectable: false,
-    childSelectable: true,
-
-    parentFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}',
-    selectableFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}',
-
-    setupTypes: SHORT_FIXED_SETUP_TYPES,
-    regimeBuckets: SHORT_FIXED_REGIME_BUCKETS,
-    confirmationProfiles: SHORT_CONFIRMATION_PROFILES
-  };
-}
-
-function shortRiskFlags() {
-  return {
-    riskGeometryRule: 'SHORT: tp < entry < sl',
-    tpHitRule: 'SHORT: price <= tp',
-    slHitRule: 'SHORT: price >= sl',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
-
-    validShortRiskShape: true,
-    shortRiskFormula: 'tp < entry < sl',
-    shortTpExitRule: 'price <= tp',
-    shortSlExitRule: 'price >= sl',
-    shortTimeStopExitRule: 'TIME_STOP',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)'
-  };
-}
-
-function currentFitFlags() {
-  return {
-    currentFitSoftOnly: true,
-    currentFitBlocksLearning: false,
-    currentFitBlocksVirtualLearning: false,
-    currentFitBlocksShadowLearning: false,
-    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
-  };
-}
-
-function modeFlags() {
-  return {
-    namespace: SHORT_NAMESPACE,
-    redisNamespace: SHORT_NAMESPACE,
-    keyPrefix: SHORT_KEY_PREFIX,
-    redisKeyPrefix: SHORT_KEY_PREFIX,
-    persistentLearningKey: PERSISTENT_LEARNING_KEY,
-    redisKeysSeparatedFromLongRoot: true,
-
-    targetTradeSide: TARGET_TRADE_SIDE,
-    targetScannerSide: TARGET_SCANNER_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
-    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
-
-    side: TARGET_DASHBOARD_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
-    scannerSide: TARGET_SCANNER_SIDE,
-    actualScannerSide: TARGET_SCANNER_SIDE,
-    analysisSide: TARGET_TRADE_SIDE,
-
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
-
-    virtualOnly: true,
-    virtualLearning: true,
-    virtualTracked: true,
-    shadowOnly: true,
-    source: 'VIRTUAL',
-    outcomeSource: 'VIRTUAL',
-
-    noRealOrders: true,
-    noExchangeOrders: true,
-    realOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
-    exchangeOrdersDisabled: true,
-    exchangeCallsDisabled: true,
-
-    noGlobalMaxOpenPositionsBlock: true,
-    oneOpenPositionPerSymbol: true,
-
-    manualDiscordSelectionExactTrueMicroOnly: true,
-    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
-    discordOnlyForExactTrueMicroMatch: true,
-    discordOnlyForSelectedMicroFamilies: true,
-
-    scannerFingerprintsMetadataOnly: true,
-    scannerFingerprintsUsedAsLearningFamily: false,
-    scannerBucketsMetadataOnly: true,
-    legacy25BucketsMetadataOnly: true,
-
-    executionFingerprintsMetadataOnly: true,
-    executionFingerprintsUsedAsLearningFamily: false,
-
-    analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
-
-    symbolExcludedFromFamilyId: true,
-    coinNameExcludedFromFamilyId: true,
-    hashesExcludedFromFamilyId: true,
-
-    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
-    scoringRSource: 'netR',
-    winsLossesFlatsSource: 'netR',
-    winrateDefinition: 'netR > 0',
-    avgRSource: 'netR',
-    totalRSource: 'netR',
-    avgCostRShown: true,
-
-    rankingUsesBalancedScore: true,
-    noBareWinrateRanking: true,
-    balancedRankingFields: [
-      'balancedScore',
-      'dashboardBalancedScore',
-      'fairWinrate',
-      'totalR',
-      'avgR',
-      'avgCostR'
-    ],
-
-    noResetCron: true,
-    noActivateCron: true,
-    noFreezeCron: true,
-    manualSelectionPreserved: true,
-
-    longRootTouched: false,
-
-    ...taxonomyFlags(),
-    ...shortRiskFlags(),
-    ...currentFitFlags()
-  };
-}
-
-function envValue(...names) {
-  for (const name of names) {
-    const value = process.env[name];
-
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      return String(value).trim();
+export async function initializeRedis() {
+  try {
+    if (isConnected) {
+      return { ok: true, message: 'Already connected' };
     }
-  }
 
-  return '';
-}
+    const url = CONFIG.REDIS.URL;
+    if (!url) {
+      throw new Error('REDIS_URL not set in environment');
+    }
 
-function makeRedis(url, token, label) {
-  if (!url || !token) {
-    throw new Error(`${label}_REDIS_ENV_MISSING`);
-  }
-
-  return new Redis({
-    url,
-    token,
-    automaticDeserialization: false
-  });
-}
-
-function getVolatileEnv() {
-  return {
-    url: envValue(
-      'VOLATILE_REDIS_REST_URL',
-      'KV_REST_API_URL',
-      'UPSTASH_REDIS_REST_URL'
-    ),
-    token: envValue(
-      'VOLATILE_REDIS_REST_TOKEN',
-      'KV_REST_API_TOKEN',
-      'UPSTASH_REDIS_REST_TOKEN'
-    )
-  };
-}
-
-function getDurableEnv() {
-  return {
-    url: envValue(
-      'DURABLE_REDIS_REST_URL',
-      'KV_REST_API_URL',
-      'UPSTASH_REDIS_REST_URL'
-    ),
-    token: envValue(
-      'DURABLE_REDIS_REST_TOKEN',
-      'KV_REST_API_TOKEN',
-      'UPSTASH_REDIS_REST_TOKEN'
-    )
-  };
-}
-
-let volatileRedis = null;
-let durableRedis = null;
-
-function upper(value) {
-  return String(value || '').trim().toUpperCase();
-}
-
-function isBlockedLongKey(key = '') {
-  const value = upper(key);
-
-  return BLOCKED_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
-
-function isRootAppKey(key = '') {
-  const value = String(key || '').trim();
-
-  return ROOT_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
-}
-
-function isPublicMarketKey(key = '') {
-  const value = String(key || '').trim();
-
-  return PUBLIC_MARKET_KEY_PREFIXES.some((prefix) => (
-    value === prefix ||
-    value.startsWith(`${prefix}:`)
-  ));
-}
-
-function isShortKey(key = '') {
-  return String(key || '').trim().startsWith(SHORT_KEY_PREFIX);
-}
-
-function buildNamespaceError(message, payload = {}) {
-  const error = new Error(message);
-
-  error.details = {
-    ...payload,
-    namespace: SHORT_NAMESPACE,
-    redisNamespace: SHORT_NAMESPACE,
-    keyPrefix: SHORT_KEY_PREFIX,
-    redisKeyPrefix: SHORT_KEY_PREFIX,
-    targetTradeSide: TARGET_TRADE_SIDE,
-    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
-    longRootTouched: false,
-    ...taxonomyFlags(),
-    ...shortRiskFlags(),
-    ...currentFitFlags()
-  };
-
-  return error;
-}
-
-function normalizeKey(key) {
-  const raw = String(key || '').trim();
-
-  if (!raw) return '';
-
-  if (isBlockedLongKey(raw)) {
-    throw buildNamespaceError('SHORT_REDIS_REFUSED_LONG_NAMESPACE_KEY', {
-      key: raw
+    redisClient = redis.createClient({
+      url,
+      socket: {
+        connectTimeout: CONFIG.REDIS.TIMEOUT_MS,
+        reconnectStrategy: (retries) => {
+          if (retries > CONFIG.REDIS.RETRY_ATTEMPTS) {
+            console.error('❌ Redis max retries exceeded');
+            return new Error('Redis max retries exceeded');
+          }
+          return Math.min(retries * CONFIG.REDIS.RETRY_DELAY_MS, 30000);
+        }
+      }
     });
-  }
 
-  if (isShortKey(raw)) return raw;
-
-  if (isPublicMarketKey(raw)) return raw;
-
-  if (isRootAppKey(raw)) return `${SHORT_KEY_PREFIX}${raw}`;
-
-  return `${SHORT_KEY_PREFIX}${raw}`;
-}
-
-function normalizePattern(pattern) {
-  const raw = String(pattern || '').trim();
-
-  if (!raw) return '';
-
-  if (isBlockedLongKey(raw)) {
-    throw buildNamespaceError('SHORT_REDIS_REFUSED_LONG_NAMESPACE_PATTERN', {
-      pattern: raw
+    redisClient.on('connect', () => {
+      console.log('✅ Redis connected');
+      isConnected = true;
     });
+
+    redisClient.on('error', (err) => {
+      console.error('❌ Redis error:', err);
+      isConnected = false;
+    });
+
+    redisClient.on('reconnecting', () => {
+      console.log('🔄 Redis reconnecting...');
+    });
+
+    await redisClient.connect();
+    isConnected = true;
+
+    return { ok: true, message: 'Redis connected' };
+
+  } catch (err) {
+    console.error('❌ Redis initialization error:', err);
+    isConnected = false;
+    return { ok: false, error: err.message };
   }
-
-  if (raw.startsWith(SHORT_KEY_PREFIX)) return raw;
-
-  if (isPublicMarketKey(raw)) return raw;
-
-  if (isRootAppKey(raw)) return `${SHORT_KEY_PREFIX}${raw}`;
-
-  if (raw === '*') return `${SHORT_KEY_PREFIX}*`;
-
-  return `${SHORT_KEY_PREFIX}${raw}`;
 }
 
-function normalizeLimit(value, fallback = DEFAULT_LOG_LIMIT) {
-  const n = Math.floor(Number(value));
-
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-
-  return n;
+export function getRedis() {
+  if (!redisClient) {
+    throw new Error('Redis not initialized. Call initializeRedis first.');
+  }
+  return createRedisProxy();
 }
 
-function normalizeScanCount(value = DEFAULT_SCAN_COUNT) {
-  const n = Math.floor(Number(value));
+function createRedisProxy() {
+  return {
+    async get(key) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const value = await redisClient.get(key);
+        if (!value) return null;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      } catch (err) {
+        console.error('Redis GET error:', err);
+        throw err;
+      }
+    },
 
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SCAN_COUNT;
+    async set(key, value, expirationSeconds = null) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);
+        
+        if (expirationSeconds) {
+          await redisClient.setEx(key, expirationSeconds, jsonValue);
+        } else {
+          await redisClient.set(key, jsonValue);
+        }
+        
+        return { ok: true };
+      } catch (err) {
+        console.error('Redis SET error:', err);
+        throw err;
+      }
+    },
 
-  return Math.max(1, Math.min(1000, n));
+    async delete(key) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const result = await redisClient.del(key);
+        return { ok: true, deleted: result > 0 };
+      } catch (err) {
+        console.error('Redis DEL error:', err);
+        throw err;
+      }
+    },
+
+    async exists(key) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const result = await redisClient.exists(key);
+        return result === 1;
+      } catch (err) {
+        console.error('Redis EXISTS error:', err);
+        throw err;
+      }
+    },
+
+    async expire(key, seconds) {
+      try {
+        if (!key) throw new Error('Key is required');
+        await redisClient.expire(key, seconds);
+        return { ok: true };
+      } catch (err) {
+        console.error('Redis EXPIRE error:', err);
+        throw err;
+      }
+    },
+
+    async ttl(key) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const ttl = await redisClient.ttl(key);
+        return ttl;
+      } catch (err) {
+        console.error('Redis TTL error:', err);
+        throw err;
+      }
+    },
+
+    async keys(pattern) {
+      try {
+        if (!pattern) throw new Error('Pattern is required');
+        const keys = await redisClient.keys(pattern);
+        return keys || [];
+      } catch (err) {
+        console.error('Redis KEYS error:', err);
+        throw err;
+      }
+    },
+
+    async increment(key, amount = 1) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const result = await redisClient.incrBy(key, amount);
+        return result;
+      } catch (err) {
+        console.error('Redis INCR error:', err);
+        throw err;
+      }
+    },
+
+    async decrement(key, amount = 1) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const result = await redisClient.decrBy(key, amount);
+        return result;
+      } catch (err) {
+        console.error('Redis DECR error:', err);
+        throw err;
+      }
+    },
+
+    async lpush(key, value) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);
+        await redisClient.lPush(key, jsonValue);
+        return { ok: true };
+      } catch (err) {
+        console.error('Redis LPUSH error:', err);
+        throw err;
+      }
+    },
+
+    async lrange(key, start = 0, stop = -1) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const values = await redisClient.lRange(key, start, stop);
+        return (values || []).map(v => {
+          try {
+            return JSON.parse(v);
+          } catch {
+            return v;
+          }
+        });
+      } catch (err) {
+        console.error('Redis LRANGE error:', err);
+        throw err;
+      }
+    },
+
+    async hset(key, field, value) {
+      try {
+        if (!key || !field) throw new Error('Key and field are required');
+        const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);
+        await redisClient.hSet(key, field, jsonValue);
+        return { ok: true };
+      } catch (err) {
+        console.error('Redis HSET error:', err);
+        throw err;
+      }
+    },
+
+    async hget(key, field) {
+      try {
+        if (!key || !field) throw new Error('Key and field are required');
+        const value = await redisClient.hGet(key, field);
+        if (!value) return null;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      } catch (err) {
+        console.error('Redis HGET error:', err);
+        throw err;
+      }
+    },
+
+    async hgetall(key) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const obj = await redisClient.hGetAll(key);
+        if (!obj || Object.keys(obj).length === 0) return null;
+        const result = {};
+        for (const [k, v] of Object.entries(obj)) {
+          try {
+            result[k] = JSON.parse(v);
+          } catch {
+            result[k] = v;
+          }
+        }
+        return result;
+      } catch (err) {
+        console.error('Redis HGETALL error:', err);
+        throw err;
+      }
+    },
+
+    async zadd(key, score, member) {
+      try {
+        if (!key) throw new Error('Key is required');
+        await redisClient.zAdd(key, { score, value: member });
+        return { ok: true };
+      } catch (err) {
+        console.error('Redis ZADD error:', err);
+        throw err;
+      }
+    },
+
+    async zrange(key, start = 0, stop = -1, withScores = false) {
+      try {
+        if (!key) throw new Error('Key is required');
+        const options = withScores ? { withScores: true } : {};
+        const values = await redisClient.zRange(key, start, stop, options);
+        return values || [];
+      } catch (err) {
+        console.error('Redis ZRANGE error:', err);
+        throw err;
+      }
+    },
+
+    async ping() {
+      try {
+        const result = await redisClient.ping();
+        return { ok: true, pong: result };
+      } catch (err) {
+        console.error('Redis PING error:', err);
+        return { ok: false, error: err.message };
+      }
+    },
+
+    async flushdb() {
+      try {
+        await redisClient.flushDb();
+        return { ok: true, message: 'Database flushed' };
+      } catch (err) {
+        console.error('Redis FLUSHDB error:', err);
+        throw err;
+      }
+    },
+
+    async raw() {
+      return redisClient;
+    }
+  };
 }
 
-function normalizeMax(value, fallback = 1000) {
-  const n = Math.floor(Number(value));
-
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-
-  return n;
-}
-
-function parseJsonValue(value, fallback = null) {
-  if (value === null || value === undefined) return fallback;
-
-  if (typeof value !== 'string') return value;
-
-  const text = value.trim();
-
-  if (!text) return fallback;
-  if (text === 'null') return null;
-  if (text === 'undefined') return fallback;
-
+export async function checkRedisHealth() {
   try {
-    return JSON.parse(text);
-  } catch {
-    return fallback;
-  }
-}
+    if (!isConnected) {
+      return {
+        ok: false,
+        status: 'DISCONNECTED',
+        message: 'Redis not connected'
+      };
+    }
 
-function stringifyJsonValue(value, keyForError = 'UNKNOWN_KEY') {
-  if (value === undefined) {
-    throw new Error(`JSON_UNDEFINED_VALUE:${keyForError}`);
-  }
+    const redis = getRedis();
+    const pingResult = await redis.ping();
 
-  try {
-    return JSON.stringify(value);
-  } catch (error) {
-    throw new Error(`JSON_STRINGIFY_FAILED:${keyForError}:${error?.message || String(error)}`);
-  }
-}
+    if (!pingResult.ok) {
+      return {
+        ok: false,
+        status: 'ERROR',
+        message: pingResult.error
+      };
+    }
 
-function normalizeScanResult(result) {
-  if (!Array.isArray(result)) {
     return {
-      cursor: 0,
-      keys: []
+      ok: true,
+      status: 'HEALTHY',
+      message: 'Redis connection OK'
+    };
+
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'ERROR',
+      message: err.message
     };
   }
-
-  const [nextCursor, keys] = result;
-
-  return {
-    cursor: Number(nextCursor) || 0,
-    keys: Array.isArray(keys) ? keys.filter(Boolean) : []
-  };
 }
 
-function withShortMeta(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-
-  return {
-    ...value,
-    ...modeFlags()
-  };
-}
-
-function assertShortNormalizedKey(key) {
-  const value = String(key || '').trim();
-
-  if (
-    !value.startsWith(SHORT_KEY_PREFIX) &&
-    !isPublicMarketKey(value)
-  ) {
-    throw buildNamespaceError('SHORT_REDIS_REFUSED_NON_SHORT_KEY', {
-      key: value
-    });
-  }
-
-  return true;
-}
-
-async function deleteKeys(redis, keys = []) {
-  const rows = Array.isArray(keys)
-    ? keys
-      .filter(Boolean)
-      .map(normalizeKey)
-      .filter((key) => (
-        key.startsWith(SHORT_KEY_PREFIX) ||
-        isPublicMarketKey(key)
-      ))
-    : [];
-
-  if (!rows.length) return 0;
-
-  let deleted = 0;
-
-  for (let i = 0; i < rows.length; i += DEFAULT_DELETE_BATCH_SIZE) {
-    const batch = rows.slice(i, i + DEFAULT_DELETE_BATCH_SIZE);
-
-    if (!batch.length) continue;
-
-    const result = await redis.del(...batch);
-    const count = Number(result);
-
-    deleted += Number.isFinite(count) ? count : batch.length;
-  }
-
-  return deleted;
-}
-
-export function getVolatileRedis() {
-  if (!volatileRedis) {
-    const { url, token } = getVolatileEnv();
-    volatileRedis = makeRedis(url, token, 'VOLATILE');
-  }
-
-  return volatileRedis;
-}
-
-export function getDurableRedis() {
-  if (!durableRedis) {
-    const { url, token } = getDurableEnv();
-    durableRedis = makeRedis(url, token, 'DURABLE');
-  }
-
-  return durableRedis;
-}
-
-export function hasVolatileRedisEnv() {
-  const { url, token } = getVolatileEnv();
-
-  return Boolean(url && token);
-}
-
-export function hasDurableRedisEnv() {
-  const { url, token } = getDurableEnv();
-
-  return Boolean(url && token);
-}
-
-export function hasRedisEnv() {
-  return hasVolatileRedisEnv() && hasDurableRedisEnv();
-}
-
-export function normalizeRedisKey(key) {
-  return normalizeKey(key);
-}
-
-export function normalizeRedisPattern(pattern) {
-  return normalizePattern(pattern);
-}
-
-export function isShortRedisKey(key) {
-  return isShortKey(key);
-}
-
-export function isPublicMarketRedisKey(key) {
-  return isPublicMarketKey(key);
-}
-
-export function redisModeFlags() {
-  return modeFlags();
-}
-
-export async function getJson(redis, key, fallback = null) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) return fallback;
-
-  assertShortNormalizedKey(redisKey);
-
-  const value = await redis.get(redisKey);
-
-  return parseJsonValue(value, fallback);
-}
-
-export async function setJson(redis, key, value, options = undefined) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) {
-    throw new Error('SET_SHORT_JSON_INVALID_REDIS_OR_KEY');
-  }
-
-  assertShortNormalizedKey(redisKey);
-
-  const payload = stringifyJsonValue(withShortMeta(value), redisKey);
-
-  return redis.set(redisKey, payload, options);
-}
-
-export async function setNxJson(redis, key, value, options = {}) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) {
-    throw new Error('SET_NX_SHORT_JSON_INVALID_REDIS_OR_KEY');
-  }
-
-  assertShortNormalizedKey(redisKey);
-
-  const payload = stringifyJsonValue(withShortMeta(value), redisKey);
-
-  return redis.set(redisKey, payload, {
-    ...options,
-    nx: true
-  });
-}
-
-export async function delJson(redis, key) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) return 0;
-
-  assertShortNormalizedKey(redisKey);
-
-  return redis.del(redisKey);
-}
-
-export async function delPattern(redis, pattern, max = 5000) {
-  const redisPattern = normalizePattern(pattern);
-
-  if (!redis || !redisPattern) return 0;
-
-  assertShortNormalizedKey(redisPattern.replace(/\*.*$/u, '') || SHORT_KEY_PREFIX);
-
-  const maxDelete = normalizeMax(max, 5000);
-
-  let cursor = 0;
-  let deleted = 0;
-
-  do {
-    const scanResult = await redis.scan(cursor, {
-      match: redisPattern,
-      count: normalizeScanCount()
-    });
-
-    const normalized = normalizeScanResult(scanResult);
-
-    cursor = normalized.cursor;
-
-    if (!normalized.keys.length) continue;
-
-    const allowedKeys = normalized.keys
-      .filter((key) => (
-        String(key || '').startsWith(SHORT_KEY_PREFIX) ||
-        isPublicMarketKey(key)
-      ));
-
-    const remaining = Math.max(0, maxDelete - deleted);
-    const limitedKeys = allowedKeys.slice(0, remaining);
-
-    deleted += await deleteKeys(redis, limitedKeys);
-
-    if (deleted >= maxDelete) break;
-  } while (cursor !== 0);
-
-  return deleted;
-}
-
-export async function getKeys(redis, pattern, max = 1000) {
-  const redisPattern = normalizePattern(pattern);
-
-  if (!redis || !redisPattern) return [];
-
-  assertShortNormalizedKey(redisPattern.replace(/\*.*$/u, '') || SHORT_KEY_PREFIX);
-
-  const maxKeys = normalizeMax(max, 1000);
-
-  let cursor = 0;
-  const out = [];
-  const seen = new Set();
-
-  do {
-    const scanResult = await redis.scan(cursor, {
-      match: redisPattern,
-      count: normalizeScanCount()
-    });
-
-    const normalized = normalizeScanResult(scanResult);
-
-    cursor = normalized.cursor;
-
-    for (const key of normalized.keys) {
-      if (!key || seen.has(key)) continue;
-
-      if (
-        !String(key).startsWith(SHORT_KEY_PREFIX) &&
-        !isPublicMarketKey(key)
-      ) {
-        continue;
-      }
-
-      seen.add(key);
-      out.push(key);
-
-      if (out.length >= maxKeys) break;
-    }
-
-    if (out.length >= maxKeys) break;
-  } while (cursor !== 0);
-
-  return out;
-}
-
-export async function pushJsonLog(redis, key, value, limit = DEFAULT_LOG_LIMIT) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) {
-    throw new Error('PUSH_SHORT_JSON_LOG_INVALID_REDIS_OR_KEY');
-  }
-
-  assertShortNormalizedKey(redisKey);
-
-  const safeLimit = normalizeLimit(limit, DEFAULT_LOG_LIMIT);
-  const payload = stringifyJsonValue(withShortMeta(value), redisKey);
-
-  await redis.lpush(redisKey, payload);
-  await redis.ltrim(redisKey, 0, safeLimit - 1);
-
-  return true;
-}
-
-export async function readJsonLogs(redis, key, limit = 100) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) return [];
-
-  assertShortNormalizedKey(redisKey);
-
-  const safeLimit = normalizeLimit(limit, 100);
-  const rows = await redis.lrange(redisKey, 0, safeLimit - 1);
-
-  return (Array.isArray(rows) ? rows : [])
-    .map((row) => {
-      if (row === null || row === undefined) return null;
-
-      if (typeof row !== 'string') {
-        return withShortMeta(row);
-      }
-
-      const parsed = parseJsonValue(row, null);
-
-      return parsed === null
-        ? {
-          raw: row,
-          ...modeFlags()
-        }
-        : withShortMeta(parsed);
-    })
-    .filter(Boolean);
-}
-
-export async function pingRedis(redis) {
-  if (!redis) return false;
-
+export async function closeRedis() {
   try {
-    const result = await redis.ping();
-
-    return result === 'PONG' || result === 'pong' || result === true;
-  } catch {
-    return false;
+    if (redisClient) {
+      await redisClient.quit();
+      isConnected = false;
+      return { ok: true, message: 'Redis connection closed' };
+    }
+    return { ok: true, message: 'Redis already closed' };
+  } catch (err) {
+    console.error('Error closing Redis:', err);
+    return { ok: false, error: err.message };
   }
 }
+
+export default {
+  initializeRedis,
+  getRedis,
+  checkRedisHealth,
+  closeRedis
+};
