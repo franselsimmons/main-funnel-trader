@@ -105,10 +105,10 @@ const BLOCK_E_WEAK_CONTRA_FOR_POLICY_GATE = true;
 
 const DEFAULT_RR_VARIANTS = Object.freeze([1, 1.25, 1.5, 1.75, 2]);
 
-const DEFAULT_MAX_RUNTIME_MS = 13000; // effective max, route deadline is leading
+const DEFAULT_MAX_RUNTIME_MS = 13000;
 const HARD_MAX_RUNTIME_MS = 21000;
 const FINALIZATION_RESERVE_MS = 1500;
-const DEFAULT_HARD_RETURN_RESERVE_MS = 3500; // legacy, replaced by FINALIZATION_RESERVE_MS
+const DEFAULT_HARD_RETURN_RESERVE_MS = 3500;
 const DEFAULT_PHASE_RESERVE_MS = 800;
 const DEFAULT_ENTRY_LOOP_RESERVE_MS = 2000;
 const DEFAULT_CANDIDATE_CHUNK_SIZE = 15;
@@ -154,7 +154,7 @@ const DEFAULT_REDIS_READ_TIMEOUT_MS = 160;
 
 const DEFAULT_ANALYZE_MAX_CANDIDATES_PER_SNAPSHOT = 30;
 const DEFAULT_CANDIDATE_TIMEOUT_MS = 400;
-const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 2; // kept but no longer forces
+const DEFAULT_MIN_ENTRY_LOOP_ATTEMPTS = 2;
 
 const DEFAULT_HARD_TIME_STOP_NO_PRICE_EXIT = true;
 const DEFAULT_CLOSE_EXPIRED_BEFORE_PRICE_FETCH = true;
@@ -592,8 +592,6 @@ async function readSnapshotCursor(snapshotId, cfg) {
   return Math.max(0, int(value.nextIndex ?? value.cursor ?? value.index, 0, 0, 100000));
 }
 
-// ===== NIEUWE TWEEFASEN-CURSOR =====
-
 async function claimSnapshotChunk({ snapshotId, startIndex, intendedNextIndex, runId, cfg, context }) {
   const redis = safeGetDurableRedis();
   if (!redis) return false;
@@ -959,7 +957,6 @@ function virtualFlags(row = {}) {
   };
 }
 
-// tradeConfig en sizingConfig gebruiken nu een options-parameter
 function tradeConfig(options = {}) {
   const requestedRuntime = int(
     first(
@@ -1531,7 +1528,7 @@ function marketWeatherFieldsFromRow(row = {}) {
   return buildResolvedEntryWeatherFields(resolved, row, {});
 }
 
-// ===== OVERIGE HELPERS (uit oorspronkelijke code, grotendeels ongewijzigd) =====
+// ===== OVERIGE HELPERS (uit oorspronkelijke code) =====
 
 function sideToTradeSideSafe(value) {
   if (typeof Utils.sideToTradeSide === 'function') {
@@ -2360,7 +2357,6 @@ function resolveCanonicalMarketContext({
   previousConfirmedWeather,
   nowTime = now()
 }) {
-  // 1. Geldige verse Redis SHORT weather
   const redisParsed = parseKnownMarketWeatherKey(redisWeather?.confirmedMarketWeatherKey || redisWeather?.key);
   const redisFresh = redisWeather?.freshConfirmed === true && redisParsed.known;
   if (redisFresh) {
@@ -2381,7 +2377,6 @@ function resolveCanonicalMarketContext({
     };
   }
 
-  // 2. Snapshot weather
   const snapshotParsed = parseKnownMarketWeatherKey(snapshotWeather?.confirmedMarketWeatherKey || snapshotWeather?.key);
   if (snapshotParsed.known && snapshotWeather?.freshConfirmed !== false) {
     return {
@@ -2401,11 +2396,10 @@ function resolveCanonicalMarketContext({
     };
   }
 
-  // 3. Vorige bevestigde weather (uit Redis)
   const prevParsed = parseKnownMarketWeatherKey(previousConfirmedWeather?.confirmedMarketWeatherKey || previousConfirmedWeather?.currentEntryMarketWeatherKey);
   if (prevParsed.known) {
     const age = previousConfirmedWeather?.updatedAt ? (nowTime - previousConfirmedWeather.updatedAt) / 1000 : Infinity;
-    if (age < 24 * 3600) { // max 1 dag oud
+    if (age < 24 * 3600) {
       return {
         ...previousConfirmedWeather,
         canonical: true,
@@ -2424,7 +2418,6 @@ function resolveCanonicalMarketContext({
     }
   }
 
-  // 4. UNKNOWN
   return {
     ok: false,
     canonical: true,
@@ -3783,7 +3776,6 @@ function hasValidRiskShape(row = {}) {
   return validShortRiskShape(row);
 }
 
-// ===== AANGEPASTE VIRTUAL ENTRY VALIDATIE (virtual learning los van Discord) =====
 function validateVirtualEntry(row = {}) {
   const tradeSide = inferRowTradeSide(row);
   const trueMicroFamilyId = getTrueMicroFamilyId(row);
@@ -4601,7 +4593,7 @@ async function lazyImportAnalyzeEngine(deadlineAt, cfg, context) {
     fallback: null
   });
   if (!result.ok || !result.result) {
-    ANALYZE_ENGINE_MODULE = null; // reset
+    ANALYZE_ENGINE_MODULE = null;
     context.runtimeWarnings.push('ANALYZE_ENGINE_IMPORT_TIMEOUT_OR_FAILED');
     return null;
   }
@@ -4726,7 +4718,7 @@ async function loadOpenPositionsFast(cfg, runtimeWarnings, deadlineAt, options =
   return Array.isArray(result.result) ? result.result : [];
 }
 
-// ===== MONITOR OPEN POSITIES (aangepast met abort) =====
+// ===== MONITOR OPEN POSITIES =====
 
 async function monitorOpenPositionsSafe({
   cfg,
@@ -4791,7 +4783,7 @@ async function monitorOpenPositionsSafe({
       closeExpiredBeforePriceFetch: cfg.closeExpiredBeforePriceFetch,
       persistNoPriceFailures: false,
       hardTimeStopCleanupVersion: HARD_TIME_STOP_CLEANUP_VERSION,
-      signal: signal // doorgeven aan PositionEngine indien ondersteund
+      signal: signal
     }).catch((error) => ({
       __monitorError: true,
       error: error?.message || String(error)
@@ -4856,14 +4848,12 @@ async function saveVirtualPositionFast(entry, cfg, deadlineAt, runtimeWarnings, 
   if (typeof PositionEngine.saveOpenPosition !== 'function') {
     return { ok: false, code: 'SAVE_OPEN_POSITION_FUNCTION_MISSING', reason: 'saveOpenPosition missing' };
   }
-  // Valideer
   if (!entry.symbol || !entry.contractSymbol) return { ok: false, code: 'INVALID_SYMBOL', reason: 'Symbol missing' };
   if (inferRowTradeSide(entry) !== TARGET_TRADE_SIDE) return { ok: false, code: 'INVALID_SIDE', reason: 'Not SHORT' };
   const geo = hasCompletePositiveGeometry(entry);
   if (!geo.valid) return { ok: false, code: 'INVALID_GEOMETRY', reason: 'Invalid TP/SL/entry' };
   const microId = getMicroMicroFamilyId(entry);
   if (!microId || !isSelectableMicroMicroId(microId)) return { ok: false, code: 'INVALID_MICRO_MICRO', reason: 'No valid micro-micro' };
-  // Bouw positie
   const position = typeof PositionEngine.buildOpenPositionFromEntry === 'function'
     ? PositionEngine.buildOpenPositionFromEntry(entry)
     : fallbackBuildOpenPositionFromEntry(entry);
@@ -6283,7 +6273,6 @@ export async function runTradeSystem(options = {}) {
   const startedAt = now();
   const lagMonitor = createEventLoopLagMonitor(100);
 
-  // Bepaal effectieve deadline
   const externalDeadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Infinity;
   const cfg = tradeConfig(options);
   const maxRuntimeMs = Math.min(cfg.maxRuntimeMs, DEFAULT_MAX_RUNTIME_MS);
@@ -6571,7 +6560,6 @@ export async function runTradeSystem(options = {}) {
       return payload;
     }
 
-    // Snapshot age check
     const snapshotAgeSec = snapshot.createdAt > 0 ? (now() - snapshot.createdAt) / 1000 : 0;
     if (snapshotAgeSec > cfg.maxSnapshotAgeSec) {
       const payload = buildEarlyReturnPayload({
@@ -7282,7 +7270,6 @@ export async function runTradeSystem(options = {}) {
 
     recordPhaseLocal('TRADE_SYSTEM_RETURN', { remainingMs: remainingMs(context.deadlineAt, 0) });
 
-    // Sla run-meta op (best effort)
     const runMetaSaved = await saveRunMetaWithBudget(baseResult, context);
     baseResult.runMetaSaved = runMetaSaved;
 
