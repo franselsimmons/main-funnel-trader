@@ -251,7 +251,7 @@ function envValue(...names) {
 
 function makeRedis(url, token, label) {
   if (!url || !token) {
-    throw new Error(`${label}_REDIS_ENV_MISSING`);
+    throw new Error(`${label}_REDIS_ENV_MISSING:url=${url ? 'SET' : 'MISSING'},token=${token ? 'SET' : 'MISSING'}`);
   }
 
   return new Redis({
@@ -264,14 +264,18 @@ function makeRedis(url, token, label) {
 function getVolatileEnv() {
   return {
     url: envValue(
+      'KV_URL',
       'VOLATILE_REDIS_REST_URL',
       'KV_REST_API_URL',
-      'UPSTASH_REDIS_REST_URL'
+      'UPSTASH_REDIS_REST_URL',
+      'REDIS_URL'
     ),
     token: envValue(
+      'KV_REST_TOKEN',
       'VOLATILE_REDIS_REST_TOKEN',
       'KV_REST_API_TOKEN',
-      'UPSTASH_REDIS_REST_TOKEN'
+      'UPSTASH_REDIS_REST_TOKEN',
+      'REDIS_TOKEN'
     )
   };
 }
@@ -279,14 +283,18 @@ function getVolatileEnv() {
 function getDurableEnv() {
   return {
     url: envValue(
+      'KV_URL',
       'DURABLE_REDIS_REST_URL',
       'KV_REST_API_URL',
-      'UPSTASH_REDIS_REST_URL'
+      'UPSTASH_REDIS_REST_URL',
+      'REDIS_URL'
     ),
     token: envValue(
+      'KV_REST_TOKEN',
       'DURABLE_REDIS_REST_TOKEN',
       'KV_REST_API_TOKEN',
-      'UPSTASH_REDIS_REST_TOKEN'
+      'UPSTASH_REDIS_REST_TOKEN',
+      'REDIS_TOKEN'
     )
   };
 }
@@ -762,3 +770,25 @@ export async function pingRedis(redis) {
     return false;
   }
 }
+
+export default {
+  getVolatileRedis,
+  getDurableRedis,
+  hasVolatileRedisEnv,
+  hasDurableRedisEnv,
+  hasRedisEnv,
+  normalizeRedisKey,
+  normalizeRedisPattern,
+  isShortRedisKey,
+  isPublicMarketRedisKey,
+  redisModeFlags,
+  getJson,
+  setJson,
+  setNxJson,
+  delJson,
+  delPattern,
+  getKeys,
+  pushJsonLog,
+  readJsonLogs,
+  pingRedis
+};
