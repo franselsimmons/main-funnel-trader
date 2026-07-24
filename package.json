@@ -12,8 +12,12 @@
     "trace:scanner": "node --trace-deprecation scripts/runScanner.js",
     "trace:trade": "node --trace-deprecation scripts/runTradeSystem.js",
     "check:node": "node -v",
-    "check:syntax": "node --check src/trade/tradeSystem.js",
-    "validate": "node --check src/trade/tradeSystem.js"
+    "check:trade": "node --check src/trade/tradeSystem.js",
+    "check:lock": "node -e \"import('./src/lock.js').then(() => console.log('src/lock.js import OK'))\"",
+    "check:analyze": "node -e \"import('./src/analyze/analyzeEngine.js').then(() => console.log('src/analyze/analyzeEngine.js import OK'))\"",
+    "check:imports": "node -e \"Promise.all([import('./src/redis.js'), import('./src/keys.js'), import('./src/utils.js'), import('./src/lock.js'), import('./src/analyze/analyzeEngine.js'), import('./src/trade/tradeSystem.js')]).then(() => console.log('All critical module imports OK'))\"",
+    "check:syntax": "npm run check:trade && npm run check:imports",
+    "validate": "npm run check:syntax"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
