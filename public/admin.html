@@ -1,595 +1,4186 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="nl">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ARS-U Platform v2 - Admin Dashboard</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SHORT 75 Micro-Family Learning Admin</title>
+
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    :root {
+      --bg: #f3f5f9;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --dark: #0f172a;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --blue: #2563eb;
+      --purple: #7c3aed;
+      --cyan: #0891b2;
+      --shadow: 0 2px 12px rgba(15, 23, 42, 0.07);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+
+    * { box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
-      color: #e0e0e0;
-      line-height: 1.6;
-      min-height: 100vh;
-      padding: 20px;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(220, 38, 38, 0.12), transparent 30%),
+        radial-gradient(circle at top right, rgba(15, 23, 42, 0.12), transparent 32%),
+        var(--bg);
     }
 
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
-    }
-
-    header {
-      text-align: center;
-      margin-bottom: 40px;
-      border-bottom: 2px solid #3d3d5a;
-      padding-bottom: 20px;
-    }
-
-    h1 {
-      font-size: 2.5em;
-      margin-bottom: 10px;
-      background: linear-gradient(135deg, #00d4ff, #0099ff);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    .subtitle {
-      color: #888;
-      font-size: 0.95em;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-      margin-bottom: 30px;
-    }
-
-    .card {
-      background: #2a2a3a;
-      border: 1px solid #3d3d5a;
-      border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    }
-
-    .card h2 {
-      font-size: 1.2em;
-      margin-bottom: 15px;
-      color: #00d4ff;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .card-stat {
-      font-size: 2em;
-      font-weight: bold;
-      color: #00ff88;
-      margin: 10px 0;
-    }
-
-    .card-label {
-      color: #888;
-      font-size: 0.9em;
-      margin-bottom: 20px;
-    }
-
-    .status-badge {
-      display: inline-block;
-      padding: 4px 12px;
-      border-radius: 4px;
-      font-size: 0.85em;
-      font-weight: bold;
-    }
-
-    .status-active {
-      background: #00ff88;
-      color: #000;
-    }
-
-    .status-inactive {
-      background: #ff4444;
-      color: #fff;
-    }
-
-    .status-pending {
-      background: #ffaa00;
-      color: #000;
-    }
-
-    .button-group {
-      display: flex;
-      gap: 10px;
-      margin-top: 15px;
-      flex-wrap: wrap;
+    button,
+    select,
+    input,
+    textarea {
+      font: inherit;
     }
 
     button {
-      background: #00d4ff;
-      color: #000;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      font-weight: bold;
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: white;
+      color: var(--text);
       cursor: pointer;
-      font-size: 0.9em;
-      transition: all 0.3s ease;
+      transition: 0.14s ease;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
     }
 
-    button:hover {
-      background: #00ffff;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3);
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
     }
 
-    button:active {
-      transform: translateY(0);
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
     }
 
-    button.danger {
-      background: #ff4444;
-      color: #fff;
+    button.primary { background: var(--dark); color: white; border-color: var(--dark); }
+    button.success { background: var(--green); color: white; border-color: var(--green); }
+    button.warn { background: var(--amber); color: white; border-color: var(--amber); }
+    button.danger { background: var(--red); color: white; border-color: var(--red); }
+    button.short-action { background: var(--red); color: white; border-color: var(--red); }
+    button.small { padding: 6px 9px; border-radius: 9px; font-size: 12px; }
+
+    select,
+    input,
+    textarea {
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: white;
+      color: var(--text);
+      min-height: 42px;
     }
 
-    button.danger:hover {
-      background: #ff6666;
-    }
+    input[type="search"] { min-width: 340px; }
 
-    button.secondary {
-      background: #3d3d5a;
-      color: #e0e0e0;
-    }
-
-    button.secondary:hover {
-      background: #4d4d6a;
-    }
-
-    .table-container {
-      overflow-x: auto;
-      background: #2a2a3a;
-      border: 1px solid #3d3d5a;
-      border-radius: 8px;
-      margin-bottom: 30px;
-    }
-
-    table {
+    textarea {
       width: 100%;
-      border-collapse: collapse;
+      min-height: 110px;
+      resize: vertical;
+      line-height: 1.45;
     }
 
-    th {
-      background: #1e1e2e;
-      padding: 15px;
-      text-align: left;
-      color: #00d4ff;
-      font-weight: bold;
-      border-bottom: 2px solid #3d3d5a;
+    header {
+      background: linear-gradient(135deg, #0f172a 0%, #111827 46%, #7f1d1d 100%);
+      color: white;
+      padding: 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
 
-    td {
-      padding: 12px 15px;
-      border-bottom: 1px solid #3d3d5a;
-    }
-
-    tr:hover {
-      background: #32323f;
-    }
-
-    .alert {
-      padding: 15px;
-      border-radius: 4px;
-      margin-bottom: 20px;
+    .header-inner {
+      max-width: 1540px;
+      margin: 0 auto;
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      gap: 18px;
+      align-items: flex-start;
     }
 
-    .alert-success {
-      background: #004400;
-      border-left: 4px solid #00ff88;
-      color: #00ff88;
-    }
-
-    .alert-danger {
-      background: #440000;
-      border-left: 4px solid #ff4444;
-      color: #ff8888;
-    }
-
-    .alert-info {
-      background: #004466;
-      border-left: 4px solid #00d4ff;
-      color: #00d4ff;
-    }
-
-    .metric {
-      margin-bottom: 15px;
+    .brand-title {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #dc2626, #fca5a5);
+      box-shadow: 0 12px 32px rgba(220, 38, 38, 0.30);
+      font-weight: 900;
+      letter-spacing: -0.04em;
+    }
+
+    .brand-title strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+    }
+
+    .brand-subtitle {
+      color: #cbd5e1;
+      margin-top: 6px;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #fca5a5;
+      box-shadow: 0 0 0 4px rgba(252, 165, 165, 0.18);
+    }
+
+    main {
+      max-width: 1540px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: rgba(243, 245, 249, 0.88);
+      backdrop-filter: blur(14px);
+      padding: 10px 0;
+    }
+
+    .tab {
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.80);
+      border-color: rgba(203, 213, 225, 0.90);
+    }
+
+    .tab.active {
+      background: var(--dark);
+      color: white;
+      border-color: var(--dark);
+    }
+
+    .hidden,
+    .panel.hidden { display: none; }
+
+    .message {
+      border-radius: 16px;
+      padding: 13px 15px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      background: white;
+      box-shadow: var(--shadow);
+      white-space: pre-wrap;
+    }
+
+    .message.ok { color: #166534; background: #dcfce7; border-color: #bbf7d0; }
+    .message.error { color: #991b1b; background: #fee2e2; border-color: #fecaca; }
+    .message.warn { color: #92400e; background: #fef3c7; border-color: #fde68a; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .coin-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(240px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      margin-bottom: 14px;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: #334155;
+    }
+
+    .metric-card {
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }
 
     .metric-label {
-      color: #888;
-      font-size: 0.9em;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
     }
 
     .metric-value {
-      font-weight: bold;
-      color: #00ff88;
-      font-size: 1.1em;
+      font-size: 26px;
+      line-height: 1.1;
+      font-weight: 850;
+      letter-spacing: -0.04em;
+      word-break: break-word;
     }
 
-    .mini-chart {
-      height: 60px;
-      background: rgba(0, 212, 255, 0.1);
-      border-radius: 4px;
-      margin-top: 10px;
+    .metric-extra {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 5px;
+      line-height: 1.45;
+    }
+
+    .section-title {
       display: flex;
+      justify-content: space-between;
       align-items: flex-end;
-      justify-content: space-around;
-      padding: 5px;
+      gap: 12px;
+      margin: 22px 0 10px;
     }
 
-    .bar {
-      width: 100%;
-      background: #00d4ff;
-      border-radius: 2px;
-      opacity: 0.7;
+    .section-title h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
     }
 
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: #888;
+    .section-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
     }
 
-    .spinner {
-      display: inline-block;
-      width: 40px;
-      height: 40px;
-      border: 4px solid #3d3d5a;
-      border-top-color: #00d4ff;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .close-btn {
-      background: none;
-      border: none;
-      color: inherit;
-      font-size: 1.2em;
-      cursor: pointer;
-      padding: 0;
-      width: 24px;
-      height: 24px;
-    }
-
-    .modal {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.7);
-      z-index: 1000;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .modal.show {
+    .toolbar {
       display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      align-items: center;
+      margin: 12px 0 14px;
     }
 
-    .modal-content {
-      background: #2a2a3a;
-      border: 2px solid #3d3d5a;
-      border-radius: 8px;
-      padding: 30px;
-      max-width: 500px;
-      width: 90%;
-      max-height: 80vh;
-      overflow-y: auto;
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
     }
 
-    .modal-header {
-      font-size: 1.5em;
-      margin-bottom: 20px;
+    .pill.active { background: #dcfce7; color: #166534; }
+    .pill.short { background: #fee2e2; color: #991b1b; }
+    .pill.danger { background: #fee2e2; color: #991b1b; }
+    .pill.warn { background: #fef3c7; color: #92400e; }
+    .pill.info { background: #dbeafe; color: #1d4ed8; }
+    .pill.purple { background: #ede9fe; color: #5b21b6; }
+    .pill.dark { background: #0f172a; color: white; }
+    .pill.soft { background: #e0f2fe; color: #075985; }
+    .pill.observation { background: #fef9c3; color: #854d0e; }
+    .pill.raw { background: #f1f5f9; color: #475569; }
+    .pill.fit { background: #dcfce7; color: #166534; }
+    .pill.weakfit { background: #ccfbf1; color: #0f766e; }
+    .pill.neutral { background: #f1f5f9; color: #475569; }
+    .pill.misfit { background: #fee2e2; color: #991b1b; }
+
+    .score-bar {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .score-bar > span {
+      display: block;
+      height: 100%;
+      width: var(--w);
+      background: linear-gradient(90deg, #dc2626, #fca5a5);
+      border-radius: inherit;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 14px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 1560px;
+      background: white;
+    }
+
+    th,
+    td {
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      font-size: 13px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #334155;
+      font-weight: 800;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:hover td { background: #f8fafc; }
+
+    code {
+      font-size: 12px;
+      background: #f1f5f9;
+      padding: 3px 5px;
+      border-radius: 6px;
+      color: #334155;
+      white-space: nowrap;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0b1020;
+      color: #e5e7eb;
+      padding: 14px;
+      border-radius: 16px;
+      max-height: 520px;
+      overflow: auto;
+      margin: 0 0 10px;
+      font-size: 12px;
+      line-height: 1.48;
+    }
+
+    .api-url-box {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+
+    .api-url-box code {
+      white-space: normal;
+      word-break: break-all;
+    }
+
+    .api-output-textarea {
+      width: 100%;
+      min-height: 360px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      background: #0b1020;
+      color: #e5e7eb;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 14px;
+      white-space: pre;
+      user-select: all;
+    }
+
+    .api-output-head {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid #3d3d5a;
-      padding-bottom: 15px;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
     }
 
-    .modal-body {
-      margin-bottom: 20px;
+    .api-output-head h3 {
+      margin: 0;
     }
 
-    .form-group {
-      margin-bottom: 15px;
+    .copy-big {
+      background: var(--dark);
+      color: white;
+      border-color: var(--dark);
+      font-weight: 800;
     }
 
-    label {
-      display: block;
-      margin-bottom: 5px;
-      color: #00d4ff;
-      font-size: 0.9em;
+    .micro-desktop-table table {
+      min-width: 1180px;
     }
 
-    input, textarea, select {
+    .micro-id-cell {
+      max-width: 360px;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    .micro-id-cell code {
+      white-space: normal;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    .micro-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .micro-mobile-cards {
+      display: none;
+    }
+
+    .micro-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 12px;
+    }
+
+    .micro-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .micro-card-title {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .micro-id-button {
       width: 100%;
+      text-align: left;
       padding: 10px;
-      background: #1e1e2e;
-      border: 1px solid #3d3d5a;
-      border-radius: 4px;
-      color: #e0e0e0;
-      font-family: inherit;
+      border-radius: 14px;
+      margin: 8px 0;
+      background: #f8fafc;
     }
 
-    input:focus, textarea:focus, select:focus {
-      outline: none;
-      border-color: #00d4ff;
-      box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
+    .micro-id-button code {
+      white-space: normal;
+      word-break: break-all;
+      line-height: 1.55;
+      font-size: 12px;
+    }
+
+    .micro-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .micro-stat-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 9px;
+    }
+
+    .micro-stat-box span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .micro-stat-box strong {
+      display: block;
+      font-size: 14px;
+      word-break: break-word;
+    }
+
+    @media (max-width: 720px) {
+      .micro-desktop-table {
+        display: none;
+      }
+
+      .micro-mobile-cards {
+        display: block;
+      }
+
+      .api-output-textarea {
+        min-height: 420px;
+        font-size: 11px;
+      }
+    }
+
+    .empty {
+      padding: 22px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--border-strong);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.70);
+    }
+
+    .coin-card,
+    .manual-card {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .coin-card::before,
+    .manual-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      background: linear-gradient(90deg, #dc2626, #fca5a5);
+    }
+
+    .coin-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .coin-symbol {
+      font-weight: 850;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .coin-name {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .coin-price {
+      text-align: right;
+    }
+
+    .coin-price strong {
+      display: block;
+      font-size: 16px;
+    }
+
+    .coin-price span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .coin-stats,
+    .manual-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .coin-stat,
+    .manual-stat {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 9px;
+    }
+
+    .coin-stat span,
+    .manual-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 3px;
+      font-weight: 700;
+    }
+
+    .coin-stat strong,
+    .manual-stat strong {
+      font-size: 13px;
+      word-break: break-word;
+    }
+
+    .coin-foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      align-items: center;
+    }
+
+    .manual-card {
+      max-width: 1100px;
+      margin-bottom: 14px;
+    }
+
+    .drawer {
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: min(900px, 94vw);
+      background: white;
+      border-left: 1px solid var(--border);
+      box-shadow: -12px 0 42px rgba(15, 23, 42, 0.18);
+      padding: 20px;
+      overflow: auto;
+      z-index: 30;
+    }
+
+    .drawer-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .drawer h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+      word-break: break-word;
+    }
+
+    @media (max-width: 1180px) {
+      .grid,
+      .coin-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+      .grid-3 { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      header { padding: 18px 14px; }
+      .header-inner { flex-direction: column; }
+      main { padding: 14px; }
+      .grid,
+      .coin-grid { grid-template-columns: 1fr; }
+      .tab { flex: 1 1 auto; padding: 9px 10px; }
+      input[type="search"] { min-width: 100%; }
+      .manual-grid,
+      .coin-stats { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
+
 <body>
-  <div class="container">
-    <header>
-      <h1>🤖 ARS-U Platform v2</h1>
-      <p class="subtitle">Net-Aware SHORT-only Crypto Trading System</p>
-    </header>
-
-    <div class="grid">
-      <div class="card">
-        <h2>📊 Scanner Status</h2>
-        <div class="card-stat" id="candidatesCount">0</div>
-        <div class="card-label">Candidates Found</div>
-        <div class="status-badge status-active">ACTIVE</div>
-        <div class="button-group">
-          <button onclick="runScanner()">Run Now</button>
-          <button class="secondary" onclick="viewScanLogs()">Logs</button>
+  <header>
+    <div class="header-inner">
+      <div class="brand-title">
+        <div class="brand-logo">75</div>
+        <div>
+          <strong>SHORT 75 Micro-Family Learning Admin</strong>
+          <div class="brand-subtitle">
+            Scanner → Analyze 75-child trueMicroFamilyId → virtual/shadow outcomes → netR scoring → adaptive selection → strict Discord
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>🎯 Trade System</h2>
-        <div class="card-stat" id="openPositions">0</div>
-        <div class="card-label">Open Positions</div>
-        <div class="metric">
-          <span class="metric-label">Last Run</span>
-          <span class="metric-value" id="lastTradeRun">--</span>
-        </div>
-        <div class="button-group">
-          <button onclick="runTradeSystem()">Execute</button>
-          <button class="secondary" onclick="viewPositions()">View</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>💰 Portfolio P&L</h2>
-        <div class="card-stat" id="portfolioPnL">$0.00</div>
-        <div class="card-label">Total P&L</div>
-        <div class="metric">
-          <span class="metric-label">Win Rate</span>
-          <span class="metric-value" id="winRate">0%</span>
-        </div>
-        <div class="button-group">
-          <button class="secondary" onclick="viewStats()">Details</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>🔄 Rotation</h2>
-        <div class="card-stat" id="activeFamilies">0</div>
-        <div class="card-label">Active Families</div>
-        <div class="status-badge status-active">42 TARGET</div>
-        <div class="button-group">
-          <button onclick="rotateNow()">Rotate Now</button>
-          <button class="secondary" onclick="viewRotation()">View</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>📈 Market Weather</h2>
-        <div id="weatherCondition" class="card-stat">--</div>
-        <div class="card-label">Current Condition</div>
-        <div class="metric">
-          <span class="metric-label">Volatility</span>
-          <span class="metric-value" id="weatherVolatility">--</span>
-        </div>
-        <div class="button-group">
-          <button class="secondary" onclick="refreshWeather()">Refresh</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>⚙️ System</h2>
-        <div class="metric">
-          <span class="metric-label">Crons Active</span>
-          <span class="metric-value">4</span>
-        </div>
-        <div class="metric">
-          <span class="metric-label">Redis</span>
-          <span class="metric-value status-active" id="redisStatus">✓</span>
-        </div>
-        <div class="button-group">
-          <button class="danger" onclick="factoryReset()">Factory Reset</button>
-          <button class="secondary" onclick="viewLogs()">Logs</button>
-        </div>
+      <div class="header-actions">
+        <div class="live-pill"><span class="live-dot"></span><span id="liveLabel">SHORT-only · broad learning · adaptive selection</span></div>
+        <button id="refreshBtn" type="button">Refresh</button>
       </div>
     </div>
+  </header>
 
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Symbol</th>
-            <th>Setup</th>
-            <th>Entry</th>
-            <th>TP</th>
-            <th>SL</th>
-            <th>R/R</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="candidatesTable">
-          <tr>
-            <td colspan="7" style="text-align: center; color: #888;">Loading...</td>
-          </tr>
-        </tbody>
-      </table>
+  <main>
+    <div class="tabs">
+      <button type="button" class="tab active" data-tab="overview">Overview</button>
+      <button type="button" class="tab" data-tab="market">marketWeather.js</button>
+      <button type="button" class="tab" data-tab="scanner">Scanner</button>
+      <button type="button" class="tab" data-tab="trade">TradeSystem</button>
+      <button type="button" class="tab" data-tab="micros">75 MicroFamilies</button>
+      <button type="button" class="tab" data-tab="rotation">Manual Discord Selection</button>
+      <button type="button" class="tab" data-tab="discord">Discord Logs</button>
+      <button type="button" class="tab" data-tab="reset">Reset</button>
     </div>
-  </div>
 
-  <div id="modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <span id="modalTitle">Modal</span>
-        <button class="close-btn" onclick="closeModal()">×</button>
-      </div>
-      <div class="modal-body" id="modalBody">
-        <!-- Content injected here -->
-      </div>
-    </div>
-  </div>
+    <div id="message"></div>
+
+    <section id="overview" class="panel"></section>
+    <section id="market" class="panel hidden"></section>
+    <section id="scanner" class="panel hidden"></section>
+    <section id="trade" class="panel hidden"></section>
+    <section id="micros" class="panel hidden"></section>
+    <section id="rotation" class="panel hidden"></section>
+    <section id="discord" class="panel hidden"></section>
+    <section id="reset" class="panel hidden"></section>
+  </main>
+
+  <div id="drawer" class="drawer hidden"></div>
 
   <script>
-    const ADMIN_TOKEN = localStorage.getItem('adminToken') || '';
-    const API_BASE = window.location.origin;
+    const ONLY_SIDE = "SHORT";
+    const OPPOSITE_SIDE = "LONG";
+    const DASHBOARD_SIDE = "bear";
+    const SHORT_NAMESPACE = "SHORT";
+    const SHORT_KEY_PREFIX = "SHORT:";
+    const PERSISTENT_LEARNING_KEY = "SHORT_LIVE";
 
-    // Initialize
-    document.addEventListener('DOMContentLoaded', () => {
-      loadDashboard();
-      setInterval(loadDashboard, 30000); // Refresh every 30 seconds
-    });
+    const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+    const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
-    async function loadDashboard() {
-      try {
-        const response = await fetch(`${API_BASE}/api/admin/overview`, {
-          headers: { 'x-admin-token': ADMIN_TOKEN }
-        });
+    const TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_75";
+    const PARENT_TRUE_MICRO_SCHEMA = "FIXED_TAXONOMY_15";
+    const LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1";
+    const PARENT_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1";
 
-        if (!response.ok) throw new Error('Failed to load dashboard');
-        const data = await response.json();
+    const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1";
+    const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V1";
 
-        if (data.ok) {
-          updateDashboard(data);
-        }
-      } catch (err) {
-        console.error('Dashboard load error:', err);
+    const SHORT_FIXED_SETUP_TYPES = new Set([
+      "BREAKOUT",
+      "RETEST",
+      "SWEEP_REVERSAL",
+      "CONTINUATION",
+      "COMPRESSION"
+    ]);
+
+    const SHORT_FIXED_REGIME_BUCKETS = new Set([
+      "TREND",
+      "CHOP",
+      "SQUEEZE"
+    ]);
+
+    const SHORT_FIXED_CONFIRMATION_PROFILES = new Set([
+      "A_STRONG_ALIGN",
+      "B_FLOW_ALIGN",
+      "C_VOLUME_ALIGN",
+      "D_MIXED_OK",
+      "E_WEAK_CONTRA"
+    ]);
+
+    const state = {
+      activeTab: "overview",
+      overview: null,
+      market: null,
+      scanner: null,
+      trade: null,
+      micros: null,
+      rotation: null,
+      discord: null,
+      microMode: "adaptive",
+      microSearch: "",
+      apiTimeoutMs: 22000,
+      microLimit: 180,
+      bestLimit: 140
+    };
+
+    const endpoints = {
+      overview: "/api/admin/overview",
+      market: "/api/admin/market-weather",
+      scanner: "/api/admin/scanner",
+      trade: "/api/admin/trade",
+      micros: "/api/admin/micro-families",
+      rotation: "/api/admin/rotation",
+      discord: "/api/admin/discord-logs",
+      microDetail: "/api/admin/micro-family",
+      runScanner: "/api/scanner/run?force=true",
+      runTrade: "/api/trade/run?force=true&forceProcessSnapshot=true",
+      resetLearning: "/api/admin/reset-learning",
+      resetRotation: "/api/admin/reset-rotation",
+      factoryReset: "/api/admin/factory-reset"
+    };
+
+    const tabs = ["overview", "market", "scanner", "trade", "micros", "rotation", "discord", "reset"];
+    const validMicroModes = ["adaptive", "balanced", "winrate", "totalR", "avgR", "directSL", "observed", "cost", "currentFit"];
+
+    const $ = (id) => document.getElementById(id);
+
+    class ApiError extends Error {
+      constructor(message, details = {}) {
+        super(message);
+        this.name = "ApiError";
+        this.status = details.status || 0;
+        this.url = details.url || "";
+        this.data = details.data || null;
+        this.timeout = Boolean(details.timeout);
       }
     }
 
-    function updateDashboard(data) {
-      document.getElementById('candidatesCount').textContent = data.candidates?.count || 0;
-      document.getElementById('openPositions').textContent = data.positions?.open || 0;
-      document.getElementById('activeFamilies').textContent = data.rotation?.active || 0;
-      document.getElementById('weatherCondition').textContent = data.weather?.condition || '--';
-      document.getElementById('portfolioPnL').textContent = `$${(data.pnl?.total || 0).toFixed(2)}`;
-      document.getElementById('winRate').textContent = `${(data.pnl?.winRate || 0).toFixed(1)}%`;
-      document.getElementById('lastTradeRun').textContent = data.lastRun ? new Date(data.lastRun).toLocaleTimeString() : '--';
-
-      updateCandidatesTable(data.candidates?.list || []);
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
     }
 
-    function updateCandidatesTable(candidates) {
-      const tbody = document.getElementById('candidatesTable');
-      if (candidates.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #888;">No candidates</td></tr>';
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("`", "&#096;");
+    }
+
+    function upper(value) {
+      return String(value || "").trim().toUpperCase();
+    }
+
+    function cleanSideText(value = "") {
+      return upper(value)
+        .replaceAll("LONG_DISABLED_TRUE", "SHORT")
+        .replaceAll("LONGDISABLED_TRUE", "SHORT")
+        .replaceAll("BLOCK_LONG_TRUE", "SHORT")
+        .replaceAll("LONG_DISABLED_FALSE", "")
+        .replaceAll("LONGDISABLED_FALSE", "")
+        .replaceAll("BLOCK_LONG_FALSE", "")
+        .replaceAll("LONG_ENABLED_FALSE", "")
+        .replaceAll("LONG_ONLY_FALSE", "")
+        .replaceAll("SHORT_DISABLED_FALSE", "")
+        .replaceAll("SHORTDISABLED_FALSE", "")
+        .replaceAll("BLOCK_SHORT_FALSE", "")
+        .replaceAll("SHORT_ENABLED_FALSE", "")
+        .replaceAll("SHORT_ONLY_FALSE", "")
+        .replaceAll("LONG_DISABLED_SHORT_ONLY", "SHORT")
+        .replaceAll("LONGDISABLED_SHORT_ONLY", "SHORT")
+        .replaceAll("BLOCK_LONG", "SHORT")
+        .replaceAll("LONG_DISABLED", "SHORT")
+        .replaceAll("LONGDISABLED", "SHORT")
+        .replaceAll("SHORT_DISABLED_LONG_ONLY", "LONG")
+        .replaceAll("SHORTDISABLED_LONG_ONLY", "LONG")
+        .replaceAll("BLOCK_SHORT", "LONG")
+        .replaceAll("SHORT_DISABLED", "LONG")
+        .replaceAll("SHORTDISABLED", "LONG")
+        .replaceAll("SHORT_ONLY_MODE", "SHORT")
+        .replaceAll("SHORT_ONLY", "SHORT")
+        .replaceAll("SHORT-ONLY", "SHORT")
+        .replaceAll("LONG_ONLY_MODE", "LONG")
+        .replaceAll("LONG_ONLY", "LONG")
+        .replaceAll("LONG-ONLY", "LONG");
+    }
+
+    function parseFixedShortTaxonomyId(id = "") {
+      const value = upper(id);
+      const match = /^MICRO_SHORT_([A-Z_]+)_(TREND|CHOP|SQUEEZE)(?:_(A_STRONG_ALIGN|B_FLOW_ALIGN|C_VOLUME_ALIGN|D_MIXED_OK|E_WEAK_CONTRA))?$/.exec(value);
+
+      if (!match) return null;
+
+      const setup = match[1];
+      const regime = match[2];
+      const confirmation = match[3] || null;
+
+      if (!SHORT_FIXED_SETUP_TYPES.has(setup)) return null;
+      if (!SHORT_FIXED_REGIME_BUCKETS.has(regime)) return null;
+      if (confirmation && !SHORT_FIXED_CONFIRMATION_PROFILES.has(confirmation)) return null;
+
+      const parentTrueMicroFamilyId = `MICRO_SHORT_${setup}_${regime}`;
+      const childTrueMicroFamilyId = confirmation
+        ? `${parentTrueMicroFamilyId}_${confirmation}`
+        : null;
+
+      return {
+        setup,
+        regime,
+        confirmation,
+        parentTrueMicroFamilyId,
+        childTrueMicroFamilyId,
+        isParent: !confirmation,
+        isChild: Boolean(confirmation)
+      };
+    }
+
+    function isFixedShortTaxonomyParentId(id = "") {
+      return parseFixedShortTaxonomyId(id)?.isParent === true;
+    }
+
+    function isFixedShortTaxonomyChildId(id = "") {
+      return parseFixedShortTaxonomyId(id)?.isChild === true;
+    }
+
+    function parentFromChildTrueMicroFamilyId(id = "") {
+      const parsed = parseFixedShortTaxonomyId(id);
+
+      if (!parsed?.isChild) return "";
+
+      return parsed.parentTrueMicroFamilyId;
+    }
+
+    function normalizeSide(value) {
+      const raw = cleanSideText(value);
+
+      if (["SHORT", "BEAR", "BEARISH", "SELL", "DOWN", "DOWNSIDE"].includes(raw)) return ONLY_SIDE;
+      if (["LONG", "BULL", "BULLISH", "BUY", "UP", "UPSIDE"].includes(raw)) return OPPOSITE_SIDE;
+
+      return "UNKNOWN";
+    }
+
+    function hasShortSignal(value = "") {
+      const text = ` ${cleanSideText(value)} `;
+
+      return (
+        text.includes("MICRO_SHORT_") ||
+        text.includes("TRADESIDE=SHORT") ||
+        text.includes("TRADE_SIDE=SHORT") ||
+        text.includes("POSITION_SIDE=SHORT") ||
+        text.includes("POSITIONSIDE=SHORT") ||
+        text.includes("SIDE=SHORT") ||
+        text.includes("SIDE=BEAR") ||
+        text.includes("SIDE=SELL") ||
+        text.includes("DIRECTION=SHORT") ||
+        text.includes("DIRECTION=BEAR") ||
+        text.includes("DIRECTION=SELL") ||
+        text.includes(" SHORT ") ||
+        text.includes(" SHORT_") ||
+        text.includes("_SHORT ") ||
+        text.includes("_SHORT_") ||
+        text.includes("|SHORT|") ||
+        text.includes(":SHORT") ||
+        text.includes("=SHORT") ||
+        text.includes(" BEAR ") ||
+        text.includes("_BEAR") ||
+        text.includes("BEAR_") ||
+        text.includes("|BEAR|") ||
+        text.includes(":BEAR") ||
+        text.includes("=BEAR") ||
+        text.includes(" SELL ") ||
+        text.includes("_SELL") ||
+        text.includes("SELL_") ||
+        text.includes("|SELL|") ||
+        text.includes(":SELL") ||
+        text.includes("=SELL")
+      );
+    }
+
+    function hasLongSignal(value = "") {
+      const text = ` ${cleanSideText(value)} `;
+
+      return (
+        text.includes("MICRO_LONG_") ||
+        text.includes("TRADESIDE=LONG") ||
+        text.includes("TRADE_SIDE=LONG") ||
+        text.includes("POSITION_SIDE=LONG") ||
+        text.includes("POSITIONSIDE=LONG") ||
+        text.includes("SIDE=LONG") ||
+        text.includes("SIDE=BULL") ||
+        text.includes("SIDE=BUY") ||
+        text.includes("DIRECTION=LONG") ||
+        text.includes("DIRECTION=BULL") ||
+        text.includes("DIRECTION=BUY") ||
+        text.includes(" LONG ") ||
+        text.includes(" LONG_") ||
+        text.includes("_LONG ") ||
+        text.includes("_LONG_") ||
+        text.includes("|LONG|") ||
+        text.includes(":LONG") ||
+        text.includes("=LONG") ||
+        text.includes(" BULL ") ||
+        text.includes("_BULL") ||
+        text.includes("BULL_") ||
+        text.includes("|BULL|") ||
+        text.includes(":BULL") ||
+        text.includes("=BULL") ||
+        text.includes(" BUY ") ||
+        text.includes("_BUY") ||
+        text.includes("BUY_") ||
+        text.includes("|BUY|") ||
+        text.includes(":BUY")
+      );
+    }
+
+    function isScannerFingerprintId(id = "") {
+      const value = upper(id);
+
+      return (
+        value.startsWith("MICRO_SHORT_SCANNER__") ||
+        value.includes("MICRO_SHORT_SCANNER__") ||
+        value.startsWith("SHORT_SCANNER_") ||
+        value.includes("SHORT_SCANNER_") ||
+        value.startsWith("MICRO_LONG_SCANNER__") ||
+        value.includes("MICRO_LONG_SCANNER__") ||
+        value.startsWith("LONG_SCANNER_") ||
+        value.includes("LONG_SCANNER_") ||
+        value.includes("__SCANNER__") ||
+        value.includes("SCANNER_GATE_PASS") ||
+        value.includes("SCANNER_GATE_FAIL")
+      );
+    }
+
+    function isExecutionFingerprintId(id = "") {
+      const value = upper(id);
+
+      return (
+        value.includes("_XR_") ||
+        value.includes("__XR__") ||
+        value.includes("|XR|") ||
+        value.includes("EXECUTION_FINGERPRINT") ||
+        value.includes("EXECUTION_MICRO") ||
+        value.includes("EXECUTIONMICRO") ||
+        value.includes("REFINED_EXECUTION")
+      );
+    }
+
+    function validLearningId(id = "") {
+      const value = String(id || "").trim();
+
+      if (!value) return false;
+      if (isScannerFingerprintId(value)) return false;
+      if (isExecutionFingerprintId(value)) return false;
+
+      return true;
+    }
+
+    function isSelectableTrueMicroId(id = "") {
+      const value = String(id || "").trim();
+
+      if (!validLearningId(value)) return false;
+      if (!isFixedShortTaxonomyChildId(value)) return false;
+
+      return true;
+    }
+
+    function isSelectableParentMicroId(id = "") {
+      const value = String(id || "").trim();
+
+      if (!validLearningId(value)) return false;
+      if (!isFixedShortTaxonomyParentId(value)) return false;
+
+      return true;
+    }
+
+    function inferSide(input = {}) {
+      if (typeof input === "string") {
+        const direct = normalizeSide(input);
+        if (direct !== "UNKNOWN") return direct;
+
+        const text = cleanSideText(input);
+        const shortSignal = hasShortSignal(text);
+        const longSignal = hasLongSignal(text);
+
+        if (shortSignal && !longSignal) return ONLY_SIDE;
+        if (longSignal) return OPPOSITE_SIDE;
+
+        return "UNKNOWN";
+      }
+
+      if (!input || typeof input !== "object") return "UNKNOWN";
+
+      const directFields = [
+        input.tradeSide,
+        input.targetTradeSide,
+        input.positionSide,
+        input.direction,
+        input.scannerSide,
+        input.actualScannerSide,
+        input.analysisSide,
+        input.signalSide,
+        input.entrySide,
+        input.dashboardSide,
+        input.side,
+        input.bias,
+        input.marketBias
+      ];
+
+      for (const field of directFields) {
+        const direct = normalizeSide(field);
+        if (direct !== "UNKNOWN") return direct;
+      }
+
+      const haystack = [
+        input.familyId,
+        input.family,
+        input.baseFamilyId,
+
+        input.parentTrueMicroFamilyId,
+        input.microFamilyId,
+        input.trueMicroFamilyId,
+        input.childTrueMicroFamilyId,
+        input.coarseMicroFamilyId,
+        input.liveMicroFamilyId,
+        input.realMicroFamilyId,
+        input.executionMicroFamilyId,
+        input.analyzeMicroFamilyId,
+        input.learningMicroFamilyId,
+        input.id,
+        input.key,
+
+        input.macroFamilyId,
+        input.parentMacroFamilyId,
+        input.parentMicroFamilyId,
+        input.parentFamilyId,
+        input.macroId,
+
+        input.definition,
+        input.microDefinition,
+        input.macroDefinition,
+        input.parentDefinition,
+
+        input.scannerReason,
+        input.reason,
+        input.signalReason,
+        input.actionReason,
+        input.exitReason,
+        input.rejectionReason,
+
+        Array.isArray(input.definitionParts) ? input.definitionParts.join("|") : "",
+        Array.isArray(input.microDefinitionParts) ? input.microDefinitionParts.join("|") : "",
+        Array.isArray(input.macroDefinitionParts) ? input.macroDefinitionParts.join("|") : "",
+        Array.isArray(input.parentDefinitionParts) ? input.parentDefinitionParts.join("|") : "",
+        Array.isArray(input.executionFingerprintParts) ? input.executionFingerprintParts.join("|") : ""
+      ].join(" | ");
+
+      const shortSignal = hasShortSignal(haystack);
+      const longSignal = hasLongSignal(haystack);
+
+      if (shortSignal && !longSignal) return ONLY_SIDE;
+      if (longSignal) return OPPOSITE_SIDE;
+
+      if (
+        input.shortOnly === true ||
+        input.longDisabled === true ||
+        input.targetTradeSide === ONLY_SIDE ||
+        input.tradeSide === ONLY_SIDE ||
+        input.dashboardSide === DASHBOARD_SIDE
+      ) {
+        return ONLY_SIDE;
+      }
+
+      if (input.longOnly === true || input.shortDisabled === true) {
+        return OPPOSITE_SIDE;
+      }
+
+      return "UNKNOWN";
+    }
+
+    function microId(row = {}) {
+      return String(
+        row.trueMicroFamilyId ||
+        row.childTrueMicroFamilyId ||
+        row.microFamilyId ||
+        row.analyzeMicroFamilyId ||
+        row.learningMicroFamilyId ||
+        row.liveMicroFamilyId ||
+        row.realMicroFamilyId ||
+        row.executionMicroFamilyId ||
+        row.id ||
+        row.key ||
+        ""
+      ).trim().toUpperCase();
+    }
+
+    function parentMicroId(row = {}) {
+      const id = microId(row);
+
+      return String(
+        row.parentTrueMicroFamilyId ||
+        row.parentMicroFamilyId ||
+        row.parentMacroFamilyId ||
+        row.coarseMicroFamilyId ||
+        row.baseMicroFamilyId ||
+        row.legacyMicroFamilyId ||
+        parentFromChildTrueMicroFamilyId(id) ||
+        ""
+      ).trim().toUpperCase();
+    }
+
+    function macroId(row = {}) {
+      return parentMicroId(row);
+    }
+
+    function familyId(row = {}) {
+      return String(row.familyId || row.family || row.baseFamilyId || "").trim();
+    }
+
+    function isRealAnalyzeMicroRow(row = {}) {
+      const id = microId(row);
+      const parentId = parentMicroId(row);
+
+      if (!id) return false;
+      if (!isSelectableTrueMicroId(id)) return false;
+      if (parentId && !isSelectableParentMicroId(parentId)) return false;
+      if (row.legacyScannerFamilyFallback === true) return false;
+
+      const side = inferSide(row);
+      if (side === OPPOSITE_SIDE) return false;
+
+      return true;
+    }
+
+    function idAllowedInShortOnly(id = "") {
+      return isSelectableTrueMicroId(id);
+    }
+
+    function parentIdAllowedInShortOnly(id = "") {
+      return isSelectableParentMicroId(id);
+    }
+
+    function uniqueStrings(values = []) {
+      const stack = Array.isArray(values) ? [...values] : [values];
+      const out = [];
+
+      while (stack.length) {
+        const value = stack.shift();
+
+        if (Array.isArray(value)) {
+          stack.unshift(...value);
+          continue;
+        }
+
+        if (typeof value === "string") {
+          out.push(...value.split(/[\s,;\n\r]+/g));
+          continue;
+        }
+
+        if (value !== undefined && value !== null) out.push(value);
+      }
+
+      return [...new Set(
+        out
+          .map((value) => String(value || "").trim().toUpperCase())
+          .filter(Boolean)
+      )];
+    }
+
+    function asArray(value) {
+      if (Array.isArray(value)) return value;
+      if (value && typeof value === "object") return Object.values(value);
+
+      return [];
+    }
+
+    function num(value, fallback = 0) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function firstFinite(...values) {
+      for (const value of values) {
+        const n = Number(value);
+        if (Number.isFinite(n)) return n;
+      }
+
+      return null;
+    }
+
+    function clamp(value, min, max) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return min;
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function fmt(value, decimals = 3) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return n.toFixed(decimals);
+    }
+
+    function fmtInt(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "0";
+      return Math.round(n).toLocaleString();
+    }
+
+    function fmtPct(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return `${(n * 100).toFixed(1)}%`;
+    }
+
+    function fmtRawPct(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "-";
+      return `${n.toFixed(2)}%`;
+    }
+
+    function fmtPrice(value) {
+      const n = Number(value);
+
+      if (!Number.isFinite(n)) return "-";
+      if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+      return n.toLocaleString(undefined, { maximumFractionDigits: 8 });
+    }
+
+    function fmtMoney(value) {
+      const n = Number(value);
+
+      if (!Number.isFinite(n)) return "-";
+      if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+      if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+      if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+
+      return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+
+    function fmtTs(value) {
+      if (!value) return "-";
+
+      const n = Number(value);
+      const date = Number.isFinite(n) ? new Date(n) : new Date(value);
+
+      if (Number.isNaN(date.getTime())) return "-";
+
+      return date.toLocaleString();
+    }
+
+    function ageText(ts) {
+      const n = Number(ts);
+
+      if (!Number.isFinite(n) || n <= 0) return "-";
+
+      const seconds = Math.max(0, Math.floor((Date.now() - n) / 1000));
+
+      if (seconds < 60) return `${seconds}s geleden`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m geleden`;
+
+      return `${Math.floor(seconds / 3600)}u geleden`;
+    }
+
+    function baseSymbol(row = {}) {
+      const raw = typeof row === "string"
+        ? row
+        : row.symbol || row.baseSymbol || row.coin || row.contractSymbol || row.instId || row.instrumentId || "";
+
+      let symbol = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+      for (const suffix of ["USDTUMCBL", "USDCUMCBL", "USDTPERP", "USDCPERP", "USDT", "USDC", "BUSD", "PERP", "SWAP", "USD"]) {
+        if (symbol.endsWith(suffix) && symbol.length > suffix.length) {
+          symbol = symbol.slice(0, -suffix.length);
+          break;
+        }
+      }
+
+      return symbol || "COIN";
+    }
+
+    function completed(row = {}) {
+      const explicitVirtual = num(row.virtualCompleted, 0);
+      const explicitShadow = num(row.shadowCompleted, 0);
+      const closed = explicitVirtual + explicitShadow;
+
+      if (closed > 0) return closed;
+
+      const outcome = Number(row.outcomeSample);
+      if (Number.isFinite(outcome)) return outcome;
+
+      const explicit = Number(row.completed);
+      if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+      const wins = num(row.wins, 0);
+      const losses = num(row.losses, 0);
+      const flats = num(row.flats, 0);
+      const sum = wins + losses + flats;
+
+      return sum > 0 ? sum : 0;
+    }
+
+    function observationSample(row = {}) {
+      return Math.max(
+        num(row.observationSample, 0),
+        num(row.seen, 0),
+        num(row.observations, 0),
+        completed(row),
+        0
+      );
+    }
+
+    function learningStatus(row = {}) {
+      const done = completed(row);
+
+      if (done >= MIN_COMPLETED_ACTIVE_LEARNING) return "ACTIVE_LEARNING";
+      if (done > 0) return "EARLY_OUTCOMES";
+
+      return "OBSERVING";
+    }
+
+    function tooEarly(row = {}) {
+      return completed(row) < MIN_COMPLETED_ACTIVE_LEARNING;
+    }
+
+    function tier(row = {}) {
+      const done = completed(row);
+      const obs = observationSample(row);
+
+      if (done >= MIN_COMPLETED_ACTIVE_LEARNING) return "HARD";
+      if (done > 0) return "SOFT";
+      if (obs > 0) return "OBSERVATION";
+
+      return String(row.selectedTier || row.rotationEligibilityTier || row.eligibilityTier || row.tier || "RAW").toUpperCase();
+    }
+
+    function currentMarketRegimeForFit() {
+      return upper(
+        state.market?.regime ||
+        state.market?.currentRegime ||
+        state.market?.source?.currentRegime ||
+        state.market?.source?.regime ||
+        state.market?.raw?.currentRegime ||
+        state.market?.raw?.regime ||
+        ""
+      );
+    }
+
+    function currentMarketTrendForFit() {
+      const raw = upper(
+        state.market?.trendSide ||
+        state.market?.currentTrendSide ||
+        state.market?.source?.currentTrendSide ||
+        state.market?.source?.trendSide ||
+        state.market?.raw?.currentTrendSide ||
+        state.market?.raw?.trendSide ||
+        ""
+      );
+
+      if (["SHORT", "BEAR", "BEARISH", "SELL", "DOWN", "DOWNSIDE"].includes(raw)) return "SHORT";
+      if (["LONG", "BULL", "BULLISH", "BUY", "UP", "UPSIDE"].includes(raw)) return "LONG";
+      if (["NEUTRAL", "MIXED", "CHOP", "SIDEWAYS", "FLAT"].includes(raw)) return "NEUTRAL";
+
+      return raw || "UNKNOWN";
+    }
+
+    function fallbackCurrentFitScore(row = {}) {
+      const parsed = parseFixedShortTaxonomyId(microId(row));
+      if (!parsed?.isChild) return 0;
+
+      const marketRegime = currentMarketRegimeForFit();
+      const marketTrend = currentMarketTrendForFit();
+
+      let score = 0;
+      let hasSignal = false;
+
+      if (marketTrend === "SHORT") {
+        score += 30;
+        hasSignal = true;
+      } else if (marketTrend === "NEUTRAL") {
+        score += 8;
+        hasSignal = true;
+      } else if (marketTrend === "LONG") {
+        score -= 35;
+        hasSignal = true;
+      }
+
+      if (marketRegime && marketRegime !== "UNKNOWN") {
+        hasSignal = true;
+
+        if (marketRegime === parsed.regime) {
+          score += 40;
+        } else if (
+          (marketRegime === "TREND" && parsed.regime === "SQUEEZE") ||
+          (marketRegime === "SQUEEZE" && parsed.regime === "TREND")
+        ) {
+          score += 12;
+        } else {
+          score -= 10;
+        }
+      }
+
+      if (parsed.confirmation === "A_STRONG_ALIGN") score += 18;
+      if (parsed.confirmation === "B_FLOW_ALIGN") score += 14;
+      if (parsed.confirmation === "C_VOLUME_ALIGN") score += 10;
+      if (parsed.confirmation === "D_MIXED_OK") score += 4;
+      if (parsed.confirmation === "E_WEAK_CONTRA") score -= 8;
+
+      if (!hasSignal) return 0;
+
+      return clamp(score, -80, 100);
+    }
+
+    function currentFit(row = {}) {
+      const label = upper(
+        row.currentFitLabel ||
+        row.entryCurrentFitLabel ||
+        row.currentMarketFitLabel ||
+        row.fitLabel ||
+        row.marketFitLabel ||
+        ""
+      );
+
+      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(label)) return "MATCH";
+      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH"].includes(label)) return "WEAK_MATCH";
+      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(label)) return "MISFIT";
+      if (["NEUTRAL", "MIXED"].includes(label)) return "NEUTRAL";
+
+      const raw = upper(
+        row.currentFit ||
+        row.entryCurrentFit ||
+        row.currentMarketFit ||
+        row.fit ||
+        row.marketFit ||
+        ""
+      );
+
+      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(raw)) return "MATCH";
+      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH"].includes(raw)) return "WEAK_MATCH";
+      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(raw)) return "MISFIT";
+      if (["NEUTRAL", "MIXED"].includes(raw)) return "NEUTRAL";
+
+      const score = currentFitScore(row);
+
+      if (score >= 70) return "MATCH";
+      if (score >= 45) return "WEAK_MATCH";
+      if (score >= 20) return "NEUTRAL";
+      if (score <= -20) return "MISFIT";
+
+      return "UNKNOWN";
+    }
+
+    function marketBiasHaystack(row = {}) {
+      return [
+        row.currentMarketTrendSide,
+        row.marketTrendSide,
+        row.trendSide,
+        row.dashboardSide,
+        row.marketSide,
+        row.marketBias,
+        row.bias,
+        row.direction,
+        row.currentRegime,
+        row.marketRegime,
+        row.regime,
+        row.scannerReason,
+        row.reason,
+        row.currentFitReason,
+        Array.isArray(row.currentFitReasons) ? row.currentFitReasons.join("|") : ""
+      ]
+        .map((value) => upper(value))
+        .join(" | ");
+    }
+
+    function currentFitScore(row = {}) {
+      const explicitShort = firstFinite(
+        row.shortCurrentFit,
+        row.bearCurrentFit,
+        row.currentFitShort,
+        row.currentFitBear,
+        row.shortFitScore,
+        row.bearFitScore
+      );
+
+      if (explicitShort !== null) return explicitShort;
+
+      const explicitLong = firstFinite(
+        row.longCurrentFit,
+        row.bullCurrentFit,
+        row.bullishCurrentFit,
+        row.currentFitLong,
+        row.currentFitBull,
+        row.longFitScore,
+        row.bullFitScore
+      );
+
+      if (explicitLong !== null) return -Math.abs(explicitLong);
+
+      const direct = firstFinite(
+        row.currentFitScore,
+        row.entryCurrentFitScore,
+        row.currentMarketFitScore,
+        row.fitScore
+      );
+
+      if (direct !== null) {
+        const haystack = marketBiasHaystack(row);
+
+        if (
+          haystack.includes("BEAR") ||
+          haystack.includes("BEARISH") ||
+          haystack.includes("SHORT") ||
+          haystack.includes("SELL") ||
+          haystack.includes("DOWNSIDE")
+        ) {
+          return Math.abs(direct);
+        }
+
+        if (
+          haystack.includes("BULL") ||
+          haystack.includes("BULLISH") ||
+          haystack.includes("LONG") ||
+          haystack.includes("BUY") ||
+          haystack.includes("UPSIDE")
+        ) {
+          return -Math.abs(direct);
+        }
+
+        return -direct;
+      }
+
+      const numericFit = firstFinite(
+        row.currentFit,
+        row.entryCurrentFit,
+        row.currentMarketFit,
+        row.fit,
+        row.marketFit
+      );
+
+      if (numericFit !== null) {
+        const marketTrend = currentMarketTrendForFit();
+
+        if (marketTrend === "SHORT") return Math.abs(numericFit);
+        if (marketTrend === "LONG") return -Math.abs(numericFit);
+
+        return -numericFit;
+      }
+
+      const fit = upper(
+        row.currentFitLabel ||
+        row.entryCurrentFitLabel ||
+        row.currentFit ||
+        row.entryCurrentFit ||
+        ""
+      );
+
+      if (fit === "MATCH") return 80;
+      if (fit === "WEAK_MATCH") return 60;
+      if (fit === "NEUTRAL") return 40;
+      if (fit === "MISFIT") return 20;
+
+      return fallbackCurrentFitScore(row);
+    }
+
+    function currentFitConfidence(row = {}) {
+      const direct = firstFinite(
+        row.currentFitConfidence,
+        row.entryCurrentFitConfidence,
+        row.currentMarketFitConfidence,
+        row.fitConfidence,
+        row.marketFitConfidence,
+        row.weatherConfidence,
+        row.currentMarketWeatherConfidence
+      );
+
+      if (direct !== null) return direct;
+
+      const score = currentFitScore(row);
+
+      if (score >= 70) return 80;
+      if (score >= 45) return 60;
+      if (score >= 20) return 40;
+      if (score <= -20) return 35;
+
+      return 0;
+    }
+
+    function currentFitPill(row = {}) {
+      const fit = currentFit(row);
+      const score = currentFitScore(row);
+      const conf = currentFitConfidence(row);
+
+      if (fit === "MATCH") {
+        return `<span class="pill fit">FIT ${escapeHtml(fmt(score, 0))}</span>`;
+      }
+
+      if (fit === "WEAK_MATCH") {
+        return `<span class="pill weakfit">WEAK FIT ${escapeHtml(fmt(score, 0))}</span>`;
+      }
+
+      if (fit === "MISFIT") {
+        return `<span class="pill misfit">MISFIT ${escapeHtml(fmt(score, 0))}</span>`;
+      }
+
+      if (fit === "NEUTRAL") {
+        return `<span class="pill neutral">NEUTRAL ${escapeHtml(fmt(conf, 0))}</span>`;
+      }
+
+      if (score !== 0) {
+        return `<span class="pill neutral">SOFT ${escapeHtml(fmt(score, 0))}</span>`;
+      }
+
+      return '<span class="pill raw">UNKNOWN</span>';
+    }
+
+    function recentMomentumScore(row = {}) {
+      const direct = firstFinite(
+        row.recentMomentumScore,
+        row.momentumScore,
+        row.recentScore,
+        row.recentNetRScore
+      );
+
+      if (direct !== null) return direct;
+
+      const recentRows = Array.isArray(row.recentOutcomes) ? row.recentOutcomes.slice(-12) : [];
+
+      if (!recentRows.length) return 0;
+
+      const netR = recentRows.reduce((sum, outcome) => {
+        return sum + num(outcome.shortNetR ?? outcome.netShortR ?? outcome.netR ?? outcome.exitR ?? outcome.realizedR ?? outcome.r, 0);
+      }, 0);
+
+      const directSLPenalty = recentRows.filter((outcome) => outcome.directSL || outcome.directToSL).length * 6;
+      const costPenalty = recentRows.reduce((sum, outcome) => sum + Math.max(0, num(outcome.costR, 0)), 0) * 2;
+
+      return clamp(netR * 8 - directSLPenalty - costPenalty, -80, 80);
+    }
+
+    function fairWinrate(row = {}) {
+      return num(
+        row.fairWinrate ??
+        row.sampleAdjustedWinrate ??
+        row.sampleWilsonLowerBound ??
+        row.wilsonLowerBound ??
+        row.bayesianWinrate,
+        0
+      );
+    }
+
+    function balancedScore(row = {}) {
+      return num(row.dashboardBalancedScore ?? row.balancedScore ?? row.learningQualityRank, 0);
+    }
+
+    function netTotalR(row = {}) {
+      return num(row.totalR ?? row.netTotalR ?? row.totalNetR, 0);
+    }
+
+    function netAvgR(row = {}) {
+      return num(row.avgR ?? row.avgNetR ?? row.netAvgR, 0);
+    }
+
+    function avgCostR(row = {}) {
+      return Math.max(0, num(row.avgCostR ?? row.costR, 0));
+    }
+
+    function directSLPct(row = {}) {
+      return Math.max(0, num(row.directSLPct, 0));
+    }
+
+    function sampleReliability(row = {}) {
+      return num(row.sampleReliability, 0);
+    }
+
+    function adaptiveScore(row = {}) {
+      const direct = firstFinite(
+        row.adaptiveScore,
+        row.selectionScore,
+        row.currentAdaptiveScore
+      );
+
+      if (direct !== null) return direct;
+
+      const base = balancedScore(row);
+      const fit = currentFitScore(row);
+      const momentum = recentMomentumScore(row);
+      const reliability = sampleReliability(row);
+      const directSLPenalty = directSLPct(row) * 35;
+      const costPenalty = avgCostR(row) * 8;
+
+      return base + fit * 0.35 + momentum * 0.25 + reliability * 10 - directSLPenalty - costPenalty;
+    }
+
+    function tierPill(value) {
+      const t = String(value || "NA").toUpperCase();
+
+      if (t === "HARD") return '<span class="pill active">ACTIVE</span>';
+      if (t === "SOFT") return '<span class="pill soft">EARLY</span>';
+      if (t === "OBSERVATION") return '<span class="pill observation">OBS</span>';
+      if (t === "RAW") return '<span class="pill raw">RAW</span>';
+      if (t === "MANUAL") return '<span class="pill purple">MANUAL</span>';
+
+      return `<span class="pill">${escapeHtml(t)}</span>`;
+    }
+
+    function statusPill(row = {}) {
+      const status = learningStatus(row);
+      const done = completed(row);
+
+      if (status === "ACTIVE_LEARNING") {
+        return '<span class="pill active">ACTIVE_LEARNING</span>';
+      }
+
+      if (status === "EARLY_OUTCOMES") {
+        return `<span class="pill soft">EARLY_OUTCOMES · ${escapeHtml(fmt(done, 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>`;
+      }
+
+      return '<span class="pill observation">OBSERVING</span>';
+    }
+
+    function jsonBlock(data) {
+      return `<pre>${escapeHtml(JSON.stringify(data ?? null, null, 2))}</pre>`;
+    }
+
+    function setMessage(message = "", type = "") {
+      $("message").innerHTML = message
+        ? `<div class="message ${escapeAttr(type)}">${escapeHtml(message)}</div>`
+        : "";
+    }
+
+    function showLoading(tabId, label = "Laden...") {
+      $(tabId).innerHTML = `
+        <div class="card">
+          <h3>${escapeHtml(label)}</h3>
+          <div class="empty">Data ophalen voor ${escapeHtml(tabId)}...</div>
+        </div>
+      `;
+    }
+
+    function friendlyApiMessage(error) {
+      if (error?.timeout) return "API-timeout: request is afgebroken door de admin UI.";
+
+      const status = Number(error?.status || 0);
+      const raw = String(error?.message || error || "");
+
+      if (status === 409 || raw.includes("LOCK")) return "Lock actief. Vorige run is nog bezig.";
+      if (status === 504 || raw.includes("504")) return "Backend timeout op deze admin-route.";
+      if (status === 500) return "Backend error op deze admin-route. Check server logs.";
+      if (status === 404) return "Endpoint niet gevonden.";
+
+      return raw || "Onbekende API fout.";
+    }
+
+    function timeoutSignal(timeoutMs = state.apiTimeoutMs) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      return {
+        signal: controller.signal,
+        clear: () => clearTimeout(timer)
+      };
+    }
+
+    function noCacheUrl(url) {
+      const join = String(url).includes("?") ? "&" : "?";
+      return `${url}${join}_ts=${Date.now()}`;
+    }
+
+    async function api(url, options = {}) {
+      const timeout = timeoutSignal(options.timeoutMs || state.apiTimeoutMs);
+
+      const headers = {
+        accept: "application/json",
+        ...(options.headers || {})
+      };
+
+      if (options.body !== undefined && !headers["content-type"]) {
+        headers["content-type"] = "application/json";
+      }
+
+      try {
+        const response = await fetch(noCacheUrl(url), {
+          cache: "no-store",
+          ...options,
+          headers,
+          signal: options.signal || timeout.signal
+        });
+
+        const rawText = await response.text();
+
+        let data = {};
+
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          data = { raw: rawText };
+        }
+
+        if (!response.ok) {
+          throw new ApiError(`${response.status} ${data.error || data.reason || response.statusText}`, {
+            status: response.status,
+            url,
+            data
+          });
+        }
+
+        return data;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          throw new ApiError("REQUEST_ABORTED_TIMEOUT", {
+            status: 0,
+            url,
+            timeout: true
+          });
+        }
+
+        if (error instanceof ApiError) throw error;
+
+        throw new ApiError(error?.message || String(error), {
+          status: 0,
+          url
+        });
+      } finally {
+        timeout.clear();
+      }
+    }
+
+    async function optionalApi(url, fallback = null) {
+      try {
+        return await api(url, { timeoutMs: 12000 });
+      } catch {
+        return fallback;
+      }
+    }
+
+    function metricCard(label, value, extra = "") {
+      return `
+        <div class="card metric-card">
+          <div class="metric-label">${escapeHtml(label)}</div>
+          <div>
+            <div class="metric-value">${escapeHtml(value)}</div>
+            ${extra ? `<div class="metric-extra">${escapeHtml(extra)}</div>` : ""}
+          </div>
+        </div>
+      `;
+    }
+
+    function scoreBar(value, min = 0, max = 100) {
+      const n = Number(value);
+      const width = Number.isFinite(n)
+        ? Math.max(0, Math.min(100, ((n - min) / (max - min)) * 100))
+        : 0;
+
+      return `<div class="score-bar"><span style="--w:${width.toFixed(1)}%"></span></div>`;
+    }
+
+    function table(rows, cols, emptyText = "Geen data.") {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+      }
+
+      const head = cols.map((col) => `<th>${escapeHtml(col.label)}</th>`).join("");
+
+      const body = rows.map((row, index) => {
+        const cells = cols.map((col) => {
+          const value = col.render
+            ? col.render(row, index)
+            : escapeHtml(row?.[col.key]);
+
+          return `<td>${value}</td>`;
+        }).join("");
+
+        return `<tr>${cells}</tr>`;
+      }).join("");
+
+      return `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>${head}</tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function extractObjectArrays(data, keys = []) {
+      const rows = [];
+
+      for (const key of keys) {
+        const value = data?.[key];
+
+        if (Array.isArray(value)) {
+          rows.push(...value);
+        } else if (value && typeof value === "object") {
+          rows.push(...Object.values(value));
+        }
+      }
+
+      return rows;
+    }
+
+    function extractDeepMicroRows(data) {
+      const output = [];
+      const seenObjects = new Set();
+      const seenIds = new Set();
+
+      function add(row) {
+        if (!row || typeof row !== "object") return;
+
+        const id = microId(row);
+
+        if (!id || seenIds.has(id)) return;
+        if (!isRealAnalyzeMicroRow(row)) return;
+
+        seenIds.add(id);
+        output.push(row);
+      }
+
+      function walk(value, depth = 0) {
+        if (!value || typeof value !== "object" || depth > 7) return;
+        if (seenObjects.has(value)) return;
+
+        seenObjects.add(value);
+
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (item && typeof item === "object" && microId(item)) add(item);
+            walk(item, depth + 1);
+          }
+          return;
+        }
+
+        if (microId(value)) add(value);
+
+        for (const key of [
+          "best75MicroFamilies",
+          "top75MicroFamilies",
+          "bestMicroFamilies",
+          "topMicroFamilies",
+          "shortRows",
+          "rows",
+          "microFamilies",
+          "micros",
+          "items",
+          "data",
+          "result",
+          "payload",
+          "response",
+          "activeRotation",
+          "active",
+          "balanced",
+          "adaptive",
+          "winrate",
+          "totalR",
+          "avgR",
+          "directSL",
+          "observed"
+        ]) {
+          walk(value[key], depth + 1);
+        }
+      }
+
+      walk(data, 0);
+
+      return output;
+    }
+
+    function extractMicroRowsFromApiPayload(data = {}) {
+      const preferred = extractObjectArrays(data, [
+        "best75MicroFamilies",
+        "top75MicroFamilies",
+        "bestMicroFamilies",
+        "topMicroFamilies"
+      ]);
+
+      const direct = extractObjectArrays(data, [
+        "shortRows",
+        "rows",
+        "microFamilies",
+        "micros",
+        "items"
+      ]);
+
+      const nestedPreferred = [
+        ...extractObjectArrays(data.result || {}, ["best75MicroFamilies", "top75MicroFamilies", "bestMicroFamilies", "topMicroFamilies"]),
+        ...extractObjectArrays(data.payload || {}, ["best75MicroFamilies", "top75MicroFamilies", "bestMicroFamilies", "topMicroFamilies"])
+      ];
+
+      const deep = extractDeepMicroRows(data);
+
+      const source = preferred.length
+        ? preferred
+        : nestedPreferred.length
+          ? nestedPreferred
+          : direct.length
+            ? direct
+            : deep;
+
+      const byId = new Map();
+
+      for (const row of source) {
+        if (!row || typeof row !== "object") continue;
+        if (!isRealAnalyzeMicroRow(row)) continue;
+
+        const id = microId(row);
+        if (!id || byId.has(id)) continue;
+
+        byId.set(id, row);
+      }
+
+      if (byId.size === 0) {
+        for (const row of deep) {
+          const id = microId(row);
+          if (!id || byId.has(id)) continue;
+
+          byId.set(id, row);
+        }
+      }
+
+      return [...byId.values()];
+    }
+
+    function compareNumberDesc(a, b) {
+      return num(b, 0) - num(a, 0);
+    }
+
+    function compareNumberAsc(a, b) {
+      return num(a, 0) - num(b, 0);
+    }
+
+    function compareMicroIds(a = {}, b = {}) {
+      return String(microId(a) || "").localeCompare(String(microId(b) || ""));
+    }
+
+    function compareBestDataFirst(a, b) {
+      return (
+        compareNumberDesc(balancedScore(a), balancedScore(b)) ||
+        compareNumberDesc(netTotalR(a), netTotalR(b)) ||
+        compareNumberDesc(netAvgR(a), netAvgR(b)) ||
+        compareNumberDesc(sampleReliability(a), sampleReliability(b)) ||
+        compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
+        compareNumberAsc(avgCostR(a), avgCostR(b)) ||
+        compareNumberAsc(directSLPct(a), directSLPct(b)) ||
+        compareNumberDesc(observationSample(a), observationSample(b)) ||
+        compareNumberDesc(completed(a), completed(b)) ||
+        compareMicroIds(a, b)
+      );
+    }
+
+    function compareMicroRows(a, b, mode = state.microMode) {
+      if (mode === "adaptive") {
+        return (
+          compareNumberDesc(adaptiveScore(a), adaptiveScore(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "currentFit") {
+        return (
+          compareNumberDesc(currentFitScore(a), currentFitScore(b)) ||
+          compareNumberDesc(currentFitConfidence(a), currentFitConfidence(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "cost") {
+        return (
+          compareNumberAsc(avgCostR(a), avgCostR(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "observed") {
+        return (
+          compareNumberDesc(observationSample(a), observationSample(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "directSL") {
+        return (
+          compareNumberAsc(directSLPct(a), directSLPct(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "totalR") {
+        return (
+          compareNumberDesc(netTotalR(a), netTotalR(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "avgR") {
+        return (
+          compareNumberDesc(netAvgR(a), netAvgR(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      if (mode === "winrate") {
+        return (
+          compareNumberDesc(fairWinrate(a), fairWinrate(b)) ||
+          compareNumberDesc(a.sampleWilsonLowerBound ?? a.wilsonLowerBound, b.sampleWilsonLowerBound ?? b.wilsonLowerBound) ||
+          compareNumberDesc(a.sampleBayesianWinrate ?? a.bayesianWinrate, b.sampleBayesianWinrate ?? b.bayesianWinrate) ||
+          compareNumberDesc(completed(a), completed(b)) ||
+          compareBestDataFirst(a, b)
+        );
+      }
+
+      return compareBestDataFirst(a, b);
+    }
+
+    function normalizeMicroRowForUi(row = {}) {
+      const id = microId(row);
+      const parentId = parentMicroId(row) || parentFromChildTrueMicroFamilyId(id);
+      const done = completed(row);
+      const obs = observationSample(row);
+      const status = learningStatus(row);
+      const rowTier = tier(row);
+
+      return {
+        ...row,
+        microFamilyId: id,
+        trueMicroFamilyId: id,
+        childTrueMicroFamilyId: id,
+
+        parentTrueMicroFamilyId: parentId,
+        parentMicroFamilyId: parentId,
+        parentMacroFamilyId: parentId,
+        macroFamilyId: parentId,
+        coarseMicroFamilyId: parentId,
+
+        side: DASHBOARD_SIDE,
+        dashboardSide: DASHBOARD_SIDE,
+        tradeSide: ONLY_SIDE,
+        targetTradeSide: ONLY_SIDE,
+        positionSide: ONLY_SIDE,
+        direction: ONLY_SIDE,
+
+        shortOnly: true,
+        longDisabled: true,
+        longOnly: false,
+        shortDisabled: false,
+
+        completed: done,
+        outcomeSample: done,
+        observationSample: obs,
+        learningStatus: status,
+        status,
+
+        tooEarly: done < MIN_COMPLETED_ACTIVE_LEARNING,
+        tooEarlyReason: done < MIN_COMPLETED_ACTIVE_LEARNING
+          ? `completed ${done}/${MIN_COMPLETED_ACTIVE_LEARNING}`
+          : null,
+
+        tier: rowTier,
+        selectedTier: rowTier,
+        rotationEligibilityTier: rowTier,
+
+        dashboardBalancedScore: balancedScore(row),
+        balancedScore: num(row.balancedScore ?? row.dashboardBalancedScore ?? row.learningQualityRank, 0),
+        fairWinrate: fairWinrate(row),
+        recentMomentumScore: recentMomentumScore(row),
+        currentFitScore: currentFitScore(row),
+        adaptiveScore: adaptiveScore(row),
+
+        avgCostR: avgCostR(row),
+        directSLPct: directSLPct(row),
+
+        trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+        parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+        learningGranularity: LEARNING_GRANULARITY,
+        parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+        selectionGranularity: "EXACT_75_CHILD",
+
+        measurementFixVersion: row.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+        adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+
+        completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
+        completedOnlyClosedVirtualOrShadow: true,
+        scoringRSource: "netR",
+        winsLossesFlatsSource: "netR",
+        avgRSource: "netR",
+        totalRSource: "netR",
+        avgCostRSource: "costR",
+        seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
+
+        riskTradeSide: ONLY_SIDE,
+        riskGeometryRule: "SHORT: tp < entry < sl",
+        tpHitRule: "SHORT: price <= tp",
+        slHitRule: "SHORT: price >= sl",
+        grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+        currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+
+        currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+        currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+        currentFitSoftOnly: true,
+        currentFitBlocksLearning: false,
+        currentFitBlocksVirtualLearning: false,
+        currentFitBlocksShadowLearning: false,
+        learningRemainsBroad: true,
+        selectionIsAdaptive: true,
+        discordWillBeStrict: true,
+
+        scannerFingerprintRole: row.scannerFingerprintRole || "METADATA_ONLY",
+        scannerFingerprintsMetadataOnly: true,
+        scannerFingerprintsUsedAsLearningFamily: false,
+        executionFingerprintsMetadataOnly: true,
+        executionFingerprintsUsedAsLearningFamily: false,
+
+        legacyScannerFamilyFallback: false,
+        scannerFingerprintLegacy: false,
+        learningIdentitySource: row.learningIdentitySource || "ANALYZE_TRUE_MICRO_FAMILY",
+        symbolExcludedFromFamilyId: row.symbolExcludedFromFamilyId !== false
+      };
+    }
+
+    function rankMicroRows(rows = [], mode = state.microMode) {
+      return rows
+        .filter(isRealAnalyzeMicroRow)
+        .map(normalizeMicroRowForUi)
+        .sort((a, b) => compareMicroRows(a, b, mode))
+        .map((row, index) => ({
+          ...row,
+          rank: index + 1
+        }));
+    }
+
+    function microApiUrl() {
+      const params = new URLSearchParams();
+      const apiMode = state.microMode === "adaptive" || state.microMode === "currentFit" || state.microMode === "cost"
+        ? "balanced"
+        : state.microMode;
+
+      params.set("mode", apiMode);
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("weekKey", PERSISTENT_LEARNING_KEY);
+      params.set("persistentLearningKey", PERSISTENT_LEARNING_KEY);
+      params.set("trueMicroFamilySchema", TRUE_MICRO_SCHEMA);
+      params.set("parentTrueMicroFamilySchema", PARENT_TRUE_MICRO_SCHEMA);
+      params.set("selectionGranularity", "EXACT_75_CHILD");
+      params.set("limit", String(state.microLimit));
+      params.set("bestLimit", String(state.bestLimit));
+      params.set("sideLimit", String(state.bestLimit));
+      params.set("sideEnsureLimit", String(state.bestLimit));
+      params.set("includeActiveRotation", "1");
+      params.set("includeMarketWeather", "1");
+      params.set("includeCurrentFit", "1");
+      params.set("includeAdaptive", "1");
+      params.set("compact", "1");
+
+      if (state.microSearch.trim()) params.set("q", state.microSearch.trim());
+
+      return `${endpoints.micros}?${params.toString()}`;
+    }
+
+    function rotationApiUrl() {
+      const params = new URLSearchParams();
+
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("weekKey", PERSISTENT_LEARNING_KEY);
+      params.set("trueMicroFamilySchema", TRUE_MICRO_SCHEMA);
+      params.set("parentTrueMicroFamilySchema", PARENT_TRUE_MICRO_SCHEMA);
+      params.set("selectionGranularity", "EXACT_75_CHILD");
+      params.set("includeAvailable", "1");
+      params.set("includeAdaptive", "1");
+      params.set("includeCurrentFit", "1");
+      params.set("activeRowsLimit", "160");
+      params.set("availableLimit", "240");
+
+      return `${endpoints.rotation}?${params.toString()}`;
+    }
+
+    function marketApiUrl() {
+      const params = new URLSearchParams();
+
+      params.set("side", ONLY_SIDE);
+      params.set("tradeSide", ONLY_SIDE);
+      params.set("targetTradeSide", ONLY_SIDE);
+      params.set("dashboardSide", DASHBOARD_SIDE);
+      params.set("includeUniverse", "1");
+      params.set("includeBreadth", "1");
+      params.set("includeCurrentFit", "1");
+
+      return `${endpoints.market}?${params.toString()}`;
+    }
+
+    function extractMarketData(data = {}) {
+      const source =
+        data.marketWeather ||
+        data.weather ||
+        data.currentMarketWeather ||
+        data.latest ||
+        data.snapshot ||
+        data;
+
+      const universe =
+        data.marketUniverse ||
+        data.universe ||
+        source.universe ||
+        source.marketUniverse ||
+        {};
+
+      const createdAt = num(
+        source.createdAt ||
+        source.completedAt ||
+        source.updatedAt ||
+        source.ts ||
+        universe.createdAt ||
+        universe.updatedAt,
+        0
+      );
+
+      const regime = upper(
+        source.currentRegime ||
+        source.regime ||
+        source.marketRegime ||
+        source.breadthRegime ||
+        universe.currentRegime ||
+        universe.regime ||
+        "UNKNOWN"
+      );
+
+      const trendSide = upper(
+        source.currentTrendSide ||
+        source.trendSide ||
+        source.marketSide ||
+        source.side ||
+        source.direction ||
+        source.breadthSide ||
+        universe.currentTrendSide ||
+        universe.trendSide ||
+        "UNKNOWN"
+      );
+
+      const bullishPct = firstFinite(
+        source.bullishPct,
+        source.longPct,
+        source.upPct,
+        source.breadthBullishPct,
+        source.universeBullishPct,
+        universe.bullishPct,
+        universe.longPct,
+        universe.upPct
+      );
+
+      const bearishPct = firstFinite(
+        source.bearishPct,
+        source.shortPct,
+        source.downPct,
+        source.breadthBearishPct,
+        source.universeBearishPct,
+        universe.bearishPct,
+        universe.shortPct,
+        universe.downPct
+      );
+
+      const squeezePct = firstFinite(
+        source.squeezePct,
+        source.compressionPct,
+        source.breadthSqueezePct,
+        universe.squeezePct,
+        universe.compressionPct
+      );
+
+      const confidence = firstFinite(
+        source.confidence,
+        source.weatherConfidence,
+        source.currentTrendConfidence,
+        source.breadthConfidence,
+        universe.confidence
+      );
+
+      return {
+        raw: data,
+        source,
+        universe,
+        ok: Boolean(data && Object.keys(data).length),
+        createdAt,
+        ageText: ageText(createdAt),
+        regime,
+        trendSide,
+        bullishPct,
+        bearishPct,
+        squeezePct,
+        confidence
+      };
+    }
+
+    async function fetchMarket() {
+      const url = marketApiUrl();
+
+      try {
+        const data = await api(url, {
+          timeoutMs: 18000
+        });
+
+        const market = extractMarketData(data || {});
+        state.market = market;
+
+        return market;
+      } catch (error) {
+        const data = {
+          ok: false,
+          available: false,
+          reason: "MARKET_WEATHER_API_ERROR",
+          url,
+          status: error?.status || 0,
+          message: friendlyApiMessage(error),
+          rawError: error?.message || String(error),
+          file: "src/market/marketWeather.js",
+          apiRoute: "/api/admin/market-weather",
+          currentRegime: "UNKNOWN",
+          currentTrendSide: "UNKNOWN",
+          regime: "UNKNOWN",
+          trendSide: "UNKNOWN",
+          confidence: 0,
+          breadth: {},
+          btc: {},
+          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+          currentFitSoftOnly: true,
+          currentFitBlocksLearning: false,
+          currentFitBlocksVirtualLearning: false,
+          currentFitBlocksShadowLearning: false,
+          learningRemainsBroad: true,
+          measurementFixVersion: MEASUREMENT_FIX_VERSION
+        };
+
+        const market = extractMarketData(data);
+        state.market = market;
+
+        return market;
+      }
+    }
+
+    function activeMicroIds() {
+      return uniqueStrings([
+        state.rotation?.activeMicroFamilyIds || [],
+        state.rotation?.activeRotation?.activeMicroFamilyIds || [],
+        state.rotation?.activeRotation?.microFamilyIds || [],
+        state.rotation?.activeRotation?.trueMicroFamilyIds || [],
+        state.rotation?.active?.activeMicroFamilyIds || [],
+        state.rotation?.active?.microFamilyIds || [],
+        state.rotation?.active?.trueMicroFamilyIds || [],
+        state.micros?.activeMicroFamilyIds || [],
+        state.micros?.activeRotation?.activeMicroFamilyIds || [],
+        state.micros?.activeRotation?.microFamilyIds || [],
+        state.micros?.activeRotation?.trueMicroFamilyIds || [],
+        state.overview?.activeMicroFamilyIds || [],
+        state.trade?.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
+    }
+
+    function activeParentIds() {
+      return uniqueStrings([
+        state.rotation?.activeMacroFamilyIds || [],
+        state.rotation?.activeRotation?.activeMacroFamilyIds || [],
+        state.rotation?.activeRotation?.macroFamilyIds || [],
+        state.rotation?.active?.activeMacroFamilyIds || [],
+        state.rotation?.active?.macroFamilyIds || [],
+        state.micros?.activeMacroFamilyIds || [],
+        state.micros?.activeRotation?.activeMacroFamilyIds || [],
+        state.micros?.activeRotation?.macroFamilyIds || [],
+        state.overview?.activeMacroFamilyIds || [],
+        state.trade?.activeMacroFamilyIds || []
+      ]).filter(parentIdAllowedInShortOnly);
+    }
+
+    function shortRows(rows = []) {
+      return (Array.isArray(rows) ? rows : [])
+        .filter(Boolean)
+        .filter((row) => inferSide(row) !== OPPOSITE_SIDE);
+    }
+
+    function coinCard(row = {}) {
+      const symbol = baseSymbol(row);
+      const score = row.scannerScore ?? row.moveScore ?? row.sniperScore ?? row.confluence ?? 0;
+      const price = row.price ?? row.currentPrice ?? row.markPrice ?? row.entry;
+
+      return `
+        <article class="coin-card">
+          <div class="coin-head">
+            <div>
+              <div class="coin-symbol">${escapeHtml(symbol)}</div>
+              <div class="coin-name">${escapeHtml(row.name || row.coinName || row.contractSymbol || `${symbol}USDT`)}</div>
+            </div>
+            <div class="coin-price">
+              <strong>$${escapeHtml(fmtPrice(price))}</strong>
+              <span>${escapeHtml(row.contractSymbol || `${symbol}USDT`)}</span>
+            </div>
+          </div>
+
+          <div class="coin-foot">
+            <span class="pill short">SHORT</span>
+            <span class="pill purple">${escapeHtml(row.source || "SCANNER")}</span>
+            <span class="pill info">Score ${escapeHtml(fmt(score, 1))}</span>
+            <span class="pill raw">metadata only</span>
+          </div>
+
+          ${scoreBar(score, 0, 100)}
+
+          <div class="coin-stats">
+            <div class="coin-stat"><span>1h</span><strong>${escapeHtml(fmtRawPct(row.change1h))}</strong></div>
+            <div class="coin-stat"><span>24h</span><strong>${escapeHtml(fmtRawPct(row.change24h))}</strong></div>
+            <div class="coin-stat"><span>Volume</span><strong>${escapeHtml(fmtMoney(row.volume24h || row.quoteVolume24h))}</strong></div>
+            <div class="coin-stat"><span>BTC</span><strong>${escapeHtml(row.btcState || "-")}</strong></div>
+            <div class="coin-stat"><span>Regime</span><strong>${escapeHtml(row.regime || "-")}</strong></div>
+            <div class="coin-stat"><span>FakeBO</span><strong>${row.fakeBreakout ? "YES" : "NO"}</strong></div>
+            <div class="coin-stat"><span>Fit</span><strong>${escapeHtml(currentFit(row))}</strong></div>
+            <div class="coin-stat"><span>FitScore</span><strong>${escapeHtml(fmt(currentFitScore(row), 0))}</strong></div>
+          </div>
+        </article>
+      `;
+    }
+
+    function positionCard(row = {}) {
+      const symbol = baseSymbol(row);
+      const currentR = num(row.currentR ?? row.shortCurrentR, 0);
+
+      return `
+        <article class="coin-card">
+          <div class="coin-head">
+            <div>
+              <div class="coin-symbol">${escapeHtml(symbol)}</div>
+              <div class="coin-name">${escapeHtml(row.contractSymbol || `${symbol}USDT`)}</div>
+            </div>
+            <div class="coin-price">
+              <strong>${escapeHtml(fmt(currentR, 3))}R</strong>
+              <span>current R</span>
+            </div>
+          </div>
+
+          <div class="coin-foot">
+            <span class="pill short">SHORT</span>
+            <span class="pill purple">VIRTUAL</span>
+            <span class="pill ${currentR >= 0 ? "active" : "danger"}">${escapeHtml(fmt(currentR, 2))}R</span>
+            ${currentFitPill(row)}
+          </div>
+
+          <div class="coin-stats">
+            <div class="coin-stat"><span>Entry</span><strong>${escapeHtml(fmtPrice(row.entry))}</strong></div>
+            <div class="coin-stat"><span>SL</span><strong>${escapeHtml(fmtPrice(row.sl || row.stopLoss))}</strong></div>
+            <div class="coin-stat"><span>TP</span><strong>${escapeHtml(fmtPrice(row.tp || row.takeProfit))}</strong></div>
+            <div class="coin-stat"><span>RR</span><strong>${escapeHtml(fmt(row.rr, 2))}</strong></div>
+            <div class="coin-stat"><span>MFE</span><strong>${escapeHtml(fmt(row.mfeR, 2))}R</strong></div>
+            <div class="coin-stat"><span>MAE</span><strong>${escapeHtml(fmt(row.maeR, 2))}R</strong></div>
+            <div class="coin-stat"><span>CostR</span><strong>${escapeHtml(fmt(row.costR || row.avgCostR, 3))}</strong></div>
+            <div class="coin-stat"><span>DirectSL</span><strong>${row.directSL || row.directToSL ? "YES" : "NO"}</strong></div>
+          </div>
+
+          <div class="coin-foot">
+            <code>${escapeHtml(microId(row) || "NO_75_CHILD")}</code>
+          </div>
+        </article>
+      `;
+    }
+
+    function microTable(rows = []) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return `<div class="empty">Geen geldige SHORT 75-child Analyze micro-families.</div>`;
+      }
+
+      const activeSet = new Set(activeMicroIds());
+
+      const desktopRows = rows.map((row, index) => {
+        const id = microId(row);
+        const parentId = parentMicroId(row);
+        const active = activeSet.has(id);
+        const obs = observationSample(row);
+
+        return `
+          <tr>
+            <td><strong>${escapeHtml(row.rank ?? index + 1)}</strong></td>
+            <td><span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span></td>
+            <td class="micro-id-cell">
+              <button class="small" type="button" data-open-micro="${escapeAttr(id)}">
+                <code>${escapeHtml(id || "NO_75_CHILD")}</code>
+              </button>
+            </td>
+            <td class="micro-id-cell"><code>${escapeHtml(parentId || "NO_PARENT")}</code></td>
+            <td><span class="pill short">SHORT</span></td>
+            <td>${tierPill(tier(row))}</td>
+            <td>${statusPill(row)}</td>
+            <td>${tooEarly(row)
+              ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>`
+              : '<span class="pill active">OK</span>'
+            }</td>
+            <td>${fmtInt(obs)}</td>
+            <td>${fmt(completed(row), 2)}</td>
+            <td>${fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound)}</td>
+            <td>${fmt(row.avgR, 3)}</td>
+            <td>${fmt(row.totalR, 3)}</td>
+            <td>${fmt(avgCostR(row), 3)}</td>
+            <td>${fmtPct(directSLPct(row))}</td>
+            <td>${currentFitPill(row)}</td>
+            <td><strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong></td>
+            <td>
+              <div class="micro-actions">
+                <button type="button" class="small short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+                <button type="button" class="small" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      const mobileCards = rows.map((row, index) => {
+        const id = microId(row);
+        const parentId = parentMicroId(row);
+        const active = activeSet.has(id);
+        const obs = observationSample(row);
+
+        return `
+          <article class="micro-card">
+            <div class="micro-card-top">
+              <div>
+                <div class="micro-card-title">#${escapeHtml(row.rank ?? index + 1)}</div>
+                <div class="metric-extra">75-child true micro</div>
+              </div>
+              <div class="toolbar" style="margin:0">
+                <span class="pill ${active ? "active" : ""}">${active ? "ACTIVE" : "OFF"}</span>
+                <span class="pill short">SHORT</span>
+              </div>
+            </div>
+
+            <button class="micro-id-button" type="button" data-open-micro="${escapeAttr(id)}">
+              <code>${escapeHtml(id || "NO_75_CHILD")}</code>
+            </button>
+
+            <div class="metric-extra">Parent 15</div>
+            <code>${escapeHtml(parentId || "NO_PARENT")}</code>
+
+            <div class="toolbar">
+              ${tierPill(tier(row))}
+              ${statusPill(row)}
+              ${tooEarly(row)
+                ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>`
+                : '<span class="pill active">OK</span>'
+              }
+              ${currentFitPill(row)}
+            </div>
+
+            <div class="micro-stat-grid">
+              <div class="micro-stat-box"><span>Seen</span><strong>${escapeHtml(fmtInt(obs))}</strong></div>
+              <div class="micro-stat-box"><span>Completed</span><strong>${escapeHtml(fmt(completed(row), 2))}</strong></div>
+              <div class="micro-stat-box"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate ?? row.bayesianWinrate ?? row.wilsonLowerBound))}</strong></div>
+              <div class="micro-stat-box"><span>AvgR net</span><strong>${escapeHtml(fmt(row.avgR, 3))}</strong></div>
+              <div class="micro-stat-box"><span>TotalR net</span><strong>${escapeHtml(fmt(row.totalR, 3))}</strong></div>
+              <div class="micro-stat-box"><span>AvgCostR</span><strong>${escapeHtml(fmt(avgCostR(row), 3))}</strong></div>
+              <div class="micro-stat-box"><span>DirectSL</span><strong>${escapeHtml(fmtPct(directSLPct(row)))}</strong></div>
+              <div class="micro-stat-box"><span>FitScore</span><strong>${escapeHtml(fmt(currentFitScore(row), 1))}</strong></div>
+              <div class="micro-stat-box"><span>CurrentFit</span><strong>${escapeHtml(currentFit(row))}</strong></div>
+              <div class="micro-stat-box"><span>Adaptive</span><strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong></div>
+            </div>
+
+            <div class="toolbar">
+              <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+              <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
+            </div>
+          </article>
+        `;
+      }).join("");
+
+      return `
+        <div class="table-wrap micro-desktop-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Discord</th>
+                <th>75-child true micro</th>
+                <th>Parent 15</th>
+                <th>Side</th>
+                <th>Tier</th>
+                <th>Status</th>
+                <th>Sample</th>
+                <th>Seen</th>
+                <th>Completed</th>
+                <th>Fair WR</th>
+                <th>AvgR</th>
+                <th>TotalR</th>
+                <th>AvgCostR</th>
+                <th>DirectSL</th>
+                <th>CurrentFit</th>
+                <th>Adaptive</th>
+                <th>Actie</th>
+              </tr>
+            </thead>
+            <tbody>${desktopRows}</tbody>
+          </table>
+        </div>
+
+        <div class="micro-mobile-cards">
+          ${mobileCards}
+        </div>
+      `;
+    }
+
+    function bindMicroEvents() {
+      document.querySelectorAll("[data-activate-one]").forEach((btn) => {
+        btn.addEventListener("click", () => activateSelectedMicroFamilies([btn.dataset.activateOne]));
+      });
+
+      document.querySelectorAll("[data-copy]").forEach((btn) => {
+        btn.addEventListener("click", () => copyText(btn.dataset.copy, "75-child trueMicroFamilyId gekopieerd."));
+      });
+
+      document.querySelectorAll("[data-open-micro]").forEach((btn) => {
+        btn.addEventListener("click", () => openMicro(btn.dataset.openMicro));
+      });
+    }
+
+    async function copyText(text, message = "Gekopieerd.") {
+      try {
+        await navigator.clipboard.writeText(String(text || ""));
+        setMessage(message, "ok");
+      } catch {
+        const area = document.createElement("textarea");
+        area.value = String(text || "");
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+        setMessage(message, "ok");
+      }
+    }
+
+    function downloadJson(filename, data) {
+      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], {
+        type: "application/json"
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = filename;
+      link.click();
+
+      URL.revokeObjectURL(url);
+    }
+
+    async function fetchMicros() {
+      const data = await api(microApiUrl(), {
+        timeoutMs: 22000
+      });
+
+      const rawRows = extractMicroRowsFromApiPayload(data);
+      const rows = rankMicroRows(rawRows, state.microMode);
+
+      return {
+        ...data,
+        rows,
+        rawExtractedRows: rawRows.length,
+        activeMicroFamilyIds: uniqueStrings([
+          data.activeMicroFamilyIds || [],
+          data.selectedMicroFamilyIds || [],
+          data.activeRotation?.activeMicroFamilyIds || [],
+          data.activeRotation?.microFamilyIds || [],
+          data.activeRotation?.trueMicroFamilyIds || []
+        ]).filter(idAllowedInShortOnly),
+        activeMacroFamilyIds: uniqueStrings([
+          data.activeMacroFamilyIds || [],
+          data.selectedMacroFamilyIds || [],
+          data.activeRotation?.activeMacroFamilyIds || [],
+          data.activeRotation?.macroFamilyIds || []
+        ]).filter(parentIdAllowedInShortOnly)
+      };
+    }
+
+    function currentMicroRows() {
+      const rows = state.micros?.rows || [];
+      const search = state.microSearch.trim().toLowerCase();
+
+      const filtered = search
+        ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search))
+        : rows;
+
+      return rankMicroRows(filtered, state.microMode);
+    }
+
+    async function ensureMicrosLoaded() {
+      if (state.micros?.rows?.length) return state.micros;
+
+      try {
+        state.micros = await fetchMicros();
+      } catch {
+        state.micros = state.micros || { rows: [] };
+      }
+
+      return state.micros;
+    }
+
+    async function renderOverview() {
+      showLoading("overview");
+
+      const [data, microData, market] = await Promise.all([
+        api(endpoints.overview).catch((error) => ({
+          ok: false,
+          error: friendlyApiMessage(error)
+        })),
+        ensureMicrosLoaded(),
+        fetchMarket()
+      ]);
+
+      state.overview = data;
+      state.market = market;
+
+      const microRows = microData?.rows || [];
+      const activeCount = uniqueStrings([
+        data.activeMicroFamilyIds || [],
+        data.activeRotation?.activeMicroFamilyIds || [],
+        data.activeRotation?.microFamilyIds || [],
+        data.activeRotation?.trueMicroFamilyIds || [],
+        microData?.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly).length;
+
+      const observing = microRows.filter((row) => learningStatus(row) === "OBSERVING").length;
+      const early = microRows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES").length;
+      const active = microRows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING").length;
+      const avgCost = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
+      const avgDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
+
+      $("overview").innerHTML = `
+        <div class="grid">
+          ${metricCard("Learning key", PERSISTENT_LEARNING_KEY)}
+          ${metricCard("Redis namespace", SHORT_KEY_PREFIX)}
+          ${metricCard("Selectable children", "75", "5 setups × 3 regimes × 5 confirmations")}
+          ${metricCard("Parent families", "15", "metadata/context, not Discord match")}
+          ${metricCard("Discord selected 75-child IDs", fmtInt(activeCount))}
+          ${metricCard("Open virtual positions", fmtInt(data.openPositions || data.positionsCount))}
+          ${metricCard("Scanner SHORT candidates", fmtInt(data.shortScannerCandidates || data.scannerCandidates || data.latestScan?.shortCandidatesCount))}
+          ${metricCard("Analyze 75-child rows", fmtInt(microRows.length || data.currentWeekMicroFamilies))}
+        </div>
+
+        <div class="grid">
+          ${metricCard("OBSERVING", fmtInt(observing), "completed = 0")}
+          ${metricCard("EARLY_OUTCOMES", fmtInt(early), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1}`)}
+          ${metricCard("ACTIVE_LEARNING", fmtInt(active), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
+          ${metricCard("Ranking", "adaptive", "adaptive → balanced → fair → netR → cost")}
+          ${metricCard("AvgCostR", fmt(avgCost, 3), "gemiddelde over zichtbare 75-child rows")}
+          ${metricCard("Avg DirectSL", fmtPct(avgDirectSL), "directSL hoort correct te tellen")}
+          ${metricCard("Market regime", market.regime || "UNKNOWN", market.ageText)}
+          ${metricCard("Trend side", market.trendSide || "UNKNOWN", "CurrentFit is soft")}
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <h3>Architectuurregels</h3>
+            <div class="toolbar">
+              <span class="pill short">Learning breed</span>
+              <span class="pill info">Selection adaptief</span>
+              <span class="pill danger">Discord streng</span>
+              <span class="pill soft">CurrentFit soft</span>
+            </div>
+            <div class="metric-extra">
+              CurrentFit blokkeert geen virtual/shadow learning. Het beïnvloedt ranking, rotation en Discord-eligibility.
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Meetlat</h3>
+            ${jsonBlock({
+              measurementFixVersion: MEASUREMENT_FIX_VERSION,
+              completed: "closed virtual/shadow outcomes only",
+              scoring: "netR after costs",
+              avgCostR: "costR",
+              directSL: "directToSL/directSL/SL before meaningful favorable excursion",
+              seen: "deduped unique observation key",
+              rawWinrateRanking: "disabled",
+              riskGeometryRule: "SHORT: tp < entry < sl",
+              grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+              currentRFormula: "(entry - currentPrice) / (initialSl - entry)"
+            })}
+          </div>
+
+          <div class="card">
+            <h3>Identity</h3>
+            ${jsonBlock({
+              trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+              parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+              selectionGranularity: "EXACT_75_CHILD",
+              discordMatch: "candidate.trueMicroFamilyId === manuallySelected75ChildId",
+              parentMatchTriggersDiscord: false,
+              scannerFingerprintAsLearningFamily: false,
+              executionFingerprintAsLearningFamily: false,
+              currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE"
+            })}
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Overview raw</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+    }
+
+    async function renderMarket() {
+      showLoading("market");
+
+      const endpointUrl = marketApiUrl();
+      const market = await fetchMarket();
+      const outputData = market.raw || market;
+      const outputJson = JSON.stringify(outputData ?? {}, null, 2);
+
+      $("market").innerHTML = `
+        <div class="section-title">
+          <div>
+            <h2>marketWeather.js</h2>
+            <p>Bestand: <code>src/market/marketWeather.js</code> · API: <code>/api/admin/market-weather</code></p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button type="button" class="primary" id="copyMarketOutputBtn">Copy API output</button>
+          <button type="button" id="copyMarketUrlBtn">Copy API URL</button>
+          <button type="button" id="selectMarketOutputBtn">Select output</button>
+          <button type="button" id="openMarketApiBtn">Open API</button>
+          <button type="button" id="exportMarketBtn">Export JSON</button>
+        </div>
+
+        <div class="api-url-box">
+          <strong>API URL:</strong>
+          <code>${escapeHtml(endpointUrl)}</code>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Bestand", "marketWeather.js", "src/market/marketWeather.js")}
+          ${metricCard("API route", "/api/admin/market-weather", "admin output")}
+          ${metricCard("Available", market.ok ? "YES" : "NO")}
+          ${metricCard("Age", market.ageText || "-", fmtTs(market.createdAt))}
+          ${metricCard("Regime", market.regime || "UNKNOWN")}
+          ${metricCard("Trend side", market.trendSide || "UNKNOWN")}
+          ${metricCard("Bullish breadth", market.bullishPct === null ? "-" : `${fmt(market.bullishPct, 1)}%`)}
+          ${metricCard("Bearish breadth", market.bearishPct === null ? "-" : `${fmt(market.bearishPct, 1)}%`)}
+          ${metricCard("Squeeze breadth", market.squeezePct === null ? "-" : `${fmt(market.squeezePct, 1)}%`)}
+          ${metricCard("Confidence", market.confidence === null ? "-" : fmt(market.confidence, 1))}
+        </div>
+
+        <div class="card">
+          <h3>CurrentFit policy</h3>
+          <div class="toolbar">
+            <span class="pill soft">soft gate</span>
+            <span class="pill active">bearish positive</span>
+            <span class="pill danger">bullish negative</span>
+            <span class="pill info">ranking influence</span>
+            <span class="pill danger">discord strict later</span>
+          </div>
+          <div class="metric-extra">
+            MarketWeather is alleen context. Learning blijft gewoon doorlopen.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="api-output-head">
+            <h3>API output — makkelijk kopiëren</h3>
+            <button type="button" class="copy-big" id="copyMarketOutputBtn2">Kopieer alles</button>
+          </div>
+
+          <textarea id="marketApiOutput" class="api-output-textarea" readonly>${escapeHtml(outputJson)}</textarea>
+        </div>
+      `;
+
+      function copyMarketOutput() {
+        const box = $("marketApiOutput");
+        copyText(box?.value || outputJson, "marketWeather.js API output volledig gekopieerd.");
+      }
+
+      $("copyMarketOutputBtn")?.addEventListener("click", copyMarketOutput);
+      $("copyMarketOutputBtn2")?.addEventListener("click", copyMarketOutput);
+
+      $("copyMarketUrlBtn")?.addEventListener("click", () => {
+        copyText(endpointUrl, "marketWeather.js API URL gekopieerd.");
+      });
+
+      $("selectMarketOutputBtn")?.addEventListener("click", () => {
+        const box = $("marketApiOutput");
+        if (!box) return;
+
+        box.focus();
+        box.select();
+        setMessage("API output geselecteerd. Je kunt nu kopiëren.", "ok");
+      });
+
+      $("openMarketApiBtn")?.addEventListener("click", () => {
+        window.open(endpointUrl, "_blank", "noopener,noreferrer");
+      });
+
+      $("exportMarketBtn")?.addEventListener("click", () => {
+        downloadJson("marketWeather.js-api-output.json", outputData);
+      });
+    }
+
+    async function renderScanner() {
+      showLoading("scanner");
+
+      const data = await api(endpoints.scanner);
+      state.scanner = data;
+
+      const snapshot = data.snapshot || data.latest || {};
+      const candidates = shortRows(snapshot.candidates || data.candidates || []);
+
+      $("scanner").innerHTML = `
+        <div class="toolbar">
+          <button type="button" class="primary" id="runScannerBtn">Run Scanner now</button>
+          <button type="button" id="copyScannerBtn">Copy JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Snapshot ID", snapshot.snapshotId || data.snapshotId || "-")}
+          ${metricCard("Age", ageText(snapshot.createdAt), fmtTs(snapshot.createdAt))}
+          ${metricCard("SHORT candidates", fmtInt(candidates.length))}
+          ${metricCard("Scanner gate", fmtInt(candidates.filter((row) => row.scannerGatePassed).length))}
+          ${metricCard("Analyze-only", fmtInt(candidates.filter((row) => row.analyzeOnly || row.discoveryOnly || row.tradeDiscoveryOnly).length))}
+          ${metricCard("Ignored LONG", fmtInt(snapshot.rawLongCandidatesIgnored || data.rawOppositeCount || 0))}
+          ${metricCard("Learning identity", "Analyze only")}
+          ${metricCard("Scanner IDs", "metadata only")}
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Scanner SHORT candidates</h2>
+            <p>Scanner zoekt bearish coins. Scanner schrijft geen learning family, geen trade, geen Discord.</p>
+          </div>
+        </div>
+
+        <div class="coin-grid">
+          ${candidates.slice(0, 12).map(coinCard).join("") || '<div class="empty">Geen SHORT scanner candidates.</div>'}
+        </div>
+
+        ${table(candidates, [
+          { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
+          { label: "Contract", render: (row) => escapeHtml(row.contractSymbol || `${baseSymbol(row)}USDT`) },
+          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+          { label: "Role", render: () => '<span class="pill raw">scanner metadata</span>' },
+          { label: "Price", render: (row) => fmtPrice(row.price) },
+          { label: "Score", render: (row) => fmt(row.scannerScore ?? row.moveScore, 2) },
+          { label: "1h", render: (row) => fmtRawPct(row.change1h) },
+          { label: "24h", render: (row) => fmtRawPct(row.change24h) },
+          { label: "Vol24h", render: (row) => fmtMoney(row.volume24h || row.quoteVolume24h) },
+          { label: "BTC", render: (row) => escapeHtml(row.btcState || "-") },
+          { label: "Regime", render: (row) => escapeHtml(row.regime || "-") },
+          { label: "Reason", render: (row) => escapeHtml(row.scannerReason || row.reason || "-") }
+        ], "Geen SHORT scanner candidates.")}
+      `;
+
+      $("runScannerBtn")?.addEventListener("click", runScannerNow);
+      $("copyScannerBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Scanner JSON gekopieerd."));
+    }
+
+    async function runScannerNow() {
+      try {
+        const data = await api(endpoints.runScanner, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            force: true,
+            forced: true,
+
+            targetTradeSide: ONLY_SIDE,
+            tradeSide: ONLY_SIDE,
+            side: DASHBOARD_SIDE,
+            scannerSide: DASHBOARD_SIDE,
+            direction: ONLY_SIDE,
+
+            shortOnly: true,
+            longDisabled: true,
+            disableLong: true,
+
+            scannerOnly: true,
+            scannerDecidesTrade: false,
+            scannerDoesNotTrade: true,
+            scannerDoesNotSelectMicroFamilies: true,
+            scannerDoesNotSendDiscord: true,
+
+            scannerFingerprintRole: "METADATA_ONLY",
+            scannerFingerprintsMetadataOnly: true,
+            scannerFingerprintsUsedAsLearningFamily: false,
+
+            noTradeExecution: true,
+            noDiscord: true,
+            noMicroFamilySelection: true,
+
+            persistentLearningKey: PERSISTENT_LEARNING_KEY,
+            redisNamespace: SHORT_NAMESPACE,
+            redisKeyPrefix: SHORT_KEY_PREFIX
+          })
+        });
+
+        setMessage(`Scanner klaar. SHORT candidates=${data.shortCandidatesCount || data.candidatesCount || 0}`, "ok");
+        await renderScanner();
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
+    }
+
+    async function renderTrade() {
+      showLoading("trade");
+
+      const data = await api(endpoints.trade);
+      state.trade = data;
+
+      const positions = shortRows(data.positions || data.openPositions || data.virtualPositions || []);
+      const runMeta = data.runMeta || data.lastRunMeta || data.tradeMeta || {};
+
+      $("trade").innerHTML = `
+        <div class="toolbar">
+          <button type="button" class="primary" id="runTradeBtn">Run TradeSystem now</button>
+          <button type="button" id="copyTradeBtn">Copy JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Open virtual SHORT", fmtInt(positions.length))}
+          ${metricCard("Scanner/trade sync", data.scannerAndTradeInSync ? "YES" : "NO")}
+          ${metricCard("Last processed", data.lastProcessedSnapshotId || data.lastProcessed?.snapshotId || "-")}
+          ${metricCard("Latest scanner", data.latestScannerSnapshotId || "-")}
+          ${metricCard("Active 75-child IDs", fmtInt((data.activeMicroFamilyIds || []).filter(idAllowedInShortOnly).length))}
+          ${metricCard("Parent IDs", fmtInt((data.activeMacroFamilyIds || []).filter(parentIdAllowedInShortOnly).length))}
+          ${metricCard("Last run", fmtTs(runMeta.completedAt || runMeta.startedAt))}
+          ${metricCard("Orders", "0", "exchange disabled")}
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Open virtual SHORT positions</h2>
+            <p>Risk moet zijn: tp &lt; entry &lt; sl. Exit: price &lt;= tp, price &gt;= sl, of TIME_STOP.</p>
+          </div>
+        </div>
+
+        <div class="coin-grid">
+          ${positions.slice(0, 12).map(positionCard).join("") || '<div class="empty">Geen open virtual SHORT posities.</div>'}
+        </div>
+
+        ${table(positions, [
+          { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row)) },
+          { label: "Source", render: () => '<span class="pill purple">VIRTUAL</span>' },
+          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+          { label: "Entry", render: (row) => fmtPrice(row.entry) },
+          { label: "SL", render: (row) => fmtPrice(row.sl || row.stopLoss) },
+          { label: "TP", render: (row) => fmtPrice(row.tp || row.takeProfit) },
+          { label: "RR", render: (row) => fmt(row.rr, 2) },
+          { label: "CurrentR", render: (row) => fmt(row.currentR ?? row.shortCurrentR, 3) },
+          { label: "MFE", render: (row) => fmt(row.mfeR, 3) },
+          { label: "MAE", render: (row) => fmt(row.maeR, 3) },
+          { label: "CostR", render: (row) => fmt(row.costR || row.avgCostR, 3) },
+          { label: "DirectSL", render: (row) => row.directSL || row.directToSL ? '<span class="pill danger">YES</span>' : '<span class="pill active">NO</span>' },
+          { label: "CurrentFit", render: (row) => currentFitPill(row) },
+          { label: "Exit flags", render: (row) => `
+            ${row.tpHitNow || row.tpExitArmed || row.shortTpHit ? '<span class="pill active">TP</span>' : ""}
+            ${row.slHitNow || row.slExitArmed || row.shortSlHit ? '<span class="pill danger">SL</span>' : ""}
+            ${row.timeStopHitNow || row.timeStopExitArmed ? '<span class="pill warn">TIME</span>' : ""}
+          ` || "-" },
+          { label: "75-child true micro", render: (row) => `<code>${escapeHtml(microId(row) || "NO_75_CHILD")}</code>` },
+          { label: "Parent 15", render: (row) => `<code>${escapeHtml(parentMicroId(row) || "NO_PARENT")}</code>` },
+          { label: "Opened", render: (row) => fmtTs(row.openedAt || row.createdAt) }
+        ], "Geen open virtual SHORT posities.")}
+
+        <div class="card">
+          <h3>Run meta</h3>
+          ${jsonBlock(runMeta)}
+        </div>
+      `;
+
+      $("runTradeBtn")?.addEventListener("click", runTradeNow);
+      $("copyTradeBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Trade JSON gekopieerd."));
+    }
+
+    async function runTradeNow() {
+      try {
+        const data = await api(endpoints.runTrade, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            force: true,
+            forced: true,
+            forceProcessSnapshot: true,
+
+            monitorOpenPositionsFirst: true,
+            monitorOpenPositions: true,
+            processScannerSnapshot: true,
+
+            targetTradeSide: ONLY_SIDE,
+            tradeSide: ONLY_SIDE,
+            side: DASHBOARD_SIDE,
+            positionSide: ONLY_SIDE,
+            direction: ONLY_SIDE,
+
+            shortOnly: true,
+            longDisabled: true,
+            disableLong: true,
+
+            virtualOnly: true,
+            virtualTracked: true,
+            source: "VIRTUAL",
+            outcomeSource: "VIRTUAL",
+
+            realOrdersDisabled: true,
+            exchangeOrdersDisabled: true,
+            bitgetOrdersDisabled: true,
+            noExchangeOrders: true,
+            noRealOrders: true,
+
+            allowLearningWithoutActiveRotation: true,
+            ignoreMaxOpenPositionsForLearning: true,
+            ignoreGlobalMaxOpenPositions: true,
+            oneOpenPositionPerSymbol: true,
+            maxOneOpenPositionPerSymbol: true,
+
+            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+            learningGranularity: LEARNING_GRANULARITY,
+            parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+            selectionGranularity: "EXACT_75_CHILD",
+
+            completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
+            scoringRSource: "netR",
+            winsLossesFlatsSource: "netR",
+            avgCostRSource: "costR",
+            seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
+
+            currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+            currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+            currentFitSoftOnly: true,
+            currentFitBlocksLearning: false,
+            currentFitBlocksVirtualLearning: false,
+            currentFitBlocksShadowLearning: false,
+
+            shortRiskShape: {
+              expression: "tp < entry < sl"
+            },
+            riskGeometryRule: "SHORT: tp < entry < sl",
+            tpHitRule: "SHORT: price <= tp",
+            slHitRule: "SHORT: price >= sl",
+            grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+            currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+
+            discordOnlyForSelectedMicroFamilies: true,
+            discordOnlyForExactTrueMicroMatch: true,
+            discordRequiresCurrentFit: true,
+            macroMatchDoesNotTriggerDiscord: true,
+            parentMacroMatchDoesNotTriggerDiscord: true,
+
+            persistentLearningKey: PERSISTENT_LEARNING_KEY,
+            redisNamespace: SHORT_NAMESPACE,
+            redisKeyPrefix: SHORT_KEY_PREFIX
+          })
+        });
+
+        const counts = data.counts || {};
+        setMessage(
+          `TradeSystem klaar.\nEntries=${counts.entries || data.entryRows || 0}, waits=${counts.waits || data.waitRows || 0}, virtualExits=${counts.virtualExits || data.virtualExitRows || 0}.`,
+          "ok"
+        );
+
+        await renderTrade();
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
+    }
+
+    function manualCard(row) {
+      if (!row) {
+        return `
+          <div class="manual-card">
+            <h3>Manual Discord selection</h3>
+            <div class="empty">Geen geldige SHORT 75-child micro-family beschikbaar. Laat scanner + TradeSystem eerst Analyze rows schrijven.</div>
+          </div>
+        `;
+      }
+
+      const id = microId(row);
+      const parentId = parentMicroId(row);
+      const isActive = activeMicroIds().includes(id);
+
+      return `
+        <div class="manual-card">
+          <h3>Beste zichtbare SHORT 75-child true micro</h3>
+
+          <div class="toolbar">
+            <span class="pill short">SHORT</span>
+            <span class="pill dark">75-child exact</span>
+            ${isActive ? '<span class="pill active">DISCORD ACTIVE</span>' : '<span class="pill info">NOT SELECTED</span>'}
+            ${tierPill(tier(row))}
+            ${statusPill(row)}
+            ${currentFitPill(row)}
+            ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
+          </div>
+
+          <div>
+            <div class="metric-extra">Selectable trueMicroFamilyId</div>
+            <code>${escapeHtml(id || "NO_75_CHILD_ID")}</code>
+          </div>
+
+          <div style="margin-top:8px">
+            <div class="metric-extra">Parent 15 context</div>
+            <code>${escapeHtml(parentId || "NO_PARENT_ID")}</code>
+          </div>
+
+          <div class="manual-grid">
+            <div class="manual-stat"><span>Seen</span><strong>${escapeHtml(fmt(observationSample(row), 2))}</strong></div>
+            <div class="manual-stat"><span>Completed</span><strong>${escapeHtml(fmt(completed(row), 2))}</strong></div>
+            <div class="manual-stat"><span>Status</span><strong>${escapeHtml(learningStatus(row))}</strong></div>
+            <div class="manual-stat"><span>Sample</span><strong>${tooEarly(row) ? `TE VROEG ${fmt(completed(row), 0)}/${MIN_COMPLETED_ACTIVE_LEARNING}` : "OK"}</strong></div>
+            <div class="manual-stat"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}</strong></div>
+            <div class="manual-stat"><span>Net TotalR</span><strong>${escapeHtml(fmt(row.totalR, 3))}</strong></div>
+            <div class="manual-stat"><span>AvgCostR</span><strong>${escapeHtml(fmt(avgCostR(row), 3))}</strong></div>
+            <div class="manual-stat"><span>DirectSL</span><strong>${escapeHtml(fmtPct(directSLPct(row)))}</strong></div>
+            <div class="manual-stat"><span>CurrentFit</span><strong>${escapeHtml(currentFit(row))}</strong></div>
+            <div class="manual-stat"><span>FitScore</span><strong>${escapeHtml(fmt(currentFitScore(row), 1))}</strong></div>
+            <div class="manual-stat"><span>Momentum</span><strong>${escapeHtml(fmt(recentMomentumScore(row), 1))}</strong></div>
+            <div class="manual-stat"><span>Adaptive</span><strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong></div>
+          </div>
+
+          <div class="metric-extra">
+            Discord wordt alleen actief voor exact deze 75-child trueMicroFamilyId.
+            Parent 15, macro, scanner buckets, coinnaam en fingerprints mogen nooit Discord-match zijn.
+            CurrentFit blijft soft voor learning, maar Discord mag streng blokkeren.
+          </div>
+
+          <div class="toolbar">
+            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact 75-child</button>
+            <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
+          </div>
+        </div>
+      `;
+    }
+
+    async function renderMicros() {
+      showLoading("micros");
+
+      try {
+        state.micros = await fetchMicros();
+      } catch (error) {
+        state.micros = {
+          rows: [],
+          error: friendlyApiMessage(error)
+        };
+
+        setMessage(state.micros.error, "warn");
+      }
+
+      const rows = currentMicroRows();
+      const top = rows[0] || null;
+
+      const observingRows = rows.filter((row) => learningStatus(row) === "OBSERVING");
+      const earlyRows = rows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES");
+      const activeRows = rows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING");
+      const misfitRows = rows.filter((row) => currentFit(row) === "MISFIT");
+
+      $("micros").innerHTML = `
+        <div class="toolbar">
+          <select id="microMode">
+            ${validMicroModes.map((mode) => `
+              <option value="${escapeAttr(mode)}" ${mode === state.microMode ? "selected" : ""}>${escapeHtml(mode)}</option>
+            `).join("")}
+          </select>
+
+          <input id="microSearch" type="search" placeholder="Zoek 75-child, parent 15, setup, regime, confirmation..." value="${escapeAttr(state.microSearch)}" />
+
+          <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible 75-child IDs</button>
+          <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible exact IDs</button>
+          <button type="button" id="exportMicrosBtn">Export JSON</button>
+        </div>
+
+        <div class="card">
+          <h3>MicroFamilies ranking policy</h3>
+          <div class="toolbar">
+            <span class="pill dark">75 selectable children</span>
+            <span class="pill dark">15 parent context rows</span>
+            <span class="pill dark">adaptive/balanced/fair/netR/cost</span>
+            <span class="pill observation">OBSERVING = completed 0</span>
+            <span class="pill soft">EARLY_OUTCOMES = completed 1-19</span>
+            <span class="pill active">ACTIVE_LEARNING = completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}</span>
+            <span class="pill short">scanner fingerprints hidden</span>
+            <span class="pill soft">CurrentFit soft</span>
+          </div>
+          <div class="metric-extra">
+            Dashboard toont alleen echte Analyze 75-child trueMicroFamilyIds.
+            Scanner fingerprints, execution fingerprints, oude 25 buckets en coinnamen worden niet als leerfamilie getoond.
+          </div>
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Manual Discord selection candidate</h2>
+            <p>Alleen exacte SHORT 75-child IDs worden actief gezet. CurrentFit beïnvloedt Discord, niet learning.</p>
+          </div>
+        </div>
+
+        ${manualCard(top)}
+
+        <div class="grid">
+          ${metricCard("Analyze 75-child rows", fmtInt(rows.length), `API totalAvailable=${fmtInt(state.micros?.totalAvailable || rows.length)}`)}
+          ${metricCard("OBSERVING", fmtInt(observingRows.length), "completed = 0")}
+          ${metricCard("EARLY_OUTCOMES", fmtInt(earlyRows.length), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1}`)}
+          ${metricCard("ACTIVE_LEARNING", fmtInt(activeRows.length), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
+          ${metricCard("CurrentFit MISFIT", fmtInt(misfitRows.length), "blocks Discord only")}
+          ${metricCard("Discord active 75-child IDs", fmtInt(activeMicroIds().length))}
+          ${metricCard("Parent 15 active context", fmtInt(activeParentIds().length), "does not trigger Discord")}
+          ${metricCard("Outcomes", "NET R", "virtual/shadow closed outcomes")}
+        </div>
+
+        ${microTable(rows.slice(0, state.bestLimit))}
+
+        <div class="card">
+          <h3>Micro API status</h3>
+          ${jsonBlock({
+            ok: state.micros?.ok,
+            rowsRendered: rows.length,
+            rawExtractedRows: state.micros?.rawExtractedRows || 0,
+            best75Count: state.micros?.best75Count ?? null,
+            best25CountLegacyIgnored: state.micros?.best25Count ?? null,
+            totalAvailable: state.micros?.totalAvailable ?? null,
+            weekRows: state.micros?.weekRows ?? null,
+            primaryWeekRows: state.micros?.primaryWeekRows ?? null,
+            rawScannerFingerprintRowsHidden: state.micros?.rawScannerFingerprintRowsHidden ?? null,
+            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+            rankingPolicy: "adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR",
+            measurementFixVersion: MEASUREMENT_FIX_VERSION,
+            adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+            currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+            riskGeometryRule: "SHORT: tp < entry < sl",
+            warnings: state.micros?.warnings || [],
+            error: state.micros?.error || null
+          })}
+        </div>
+      `;
+
+      $("microMode")?.addEventListener("change", (event) => {
+        state.microMode = event.target.value;
+        renderMicros();
+      });
+
+      $("microSearch")?.addEventListener("change", (event) => {
+        state.microSearch = event.target.value;
+        renderMicros();
+      });
+
+      $("microSearch")?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          state.microSearch = event.target.value;
+          renderMicros();
+        }
+      });
+
+      $("copyVisibleIdsBtn")?.addEventListener("click", () => {
+        const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+        copyText(JSON.stringify(ids, null, 2), `Visible ${ids.length} SHORT 75-child IDs gekopieerd.`);
+      });
+
+      $("activateVisibleIdsBtn")?.addEventListener("click", () => {
+        const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+        activateSelectedMicroFamilies(ids);
+      });
+
+      $("exportMicrosBtn")?.addEventListener("click", () => {
+        downloadJson("short-75-child-micro-families.json", state.micros);
+      });
+
+      bindMicroEvents();
+    }
+
+    async function renderRotation() {
+      showLoading("rotation");
+
+      const data = await api(rotationApiUrl(), {
+        timeoutMs: 22000
+      });
+
+      state.rotation = data;
+
+      const active = data.active || data.activeRotation || {};
+      const activeIds = uniqueStrings([
+        active.activeMicroFamilyIds || [],
+        active.microFamilyIds || [],
+        active.trueMicroFamilyIds || [],
+        data.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
+
+      const parentIds = uniqueStrings([
+        active.activeMacroFamilyIds || [],
+        active.macroFamilyIds || [],
+        data.activeMacroFamilyIds || []
+      ]).filter(parentIdAllowedInShortOnly);
+
+      const activeRows = rankMicroRows(data.activeRows || active.microFamilies || []);
+
+      const rows = activeRows
+        .concat(
+          activeIds.map((id, index) => ({
+            rank: index + 1,
+            microFamilyId: id,
+            trueMicroFamilyId: id,
+            childTrueMicroFamilyId: id,
+            parentTrueMicroFamilyId: parentFromChildTrueMicroFamilyId(id),
+            tradeSide: ONLY_SIDE,
+            side: DASHBOARD_SIDE,
+            selectedTier: "MANUAL",
+            shortOnly: true,
+            longDisabled: true
+          }))
+        )
+        .filter((row, index, arr) => arr.findIndex((candidate) => microId(candidate) === microId(row)) === index);
+
+      $("rotation").innerHTML = `
+        <div class="section-title">
+          <div>
+            <h2>Manual Discord selection</h2>
+            <p>Geen auto-rotatie. Alleen exact geselecteerde SHORT 75-child trueMicroFamilyIds. CurrentFit maakt Discord strenger.</p>
+          </div>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Active 75-child IDs", fmtInt(activeIds.length))}
+          ${metricCard("Parent 15 context IDs", fmtInt(parentIds.length))}
+          ${metricCard("Rotation ID", active.rotationId || "-")}
+          ${metricCard("Mode", active.mode || "manual")}
+          ${metricCard("Source", active.source || "-")}
+          ${metricCard("Discord alerts", activeIds.length > 0 ? "STRICT" : "OFF")}
+          ${metricCard("Virtual learning", "UNCHANGED")}
+          ${metricCard("Auto rotation", "DISABLED")}
+        </div>
+
+        <div class="card">
+          <h3>Manual exact 75-child IDs</h3>
+          <p class="metric-extra">
+            Plak één of meer trueMicroFamilyIds zoals MICRO_SHORT_BREAKOUT_TREND_A_STRONG_ALIGN.
+            Parent IDs zoals MICRO_SHORT_BREAKOUT_TREND worden geweigerd voor Discord selectie.
+          </p>
+
+          <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN">${escapeHtml(activeIds.join("\n"))}</textarea>
+
+          <div class="toolbar">
+            <button type="button" class="short-action" id="activateManualBtn">Save exact Discord selection</button>
+            <button type="button" id="clearManualBtn">Clear input</button>
+            <button type="button" class="success" id="copyActiveBtn">Copy active 75-child IDs</button>
+            <button type="button" id="exportRotationBtn">Export JSON</button>
+          </div>
+        </div>
+
+        <div class="section-title">
+          <div>
+            <h2>Active selected SHORT 75-child micro-families</h2>
+            <p>Deze IDs bepalen Discord eligibility. Niet-geselecteerde setups blijven stil leren.</p>
+          </div>
+        </div>
+
+        ${microTable(rows)}
+
+        <div class="card">
+          <h3>Raw rotation dashboard</h3>
+          ${jsonBlock(data)}
+        </div>
+      `;
+
+      $("activateManualBtn")?.addEventListener("click", () => {
+        const ids = uniqueStrings(($("manualMicroIds")?.value || "").split(/[\n,;\r]+/g));
+        activateSelectedMicroFamilies(ids);
+      });
+
+      $("clearManualBtn")?.addEventListener("click", () => {
+        $("manualMicroIds").value = "";
+      });
+
+      $("copyActiveBtn")?.addEventListener("click", () => {
+        copyText(JSON.stringify(activeIds, null, 2), "Active 75-child IDs gekopieerd.");
+      });
+
+      $("exportRotationBtn")?.addEventListener("click", () => {
+        downloadJson("manual-discord-selection-short-75-child.json", data);
+      });
+
+      bindMicroEvents();
+    }
+
+    async function activateSelectedMicroFamilies(ids = []) {
+      const microFamilyIds = uniqueStrings(ids).filter(idAllowedInShortOnly);
+      const rejectedIds = uniqueStrings(ids).filter((id) => !idAllowedInShortOnly(id));
+
+      if (!microFamilyIds.length) {
+        setMessage(
+          rejectedIds.length
+            ? `Geen geldige SHORT 75-child trueMicroFamilyId geselecteerd.\nGeweigerd: ${rejectedIds.join(", ")}`
+            : "Geen geldige SHORT 75-child trueMicroFamilyId geselecteerd.",
+          "warn"
+        );
         return;
       }
 
-      tbody.innerHTML = candidates.slice(0, 10).map(c => `
-        <tr>
-          <td><strong>${c.symbol}</strong></td>
-          <td>${c.setup || '--'}</td>
-          <td>$${(c.entryPrice || 0).toFixed(2)}</td>
-          <td>$${(c.tp || 0).toFixed(2)}</td>
-          <td>$${(c.sl || 0).toFixed(2)}</td>
-          <td><strong>${(c.rrRatio || 0).toFixed(2)}:1</strong></td>
-          <td><span class="status-badge status-pending">PENDING</span></td>
-        </tr>
-      `).join('');
+      if (!confirm(
+        `Activeer Discord alerts voor ${microFamilyIds.length} exacte SHORT 75-child ID(s)?\n\n` +
+        `${microFamilyIds.slice(0, 8).join("\n")}` +
+        `${microFamilyIds.length > 8 ? "\n..." : ""}\n\n` +
+        "Virtual/shadow learning blijft breed doorlopen. CurrentFit mag Discord blokkeren."
+      )) {
+        return;
+      }
+
+      const data = await api(endpoints.rotation, {
+        method: "POST",
+        timeoutMs: 28000,
+        body: JSON.stringify({
+          action: "activateSelectedMicroFamilies",
+
+          microFamilyIds,
+          activeMicroFamilyIds: microFamilyIds,
+          trueMicroFamilyIds: microFamilyIds,
+          childTrueMicroFamilyIds: microFamilyIds,
+
+          macroFamilyIds: [],
+          activeMacroFamilyIds: [],
+
+          side: DASHBOARD_SIDE,
+          tradeSide: ONLY_SIDE,
+          positionSide: ONLY_SIDE,
+          direction: ONLY_SIDE,
+          targetTradeSide: ONLY_SIDE,
+          dashboardSide: DASHBOARD_SIDE,
+
+          shortOnly: true,
+          longDisabled: true,
+          disableLong: true,
+
+          manualOnly: true,
+          adminSelected: true,
+          autoRotation: false,
+
+          trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+          parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+          learningGranularity: LEARNING_GRANULARITY,
+          parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+          selectionGranularity: "EXACT_75_CHILD",
+
+          currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
+          currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
+          currentFitSoftOnly: true,
+          currentFitBlocksLearning: false,
+          selectionIsAdaptive: true,
+
+          riskGeometryRule: "SHORT: tp < entry < sl",
+          tpHitRule: "SHORT: price <= tp",
+          slHitRule: "SHORT: price >= sl",
+          grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
+          currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
+
+          discordOnlyForSelectedMicroFamilies: true,
+          discordOnlyForExactTrueMicroMatch: true,
+          discordRequiresCurrentFit: true,
+          macroMatchDoesNotTriggerDiscord: true,
+          parentMacroMatchDoesNotTriggerDiscord: true
+        })
+      });
+
+      const active = data.active || data.activeRotation || {};
+      const activeIds = uniqueStrings([
+        active.activeMicroFamilyIds || [],
+        active.microFamilyIds || [],
+        active.trueMicroFamilyIds || [],
+        data.activeMicroFamilyIds || []
+      ]).filter(idAllowedInShortOnly);
+
+      state.rotation = {
+        ...(state.rotation || {}),
+        ...data,
+        active,
+        activeRotation: active,
+        activeMicroFamilyIds: activeIds
+      };
+
+      setMessage(
+        `Manual Discord selection opgeslagen.\nActive SHORT 75-child IDs: ${activeIds.length}\nVirtual/shadow learning blijft breed doorlopen.`,
+        "ok"
+      );
+
+      if (state.activeTab === "rotation") await renderRotation();
+      if (state.activeTab === "micros") await renderMicros();
     }
 
-    async function runScanner() {
+    async function openMicro(id) {
+      if (!id) return;
+
+      const drawer = $("drawer");
+
+      drawer.classList.remove("hidden");
+      drawer.innerHTML = `
+        <div class="drawer-head">
+          <div>
+            <h2>${escapeHtml(id)}</h2>
+            <div class="metric-extra">Detail wordt geladen...</div>
+          </div>
+          <button type="button" id="closeDrawerBtn">Close</button>
+        </div>
+      `;
+
+      $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
+
       try {
-        const response = await fetch(`${API_BASE}/api/scanner/run`, {
-          headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET}` }
+        const data = await api(`${endpoints.microDetail}/${encodeURIComponent(id)}`, {
+          timeoutMs: 18000
         });
-        const data = await response.json();
-        alert(`Scanner complete: ${data.candidatesCount} candidates`);
-        loadDashboard();
-      } catch (err) {
-        alert(`Error: ${err.message}`);
+
+        const row = normalizeMicroRowForUi(data.row || data.microFamily || data);
+
+        drawer.innerHTML = `
+          <div class="drawer-head">
+            <div>
+              <h2>${escapeHtml(id)}</h2>
+              <div class="metric-extra">75-child=${escapeHtml(microId(row))} · parent=${escapeHtml(parentMicroId(row))}</div>
+            </div>
+            <button type="button" id="closeDrawerBtn">Close</button>
+          </div>
+
+          <div class="toolbar">
+            <span class="pill short">SHORT</span>
+            <span class="pill dark">75-child exact</span>
+            ${statusPill(row)}
+            ${currentFitPill(row)}
+            ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
+            <button type="button" class="short-action" id="activateDrawerBtn" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Select exact</button>
+            <button type="button" id="copyDrawerBtn">Copy</button>
+          </div>
+
+          <div class="grid">
+            ${metricCard("Seen", fmtInt(observationSample(row)))}
+            ${metricCard("Observations", fmtInt(observationSample(row)))}
+            ${metricCard("Obs dedupe skipped", fmtInt(row.observationDuplicateSkippedCount))}
+            ${metricCard("Completed", fmt(completed(row), 2), tooEarly(row) ? `minimum ${MIN_COMPLETED_ACTIVE_LEARNING}` : "active learning")}
+            ${metricCard("Winrate raw", fmtPct(row.winrate))}
+            ${metricCard("Fair WR", fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}
+            ${metricCard("AvgR net", fmt(row.avgR, 3))}
+            ${metricCard("TotalR net", fmt(row.totalR, 3))}
+            ${metricCard("AvgCostR", fmt(avgCostR(row), 3))}
+            ${metricCard("DirectSL", fmtPct(directSLPct(row)))}
+            ${metricCard("CurrentFit", currentFit(row))}
+            ${metricCard("Adaptive", fmt(adaptiveScore(row), 2))}
+          </div>
+
+          <div class="card">
+            <h3>Raw detail JSON</h3>
+            ${jsonBlock(data)}
+          </div>
+        `;
+
+        $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
+        $("activateDrawerBtn")?.addEventListener("click", () => activateSelectedMicroFamilies([microId(row)]));
+        $("copyDrawerBtn")?.addEventListener("click", () => copyText(microId(row), "75-child trueMicroFamilyId gekopieerd."));
+      } catch (error) {
+        drawer.innerHTML = `
+          <div class="drawer-head">
+            <div>
+              <h2>${escapeHtml(id)}</h2>
+              <div class="metric-extra">Detail API niet geladen.</div>
+            </div>
+            <button type="button" id="closeDrawerBtn">Close</button>
+          </div>
+
+          <div class="message warn">${escapeHtml(friendlyApiMessage(error))}</div>
+        `;
+
+        $("closeDrawerBtn")?.addEventListener("click", closeDrawer);
       }
     }
 
-    async function runTradeSystem() {
+    function closeDrawer() {
+      $("drawer").classList.add("hidden");
+      $("drawer").innerHTML = "";
+    }
+
+    async function renderDiscord() {
+      showLoading("discord");
+
+      const data = await api(`${endpoints.discord}?limit=60`, {
+        timeoutMs: 18000
+      });
+
+      state.discord = data;
+
+      const logs = asArray(data.logs || data.items || data.data);
+
+      $("discord").innerHTML = `
+        <div class="toolbar">
+          <button type="button" id="copyDiscordBtn">Copy JSON</button>
+          <button type="button" id="exportDiscordBtn">Export JSON</button>
+        </div>
+
+        <div class="grid">
+          ${metricCard("Logs", fmtInt(logs.length))}
+          ${metricCard("Last log", fmtTs(logs[0]?.ts || logs[0]?.createdAt))}
+          ${metricCard("Entry alerts", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("ENTRY")).length))}
+          ${metricCard("Exit alerts", fmtInt(logs.filter((row) => upper(row.type || row.event).includes("EXIT")).length))}
+          ${metricCard("Match mode", "EXACT 75-child")}
+          ${metricCard("CurrentFit", "STRICT")}
+          ${metricCard("Parent match", "OFF")}
+          ${metricCard("Scanner match", "OFF")}
+        </div>
+
+        ${table(logs, [
+          { label: "TS", render: (row) => fmtTs(row.ts || row.createdAt) },
+          { label: "Type", render: (row) => escapeHtml(row.type || row.level || row.event || "-") },
+          { label: "Symbol", render: (row) => escapeHtml(baseSymbol(row.payload || row)) },
+          { label: "Side", render: () => '<span class="pill short">SHORT</span>' },
+          { label: "Selected exact", render: (row) => {
+            const payload = row.payload || row;
+            const id = microId(payload);
+            const selected = Boolean(
+              payload.selectedMicroFamilyAlert ||
+              payload.discordAlertEligible ||
+              payload.selectedForDiscord ||
+              payload.wasSelected ||
+              row.selectedOnly
+            ) && isSelectableTrueMicroId(id);
+
+            return `<span class="pill ${selected ? "active" : ""}">${selected ? "YES" : "NO"}</span>`;
+          }},
+          { label: "CurrentFit", render: (row) => currentFitPill(row.payload || row) },
+          { label: "75-child true micro", render: (row) => `<code>${escapeHtml(microId(row.payload || row) || "-")}</code>` },
+          { label: "Parent 15", render: (row) => `<code>${escapeHtml(parentMicroId(row.payload || row) || "-")}</code>` },
+          { label: "Message", render: (row) => escapeHtml(row.message || row.content || row.result || row.reason || "") }
+        ], "Geen Discord logs.")}
+      `;
+
+      $("copyDiscordBtn")?.addEventListener("click", () => copyText(JSON.stringify(data, null, 2), "Discord JSON gekopieerd."));
+      $("exportDiscordBtn")?.addEventListener("click", () => downloadJson("discord-logs-short-75-child.json", data));
+    }
+
+    function renderReset() {
+      $("reset").innerHTML = `
+        <div class="grid-3">
+          <div class="card">
+            <h3>Reset learning only</h3>
+            <p class="metric-extra">
+              Wist SHORT learning data onder ${SHORT_KEY_PREFIX}. Manual Discord selection, open virtual positions en scanner snapshots blijven staan.
+            </p>
+            <button type="button" class="warn" id="resetLearningBtn">Reset learning</button>
+          </div>
+
+          <div class="card">
+            <h3>Reset manual selection</h3>
+            <p class="metric-extra">
+              Wist active/next SHORT rotation. Learning en virtual positions blijven staan.
+            </p>
+            <button type="button" class="warn" id="resetRotationBtn">Reset rotation</button>
+          </div>
+
+          <div class="card">
+            <h3>Factory reset</h3>
+            <p class="metric-extra">
+              Wist SHORT scanner snapshots, trade memory, open positions, analyze stats en rotations.
+            </p>
+            <input id="factoryConfirm" style="width: 100%; margin-bottom: 8px;" placeholder="SHORT_FACTORY_RESET_CONFIRMED" />
+            <label style="display: block; margin-bottom: 8px;">
+              <input id="factoryForce" type="checkbox" />
+              force even with open positions
+            </label>
+            <button type="button" class="danger" id="factoryResetBtn">Factory reset</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Reset result</h3>
+          <pre id="resetResult">Nog geen reset uitgevoerd.</pre>
+        </div>
+      `;
+
+      $("resetLearningBtn")?.addEventListener("click", postResetLearning);
+      $("resetRotationBtn")?.addEventListener("click", postResetRotation);
+      $("factoryResetBtn")?.addEventListener("click", postFactoryReset);
+    }
+
+    async function postResetLearning() {
+      const confirmValue = prompt("Typ RESET_LEARNING_SHORT om SHORT learning te wissen.");
+
+      if (confirmValue !== "RESET_LEARNING_SHORT") return;
+
       try {
-        const response = await fetch(`${API_BASE}/api/trade/run`, {
-          headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET}` }
+        const data = await api(endpoints.resetLearning, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            confirm: "RESET_LEARNING_SHORT",
+            confirmed: "RESET_LEARNING_SHORT",
+            confirmation: "RESET_LEARNING_SHORT",
+            side: DASHBOARD_SIDE,
+            tradeSide: ONLY_SIDE,
+            targetTradeSide: ONLY_SIDE,
+            shortOnly: true,
+            longDisabled: true,
+            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+            persistentLearningKey: PERSISTENT_LEARNING_KEY,
+            redisNamespace: SHORT_NAMESPACE,
+            redisKeyPrefix: SHORT_KEY_PREFIX
+          })
         });
-        const data = await response.json();
-        alert(`Trade execution: ${data.entries} entries`);
-        loadDashboard();
-      } catch (err) {
-        alert(`Error: ${err.message}`);
+
+        $("resetResult").textContent = JSON.stringify(data, null, 2);
+        setMessage("SHORT learning reset uitgevoerd.", "ok");
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
       }
     }
 
-    function rotateNow() {
-      alert('Rotation will occur on Monday 00:00 UTC');
-    }
+    async function postResetRotation() {
+      const confirmValue = prompt("Typ RESET_ROTATION_SHORT om manual Discord selection te wissen.");
 
-    function refreshWeather() {
-      alert('Weather refreshed');
-      loadDashboard();
-    }
+      if (confirmValue !== "RESET_ROTATION_SHORT") return;
 
-    function factoryReset() {
-      if (confirm('Are you SURE? This will reset all data!')) {
-        alert('Factory reset initiated');
+      try {
+        const data = await api(endpoints.resetRotation, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            confirm: "RESET_ROTATION_SHORT",
+            confirmed: "RESET_ROTATION_SHORT",
+            confirmation: "RESET_ROTATION_SHORT",
+            side: DASHBOARD_SIDE,
+            tradeSide: ONLY_SIDE,
+            targetTradeSide: ONLY_SIDE,
+            shortOnly: true,
+            longDisabled: true,
+            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+            persistentLearningKey: PERSISTENT_LEARNING_KEY,
+            redisNamespace: SHORT_NAMESPACE,
+            redisKeyPrefix: SHORT_KEY_PREFIX
+          })
+        });
+
+        $("resetResult").textContent = JSON.stringify(data, null, 2);
+        setMessage("SHORT rotation reset uitgevoerd.", "ok");
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
       }
     }
 
-    function viewScanLogs() { showModal('Scanner Logs', 'View logs endpoint...'); }
-    function viewPositions() { showModal('Open Positions', 'List positions endpoint...'); }
-    function viewStats() { showModal('Statistics', 'Stats endpoint...'); }
-    function viewRotation() { showModal('Rotation', 'View rotation endpoint...'); }
-    function viewLogs() { showModal('System Logs', 'Logs endpoint...'); }
+    async function postFactoryReset() {
+      const confirmValue = $("factoryConfirm").value.trim();
+      const force = $("factoryForce").checked;
 
-    function showModal(title, content) {
-      document.getElementById('modalTitle').textContent = title;
-      document.getElementById('modalBody').textContent = content;
-      document.getElementById('modal').classList.add('show');
-    }
-
-    function closeModal() {
-      document.getElementById('modal').classList.remove('show');
-    }
-
-    window.onclick = (event) => {
-      if (event.target.id === 'modal') {
-        closeModal();
+      if (confirmValue !== "SHORT_FACTORY_RESET_CONFIRMED") {
+        setMessage("Factory reset geblokkeerd: bevestiging is niet exact SHORT_FACTORY_RESET_CONFIRMED.", "error");
+        return;
       }
-    };
+
+      if (!confirm("SHORT FACTORY RESET wist alles in de SHORT namespace. Doorgaan?")) return;
+
+      try {
+        const data = await api(endpoints.factoryReset, {
+          method: "POST",
+          timeoutMs: 30000,
+          body: JSON.stringify({
+            confirm: "SHORT_FACTORY_RESET_CONFIRMED",
+            confirmed: "SHORT_FACTORY_RESET_CONFIRMED",
+            confirmation: "SHORT_FACTORY_RESET_CONFIRMED",
+            force,
+            forceClosePositions: force,
+
+            side: DASHBOARD_SIDE,
+            tradeSide: ONLY_SIDE,
+            targetTradeSide: ONLY_SIDE,
+
+            shortOnly: true,
+            longDisabled: true,
+            trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+            parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+            persistentLearningKey: PERSISTENT_LEARNING_KEY,
+            redisNamespace: SHORT_NAMESPACE,
+            redisKeyPrefix: SHORT_KEY_PREFIX
+          })
+        });
+
+        $("resetResult").textContent = JSON.stringify(data, null, 2);
+        setMessage("SHORT factory reset uitgevoerd.", "ok");
+      } catch (error) {
+        setMessage(friendlyApiMessage(error), "warn");
+      }
+    }
+
+    function showTab(id) {
+      const next = tabs.includes(id) ? id : "overview";
+
+      state.activeTab = next;
+
+      document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+
+      $(next).classList.remove("hidden");
+      document.querySelector(`[data-tab="${next}"]`)?.classList.add("active");
+
+      location.hash = next;
+      refresh(next);
+    }
+
+    function renderSoftError(tab, error) {
+      const message = friendlyApiMessage(error);
+
+      setMessage(message, "warn");
+
+      $(tab).innerHTML = `
+        <div class="card">
+          <h3>Niet geladen</h3>
+          <div class="empty">${escapeHtml(message)}</div>
+        </div>
+      `;
+    }
+
+    async function refresh(tab = state.activeTab) {
+      setMessage("");
+      $("liveLabel").textContent = `SHORT-only · broad learning · adaptive selection · ${new Date().toLocaleTimeString()}`;
+
+      try {
+        if (tab === "overview") return await renderOverview();
+        if (tab === "market") return await renderMarket();
+        if (tab === "scanner") return await renderScanner();
+        if (tab === "trade") return await renderTrade();
+        if (tab === "micros") return await renderMicros();
+        if (tab === "rotation") return await renderRotation();
+        if (tab === "discord") return await renderDiscord();
+        if (tab === "reset") return renderReset();
+      } catch (error) {
+        renderSoftError(tab, error);
+      }
+    }
+
+    document.querySelectorAll(".tab").forEach((button) => {
+      button.addEventListener("click", () => showTab(button.dataset.tab));
+    });
+
+    $("refreshBtn").addEventListener("click", () => refresh(state.activeTab));
+
+    window.addEventListener("error", (event) => {
+      setMessage(event.message || "Browser error", "error");
+    });
+
+    window.addEventListener("unhandledrejection", (event) => {
+      setMessage(friendlyApiMessage(event.reason), "warn");
+    });
+
+    const initialTab = location.hash.replace("#", "") || "overview";
+    showTab(tabs.includes(initialTab) ? initialTab : "overview");
   </script>
 </body>
 </html>
