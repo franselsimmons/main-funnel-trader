@@ -12,8 +12,8 @@
     "trace:scanner": "node --trace-deprecation scripts/runScanner.js",
     "trace:trade": "node --trace-deprecation scripts/runTradeSystem.js",
     "check:node": "node -v",
-    "check:syntax": "node scripts/validateSystem.js",
-    "validate": "node scripts/validateSystem.js"
+    "check:syntax": "node --check src/trade/tradeSystem.js",
+    "validate": "node --check src/trade/tradeSystem.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
