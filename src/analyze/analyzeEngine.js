@@ -9,12 +9,19 @@
 // In this project the exact 75-child identity is the finest selectable layer
 // (the user-facing "micro-micro family"). Parent-15 remains context-only.
 //
+// Storage safety:
+// - MICRO_OUTCOMES stores compact outcome rows only;
+// - full scanner payloads, candle arrays, definition arrays and
+//   currentMarketWeather.rows are never persisted in outcome history;
+// - existing oversized histories are compacted automatically;
+// - a hard byte budget keeps every MICRO_OUTCOMES value safely below
+//   the Upstash request limit.
+//
 // Compatibility:
-// - ondersteunt keys.js met export `KEYS`
-// - ondersteunt oudere keys.js met export `keys`
-// - veroorzaakt geen ESM-importfout wanneer
-//   `assertKeyAllowedForWriteScope` niet wordt geëxporteerd
-// - fallback-writeguard staat uitsluitend SHORT:ANALYZE:* toe
+// - supports keys.js with export `KEYS`;
+// - supports older keys.js with export `keys`;
+// - no ESM import failure when assertKeyAllowedForWriteScope is absent;
+// - fallback write guard allows SHORT:ANALYZE:* only.
 
 import { CONFIG } from '../config.js';
 import * as KeysApi from '../keys.js';
@@ -101,6 +108,21 @@ const DEFAULT_OUTCOME_TTL_SEC =
 const DEFAULT_RECENT_OUTCOME_LIMIT =
   250;
 
+const DEFAULT_MAX_MICRO_OUTCOME_HISTORY_BYTES =
+  2_000_000;
+
+const EMERGENCY_MAX_MICRO_OUTCOME_HISTORY_BYTES =
+  500_000;
+
+const MAX_RECENT_OUTCOME_LIMIT =
+  1000;
+
+const MAX_COMPACT_DEFINITION_PARTS =
+  16;
+
+const MAX_COMPACT_STRING_LENGTH =
+  240;
+
 function now() {
   return Date.now();
 }
@@ -121,18 +143,6 @@ function asObject(value) {
     : {};
 }
 
-function plainClone(value) {
-  try {
-    return JSON.parse(
-      JSON.stringify(value)
-    );
-  } catch {
-    return {
-      ...asObject(value)
-    };
-  }
-}
-
 function uniqueStrings(values = []) {
   return [
     ...new Set(
@@ -149,6 +159,39 @@ function uniqueStrings(values = []) {
         .filter(Boolean)
     )
   ];
+}
+
+function compactText(
+  value,
+  maxLength = MAX_COMPACT_STRING_LENGTH
+) {
+  const text =
+    String(value || '').trim();
+
+  if (!text) {
+    return null;
+  }
+
+  return text.length > maxLength
+    ? text.slice(0, maxLength)
+    : text;
+}
+
+function compactStringList(
+  values = [],
+  limit = MAX_COMPACT_DEFINITION_PARTS,
+  maxLength = MAX_COMPACT_STRING_LENGTH
+) {
+  return uniqueStrings(values)
+    .map(
+      (value) =>
+        compactText(
+          value,
+          maxLength
+        )
+    )
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function nxInsertSucceeded(result) {
@@ -170,13 +213,6 @@ function assertAnalyzeWrite(key) {
     );
   }
 
-  /*
-   * Gebruik de centrale write-scopeguard wanneer de
-   * actieve keys.js-versie deze functie exporteert.
-   *
-   * Door de namespace-import ontstaat geen ESM-importfout
-   * wanneer deze export in een oudere versie ontbreekt.
-   */
   if (
     typeof KeysApi.assertKeyAllowedForWriteScope ===
     'function'
@@ -187,10 +223,6 @@ function assertAnalyzeWrite(key) {
     );
   }
 
-  /*
-   * Compatibiliteitsfallback:
-   * Analyze mag uitsluitend onder SHORT:ANALYZE:* schrijven.
-   */
   if (
     !normalizedKey.startsWith(
       ANALYZE_KEY_PREFIX
@@ -296,17 +328,43 @@ function outcomeTtlSec() {
 }
 
 function recentOutcomeLimit() {
+  const configured = Math.floor(
+    safeNumber(
+      CONFIG.short?.analyze
+        ?.recentOutcomeLimit ??
+        CONFIG.analyze
+          ?.recentOutcomeLimit,
+
+      DEFAULT_RECENT_OUTCOME_LIMIT
+    )
+  );
+
   return Math.max(
     20,
-    Math.floor(
-      safeNumber(
-        CONFIG.short?.analyze
-          ?.recentOutcomeLimit ??
-          CONFIG.analyze
-            ?.recentOutcomeLimit,
+    Math.min(
+      MAX_RECENT_OUTCOME_LIMIT,
+      configured
+    )
+  );
+}
 
-        DEFAULT_RECENT_OUTCOME_LIMIT
-      )
+function maxMicroOutcomeHistoryBytes() {
+  const configured = Math.floor(
+    safeNumber(
+      CONFIG.short?.analyze
+        ?.maxMicroOutcomeHistoryBytes ??
+        CONFIG.analyze
+          ?.maxMicroOutcomeHistoryBytes,
+
+      DEFAULT_MAX_MICRO_OUTCOME_HISTORY_BYTES
+    )
+  );
+
+  return Math.max(
+    250_000,
+    Math.min(
+      8_000_000,
+      configured
     )
   );
 }
@@ -318,6 +376,985 @@ function normalizeSource(value) {
   return source === 'SHADOW'
     ? 'SHADOW'
     : 'VIRTUAL';
+}
+
+function jsonByteLength(value) {
+  try {
+    return Buffer.byteLength(
+      JSON.stringify(value),
+      'utf8'
+    );
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function compactMarketWeather(
+  value = null
+) {
+  const weather =
+    asObject(value);
+
+  if (!Object.keys(weather).length) {
+    return null;
+  }
+
+  return {
+    ok:
+      weather.ok !== false,
+
+    available:
+      weather.available !== false,
+
+    version:
+      compactText(
+        weather.version,
+        100
+      ),
+
+    source:
+      compactText(
+        weather.source,
+        40
+      ),
+
+    snapshotId:
+      compactText(
+        weather.snapshotId,
+        120
+      ),
+
+    generatedAt:
+      safeNumber(
+        weather.generatedAt,
+        0
+      ) || null,
+
+    updatedAt:
+      safeNumber(
+        weather.updatedAt,
+        0
+      ) || null,
+
+    currentRegime:
+      compactText(
+        weather.currentRegime ||
+        weather.regime,
+        40
+      ),
+
+    currentTrendSide:
+      compactText(
+        weather.currentTrendSide ||
+        weather.trendSide,
+        40
+      ),
+
+    currentFlow:
+      compactText(
+        weather.currentFlow ||
+        weather.flow,
+        60
+      ),
+
+    currentVolatilityState:
+      compactText(
+        weather.currentVolatilityState ||
+        weather.volatilityState,
+        60
+      ),
+
+    confidence:
+      safeNumber(
+        weather.confidence ??
+        weather.weatherConfidence,
+        0
+      ),
+
+    bullishPct:
+      safeNumber(
+        weather.bullishPct,
+        0
+      ),
+
+    bearishPct:
+      safeNumber(
+        weather.bearishPct,
+        0
+      ),
+
+    neutralPct:
+      safeNumber(
+        weather.neutralPct,
+        0
+      ),
+
+    squeezePct:
+      safeNumber(
+        weather.squeezePct,
+        0
+      ),
+
+    avgAtrPct:
+      safeNumber(
+        weather.avgAtrPct,
+        0
+      ),
+
+    avgRangePct:
+      safeNumber(
+        weather.avgRangePct,
+        0
+      ),
+
+    avgRealizedVolPct:
+      safeNumber(
+        weather.avgRealizedVolPct,
+        0
+      ),
+
+    avgVolumeExpansion:
+      safeNumber(
+        weather.avgVolumeExpansion,
+        0
+      ),
+
+    universeCount:
+      safeNumber(
+        weather.universeCount ??
+        weather.count,
+        0
+      ),
+
+    rowsExcluded:
+      true,
+
+    symbolsExcluded:
+      true
+  };
+}
+
+function compactOutcomeRecord(
+  input = {},
+  overrides = {}
+) {
+  const row = {
+    ...asObject(input),
+    ...asObject(overrides)
+  };
+
+  const childCandidate =
+    upper(
+      row.trueMicroFamilyId ||
+      row.childTrueMicroFamilyId ||
+      row.microFamilyId ||
+      row.analyzeMicroFamilyId ||
+      row.learningMicroFamilyId
+    );
+
+  const parsed =
+    parseShortTaxonomyMicroId(
+      childCandidate
+    );
+
+  const childId =
+    parsed?.isChild
+      ? upper(
+          parsed.childTrueMicroFamilyId ||
+          childCandidate
+        )
+      : childCandidate;
+
+  const parentId =
+    upper(
+      row.parentTrueMicroFamilyId ||
+      row.parentMicroFamilyId ||
+      row.parentMacroFamilyId ||
+      row.coarseMicroFamilyId ||
+      parsed?.parentTrueMicroFamilyId
+    );
+
+  const source =
+    normalizeSource(
+      row.source ||
+      row.outcomeSource
+    );
+
+  const entry =
+    safeNumber(
+      row.entry ??
+      row.entryPrice,
+      0
+    );
+
+  const initialSl =
+    safeNumber(
+      row.initialSl ??
+      row.initialStopLoss ??
+      row.sl ??
+      row.stopLoss,
+      0
+    );
+
+  const sl =
+    safeNumber(
+      row.sl ??
+      row.stopLoss ??
+      initialSl,
+      initialSl
+    );
+
+  const tp =
+    safeNumber(
+      row.tp ??
+      row.takeProfit,
+      0
+    );
+
+  const exitPrice =
+    safeNumber(
+      row.exitPrice ??
+      row.currentPrice ??
+      row.lastPrice ??
+      row.price,
+      0
+    );
+
+  const grossR =
+    safeNumber(
+      row.grossR ??
+      row.shortGrossR ??
+      row.rawR,
+      0
+    );
+
+  const netR =
+    safeNumber(
+      row.netR ??
+      row.exitR ??
+      row.netPnlR ??
+      row.realizedNetR ??
+      row.realizedR,
+      grossR
+    );
+
+  const costR =
+    safeNumber(
+      row.costR ??
+      row.totalCostR,
+      Math.max(
+        0,
+        grossR - netR
+      )
+    );
+
+  const closedAt =
+    safeNumber(
+      row.closedAt ??
+      row.completedAt ??
+      row.exitAt,
+      0
+    );
+
+  const openedAt =
+    safeNumber(
+      row.openedAt ??
+      row.createdAt ??
+      row.entryAt,
+      0
+    );
+
+  const symbol =
+    normalizeBaseSymbol(
+      row.symbol ||
+      row.baseSymbol ||
+      row.contractSymbol
+    ) || 'UNKNOWN';
+
+  const contractSymbol =
+    compactText(
+      row.contractSymbol ||
+      (
+        symbol !== 'UNKNOWN'
+          ? `${symbol}USDT`
+          : null
+      ),
+      80
+    );
+
+  const weather =
+    compactMarketWeather(
+      row.currentMarketWeather ||
+      row.marketWeather
+    );
+
+  return {
+    ok:
+      row.ok !== false,
+
+    learnable:
+      row.learnable !== false,
+
+    outcomeId:
+      compactText(
+        row.outcomeId ||
+        row.positionId ||
+        row.tradeId ||
+        row.id,
+        160
+      ),
+
+    positionId:
+      compactText(
+        row.positionId ||
+        row.tradeId ||
+        row.id,
+        160
+      ),
+
+    outcomeDedupeKey:
+      compactText(
+        row.outcomeDedupeKey,
+        220
+      ),
+
+    snapshotId:
+      compactText(
+        row.snapshotId ||
+        row.scanId ||
+        row.batchId,
+        160
+      ),
+
+    symbol,
+    baseSymbol:
+      symbol,
+    contractSymbol,
+
+    side:
+      TARGET_DASHBOARD_SIDE,
+
+    dashboardSide:
+      TARGET_DASHBOARD_SIDE,
+
+    tradeSide:
+      TARGET_TRADE_SIDE,
+
+    positionSide:
+      TARGET_TRADE_SIDE,
+
+    direction:
+      TARGET_TRADE_SIDE,
+
+    scannerSide:
+      TARGET_SCANNER_SIDE,
+
+    actualScannerSide:
+      TARGET_SCANNER_SIDE,
+
+    source,
+    outcomeSource:
+      source,
+
+    status:
+      compactText(
+        row.status || 'CLOSED',
+        40
+      ),
+
+    shortOnly:
+      true,
+
+    longDisabled:
+      true,
+
+    virtualOnly:
+      true,
+
+    realTrade:
+      false,
+
+    realOrder:
+      false,
+
+    exchangeOrder:
+      false,
+
+    bitgetOrderPlaced:
+      false,
+
+    trueMicroFamilyId:
+      childId || null,
+
+    childTrueMicroFamilyId:
+      childId || null,
+
+    microFamilyId:
+      childId || null,
+
+    analyzeMicroFamilyId:
+      childId || null,
+
+    learningMicroFamilyId:
+      childId || null,
+
+    microMicroFamilyId:
+      childId || null,
+
+    parentTrueMicroFamilyId:
+      parentId || null,
+
+    parentMicroFamilyId:
+      parentId || null,
+
+    parentMacroFamilyId:
+      parentId || null,
+
+    coarseMicroFamilyId:
+      parentId || null,
+
+    setupType:
+      compactText(
+        row.setupType ||
+        row.setup ||
+        parsed?.setup,
+        60
+      ),
+
+    regimeBucket:
+      compactText(
+        row.regimeBucket ||
+        parsed?.regime,
+        60
+      ),
+
+    confirmationProfile:
+      compactText(
+        row.confirmationProfile ||
+        parsed?.confirmationProfile,
+        80
+      ),
+
+    trueMicroFamilySchema:
+      TRUE_MICRO_SCHEMA,
+
+    parentTrueMicroFamilySchema:
+      PARENT_TRUE_MICRO_SCHEMA,
+
+    learningGranularity:
+      LEARNING_GRANULARITY,
+
+    parentLearningGranularity:
+      PARENT_LEARNING_GRANULARITY,
+
+    entry,
+    entryPrice:
+      entry,
+    initialSl,
+    sl,
+    tp,
+    exitPrice,
+
+    grossR,
+    shortGrossR:
+      grossR,
+    rawR:
+      grossR,
+
+    netR,
+    exitR:
+      netR,
+    realizedR:
+      safeNumber(
+        row.realizedR,
+        netR
+      ),
+
+    costR,
+
+    directToSL:
+      Boolean(
+        row.directToSL ??
+        row.directSL
+      ),
+
+    directSL:
+      Boolean(
+        row.directSL ??
+        row.directToSL
+      ),
+
+    exitReason:
+      compactText(
+        upper(
+          row.exitReason ||
+          row.reason ||
+          'UNKNOWN'
+        ),
+        100
+      ),
+
+    scannerReason:
+      compactText(
+        row.scannerReason,
+        100
+      ),
+
+    currentFit:
+      compactText(
+        typeof row.currentFit === 'string'
+          ? row.currentFit
+          : row.currentFitLabel,
+        100
+      ),
+
+    currentFitScore:
+      safeNumber(
+        row.currentFitScore ??
+        row.fitScore,
+        0
+      ),
+
+    scannerScore:
+      safeNumber(
+        row.scannerScore,
+        0
+      ),
+
+    moveScore:
+      safeNumber(
+        row.moveScore,
+        0
+      ),
+
+    change1h:
+      safeNumber(
+        row.change1h,
+        0
+      ),
+
+    change24h:
+      safeNumber(
+        row.change24h,
+        0
+      ),
+
+    volume24h:
+      safeNumber(
+        row.volume24h ??
+        row.quoteVolume24h ??
+        row.quoteVolume,
+        0
+      ),
+
+    volumeExpansion:
+      safeNumber(
+        row.volumeExpansion,
+        0
+      ),
+
+    atrPct:
+      safeNumber(
+        row.atrPct,
+        0
+      ),
+
+    openedAt:
+      openedAt || null,
+
+    createdAt:
+      openedAt ||
+      safeNumber(
+        row.createdAt,
+        0
+      ) ||
+      null,
+
+    closedAt:
+      closedAt || null,
+
+    completedAt:
+      closedAt ||
+      safeNumber(
+        row.completedAt,
+        0
+      ) ||
+      null,
+
+    updatedAt:
+      safeNumber(
+        row.updatedAt,
+        now()
+      ),
+
+    outcomeDuplicate:
+      Boolean(
+        row.outcomeDuplicate
+      ),
+
+    outcomeAlreadyRecorded:
+      Boolean(
+        row.outcomeAlreadyRecorded
+      ),
+
+    outcomeCounted:
+      row.outcomeCounted !== false,
+
+    countOutcome:
+      row.countOutcome !== false,
+
+    definitionParts:
+      compactStringList(
+        row.definitionParts ||
+        row.microDefinitionParts ||
+        [],
+        MAX_COMPACT_DEFINITION_PARTS,
+        180
+      ),
+
+    currentMarketWeather:
+      weather,
+
+    fullScannerPayloadExcluded:
+      true,
+
+    marketWeatherRowsExcluded:
+      true,
+
+    candleDataExcluded:
+      true,
+
+    executionFingerprintPartsExcluded:
+      true
+  };
+}
+
+function minimalOutcomeRecord(
+  row = {}
+) {
+  const compact =
+    compactOutcomeRecord(row);
+
+  return {
+    outcomeId:
+      compact.outcomeId,
+
+    positionId:
+      compact.positionId,
+
+    snapshotId:
+      compact.snapshotId,
+
+    symbol:
+      compact.symbol,
+
+    contractSymbol:
+      compact.contractSymbol,
+
+    source:
+      compact.source,
+
+    status:
+      compact.status,
+
+    trueMicroFamilyId:
+      compact.trueMicroFamilyId,
+
+    parentTrueMicroFamilyId:
+      compact.parentTrueMicroFamilyId,
+
+    setupType:
+      compact.setupType,
+
+    regimeBucket:
+      compact.regimeBucket,
+
+    confirmationProfile:
+      compact.confirmationProfile,
+
+    entry:
+      compact.entry,
+
+    initialSl:
+      compact.initialSl,
+
+    tp:
+      compact.tp,
+
+    exitPrice:
+      compact.exitPrice,
+
+    grossR:
+      compact.grossR,
+
+    netR:
+      compact.netR,
+
+    costR:
+      compact.costR,
+
+    exitReason:
+      compact.exitReason,
+
+    openedAt:
+      compact.openedAt,
+
+    closedAt:
+      compact.closedAt,
+
+    directSL:
+      compact.directSL,
+
+    currentFit:
+      compact.currentFit,
+
+    currentFitScore:
+      compact.currentFitScore,
+
+    compactEmergencyRecord:
+      true
+  };
+}
+
+function compactOutcomeHistory(
+  rows = [],
+  {
+    maxItems = recentOutcomeLimit(),
+    maxBytes = maxMicroOutcomeHistoryBytes()
+  } = {}
+) {
+  const sourceRows =
+    Array.isArray(rows)
+      ? rows
+      : [];
+
+  const deduped =
+    new Map();
+
+  for (const row of sourceRows) {
+    const compact =
+      compactOutcomeRecord(row);
+
+    const dedupeKey =
+      compact.outcomeId ||
+      compact.outcomeDedupeKey ||
+      stableHash(
+        {
+          symbol:
+            compact.symbol,
+
+          trueMicroFamilyId:
+            compact.trueMicroFamilyId,
+
+          closedAt:
+            compact.closedAt,
+
+          exitReason:
+            compact.exitReason,
+
+          exitPrice:
+            compact.exitPrice,
+
+          netR:
+            compact.netR
+        },
+        24
+      );
+
+    if (deduped.has(dedupeKey)) {
+      deduped.delete(dedupeKey);
+    }
+
+    deduped.set(
+      dedupeKey,
+      compact
+    );
+  }
+
+  let compactRows = [
+    ...deduped.values()
+  ].slice(
+    -Math.max(
+      1,
+      Math.floor(maxItems)
+    )
+  );
+
+  while (
+    compactRows.length > 1 &&
+    jsonByteLength(compactRows) > maxBytes
+  ) {
+    compactRows.shift();
+  }
+
+  if (
+    compactRows.length === 1 &&
+    jsonByteLength(compactRows) > maxBytes
+  ) {
+    compactRows = [
+      minimalOutcomeRecord(
+        compactRows[0]
+      )
+    ];
+  }
+
+  return compactRows;
+}
+
+function isMaxRequestSizeError(error) {
+  const text =
+    String(
+      error?.message ||
+      error ||
+      ''
+    ).toUpperCase();
+
+  return (
+    text.includes(
+      'MAX REQUEST SIZE EXCEEDED'
+    ) ||
+    text.includes(
+      '10485760'
+    )
+  );
+}
+
+async function saveMicroOutcomeHistory(
+  redis,
+  key,
+  rows = []
+) {
+  assertAnalyzeWrite(key);
+
+  let history =
+    compactOutcomeHistory(rows);
+
+  let bytes =
+    jsonByteLength(history);
+
+  try {
+    await setJson(
+      redis,
+      key,
+      history
+    );
+
+    return {
+      history,
+      bytes,
+      fallbackUsed:
+        false
+    };
+  } catch (error) {
+    if (!isMaxRequestSizeError(error)) {
+      throw error;
+    }
+
+    history =
+      compactOutcomeHistory(
+        history,
+        {
+          maxItems:
+            Math.min(
+              100,
+              recentOutcomeLimit()
+            ),
+
+          maxBytes:
+            EMERGENCY_MAX_MICRO_OUTCOME_HISTORY_BYTES
+        }
+      );
+
+    bytes =
+      jsonByteLength(history);
+
+    await setJson(
+      redis,
+      key,
+      history
+    );
+
+    return {
+      history,
+      bytes,
+      fallbackUsed:
+        true
+    };
+  }
+}
+
+async function compactExistingOutcomeHistory(
+  redis,
+  microId
+) {
+  const key =
+    KEYS.analyze.microOutcomes(
+      microId
+    );
+
+  const prior =
+    await getJson(
+      redis,
+      key,
+      []
+    );
+
+  const rows =
+    Array.isArray(prior)
+      ? prior
+      : [];
+
+  if (!rows.length) {
+    return {
+      cleaned:
+        false,
+
+      key,
+
+      beforeRows:
+        0,
+
+      afterRows:
+        0,
+
+      beforeBytes:
+        0,
+
+      afterBytes:
+        0
+    };
+  }
+
+  const beforeBytes =
+    jsonByteLength(rows);
+
+  const saved =
+    await saveMicroOutcomeHistory(
+      redis,
+      key,
+      rows
+    );
+
+  return {
+    cleaned:
+      true,
+
+    key,
+
+    beforeRows:
+      rows.length,
+
+    afterRows:
+      saved.history.length,
+
+    beforeBytes,
+
+    afterBytes:
+      saved.bytes,
+
+    fallbackUsed:
+      saved.fallbackUsed
+  };
 }
 
 function isExplicitNonShort(row = {}) {
@@ -606,10 +1643,6 @@ function normalizeAnalyzeIdentity(
     learningMicroFamilyId:
       childId,
 
-    /*
-     * Dashboard/product-alias.
-     * Er wordt geen extra taxonomielaag gemaakt.
-     */
     microMicroFamilyId:
       childId,
 
@@ -772,9 +1805,13 @@ function createStatsFor(row = {}) {
       TARGET_TRADE_SIDE,
 
     definitionParts:
-      row.definitionParts ||
-      row.microDefinitionParts ||
-      []
+      compactStringList(
+        row.definitionParts ||
+        row.microDefinitionParts ||
+        [],
+        MAX_COMPACT_DEFINITION_PARTS,
+        180
+      )
   });
 }
 
@@ -930,15 +1967,15 @@ function updateParentObservation(
     uniqueStrings([
       out.children || [],
       childId
-    ]);
+    ]).slice(-75);
 
   out.observationDedupeKeys =
     obsKey
       ? [
           ...dedupeKeys,
           obsKey
-        ].slice(-5000)
-      : dedupeKeys;
+        ].slice(-1000)
+      : dedupeKeys.slice(-1000);
 
   out.updatedAt =
     now();
@@ -1064,7 +2101,7 @@ function updateParentOutcome(
     uniqueStrings([
       out.children || [],
       row.trueMicroFamilyId
-    ]);
+    ]).slice(-75);
 
   out.recentOutcomes = [
     ...(
@@ -1082,12 +2119,18 @@ function updateParentOutcome(
       childTrueMicroFamilyId:
         row.trueMicroFamilyId,
 
+      symbol:
+        row.symbol || null,
+
       netR,
       grossR,
       costR,
 
       source:
         row.source,
+
+      exitReason:
+        row.exitReason || null,
 
       closedAt:
         row.closedAt ||
@@ -1660,10 +2703,6 @@ export async function analyzeCandidatesBatch(
 
   const output = [];
 
-  /*
-   * Sequentiële writes voorkomen verloren updates in
-   * het gedeelde Redis JSON-aggregate.
-   */
   for (
     const candidate
     of rows
@@ -1797,92 +2836,109 @@ export function buildOutcomeFromPosition({
   const normalizedSource =
     normalizeSource(source);
 
-  return {
-    ...plainClone(position),
-    ...identity,
-    ...shortIdentityFlags(),
+  return compactOutcomeRecord(
+    position,
+    {
+      ok:
+        true,
 
-    ok:
-      true,
+      learnable:
+        true,
 
-    outcomeId,
+      outcomeId,
 
-    positionId:
-      position.positionId ||
-      position.id ||
-      null,
+      positionId:
+        position.positionId ||
+        position.id ||
+        null,
 
-    source:
-      normalizedSource,
+      source:
+        normalizedSource,
 
-    outcomeSource:
-      normalizedSource,
+      outcomeSource:
+        normalizedSource,
 
-    learnable:
-      true,
+      status:
+        'CLOSED',
 
-    status:
-      'CLOSED',
+      exitPrice:
+        normalizedExitPrice,
 
-    exitPrice:
-      normalizedExitPrice,
+      exitReason:
+        upper(
+          exitReason ||
+          position.exitReason ||
+          'UNKNOWN'
+        ),
 
-    exitReason:
-      upper(
-        exitReason ||
-        position.exitReason ||
-        'UNKNOWN'
-      ),
-
-    closedAt,
-
-    completedAt:
       closedAt,
 
-    grossR,
+      completedAt:
+        closedAt,
 
-    shortGrossR:
       grossR,
 
-    rawR:
-      grossR,
+      shortGrossR:
+        grossR,
 
-    netR:
-      normalizedNetR,
+      rawR:
+        grossR,
 
-    exitR:
-      normalizedNetR,
+      netR:
+        normalizedNetR,
 
-    costR:
-      safeNumber(
-        position.costR,
-        Math.max(
-          0,
-          grossR -
-          normalizedNetR
-        )
-      ),
+      exitR:
+        normalizedNetR,
 
-    directToSL:
-      Boolean(
-        position.directToSL ??
-        position.directSL
-      ),
+      costR:
+        safeNumber(
+          position.costR,
+          Math.max(
+            0,
+            grossR -
+            normalizedNetR
+          )
+        ),
 
-    directSL:
-      Boolean(
-        position.directSL ??
-        position.directToSL
-      ),
+      directToSL:
+        Boolean(
+          position.directToSL ??
+          position.directSL
+        ),
 
-    createdAt:
-      position.createdAt ||
-      position.openedAt ||
-      now(),
+      directSL:
+        Boolean(
+          position.directSL ??
+          position.directToSL
+        ),
 
-    updatedAt:
-      now()
-  };
+      createdAt:
+        position.createdAt ||
+        position.openedAt ||
+        now(),
+
+      updatedAt:
+        now(),
+
+      trueMicroFamilyId:
+        identity.trueMicroFamilyId,
+
+      childTrueMicroFamilyId:
+        identity.childTrueMicroFamilyId,
+
+      parentTrueMicroFamilyId:
+        identity.parentTrueMicroFamilyId,
+
+      setupType:
+        identity.setupType,
+
+      regimeBucket:
+        identity.regimeBucket,
+
+      confirmationProfile:
+        identity.confirmationProfile
+    }
+  );
 }
 
 export async function recordOutcome(
@@ -1960,6 +3016,21 @@ export async function recordOutcome(
     );
 
   if (!inserted) {
+    const cleanup =
+      await compactExistingOutcomeHistory(
+        redis,
+        row.trueMicroFamilyId
+      ).catch(
+        (error) => ({
+          cleaned:
+            false,
+
+          error:
+            error?.message ||
+            String(error)
+        })
+      );
+
     return {
       ok:
         true,
@@ -1974,7 +3045,10 @@ export async function recordOutcome(
         'OUTCOME_ALREADY_RECORDED',
 
       outcomeId:
-        identity.id
+        identity.id,
+
+      outcomeHistoryCleanup:
+        cleanup
     };
   }
 
@@ -1992,40 +3066,41 @@ export async function recordOutcome(
       closedAt
     );
 
-  const enriched = {
-    ...row,
-    ...shortIdentityFlags(),
+  const enriched =
+    compactOutcomeRecord(
+      row,
+      {
+        outcomeId:
+          identity.id,
 
-    outcomeId:
-      identity.id,
+        outcomeDedupeKey:
+          identity.key,
 
-    outcomeDedupeKey:
-      identity.key,
+        outcomeDuplicate:
+          false,
 
-    outcomeDuplicate:
-      false,
+        outcomeAlreadyRecorded:
+          false,
 
-    outcomeAlreadyRecorded:
-      false,
+        outcomeCounted:
+          true,
 
-    outcomeCounted:
-      true,
+        countOutcome:
+          true,
 
-    countOutcome:
-      true,
+        source,
 
-    source,
+        outcomeSource:
+          source,
 
-    outcomeSource:
-      source,
+        status:
+          'CLOSED',
 
-    status:
-      'CLOSED',
+        closedAt,
 
-    closedAt,
-
-    completedAt
-  };
+        completedAt
+      }
+    );
 
   const requestedWeekKey =
     resolveWeekKey(
@@ -2092,24 +3167,22 @@ export async function recordOutcome(
       []
     );
 
-  await saveAggregate(
-    redis,
-    outcomeKey,
+  const savedHistory =
+    await saveMicroOutcomeHistory(
+      redis,
+      outcomeKey,
+      [
+        ...(
+          Array.isArray(
+            priorOutcomes
+          )
+            ? priorOutcomes
+            : []
+        ),
 
-    [
-      ...(
-        Array.isArray(
-          priorOutcomes
-        )
-          ? priorOutcomes
-          : []
-      ),
-
-      enriched
-    ].slice(
-      -recentOutcomeLimit()
-    )
-  );
+        enriched
+      ]
+    );
 
   const parentMap =
     asObject(
@@ -2153,7 +3226,33 @@ export async function recordOutcome(
       enriched,
 
     stats:
-      primaryStats
+      primaryStats,
+
+    outcomeHistory: {
+      key:
+        outcomeKey,
+
+      rows:
+        savedHistory.history.length,
+
+      bytes:
+        savedHistory.bytes,
+
+      maxBytes:
+        maxMicroOutcomeHistoryBytes(),
+
+      compact:
+        true,
+
+      fallbackUsed:
+        savedHistory.fallbackUsed,
+
+      fullRowsPersisted:
+        false,
+
+      marketWeatherRowsPersisted:
+        false
+    }
   };
 }
 
