@@ -1,4 +1,33 @@
 // ================= FILE: src/analyze/analyzeEngine.js =================
+// SHORT-only Analyze engine.
+//
+// Pipeline contract:
+// scanner candidate -> exact 75-child true micro-family observation
+// closed virtual/shadow position -> cost-aware netR outcome
+// persistent + ISO-week aggregates -> weekly manual rotation -> Discord
+//
+// In this project the exact 75-child identity is the finest selectable layer
+// (the user-facing "micro-micro family"). Parent-15 remains context-only.
+//
+// Storage safety:
+// - MICRO_OUTCOMES stores compact outcome rows only;
+// - full scanner payloads, candle arrays, definition arrays and
+//   currentMarketWeather.rows are never persisted in outcome history;
+// - existing oversized histories are compacted automatically;
+// - a hard byte budget keeps every MICRO_OUTCOMES value safely below
+//   the Upstash request limit.
+//
+// Runtime safety:
+// - observations are processed as one Redis batch per week key;
+// - dedupe writes use limited concurrency;
+// - each child/parent aggregate is read and written once per batch;
+// - all original learning, scoring, taxonomy and outcome behavior remains.
+//
+// Compatibility:
+// - supports keys.js with export `KEYS`;
+// - supports older keys.js with export `keys`;
+// - no ESM import failure when assertKeyAllowedForWriteScope is absent;
+// - fallback write guard allows SHORT:ANALYZE:* only.
 
 import { CONFIG } from '../config.js';
 import * as KeysApi from '../keys.js';
