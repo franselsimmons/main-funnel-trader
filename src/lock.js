@@ -1,1507 +1,509 @@
 // ================= FILE: src/lock.js =================
-// COMPLEET distributed lock management
-//
-// SHORT-only Redis lock management.
-//
-// Redis-contract:
-// - locks worden opgeslagen in volatile Redis
-// - lock-keys staan uitsluitend onder SHORT:LOCK:*
-// - lock verkrijgen gebeurt atomair via SET NX EX
-// - alleen de eigenaar met het juiste lockId mag normaal vrijgeven
-// - geen afhankelijkheid van keys.js of utils.js
 
 import { randomUUID } from 'node:crypto';
 
-import {
-  getVolatileRedis,
-  getJson,
-  setNxJson,
-  delJson,
-  getKeys
-} from './redis.js';
+const DEFAULT_LOCK_TTL_SEC = 180;
+const MIN_LOCK_TTL_SEC = 5;
 
-const DEFAULT_TIMEOUT_SECONDS = 30;
-const DEFAULT_MAX_WAIT_MS = 30000;
-const DEFAULT_POLL_INTERVAL_MS = 100;
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_BACKOFF_MS = 100;
-
-const MIN_TIMEOUT_SECONDS = 1;
-const MAX_TIMEOUT_SECONDS = 60 * 60;
-
-const MIN_POLL_INTERVAL_MS = 25;
-const MAX_POLL_INTERVAL_MS = 5000;
+const TARGET_TRADE_SIDE = 'SHORT';
+const TARGET_DASHBOARD_SIDE = 'bear';
+const TARGET_SCANNER_SIDE = 'bear';
+const OPPOSITE_TRADE_SIDE = 'LONG';
 
 const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
-const LOCK_KEY_PREFIX = `${SHORT_KEY_PREFIX}LOCK:`;
+const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
-const LOCK_PATTERN = 'LOCK:*';
-const MAX_LOCK_LIST_RESULTS = 1000;
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
+const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
+const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-function currentTimestamp() {
-  return Date.now();
+const RELEASE_LOCK_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`;
+
+const RAW_ROOT_KEY_PREFIXES = [
+  'SCAN:',
+  'LIVE:',
+  'TRADE:',
+  'ANALYZE:',
+  'CIRCUIT:',
+  'DISCORD:',
+  'RESET:'
+];
+
+const REFUSED_NON_SHORT_PREFIXES = [
+  'LONG:',
+  'LONG_LIVE:',
+  'BULL:',
+  'BULLISH:',
+  'BUY:'
+];
+
+function taxonomyFlags() {
+  return {
+    trueMicroSchema: TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+
+    parentTrueMicroSchema: PARENT_TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
+
+    childTrueMicroSchema: CHILD_TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: CHILD_TRUE_MICRO_SCHEMA,
+
+    learningGranularity: LEARNING_GRANULARITY,
+    parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
+
+    fixedTaxonomyPreferred: true,
+    trueMicroOnly: true,
+    exactTrueMicroOnly: true,
+    exactTrueMicroFamilyRequired: true,
+
+    parentLearningEnabled: true,
+    childLearningEnabled: true,
+    selectionGranularity: 'EXACT_75_CHILD',
+    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
+
+    parentSelectable: false,
+    childSelectable: true,
+    selectableFamilyCount: 75,
+    parentFamilyCount: 15,
+
+    parentFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}',
+    selectableFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}'
+  };
 }
 
-function errorMessage(error) {
-  return error instanceof Error
-    ? error.message
-    : String(error || 'UNKNOWN_ERROR');
+function shortRiskFlags() {
+  return {
+    riskGeometryRule: 'SHORT: tp < entry < sl',
+    tpHitRule: 'SHORT: price <= tp',
+    slHitRule: 'SHORT: price >= sl',
+    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    validShortRiskShape: true,
+    shortRiskFormula: 'tp < entry < sl',
+    shortTpExitRule: 'price <= tp',
+    shortSlExitRule: 'price >= sl',
+    shortTimeStopExitRule: 'TIME_STOP',
+    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
+    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+  };
 }
 
-function sleep(ms = 0) {
-  const delay = Math.max(
-    0,
-    Math.floor(Number(ms) || 0)
-  );
+function currentFitFlags() {
+  return {
+    currentFitSoftOnly: true,
+    currentFitBlocksLearning: false,
+    currentFitBlocksVirtualLearning: false,
+    currentFitBlocksShadowLearning: false,
+    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
+  };
+}
 
-  return new Promise((resolve) => {
-    setTimeout(resolve, delay);
+function modeFlags() {
+  return {
+    namespace: SHORT_NAMESPACE,
+    redisNamespace: SHORT_NAMESPACE,
+    keyPrefix: SHORT_KEY_PREFIX,
+    redisKeyPrefix: SHORT_KEY_PREFIX,
+    persistentLearningKey: PERSISTENT_LEARNING_KEY,
+    redisKeysSeparatedFromLongRoot: true,
+
+    targetTradeSide: TARGET_TRADE_SIDE,
+    targetScannerSide: TARGET_SCANNER_SIDE,
+    dashboardSide: TARGET_DASHBOARD_SIDE,
+    oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+
+    side: TARGET_DASHBOARD_SIDE,
+    tradeSide: TARGET_TRADE_SIDE,
+    positionSide: TARGET_TRADE_SIDE,
+    direction: TARGET_TRADE_SIDE,
+    scannerSide: TARGET_SCANNER_SIDE,
+    actualScannerSide: TARGET_SCANNER_SIDE,
+    analysisSide: TARGET_TRADE_SIDE,
+
+    shortOnly: true,
+    longDisabled: true,
+    longOnly: false,
+    shortDisabled: false,
+
+    virtualOnly: true,
+    virtualLearning: true,
+    virtualTracked: true,
+    shadowOnly: true,
+
+    noRealOrders: true,
+    noExchangeOrders: true,
+    realOrdersDisabled: true,
+    bitgetOrdersDisabled: true,
+    exchangeOrdersDisabled: true,
+    exchangeCallsDisabled: true,
+
+    scannerFingerprintsMetadataOnly: true,
+    scannerFingerprintsUsedAsLearningFamily: false,
+    scannerBucketsMetadataOnly: true,
+    legacy25BucketsMetadataOnly: true,
+
+    executionFingerprintsMetadataOnly: true,
+    executionFingerprintsUsedAsLearningFamily: false,
+
+    analyzeMicroFamiliesOnly: true,
+    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+
+    symbolExcludedFromFamilyId: true,
+    coinNameExcludedFromFamilyId: true,
+    hashesExcludedFromFamilyId: true,
+
+    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
+    discordOnlyForExactTrueMicroMatch: true,
+
+    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    scoringRSource: 'netR',
+    winsLossesFlatsSource: 'netR',
+    winrateDefinition: 'netR > 0',
+    avgRSource: 'netR',
+    totalRSource: 'netR',
+    avgCostRShown: true,
+
+    noResetCron: true,
+    noActivateCron: true,
+    noFreezeCron: true,
+    manualSelectionPreserved: true,
+
+    noGlobalMaxOpenPositionsBlock: true,
+    oneOpenPositionPerSymbol: true,
+
+    longRootTouched: false,
+
+    ...taxonomyFlags(),
+    ...shortRiskFlags(),
+    ...currentFitFlags()
+  };
+}
+
+function normalizeTtlSec(ttlSec) {
+  const n = Number(ttlSec);
+
+  if (!Number.isFinite(n)) return DEFAULT_LOCK_TTL_SEC;
+
+  return Math.max(MIN_LOCK_TTL_SEC, Math.floor(n));
+}
+
+function isRawRootKey(key = '') {
+  return RAW_ROOT_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+function isExplicitNonShortKey(key = '') {
+  const raw = String(key || '').trim().toUpperCase();
+
+  if (!raw) return false;
+
+  return REFUSED_NON_SHORT_PREFIXES.some((prefix) => raw.startsWith(prefix));
+}
+
+function normalizeLockKey(key) {
+  const raw = String(key || '').trim();
+
+  if (!raw) return '';
+
+  if (isExplicitNonShortKey(raw)) {
+    const error = new Error('SHORT_LOCK_REFUSED_NON_SHORT_NAMESPACE_KEY');
+
+    error.details = {
+      key: raw,
+      requiredNamespace: SHORT_NAMESPACE,
+      requiredPrefix: SHORT_KEY_PREFIX,
+      oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+      longRootTouched: false,
+      ...modeFlags()
+    };
+
+    throw error;
+  }
+
+  if (raw.startsWith(SHORT_KEY_PREFIX)) {
+    return raw;
+  }
+
+  if (isRawRootKey(raw)) {
+    return `${SHORT_KEY_PREFIX}${raw}`;
+  }
+
+  return `${SHORT_KEY_PREFIX}${raw}`;
+}
+
+function createLockToken() {
+  return `${SHORT_NAMESPACE}_${TARGET_TRADE_SIDE}_${Date.now()}_${randomUUID()}`;
+}
+
+function isLockAcquiredResult(value) {
+  if (value === true) return true;
+  if (value === 'OK') return true;
+  if (value === 'ok') return true;
+  if (value === 1) return true;
+
+  return false;
+}
+
+async function atomicRelease(redis, key, token) {
+  if (typeof redis.eval === 'function') {
+    const result = await redis.eval(RELEASE_LOCK_SCRIPT, [key], [token]);
+
+    return Number(result) === 1;
+  }
+
+  if (typeof redis.evalsha === 'function') {
+    return false;
+  }
+
+  return null;
+}
+
+async function fallbackRelease(redis, key, token) {
+  const current = await redis.get(key);
+
+  if (String(current || '') !== token) {
+    return {
+      ok: false,
+      released: false,
+      reason: current ? 'LOCK_TOKEN_MISMATCH' : 'LOCK_ALREADY_EXPIRED',
+      key,
+      lockNamespace: SHORT_NAMESPACE,
+      lockKeyPrefix: SHORT_KEY_PREFIX,
+      ...modeFlags()
+    };
+  }
+
+  const deleted = await redis.del(key);
+
+  return {
+    ok: Number(deleted) > 0,
+    released: Number(deleted) > 0,
+    reason: Number(deleted) > 0 ? 'LOCK_RELEASED' : 'LOCK_DELETE_NOOP',
+    key,
+    lockNamespace: SHORT_NAMESPACE,
+    lockKeyPrefix: SHORT_KEY_PREFIX,
+    ...modeFlags()
+  };
+}
+
+export function normalizeShortLockKey(key) {
+  return normalizeLockKey(key);
+}
+
+export async function acquireRedisLock(redis, key, ttlSec = DEFAULT_LOCK_TTL_SEC) {
+  const lockKey = normalizeLockKey(key);
+
+  if (!redis || !lockKey) {
+    throw new Error('ACQUIRE_SHORT_LOCK_INVALID_REDIS_OR_KEY');
+  }
+
+  const token = createLockToken();
+  const ttl = normalizeTtlSec(ttlSec);
+
+  const acquired = await redis.set(lockKey, token, {
+    nx: true,
+    ex: ttl
   });
-}
 
-function normalizeResource(resource = '') {
-  return String(resource || '').trim();
-}
-
-function normalizeLockId(lockId = '') {
-  return String(lockId || '').trim();
-}
-
-function normalizeResourcePart(resource = '') {
-  const cleanResource = normalizeResource(resource);
-
-  if (!cleanResource) {
-    return '';
-  }
-
-  return cleanResource
-    .replace(/^SHORT:LOCK:/i, '')
-    .replace(/^LOCK:/i, '')
-    .replaceAll(':', '_')
-    .replaceAll('|', '_')
-    .replaceAll('/', '_')
-    .replaceAll('\\', '_')
-    .replace(/\s+/g, '_')
-    .replace(/[^a-zA-Z0-9_.-]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-function normalizeTimeoutSeconds(
-  value,
-  fallback = DEFAULT_TIMEOUT_SECONDS
-) {
-  const parsed = Math.floor(Number(value));
-
-  if (
-    !Number.isFinite(parsed) ||
-    parsed <= 0
-  ) {
-    return fallback;
-  }
-
-  return Math.max(
-    MIN_TIMEOUT_SECONDS,
-    Math.min(
-      MAX_TIMEOUT_SECONDS,
-      parsed
-    )
-  );
-}
-
-function normalizePositiveInteger(
-  value,
-  fallback,
-  minimum = 1,
-  maximum = Number.MAX_SAFE_INTEGER
-) {
-  const parsed = Math.floor(Number(value));
-
-  if (
-    !Number.isFinite(parsed) ||
-    parsed < minimum
-  ) {
-    return fallback;
-  }
-
-  return Math.max(
-    minimum,
-    Math.min(
-      maximum,
-      parsed
-    )
-  );
-}
-
-function normalizeMaxWaitMs(value) {
-  const parsed = Math.floor(Number(value));
-
-  if (
-    !Number.isFinite(parsed) ||
-    parsed < 0
-  ) {
-    return DEFAULT_MAX_WAIT_MS;
-  }
-
-  return parsed;
-}
-
-function normalizePollIntervalMs(value) {
-  return normalizePositiveInteger(
-    value,
-    DEFAULT_POLL_INTERVAL_MS,
-    MIN_POLL_INTERVAL_MS,
-    MAX_POLL_INTERVAL_MS
-  );
-}
-
-function createLockId() {
-  return [
-    'lock',
-    currentTimestamp(),
-    randomUUID()
-  ].join('_');
-}
-
-function buildLockKey(resource = '') {
-  const resourcePart =
-    normalizeResourcePart(resource);
-
-  if (!resourcePart) {
-    throw new Error(
-      'LOCK_RESOURCE_REQUIRED'
-    );
-  }
-
-  return `${LOCK_KEY_PREFIX}${resourcePart}`;
-}
-
-function normalizeStoredLock(value) {
-  if (
-    !value ||
-    typeof value !== 'object' ||
-    Array.isArray(value)
-  ) {
-    return null;
-  }
-
-  const id =
-    normalizeLockId(
-      value.id ||
-      value.lockId ||
-      value.ownerToken
-    );
-
-  const resource =
-    normalizeResource(value.resource);
-
-  const acquiredAt =
-    Number(value.acquiredAt || 0);
-
-  const expiresAt =
-    Number(value.expiresAt || 0);
-
-  const timeoutSeconds =
-    Number(value.timeoutSeconds || 0);
-
-  if (!id || !resource) {
-    return null;
-  }
-
-  return {
-    ...value,
-
-    id,
-    lockId: id,
-    ownerToken: id,
-    resource,
-
-    acquiredAt:
-      Number.isFinite(acquiredAt)
-        ? acquiredAt
-        : 0,
-
-    expiresAt:
-      Number.isFinite(expiresAt)
-        ? expiresAt
-        : 0,
-
-    timeoutSeconds:
-      Number.isFinite(timeoutSeconds)
-        ? timeoutSeconds
-        : 0
-  };
-}
-
-function lockIsExpired(
-  lock,
-  timestamp = currentTimestamp()
-) {
-  const expiresAt =
-    Number(lock?.expiresAt || 0);
-
-  return (
-    Number.isFinite(expiresAt) &&
-    expiresAt > 0 &&
-    expiresAt <= timestamp
-  );
-}
-
-function nxInsertSucceeded(result) {
-  return (
-    result === 'OK' ||
-    result === 'ok' ||
-    result === true ||
-    result === 1
-  );
-}
-
-function deletedCount(result) {
-  const parsed = Number(result);
-
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-
-  return result ? 1 : 0;
-}
-
-async function readLock(
-  redis,
-  lockKey
-) {
-  const value = await getJson(
-    redis,
-    lockKey,
-    null
-  );
-
-  return normalizeStoredLock(value);
-}
-
-async function removeExpiredLock(
-  redis,
-  lockKey,
-  expectedLockId = ''
-) {
-  const current = await readLock(
-    redis,
-    lockKey
-  );
-
-  if (!current) {
-    return {
-      ok: true,
-      removed: false,
-      reason: 'LOCK_NOT_FOUND'
-    };
-  }
-
-  if (
-    expectedLockId &&
-    current.id !== expectedLockId
-  ) {
-    return {
-      ok: false,
-      removed: false,
-      reason: 'LOCK_OWNER_CHANGED',
-      currentLockId: current.id
-    };
-  }
-
-  if (!lockIsExpired(current)) {
-    return {
-      ok: true,
-      removed: false,
-      reason: 'LOCK_NOT_EXPIRED',
-      lock: current
-    };
-  }
-
-  /*
-   * Opnieuw lezen vlak vóór verwijderen.
-   *
-   * Hierdoor wordt voorkomen dat een inmiddels vernieuwde lock
-   * op basis van een oude read wordt verwijderd.
-   */
-  const verification = await readLock(
-    redis,
-    lockKey
-  );
-
-  if (!verification) {
-    return {
-      ok: true,
-      removed: false,
-      reason: 'LOCK_ALREADY_REMOVED'
-    };
-  }
-
-  if (verification.id !== current.id) {
-    return {
-      ok: false,
-      removed: false,
-      reason: 'LOCK_OWNER_CHANGED',
-      currentLockId: verification.id
-    };
-  }
-
-  if (!lockIsExpired(verification)) {
-    return {
-      ok: true,
-      removed: false,
-      reason: 'LOCK_NOT_EXPIRED',
-      lock: verification
-    };
-  }
-
-  const deleted = await delJson(
-    redis,
-    lockKey
-  );
-
-  return {
-    ok: true,
-    removed: deletedCount(deleted) > 0,
-    reason:
-      deletedCount(deleted) > 0
-        ? 'EXPIRED_LOCK_REMOVED'
-        : 'EXPIRED_LOCK_DELETE_NOOP'
-  };
-}
-
-export function normalizeShortLockKey(
-  resource = ''
-) {
-  return buildLockKey(resource);
-}
-
-export async function acquireLock(
-  resource = '',
-  timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
-) {
-  try {
-    const cleanResource =
-      normalizeResource(resource);
-
-    if (!cleanResource) {
-      return {
-        ok: false,
-        acquired: false,
-        reason: 'LOCK_RESOURCE_REQUIRED'
-      };
-    }
-
-    const redis =
-      getVolatileRedis();
-
-    const lockKey =
-      buildLockKey(cleanResource);
-
-    const cleanTimeoutSeconds =
-      normalizeTimeoutSeconds(
-        timeoutSeconds
-      );
-
-    const lockId =
-      createLockId();
-
-    const acquiredAt =
-      currentTimestamp();
-
-    const expiresAt =
-      acquiredAt +
-      cleanTimeoutSeconds * 1000;
-
-    const lockData = {
-      id: lockId,
-      lockId,
-      ownerToken: lockId,
-
-      resource: cleanResource,
-      lockKey,
-
-      acquiredAt,
-      expiresAt,
-
-      timeoutSeconds:
-        cleanTimeoutSeconds,
-
-      status: 'HELD',
-
-      namespace:
-        SHORT_NAMESPACE,
-
-      keyPrefix:
-        SHORT_KEY_PREFIX,
-
-      lockKeyPrefix:
-        LOCK_KEY_PREFIX
-    };
-
-    /*
-     * setNxJson voegt nx: true toe.
-     *
-     * De uiteindelijke Redis-operatie is:
-     *
-     * SET key payload NX EX timeout
-     */
-    let insertResult =
-      await setNxJson(
-        redis,
-        lockKey,
-        lockData,
-        {
-          ex: cleanTimeoutSeconds
-        }
-      );
-
-    let acquired =
-      nxInsertSucceeded(
-        insertResult
-      );
-
-    if (!acquired) {
-      const existingLock =
-        await readLock(
-          redis,
-          lockKey
-        );
-
-      /*
-       * Redis EX verwijdert een verlopen key normaal automatisch.
-       * Deze controle ondersteunt ook oudere of afwijkende lockdata.
-       */
-      if (
-        existingLock &&
-        lockIsExpired(existingLock)
-      ) {
-        await removeExpiredLock(
-          redis,
-          lockKey,
-          existingLock.id
-        );
-
-        insertResult =
-          await setNxJson(
-            redis,
-            lockKey,
-            lockData,
-            {
-              ex:
-                cleanTimeoutSeconds
-            }
-          );
-
-        acquired =
-          nxInsertSucceeded(
-            insertResult
-          );
-      }
-    }
-
-    if (!acquired) {
-      const currentLock =
-        await readLock(
-          redis,
-          lockKey
-        );
-
-      return {
-        ok: false,
-        acquired: false,
-
-        reason:
-          'LOCK_HELD',
-
-        resource:
-          cleanResource,
-
-        lockKey,
-
-        lock:
-          currentLock
-      };
-    }
-
-    return {
-      ok: true,
-      acquired: true,
-
-      resource:
-        cleanResource,
-
-      lockKey,
-      lockId,
-
-      ownerToken:
-        lockId,
-
-      acquiredAt,
-
-      expirationTime:
-        expiresAt,
-
-      expiresAt,
-
-      timeoutSeconds:
-        cleanTimeoutSeconds,
-
-      lock:
-        lockData
-    };
-  } catch (error) {
-    console.error(
-      'acquireLock error:',
-      error
-    );
-
+  if (!isLockAcquiredResult(acquired)) {
     return {
       ok: false,
       acquired: false,
-
-      reason:
-        'LOCK_ACQUIRE_ERROR',
-
-      error:
-        errorMessage(error)
+      key: lockKey,
+      ttlSec: ttl,
+      token: null,
+      reason: 'PREVIOUS_SHORT_RUN_STILL_ACTIVE',
+      lockNamespace: SHORT_NAMESPACE,
+      lockKeyPrefix: SHORT_KEY_PREFIX,
+      ...modeFlags()
     };
   }
+
+  return {
+    ok: true,
+    acquired: true,
+    key: lockKey,
+    ttlSec: ttl,
+    token,
+    lockNamespace: SHORT_NAMESPACE,
+    lockKeyPrefix: SHORT_KEY_PREFIX,
+    ...modeFlags()
+  };
 }
 
-export async function releaseLock(
-  resource = '',
-  lockId = ''
-) {
+export async function releaseRedisLock(redis, key, token) {
+  let lockKey = '';
+
   try {
-    const cleanResource =
-      normalizeResource(resource);
-
-    const cleanLockId =
-      normalizeLockId(lockId);
-
-    if (!cleanResource) {
-      return {
-        ok: false,
-        released: false,
-        reason: 'LOCK_RESOURCE_REQUIRED'
-      };
-    }
-
-    if (!cleanLockId) {
-      return {
-        ok: false,
-        released: false,
-        reason: 'LOCK_ID_REQUIRED',
-        resource: cleanResource
-      };
-    }
-
-    const redis =
-      getVolatileRedis();
-
-    const lockKey =
-      buildLockKey(cleanResource);
-
-    const currentLock =
-      await readLock(
-        redis,
-        lockKey
-      );
-
-    if (!currentLock) {
-      return {
-        ok: true,
-        released: false,
-
-        reason:
-          'LOCK_NOT_FOUND',
-
-        resource:
-          cleanResource,
-
-        lockKey
-      };
-    }
-
-    if (
-      currentLock.id !==
-      cleanLockId
-    ) {
-      return {
-        ok: false,
-        released: false,
-
-        reason:
-          'LOCK_ID_MISMATCH',
-
-        message:
-          'Cannot release lock owned by another process',
-
-        resource:
-          cleanResource,
-
-        lockKey,
-
-        expectedLockId:
-          cleanLockId,
-
-        currentLockId:
-          currentLock.id
-      };
-    }
-
-    /*
-     * De eigenaar wordt vlak vóór verwijderen nogmaals gecontroleerd.
-     */
-    const verification =
-      await readLock(
-        redis,
-        lockKey
-      );
-
-    if (!verification) {
-      return {
-        ok: true,
-        released: false,
-
-        reason:
-          'LOCK_ALREADY_REMOVED',
-
-        resource:
-          cleanResource,
-
-        lockKey
-      };
-    }
-
-    if (
-      verification.id !==
-      cleanLockId
-    ) {
-      return {
-        ok: false,
-        released: false,
-
-        reason:
-          'LOCK_OWNER_CHANGED',
-
-        resource:
-          cleanResource,
-
-        lockKey,
-
-        currentLockId:
-          verification.id
-      };
-    }
-
-    const deleted =
-      await delJson(
-        redis,
-        lockKey
-      );
-
-    const released =
-      deletedCount(deleted) > 0;
-
-    return {
-      ok: released,
-      released,
-
-      reason:
-        released
-          ? 'LOCK_RELEASED'
-          : 'LOCK_DELETE_NOOP',
-
-      resource:
-        cleanResource,
-
-      lockKey,
-
-      lockId:
-        cleanLockId
-    };
+    lockKey = normalizeLockKey(key);
   } catch (error) {
-    console.error(
-      'releaseLock error:',
-      error
-    );
-
     return {
       ok: false,
       released: false,
-
-      reason:
-        'LOCK_RELEASE_ERROR',
-
-      error:
-        errorMessage(error)
-    };
-  }
-}
-
-export async function isLocked(
-  resource = ''
-) {
-  try {
-    const cleanResource =
-      normalizeResource(resource);
-
-    if (!cleanResource) {
-      return {
-        ok: false,
-        locked: false,
-        reason: 'LOCK_RESOURCE_REQUIRED'
-      };
-    }
-
-    const redis =
-      getVolatileRedis();
-
-    const lockKey =
-      buildLockKey(cleanResource);
-
-    const lock =
-      await readLock(
-        redis,
-        lockKey
-      );
-
-    if (!lock) {
-      return {
-        ok: true,
-        locked: false,
-
-        resource:
-          cleanResource,
-
-        lockKey
-      };
-    }
-
-    if (lockIsExpired(lock)) {
-      const cleanup =
-        await removeExpiredLock(
-          redis,
-          lockKey,
-          lock.id
-        );
-
-      return {
-        ok: true,
-        locked: false,
-
-        expired:
-          true,
-
-        expiredLockRemoved:
-          cleanup.removed === true,
-
-        cleanupReason:
-          cleanup.reason || null,
-
-        resource:
-          cleanResource,
-
-        lockKey
-      };
-    }
-
-    return {
-      ok: true,
-      locked: true,
-
-      resource:
-        cleanResource,
-
-      lockKey,
-
-      lock
-    };
-  } catch (error) {
-    console.error(
-      'isLocked error:',
-      error
-    );
-
-    return {
-      ok: false,
-      locked: false,
-
-      reason:
-        'LOCK_CHECK_ERROR',
-
-      error:
-        errorMessage(error)
-    };
-  }
-}
-
-export async function waitForLock(
-  resource = '',
-  maxWaitMs = DEFAULT_MAX_WAIT_MS,
-  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS
-) {
-  try {
-    const cleanResource =
-      normalizeResource(resource);
-
-    if (!cleanResource) {
-      return {
-        ok: false,
-        available: false,
-        reason: 'LOCK_RESOURCE_REQUIRED'
-      };
-    }
-
-    const cleanMaxWaitMs =
-      normalizeMaxWaitMs(
-        maxWaitMs
-      );
-
-    const cleanPollIntervalMs =
-      normalizePollIntervalMs(
-        pollIntervalMs
-      );
-
-    const startedAt =
-      currentTimestamp();
-
-    const deadlineAt =
-      startedAt +
-      cleanMaxWaitMs;
-
-    while (
-      currentTimestamp() <=
-      deadlineAt
-    ) {
-      const lockCheck =
-        await isLocked(
-          cleanResource
-        );
-
-      if (
-        lockCheck.ok &&
-        !lockCheck.locked
-      ) {
-        return {
-          ok: true,
-          available: true,
-
-          resource:
-            cleanResource,
-
-          waitedMs:
-            currentTimestamp() -
-            startedAt
-        };
-      }
-
-      if (!lockCheck.ok) {
-        return {
-          ok: false,
-          available: false,
-
-          reason:
-            lockCheck.reason ||
-            'LOCK_CHECK_FAILED',
-
-          error:
-            lockCheck.error || null,
-
-          resource:
-            cleanResource,
-
-          waitedMs:
-            currentTimestamp() -
-            startedAt
-        };
-      }
-
-      const remainingMs =
-        deadlineAt -
-        currentTimestamp();
-
-      if (remainingMs <= 0) {
-        break;
-      }
-
-      await sleep(
-        Math.min(
-          cleanPollIntervalMs,
-          remainingMs
-        )
-      );
-    }
-
-    return {
-      ok: false,
-      available: false,
-
-      reason:
-        'TIMEOUT',
-
-      resource:
-        cleanResource,
-
-      waitedMs:
-        currentTimestamp() -
-        startedAt
-    };
-  } catch (error) {
-    console.error(
-      'waitForLock error:',
-      error
-    );
-
-    return {
-      ok: false,
-      available: false,
-
-      reason:
-        'LOCK_WAIT_ERROR',
-
-      error:
-        errorMessage(error)
-    };
-  }
-}
-
-export async function withLock(
-  resource = '',
-  fn = null,
-  timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
-) {
-  let acquiredLock = null;
-  let callbackError = null;
-  let callbackResult;
-  let releaseResult = null;
-
-  if (typeof fn !== 'function') {
-    return {
-      ok: false,
-      executed: false,
-      reason: 'LOCK_CALLBACK_REQUIRED'
+      reason: error?.message || 'RELEASE_SHORT_LOCK_INVALID_KEY',
+      key: String(key || '').trim(),
+      error: error?.message || String(error),
+      details: error?.details || null,
+      lockNamespace: SHORT_NAMESPACE,
+      lockKeyPrefix: SHORT_KEY_PREFIX,
+      ...modeFlags()
     };
   }
 
-  try {
-    acquiredLock =
-      await acquireLock(
-        resource,
-        timeoutSeconds
-      );
+  const lockToken = String(token || '').trim();
 
-    if (
-      !acquiredLock.ok ||
-      !acquiredLock.acquired
-    ) {
-      return {
-        ok: false,
-        executed: false,
-
-        reason:
-          acquiredLock.reason ||
-          'COULD_NOT_ACQUIRE_LOCK',
-
-        resource:
-          normalizeResource(resource),
-
-        lock:
-          acquiredLock.lock || null
-      };
-    }
-
-    try {
-      callbackResult =
-        await fn({
-          resource:
-            acquiredLock.resource,
-
-          lockKey:
-            acquiredLock.lockKey,
-
-          lockId:
-            acquiredLock.lockId,
-
-          ownerToken:
-            acquiredLock.ownerToken,
-
-          acquiredAt:
-            acquiredLock.acquiredAt,
-
-          expiresAt:
-            acquiredLock.expiresAt,
-
-          timeoutSeconds:
-            acquiredLock.timeoutSeconds
-        });
-    } catch (error) {
-      callbackError = error;
-    }
-
-    releaseResult =
-      await releaseLock(
-        acquiredLock.resource,
-        acquiredLock.lockId
-      );
-
-    if (callbackError) {
-      return {
-        ok: false,
-        executed: true,
-
-        reason:
-          'LOCKED_CALLBACK_ERROR',
-
-        error:
-          errorMessage(
-            callbackError
-          ),
-
-        resource:
-          acquiredLock.resource,
-
-        lockKey:
-          acquiredLock.lockKey,
-
-        lockId:
-          acquiredLock.lockId,
-
-        lockReleased:
-          Boolean(
-            releaseResult?.released
-          ),
-
-        lockReleaseReason:
-          releaseResult?.reason || null
-      };
-    }
-
-    return {
-      ok: true,
-      executed: true,
-
-      resource:
-        acquiredLock.resource,
-
-      result:
-        callbackResult,
-
-      lockKey:
-        acquiredLock.lockKey,
-
-      lockId:
-        acquiredLock.lockId,
-
-      ownerToken:
-        acquiredLock.ownerToken,
-
-      lockReleased:
-        Boolean(
-          releaseResult?.released
-        ),
-
-      lockReleaseReason:
-        releaseResult?.reason || null
-    };
-  } catch (error) {
-    console.error(
-      'withLock error:',
-      error
-    );
-
-    if (
-      acquiredLock?.acquired &&
-      acquiredLock?.lockId &&
-      !releaseResult
-    ) {
-      try {
-        releaseResult =
-          await releaseLock(
-            acquiredLock.resource,
-            acquiredLock.lockId
-          );
-      } catch (releaseError) {
-        console.error(
-          'withLock emergency release error:',
-          releaseError
-        );
-      }
-    }
-
-    return {
-      ok: false,
-      executed:
-        Boolean(acquiredLock?.acquired),
-
-      reason:
-        'LOCK_EXECUTION_ERROR',
-
-      error:
-        errorMessage(error),
-
-      resource:
-        normalizeResource(resource),
-
-      lockId:
-        acquiredLock?.lockId || null,
-
-      lockReleased:
-        Boolean(
-          releaseResult?.released
-        ),
-
-      lockReleaseReason:
-        releaseResult?.reason || null
-    };
-  }
-}
-
-export async function withLockRetry(
-  resource = '',
-  fn = null,
-  maxRetries = DEFAULT_MAX_RETRIES,
-  initialBackoffMs = DEFAULT_INITIAL_BACKOFF_MS,
-  timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
-) {
-  try {
-    if (typeof fn !== 'function') {
-      return {
-        ok: false,
-        executed: false,
-        reason: 'LOCK_CALLBACK_REQUIRED'
-      };
-    }
-
-    const cleanMaxRetries =
-      normalizePositiveInteger(
-        maxRetries,
-        DEFAULT_MAX_RETRIES,
-        1,
-        100
-      );
-
-    const cleanInitialBackoffMs =
-      normalizePositiveInteger(
-        initialBackoffMs,
-        DEFAULT_INITIAL_BACKOFF_MS,
-        25,
-        60000
-      );
-
-    let attempt = 0;
-    let lastError = null;
-    let lastReason = null;
-
-    while (
-      attempt <
-      cleanMaxRetries
-    ) {
-      attempt += 1;
-
-      const result =
-        await withLock(
-          resource,
-          fn,
-          timeoutSeconds
-        );
-
-      if (
-        result.ok &&
-        result.executed
-      ) {
-        return {
-          ok: true,
-          executed: true,
-
-          result:
-            result.result,
-
-          lockId:
-            result.lockId,
-
-          ownerToken:
-            result.ownerToken,
-
-          lockReleased:
-            result.lockReleased,
-
-          lockReleaseReason:
-            result.lockReleaseReason,
-
-          attempts:
-            attempt
-        };
-      }
-
-      /*
-       * Een callbackfout wordt niet opnieuw uitgevoerd.
-       * Alleen het niet verkrijgen van een lock hoort opnieuw geprobeerd te worden.
-       */
-      if (
-        result.executed ||
-        result.reason ===
-          'LOCKED_CALLBACK_ERROR' ||
-        result.reason ===
-          'LOCK_EXECUTION_ERROR'
-      ) {
-        return {
-          ...result,
-          attempts: attempt
-        };
-      }
-
-      lastReason =
-        result.reason ||
-        'COULD_NOT_ACQUIRE_LOCK';
-
-      lastError =
-        result.error ||
-        result.reason ||
-        null;
-
-      if (
-        attempt >=
-        cleanMaxRetries
-      ) {
-        break;
-      }
-
-      const backoffMs =
-        cleanInitialBackoffMs *
-        Math.pow(
-          2,
-          attempt - 1
-        );
-
-      await sleep(
-        Math.min(
-          backoffMs,
-          60000
-        )
-      );
-    }
-
-    return {
-      ok: false,
-      executed: false,
-
-      reason:
-        'MAX_RETRIES_EXCEEDED',
-
-      lastReason,
-      lastError,
-
-      attempts:
-        attempt
-    };
-  } catch (error) {
-    console.error(
-      'withLockRetry error:',
-      error
-    );
-
-    return {
-      ok: false,
-      executed: false,
-
-      reason:
-        'LOCK_RETRY_ERROR',
-
-      error:
-        errorMessage(error)
-    };
-  }
-}
-
-export async function forceReleaseLock(
-  resource = ''
-) {
-  try {
-    const cleanResource =
-      normalizeResource(resource);
-
-    if (!cleanResource) {
-      return {
-        ok: false,
-        released: false,
-        forced: true,
-        reason: 'LOCK_RESOURCE_REQUIRED'
-      };
-    }
-
-    const redis =
-      getVolatileRedis();
-
-    const lockKey =
-      buildLockKey(cleanResource);
-
-    const currentLock =
-      await readLock(
-        redis,
-        lockKey
-      );
-
-    const deleted =
-      await delJson(
-        redis,
-        lockKey
-      );
-
-    const released =
-      deletedCount(deleted) > 0;
-
-    return {
-      ok: true,
-      released,
-      forced: true,
-
-      reason:
-        released
-          ? 'LOCK_FORCE_RELEASED'
-          : 'LOCK_NOT_FOUND',
-
-      resource:
-        cleanResource,
-
-      lockKey,
-
-      previousLock:
-        currentLock || null
-    };
-  } catch (error) {
-    console.error(
-      'forceReleaseLock error:',
-      error
-    );
-
+  if (!redis || !lockKey || !lockToken) {
     return {
       ok: false,
       released: false,
-      forced: true,
-
-      reason:
-        'FORCE_LOCK_RELEASE_ERROR',
-
-      error:
-        errorMessage(error)
+      reason: 'RELEASE_SHORT_LOCK_INVALID_INPUT',
+      key: lockKey || key,
+      lockNamespace: SHORT_NAMESPACE,
+      lockKeyPrefix: SHORT_KEY_PREFIX,
+      ...modeFlags()
     };
   }
-}
 
-export async function getAllLocks() {
   try {
-    const redis =
-      getVolatileRedis();
+    const atomic = await atomicRelease(redis, lockKey, lockToken);
 
-    /*
-     * redis.js normaliseert LOCK:* automatisch naar SHORT:LOCK:*.
-     */
-    const lockKeys =
-      await getKeys(
-        redis,
-        LOCK_PATTERN,
-        MAX_LOCK_LIST_RESULTS
-      );
-
-    const locks = [];
-    let expiredRemoved = 0;
-
-    for (
-      const lockKey
-      of lockKeys
-    ) {
-      const lock =
-        await readLock(
-          redis,
-          lockKey
-        );
-
-      if (!lock) {
-        continue;
-      }
-
-      if (lockIsExpired(lock)) {
-        const cleanup =
-          await removeExpiredLock(
-            redis,
-            lockKey,
-            lock.id
-          );
-
-        if (cleanup.removed) {
-          expiredRemoved += 1;
-        }
-
-        continue;
-      }
-
-      locks.push({
+    if (atomic === true) {
+      return {
+        ok: true,
+        released: true,
+        reason: 'SHORT_LOCK_RELEASED_ATOMIC',
         key: lockKey,
-        ...lock
-      });
+        lockNamespace: SHORT_NAMESPACE,
+        lockKeyPrefix: SHORT_KEY_PREFIX,
+        ...modeFlags()
+      };
     }
 
-    locks.sort(
-      (left, right) => (
-        Number(
-          left.expiresAt || 0
-        ) -
-        Number(
-          right.expiresAt || 0
-        )
-      )
-    );
+    if (atomic === false) {
+      return {
+        ok: false,
+        released: false,
+        reason: 'SHORT_LOCK_TOKEN_MISMATCH_OR_ALREADY_EXPIRED',
+        key: lockKey,
+        lockNamespace: SHORT_NAMESPACE,
+        lockKeyPrefix: SHORT_KEY_PREFIX,
+        ...modeFlags()
+      };
+    }
 
-    return {
-      ok: true,
-
-      locks,
-
-      count:
-        locks.length,
-
-      expiredRemoved,
-
-      namespace:
-        SHORT_NAMESPACE,
-
-      lockKeyPrefix:
-        LOCK_KEY_PREFIX
-    };
+    return await fallbackRelease(redis, lockKey, lockToken);
   } catch (error) {
-    console.error(
-      'getAllLocks error:',
-      error
-    );
+    try {
+      return await fallbackRelease(redis, lockKey, lockToken);
+    } catch (fallbackError) {
+      return {
+        ok: false,
+        released: false,
+        reason: 'SHORT_LOCK_RELEASE_FAILED',
+        key: lockKey,
+        error: fallbackError?.message || error?.message || String(fallbackError || error),
+        lockNamespace: SHORT_NAMESPACE,
+        lockKeyPrefix: SHORT_KEY_PREFIX,
+        ...modeFlags()
+      };
+    }
+  }
+}
 
+export async function withRedisLock(redis, key, ttlSec, task) {
+  if (typeof task !== 'function') {
+    throw new Error('WITH_SHORT_REDIS_LOCK_TASK_MUST_BE_FUNCTION');
+  }
+
+  const lockKey = normalizeLockKey(key);
+  const lock = await acquireRedisLock(redis, lockKey, ttlSec);
+
+  if (!lock.acquired) {
     return {
       ok: false,
-
-      reason:
-        'GET_ALL_LOCKS_ERROR',
-
-      error:
-        errorMessage(error),
-
-      locks: [],
-      count: 0,
-      expiredRemoved: 0
+      skipped: true,
+      reason: lock.reason,
+      lockKey,
+      ttlSec: lock.ttlSec,
+      lockNamespace: SHORT_NAMESPACE,
+      lockKeyPrefix: SHORT_KEY_PREFIX,
+      ...modeFlags()
     };
   }
+
+  let taskResult;
+  let taskError;
+  let releaseResult;
+
+  try {
+    taskResult = await task({
+      lockKey,
+      lockToken: lock.token,
+      lockTtlSec: lock.ttlSec,
+      lockNamespace: SHORT_NAMESPACE,
+      lockKeyPrefix: SHORT_KEY_PREFIX,
+      ...modeFlags()
+    });
+  } catch (error) {
+    taskError = error;
+  }
+
+  releaseResult = await releaseRedisLock(redis, lockKey, lock.token);
+
+  if (taskError) {
+    taskError.lockReleased = Boolean(releaseResult?.released);
+    taskError.lockReleaseReason = releaseResult?.reason || null;
+    taskError.lockKey = lockKey;
+    taskError.lockNamespace = SHORT_NAMESPACE;
+    taskError.lockKeyPrefix = SHORT_KEY_PREFIX;
+    taskError.tradeSide = TARGET_TRADE_SIDE;
+    taskError.dashboardSide = TARGET_DASHBOARD_SIDE;
+    taskError.longDisabled = true;
+    taskError.realOrdersDisabled = true;
+    taskError.bitgetOrdersDisabled = true;
+    taskError.exchangeOrdersDisabled = true;
+    taskError.trueMicroFamilySchema = TRUE_MICRO_SCHEMA;
+    taskError.parentTrueMicroFamilySchema = PARENT_TRUE_MICRO_SCHEMA;
+    taskError.childTrueMicroFamilySchema = CHILD_TRUE_MICRO_SCHEMA;
+    taskError.riskGeometryRule = 'SHORT: tp < entry < sl';
+    taskError.tpHitRule = 'SHORT: price <= tp';
+    taskError.slHitRule = 'SHORT: price >= sl';
+    taskError.grossRFormula = '(entry - exitPrice) / (initialSl - entry)';
+    taskError.currentRFormula = '(entry - currentPrice) / (initialSl - entry)';
+    taskError.currentFitPolarity = 'BEARISH_POSITIVE_BULLISH_NEGATIVE';
+    taskError.currentFitDefinition = 'SHORT_MIRRORED_CURRENT_FIT';
+    taskError.longRootTouched = false;
+
+    throw taskError;
+  }
+
+  return {
+    ok: true,
+    skipped: false,
+    lockKey,
+    ttlSec: lock.ttlSec,
+    lockReleased: Boolean(releaseResult?.released),
+    lockReleaseReason: releaseResult?.reason || null,
+    result: taskResult,
+    lockNamespace: SHORT_NAMESPACE,
+    lockKeyPrefix: SHORT_KEY_PREFIX,
+    ...modeFlags()
+  };
 }
 
 export default {
   normalizeShortLockKey,
-  acquireLock,
-  releaseLock,
-  isLocked,
-  waitForLock,
-  withLock,
-  withLockRetry,
-  forceReleaseLock,
-  getAllLocks
+  acquireRedisLock,
+  releaseRedisLock,
+  withRedisLock
 };
