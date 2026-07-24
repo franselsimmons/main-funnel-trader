@@ -12,12 +12,13 @@
     "trace:scanner": "node --trace-deprecation scripts/runScanner.js",
     "trace:trade": "node --trace-deprecation scripts/runTradeSystem.js",
     "check:node": "node -v",
+    "check:syntax": "node scripts/validateSystem.js",
     "validate": "node scripts/validateSystem.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
   },
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   }
 }
