@@ -1593,26 +1593,7 @@ export async function getOpenPosition(symbol) {
   return row;
 }
 
-export async function saveOpenPosition(position) {
-  assertShortInput(position, 'SAVE_OPEN_POSITION');
-
-  const keySymbol = storageSymbol(position);
-
-  if (!keySymbol) {
-    throw new Error('OPEN_POSITION_SYMBOL_MISSING');
-  }
-
-  const existing = await getOpenPosition(keySymbol);
-
-  if (
-    existing &&
-    existing.tradeId &&
-    position.tradeId &&
-    existing.tradeId !== position.tradeId
-  ) {
-    throw new Error('OPEN_POSITION_SYMBOL_ALREADY_OPEN_SHORT_ONLY');
-  }
-
+function normalizeOpenPositionForStorage(position, keySymbol) {
   const normalized = forceShortPositionFields(position);
   const identity = normalizeMicroIdentity(normalized);
 
@@ -1634,6 +1615,23 @@ export async function saveOpenPosition(position) {
 
   assertPositionPersistable(row);
 
+  return row;
+}
+
+async function persistOpenPositionWithoutDuplicateRead(position, context = 'SAVE_EXISTING_OPEN_POSITION') {
+  assertShortInput(position, context);
+
+  const keySymbol = storageSymbol(position);
+
+  if (!keySymbol) {
+    throw new Error('OPEN_POSITION_SYMBOL_MISSING');
+  }
+
+  const row = normalizeOpenPositionForStorage(
+    position,
+    keySymbol
+  );
+
   await setJson(
     getDurableRedis(),
     SHORT_KEYS.trade.open(keySymbol),
@@ -1641,6 +1639,39 @@ export async function saveOpenPosition(position) {
   );
 
   return row;
+}
+
+export async function saveOpenPosition(position) {
+  assertShortInput(position, 'SAVE_OPEN_POSITION');
+
+  const keySymbol = storageSymbol(position);
+
+  if (!keySymbol) {
+    throw new Error('OPEN_POSITION_SYMBOL_MISSING');
+  }
+
+  const existing = await getOpenPosition(keySymbol);
+
+  if (
+    existing &&
+    existing.tradeId &&
+    position.tradeId &&
+    existing.tradeId !== position.tradeId
+  ) {
+    throw new Error('OPEN_POSITION_SYMBOL_ALREADY_OPEN_SHORT_ONLY');
+  }
+
+  return persistOpenPositionWithoutDuplicateRead(
+    position,
+    'SAVE_OPEN_POSITION'
+  );
+}
+
+export async function saveExistingOpenPosition(position) {
+  return persistOpenPositionWithoutDuplicateRead(
+    position,
+    'SAVE_EXISTING_OPEN_POSITION'
+  );
 }
 
 export async function deleteOpenPosition(symbol) {
@@ -1861,7 +1892,7 @@ async function markPriceFetchFailed(position) {
   position.lastPriceFetchFailedAt = now();
   position.updatedAt = now();
 
-  await saveOpenPosition(forceShortPositionFields(position));
+  await saveExistingOpenPosition(forceShortPositionFields(position));
 
   return position;
 }
@@ -2162,7 +2193,7 @@ async function monitorOnePosition({
   });
 
   if (!exit.shouldExit) {
-    await saveOpenPosition(position);
+    await saveExistingOpenPosition(position);
 
     return {
       type: 'UPDATED',
