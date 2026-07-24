@@ -1,0 +1,100 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+
+async function walk(dir) {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const out = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...await walk(full));
+    else if (entry.isFile() && entry.name.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
+function exportedNames(source) {
+  const names = new Set();
+  const direct = /export\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)/g;
+  for (const match of source.matchAll(direct)) names.add(match[1]);
+  const blocks = /export\s*\{([^}]+)\}/gs;
+  for (const match of source.matchAll(blocks)) {
+    for (const raw of match[1].split(',')) {
+      const item = raw.trim();
+      if (!item) continue;
+      names.add(item.split(/\s+as\s+/).at(-1).trim());
+    }
+  }
+  if (/export\s+default\b/.test(source)) names.add('default');
+  return names;
+}
+
+const files = [
+  ...await walk(path.join(root, 'src')),
+  ...await walk(path.join(root, 'api')),
+  ...await walk(path.join(root, 'scripts'))
+];
+
+const sourceByFile = new Map();
+const exportsByFile = new Map();
+for (const file of files) {
+  const source = await fs.readFile(file, 'utf8');
+  sourceByFile.set(file, source);
+  exportsByFile.set(path.normalize(file), exportedNames(source));
+}
+
+const errors = [];
+for (const file of files) {
+  const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+  if (checked.status !== 0) {
+    errors.push({ type: 'SYNTAX', file: path.relative(root, file), error: checked.stderr.trim() });
+  }
+
+  const source = sourceByFile.get(file);
+  const importPattern = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/gs;
+  for (const match of source.matchAll(importPattern)) {
+    const specifier = match[2];
+    if (!specifier.startsWith('.')) continue;
+    let target = path.normalize(path.resolve(path.dirname(file), specifier));
+    if (!target.endsWith('.js')) target += '.js';
+    if (!exportsByFile.has(target)) {
+      errors.push({ type: 'MISSING_LOCAL_MODULE', file: path.relative(root, file), target: path.relative(root, target) });
+      continue;
+    }
+    const available = exportsByFile.get(target);
+    for (const raw of match[1].split(',')) {
+      const name = raw.trim().split(/\s+as\s+/)[0].trim();
+      if (name && !available.has(name)) {
+        errors.push({ type: 'MISSING_EXPORT', file: path.relative(root, file), target: path.relative(root, target), name });
+      }
+    }
+  }
+}
+
+const requiredAnalyzeExports = [
+  'analyzeCandidatesBatch',
+  'buildOutcomeFromPosition',
+  'recordOutcome',
+  'getWeekMicros',
+  'saveWeekMicros'
+];
+const analyzeFile = path.join(root, 'src/analyze/analyzeEngine.js');
+const analyzeExports = exportsByFile.get(path.normalize(analyzeFile)) || new Set();
+for (const name of requiredAnalyzeExports) {
+  if (!analyzeExports.has(name)) errors.push({ type: 'ANALYZE_CONTRACT', name });
+}
+
+if (errors.length) {
+  console.error(JSON.stringify({ ok: false, checkedFiles: files.length, errors }, null, 2));
+  process.exit(1);
+}
+
+console.log(JSON.stringify({
+  ok: true,
+  checkedFiles: files.length,
+  localImportContracts: 'PASS',
+  syntax: 'PASS',
+  analyzeContract: 'PASS'
+}, null, 2));
