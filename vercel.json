@@ -27,6 +27,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/trade/run",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/analyze/weekly-freeze",
       "schedule": "0 22 * * 0"
     },
