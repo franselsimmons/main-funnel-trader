@@ -18,8 +18,12 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
-const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
-const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
+
+const LEARNING_GRANULARITY =
+  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
+
+const PARENT_LEARNING_GRANULARITY =
+  'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const ROOT_KEY_PREFIXES = [
   'SCAN:',
@@ -73,6 +77,53 @@ const SHORT_CONFIRMATION_PROFILES = Object.freeze([
   'E_WEAK_CONTRA'
 ]);
 
+/*
+ * Geldige REST-combinaties.
+ *
+ * Belangrijk:
+ * - KV_URL en REDIS_URL worden bewust NIET gebruikt.
+ * - Die variabelen bevatten meestal rediss:// TCP-URL's.
+ * - @upstash/redis vereist een https:// REST-URL en REST-token.
+ * - URL en token worden altijd uit dezelfde configuratieset gehaald.
+ */
+const VOLATILE_REDIS_ENV_PAIRS = Object.freeze([
+  {
+    urlName: 'VOLATILE_REDIS_REST_URL',
+    tokenName: 'VOLATILE_REDIS_REST_TOKEN'
+  },
+  {
+    urlName: 'KV_REST_API_URL',
+    tokenName: 'KV_REST_API_TOKEN'
+  },
+  {
+    urlName: 'KV_REST_API_URL',
+    tokenName: 'KV_REST_TOKEN'
+  },
+  {
+    urlName: 'UPSTASH_REDIS_REST_URL',
+    tokenName: 'UPSTASH_REDIS_REST_TOKEN'
+  }
+]);
+
+const DURABLE_REDIS_ENV_PAIRS = Object.freeze([
+  {
+    urlName: 'DURABLE_REDIS_REST_URL',
+    tokenName: 'DURABLE_REDIS_REST_TOKEN'
+  },
+  {
+    urlName: 'KV_REST_API_URL',
+    tokenName: 'KV_REST_API_TOKEN'
+  },
+  {
+    urlName: 'KV_REST_API_URL',
+    tokenName: 'KV_REST_TOKEN'
+  },
+  {
+    urlName: 'UPSTASH_REDIS_REST_URL',
+    tokenName: 'UPSTASH_REDIS_REST_TOKEN'
+  }
+]);
+
 function taxonomyFlags() {
   return {
     trueMicroSchema: TRUE_MICRO_SCHEMA,
@@ -96,15 +147,19 @@ function taxonomyFlags() {
     parentLearningEnabled: true,
     childLearningEnabled: true,
     selectionGranularity: 'EXACT_75_CHILD',
-    fallbackRankingGranularity: 'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
+    fallbackRankingGranularity:
+      'PARENT_15_UNTIL_CHILD_MIN_COMPLETED',
 
     selectableFamilyCount: 75,
     parentFamilyCount: 15,
     parentSelectable: false,
     childSelectable: true,
 
-    parentFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}',
-    selectableFamilyRule: 'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}',
+    parentFamilyRule:
+      'MICRO_SHORT_{SETUP}_{REGIME}',
+
+    selectableFamilyRule:
+      'MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}',
 
     setupTypes: SHORT_FIXED_SETUP_TYPES,
     regimeBuckets: SHORT_FIXED_REGIME_BUCKETS,
@@ -117,16 +172,24 @@ function shortRiskFlags() {
     riskGeometryRule: 'SHORT: tp < entry < sl',
     tpHitRule: 'SHORT: price <= tp',
     slHitRule: 'SHORT: price >= sl',
-    grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+
+    grossRFormula:
+      '(entry - exitPrice) / (initialSl - entry)',
+
+    currentRFormula:
+      '(entry - currentPrice) / (initialSl - entry)',
 
     validShortRiskShape: true,
     shortRiskFormula: 'tp < entry < sl',
     shortTpExitRule: 'price <= tp',
     shortSlExitRule: 'price >= sl',
     shortTimeStopExitRule: 'TIME_STOP',
-    shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
-    shortCurrentRFormula: '(entry - currentPrice) / (initialSl - entry)'
+
+    shortGrossRFormula:
+      '(entry - exitPrice) / (initialSl - entry)',
+
+    shortCurrentRFormula:
+      '(entry - currentPrice) / (initialSl - entry)'
   };
 }
 
@@ -136,8 +199,12 @@ function currentFitFlags() {
     currentFitBlocksLearning: false,
     currentFitBlocksVirtualLearning: false,
     currentFitBlocksShadowLearning: false,
-    currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
-    currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT'
+
+    currentFitPolarity:
+      'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+
+    currentFitDefinition:
+      'SHORT_MIRRORED_CURRENT_FIT'
   };
 }
 
@@ -186,7 +253,10 @@ function modeFlags() {
     oneOpenPositionPerSymbol: true,
 
     manualDiscordSelectionExactTrueMicroOnly: true,
-    manualSelectionMatchMode: 'EXACT_TRUE_MICRO_FAMILY_ID',
+
+    manualSelectionMatchMode:
+      'EXACT_TRUE_MICRO_FAMILY_ID',
+
     discordOnlyForExactTrueMicroMatch: true,
     discordOnlyForSelectedMicroFamilies: true,
 
@@ -199,13 +269,17 @@ function modeFlags() {
     executionFingerprintsUsedAsLearningFamily: false,
 
     analyzeMicroFamiliesOnly: true,
-    learningIdentitySource: 'ANALYZE_TRUE_MICRO_FAMILY',
+
+    learningIdentitySource:
+      'ANALYZE_TRUE_MICRO_FAMILY',
 
     symbolExcludedFromFamilyId: true,
     coinNameExcludedFromFamilyId: true,
     hashesExcludedFromFamilyId: true,
 
-    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    completedDefinition:
+      'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+
     scoringRSource: 'netR',
     winsLossesFlatsSource: 'netR',
     winrateDefinition: 'netR > 0',
@@ -215,6 +289,7 @@ function modeFlags() {
 
     rankingUsesBalancedScore: true,
     noBareWinrateRanking: true,
+
     balancedRankingFields: [
       'balancedScore',
       'dashboardBalancedScore',
@@ -241,7 +316,11 @@ function envValue(...names) {
   for (const name of names) {
     const value = process.env[name];
 
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
+    if (
+      value !== undefined &&
+      value !== null &&
+      String(value).trim() !== ''
+    ) {
       return String(value).trim();
     }
   }
@@ -249,9 +328,124 @@ function envValue(...names) {
   return '';
 }
 
-function makeRedis(url, token, label) {
+function isValidHttpsRedisUrl(value) {
+  const raw = String(value || '').trim();
+
+  if (!raw) return false;
+
+  try {
+    const parsed = new URL(raw);
+
+    return (
+      parsed.protocol === 'https:' &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeRedisRestUrl(value) {
+  const raw = String(value || '').trim();
+
+  if (!isValidHttpsRedisUrl(raw)) {
+    return '';
+  }
+
+  return raw.replace(/\/+$/u, '');
+}
+
+function resolveRedisEnvironment(pairs = []) {
+  const invalidUrlVariables = [];
+  const incompletePairs = [];
+
+  for (const pair of pairs) {
+    const urlRaw = envValue(pair.urlName);
+    const token = envValue(pair.tokenName);
+
+    if (!urlRaw && !token) {
+      continue;
+    }
+
+    const url = sanitizeRedisRestUrl(urlRaw);
+
+    if (urlRaw && !url) {
+      invalidUrlVariables.push(pair.urlName);
+    }
+
+    if (!url || !token) {
+      incompletePairs.push({
+        urlName: pair.urlName,
+        tokenName: pair.tokenName,
+        urlSet: Boolean(urlRaw),
+        tokenSet: Boolean(token),
+        validHttpsUrl: Boolean(url)
+      });
+
+      continue;
+    }
+
+    return {
+      url,
+      token,
+
+      urlName: pair.urlName,
+      tokenName: pair.tokenName,
+
+      valid: true,
+      invalidUrlVariables,
+      incompletePairs
+    };
+  }
+
+  return {
+    url: '',
+    token: '',
+
+    urlName: null,
+    tokenName: null,
+
+    valid: false,
+    invalidUrlVariables,
+    incompletePairs
+  };
+}
+
+function makeRedis(environment, label) {
+  const url = environment?.url || '';
+  const token = environment?.token || '';
+
   if (!url || !token) {
-    throw new Error(`${label}_REDIS_ENV_MISSING:url=${url ? 'SET' : 'MISSING'},token=${token ? 'SET' : 'MISSING'}`);
+    const invalidVariables = Array.isArray(
+      environment?.invalidUrlVariables
+    )
+      ? environment.invalidUrlVariables.join(',')
+      : '';
+
+    throw new Error(
+      [
+        `${label}_REDIS_REST_ENV_MISSING`,
+        'Expected one complete HTTPS REST pair',
+        'Supported URL variables:',
+        label === 'VOLATILE'
+          ? 'VOLATILE_REDIS_REST_URL,KV_REST_API_URL,UPSTASH_REDIS_REST_URL'
+          : 'DURABLE_REDIS_REST_URL,KV_REST_API_URL,UPSTASH_REDIS_REST_URL',
+        invalidVariables
+          ? `Invalid non-HTTPS URL variables ignored:${invalidVariables}`
+          : null,
+        'KV_URL and REDIS_URL are intentionally ignored'
+      ]
+        .filter(Boolean)
+        .join(':')
+    );
+  }
+
+  if (!isValidHttpsRedisUrl(url)) {
+    throw new Error(
+      `${label}_REDIS_REST_URL_INVALID:URL_MUST_START_WITH_HTTPS`
+    );
   }
 
   return new Redis({
@@ -262,87 +456,78 @@ function makeRedis(url, token, label) {
 }
 
 function getVolatileEnv() {
-  return {
-    url: envValue(
-      'KV_URL',
-      'VOLATILE_REDIS_REST_URL',
-      'KV_REST_API_URL',
-      'UPSTASH_REDIS_REST_URL',
-      'REDIS_URL'
-    ),
-    token: envValue(
-      'KV_REST_TOKEN',
-      'VOLATILE_REDIS_REST_TOKEN',
-      'KV_REST_API_TOKEN',
-      'UPSTASH_REDIS_REST_TOKEN',
-      'REDIS_TOKEN'
-    )
-  };
+  return resolveRedisEnvironment(
+    VOLATILE_REDIS_ENV_PAIRS
+  );
 }
 
 function getDurableEnv() {
-  return {
-    url: envValue(
-      'KV_URL',
-      'DURABLE_REDIS_REST_URL',
-      'KV_REST_API_URL',
-      'UPSTASH_REDIS_REST_URL',
-      'REDIS_URL'
-    ),
-    token: envValue(
-      'KV_REST_TOKEN',
-      'DURABLE_REDIS_REST_TOKEN',
-      'KV_REST_API_TOKEN',
-      'UPSTASH_REDIS_REST_TOKEN',
-      'REDIS_TOKEN'
-    )
-  };
+  return resolveRedisEnvironment(
+    DURABLE_REDIS_ENV_PAIRS
+  );
 }
 
 let volatileRedis = null;
 let durableRedis = null;
 
 function upper(value) {
-  return String(value || '').trim().toUpperCase();
+  return String(value || '')
+    .trim()
+    .toUpperCase();
 }
 
 function isBlockedLongKey(key = '') {
   const value = upper(key);
 
-  return BLOCKED_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
+  return BLOCKED_KEY_PREFIXES.some(
+    (prefix) => value.startsWith(prefix)
+  );
 }
 
 function isRootAppKey(key = '') {
   const value = String(key || '').trim();
 
-  return ROOT_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
+  return ROOT_KEY_PREFIXES.some(
+    (prefix) => value.startsWith(prefix)
+  );
 }
 
 function isPublicMarketKey(key = '') {
   const value = String(key || '').trim();
 
-  return PUBLIC_MARKET_KEY_PREFIXES.some((prefix) => (
-    value === prefix ||
-    value.startsWith(`${prefix}:`)
-  ));
+  return PUBLIC_MARKET_KEY_PREFIXES.some(
+    (prefix) => (
+      value === prefix ||
+      value.startsWith(`${prefix}:`)
+    )
+  );
 }
 
 function isShortKey(key = '') {
-  return String(key || '').trim().startsWith(SHORT_KEY_PREFIX);
+  return String(key || '')
+    .trim()
+    .startsWith(SHORT_KEY_PREFIX);
 }
 
-function buildNamespaceError(message, payload = {}) {
+function buildNamespaceError(
+  message,
+  payload = {}
+) {
   const error = new Error(message);
 
   error.details = {
     ...payload,
+
     namespace: SHORT_NAMESPACE,
     redisNamespace: SHORT_NAMESPACE,
     keyPrefix: SHORT_KEY_PREFIX,
     redisKeyPrefix: SHORT_KEY_PREFIX,
+
     targetTradeSide: TARGET_TRADE_SIDE,
     oppositeTradeSide: OPPOSITE_TRADE_SIDE,
+
     longRootTouched: false,
+
     ...taxonomyFlags(),
     ...shortRiskFlags(),
     ...currentFitFlags()
@@ -357,16 +542,25 @@ function normalizeKey(key) {
   if (!raw) return '';
 
   if (isBlockedLongKey(raw)) {
-    throw buildNamespaceError('SHORT_REDIS_REFUSED_LONG_NAMESPACE_KEY', {
-      key: raw
-    });
+    throw buildNamespaceError(
+      'SHORT_REDIS_REFUSED_LONG_NAMESPACE_KEY',
+      {
+        key: raw
+      }
+    );
   }
 
-  if (isShortKey(raw)) return raw;
+  if (isShortKey(raw)) {
+    return raw;
+  }
 
-  if (isPublicMarketKey(raw)) return raw;
+  if (isPublicMarketKey(raw)) {
+    return raw;
+  }
 
-  if (isRootAppKey(raw)) return `${SHORT_KEY_PREFIX}${raw}`;
+  if (isRootAppKey(raw)) {
+    return `${SHORT_KEY_PREFIX}${raw}`;
+  }
 
   return `${SHORT_KEY_PREFIX}${raw}`;
 }
@@ -377,50 +571,103 @@ function normalizePattern(pattern) {
   if (!raw) return '';
 
   if (isBlockedLongKey(raw)) {
-    throw buildNamespaceError('SHORT_REDIS_REFUSED_LONG_NAMESPACE_PATTERN', {
-      pattern: raw
-    });
+    throw buildNamespaceError(
+      'SHORT_REDIS_REFUSED_LONG_NAMESPACE_PATTERN',
+      {
+        pattern: raw
+      }
+    );
   }
 
-  if (raw.startsWith(SHORT_KEY_PREFIX)) return raw;
+  if (raw.startsWith(SHORT_KEY_PREFIX)) {
+    return raw;
+  }
 
-  if (isPublicMarketKey(raw)) return raw;
+  if (isPublicMarketKey(raw)) {
+    return raw;
+  }
 
-  if (isRootAppKey(raw)) return `${SHORT_KEY_PREFIX}${raw}`;
+  if (isRootAppKey(raw)) {
+    return `${SHORT_KEY_PREFIX}${raw}`;
+  }
 
-  if (raw === '*') return `${SHORT_KEY_PREFIX}*`;
+  if (raw === '*') {
+    return `${SHORT_KEY_PREFIX}*`;
+  }
 
   return `${SHORT_KEY_PREFIX}${raw}`;
 }
 
-function normalizeLimit(value, fallback = DEFAULT_LOG_LIMIT) {
-  const n = Math.floor(Number(value));
+function normalizeLimit(
+  value,
+  fallback = DEFAULT_LOG_LIMIT
+) {
+  const number = Math.floor(
+    Number(value)
+  );
 
-  if (!Number.isFinite(n) || n <= 0) return fallback;
+  if (
+    !Number.isFinite(number) ||
+    number <= 0
+  ) {
+    return fallback;
+  }
 
-  return n;
+  return number;
 }
 
-function normalizeScanCount(value = DEFAULT_SCAN_COUNT) {
-  const n = Math.floor(Number(value));
+function normalizeScanCount(
+  value = DEFAULT_SCAN_COUNT
+) {
+  const number = Math.floor(
+    Number(value)
+  );
 
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SCAN_COUNT;
+  if (
+    !Number.isFinite(number) ||
+    number <= 0
+  ) {
+    return DEFAULT_SCAN_COUNT;
+  }
 
-  return Math.max(1, Math.min(1000, n));
+  return Math.max(
+    1,
+    Math.min(1000, number)
+  );
 }
 
-function normalizeMax(value, fallback = 1000) {
-  const n = Math.floor(Number(value));
+function normalizeMax(
+  value,
+  fallback = 1000
+) {
+  const number = Math.floor(
+    Number(value)
+  );
 
-  if (!Number.isFinite(n) || n <= 0) return fallback;
+  if (
+    !Number.isFinite(number) ||
+    number <= 0
+  ) {
+    return fallback;
+  }
 
-  return n;
+  return number;
 }
 
-function parseJsonValue(value, fallback = null) {
-  if (value === null || value === undefined) return fallback;
+function parseJsonValue(
+  value,
+  fallback = null
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return fallback;
+  }
 
-  if (typeof value !== 'string') return value;
+  if (typeof value !== 'string') {
+    return value;
+  }
 
   const text = value.trim();
 
@@ -435,15 +682,22 @@ function parseJsonValue(value, fallback = null) {
   }
 }
 
-function stringifyJsonValue(value, keyForError = 'UNKNOWN_KEY') {
+function stringifyJsonValue(
+  value,
+  keyForError = 'UNKNOWN_KEY'
+) {
   if (value === undefined) {
-    throw new Error(`JSON_UNDEFINED_VALUE:${keyForError}`);
+    throw new Error(
+      `JSON_UNDEFINED_VALUE:${keyForError}`
+    );
   }
 
   try {
     return JSON.stringify(value);
   } catch (error) {
-    throw new Error(`JSON_STRINGIFY_FAILED:${keyForError}:${error?.message || String(error)}`);
+    throw new Error(
+      `JSON_STRINGIFY_FAILED:${keyForError}:${error?.message || String(error)}`
+    );
   }
 }
 
@@ -455,16 +709,26 @@ function normalizeScanResult(result) {
     };
   }
 
-  const [nextCursor, keys] = result;
+  const [
+    nextCursor,
+    keys
+  ] = result;
 
   return {
     cursor: Number(nextCursor) || 0,
-    keys: Array.isArray(keys) ? keys.filter(Boolean) : []
+
+    keys: Array.isArray(keys)
+      ? keys.filter(Boolean)
+      : []
   };
 }
 
 function withShortMeta(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value)
+  ) {
     return value;
   }
 
@@ -481,38 +745,64 @@ function assertShortNormalizedKey(key) {
     !value.startsWith(SHORT_KEY_PREFIX) &&
     !isPublicMarketKey(value)
   ) {
-    throw buildNamespaceError('SHORT_REDIS_REFUSED_NON_SHORT_KEY', {
-      key: value
-    });
+    throw buildNamespaceError(
+      'SHORT_REDIS_REFUSED_NON_SHORT_KEY',
+      {
+        key: value
+      }
+    );
   }
 
   return true;
 }
 
-async function deleteKeys(redis, keys = []) {
+async function deleteKeys(
+  redis,
+  keys = []
+) {
   const rows = Array.isArray(keys)
     ? keys
-      .filter(Boolean)
-      .map(normalizeKey)
-      .filter((key) => (
-        key.startsWith(SHORT_KEY_PREFIX) ||
-        isPublicMarketKey(key)
-      ))
+        .filter(Boolean)
+        .map(normalizeKey)
+        .filter(
+          (key) => (
+            key.startsWith(
+              SHORT_KEY_PREFIX
+            ) ||
+            isPublicMarketKey(key)
+          )
+        )
     : [];
 
-  if (!rows.length) return 0;
+  if (!rows.length) {
+    return 0;
+  }
 
   let deleted = 0;
 
-  for (let i = 0; i < rows.length; i += DEFAULT_DELETE_BATCH_SIZE) {
-    const batch = rows.slice(i, i + DEFAULT_DELETE_BATCH_SIZE);
+  for (
+    let index = 0;
+    index < rows.length;
+    index += DEFAULT_DELETE_BATCH_SIZE
+  ) {
+    const batch = rows.slice(
+      index,
+      index + DEFAULT_DELETE_BATCH_SIZE
+    );
 
-    if (!batch.length) continue;
+    if (!batch.length) {
+      continue;
+    }
 
-    const result = await redis.del(...batch);
+    const result = await redis.del(
+      ...batch
+    );
+
     const count = Number(result);
 
-    deleted += Number.isFinite(count) ? count : batch.length;
+    deleted += Number.isFinite(count)
+      ? count
+      : batch.length;
   }
 
   return deleted;
@@ -520,8 +810,13 @@ async function deleteKeys(redis, keys = []) {
 
 export function getVolatileRedis() {
   if (!volatileRedis) {
-    const { url, token } = getVolatileEnv();
-    volatileRedis = makeRedis(url, token, 'VOLATILE');
+    const environment =
+      getVolatileEnv();
+
+    volatileRedis = makeRedis(
+      environment,
+      'VOLATILE'
+    );
   }
 
   return volatileRedis;
@@ -529,34 +824,54 @@ export function getVolatileRedis() {
 
 export function getDurableRedis() {
   if (!durableRedis) {
-    const { url, token } = getDurableEnv();
-    durableRedis = makeRedis(url, token, 'DURABLE');
+    const environment =
+      getDurableEnv();
+
+    durableRedis = makeRedis(
+      environment,
+      'DURABLE'
+    );
   }
 
   return durableRedis;
 }
 
 export function hasVolatileRedisEnv() {
-  const { url, token } = getVolatileEnv();
+  const environment =
+    getVolatileEnv();
 
-  return Boolean(url && token);
+  return Boolean(
+    environment.valid &&
+    environment.url &&
+    environment.token
+  );
 }
 
 export function hasDurableRedisEnv() {
-  const { url, token } = getDurableEnv();
+  const environment =
+    getDurableEnv();
 
-  return Boolean(url && token);
+  return Boolean(
+    environment.valid &&
+    environment.url &&
+    environment.token
+  );
 }
 
 export function hasRedisEnv() {
-  return hasVolatileRedisEnv() && hasDurableRedisEnv();
+  return (
+    hasVolatileRedisEnv() &&
+    hasDurableRedisEnv()
+  );
 }
 
 export function normalizeRedisKey(key) {
   return normalizeKey(key);
 }
 
-export function normalizeRedisPattern(pattern) {
+export function normalizeRedisPattern(
+  pattern
+) {
   return normalizePattern(pattern);
 }
 
@@ -564,7 +879,9 @@ export function isShortRedisKey(key) {
   return isShortKey(key);
 }
 
-export function isPublicMarketRedisKey(key) {
+export function isPublicMarketRedisKey(
+  key
+) {
   return isPublicMarketKey(key);
 }
 
@@ -572,200 +889,398 @@ export function redisModeFlags() {
   return modeFlags();
 }
 
-export async function getJson(redis, key, fallback = null) {
-  const redisKey = normalizeKey(key);
-
-  if (!redis || !redisKey) return fallback;
-
-  assertShortNormalizedKey(redisKey);
-
-  const value = await redis.get(redisKey);
-
-  return parseJsonValue(value, fallback);
-}
-
-export async function setJson(redis, key, value, options = undefined) {
+export async function getJson(
+  redis,
+  key,
+  fallback = null
+) {
   const redisKey = normalizeKey(key);
 
   if (!redis || !redisKey) {
-    throw new Error('SET_SHORT_JSON_INVALID_REDIS_OR_KEY');
+    return fallback;
   }
 
-  assertShortNormalizedKey(redisKey);
+  assertShortNormalizedKey(
+    redisKey
+  );
 
-  const payload = stringifyJsonValue(withShortMeta(value), redisKey);
+  const value = await redis.get(
+    redisKey
+  );
 
-  return redis.set(redisKey, payload, options);
+  return parseJsonValue(
+    value,
+    fallback
+  );
 }
 
-export async function setNxJson(redis, key, value, options = {}) {
+export async function setJson(
+  redis,
+  key,
+  value,
+  options = undefined
+) {
   const redisKey = normalizeKey(key);
 
   if (!redis || !redisKey) {
-    throw new Error('SET_NX_SHORT_JSON_INVALID_REDIS_OR_KEY');
+    throw new Error(
+      'SET_SHORT_JSON_INVALID_REDIS_OR_KEY'
+    );
   }
 
-  assertShortNormalizedKey(redisKey);
+  assertShortNormalizedKey(
+    redisKey
+  );
 
-  const payload = stringifyJsonValue(withShortMeta(value), redisKey);
+  const payload =
+    stringifyJsonValue(
+      withShortMeta(value),
+      redisKey
+    );
 
-  return redis.set(redisKey, payload, {
-    ...options,
-    nx: true
-  });
+  return redis.set(
+    redisKey,
+    payload,
+    options
+  );
 }
 
-export async function delJson(redis, key) {
+export async function setNxJson(
+  redis,
+  key,
+  value,
+  options = {}
+) {
   const redisKey = normalizeKey(key);
 
-  if (!redis || !redisKey) return 0;
+  if (!redis || !redisKey) {
+    throw new Error(
+      'SET_NX_SHORT_JSON_INVALID_REDIS_OR_KEY'
+    );
+  }
 
-  assertShortNormalizedKey(redisKey);
+  assertShortNormalizedKey(
+    redisKey
+  );
 
-  return redis.del(redisKey);
+  const payload =
+    stringifyJsonValue(
+      withShortMeta(value),
+      redisKey
+    );
+
+  return redis.set(
+    redisKey,
+    payload,
+    {
+      ...options,
+      nx: true
+    }
+  );
 }
 
-export async function delPattern(redis, pattern, max = 5000) {
-  const redisPattern = normalizePattern(pattern);
+export async function delJson(
+  redis,
+  key
+) {
+  const redisKey = normalizeKey(key);
 
-  if (!redis || !redisPattern) return 0;
+  if (!redis || !redisKey) {
+    return 0;
+  }
 
-  assertShortNormalizedKey(redisPattern.replace(/\*.*$/u, '') || SHORT_KEY_PREFIX);
+  assertShortNormalizedKey(
+    redisKey
+  );
 
-  const maxDelete = normalizeMax(max, 5000);
+  return redis.del(
+    redisKey
+  );
+}
+
+export async function delPattern(
+  redis,
+  pattern,
+  max = 5000
+) {
+  const redisPattern =
+    normalizePattern(pattern);
+
+  if (!redis || !redisPattern) {
+    return 0;
+  }
+
+  assertShortNormalizedKey(
+    redisPattern.replace(
+      /\*.*$/u,
+      ''
+    ) || SHORT_KEY_PREFIX
+  );
+
+  const maxDelete =
+    normalizeMax(max, 5000);
 
   let cursor = 0;
   let deleted = 0;
 
   do {
-    const scanResult = await redis.scan(cursor, {
-      match: redisPattern,
-      count: normalizeScanCount()
-    });
+    const scanResult =
+      await redis.scan(
+        cursor,
+        {
+          match: redisPattern,
+          count: normalizeScanCount()
+        }
+      );
 
-    const normalized = normalizeScanResult(scanResult);
+    const normalized =
+      normalizeScanResult(
+        scanResult
+      );
 
     cursor = normalized.cursor;
 
-    if (!normalized.keys.length) continue;
+    if (!normalized.keys.length) {
+      continue;
+    }
 
-    const allowedKeys = normalized.keys
-      .filter((key) => (
-        String(key || '').startsWith(SHORT_KEY_PREFIX) ||
-        isPublicMarketKey(key)
-      ));
+    const allowedKeys =
+      normalized.keys.filter(
+        (key) => (
+          String(key || '')
+            .startsWith(
+              SHORT_KEY_PREFIX
+            ) ||
+          isPublicMarketKey(key)
+        )
+      );
 
-    const remaining = Math.max(0, maxDelete - deleted);
-    const limitedKeys = allowedKeys.slice(0, remaining);
+    const remaining = Math.max(
+      0,
+      maxDelete - deleted
+    );
 
-    deleted += await deleteKeys(redis, limitedKeys);
+    const limitedKeys =
+      allowedKeys.slice(
+        0,
+        remaining
+      );
 
-    if (deleted >= maxDelete) break;
+    deleted += await deleteKeys(
+      redis,
+      limitedKeys
+    );
+
+    if (deleted >= maxDelete) {
+      break;
+    }
   } while (cursor !== 0);
 
   return deleted;
 }
 
-export async function getKeys(redis, pattern, max = 1000) {
-  const redisPattern = normalizePattern(pattern);
+export async function getKeys(
+  redis,
+  pattern,
+  max = 1000
+) {
+  const redisPattern =
+    normalizePattern(pattern);
 
-  if (!redis || !redisPattern) return [];
+  if (!redis || !redisPattern) {
+    return [];
+  }
 
-  assertShortNormalizedKey(redisPattern.replace(/\*.*$/u, '') || SHORT_KEY_PREFIX);
+  assertShortNormalizedKey(
+    redisPattern.replace(
+      /\*.*$/u,
+      ''
+    ) || SHORT_KEY_PREFIX
+  );
 
-  const maxKeys = normalizeMax(max, 1000);
+  const maxKeys =
+    normalizeMax(max, 1000);
 
   let cursor = 0;
-  const out = [];
+
+  const output = [];
   const seen = new Set();
 
   do {
-    const scanResult = await redis.scan(cursor, {
-      match: redisPattern,
-      count: normalizeScanCount()
-    });
+    const scanResult =
+      await redis.scan(
+        cursor,
+        {
+          match: redisPattern,
+          count: normalizeScanCount()
+        }
+      );
 
-    const normalized = normalizeScanResult(scanResult);
+    const normalized =
+      normalizeScanResult(
+        scanResult
+      );
 
     cursor = normalized.cursor;
 
     for (const key of normalized.keys) {
-      if (!key || seen.has(key)) continue;
+      if (
+        !key ||
+        seen.has(key)
+      ) {
+        continue;
+      }
 
       if (
-        !String(key).startsWith(SHORT_KEY_PREFIX) &&
+        !String(key).startsWith(
+          SHORT_KEY_PREFIX
+        ) &&
         !isPublicMarketKey(key)
       ) {
         continue;
       }
 
       seen.add(key);
-      out.push(key);
+      output.push(key);
 
-      if (out.length >= maxKeys) break;
+      if (
+        output.length >= maxKeys
+      ) {
+        break;
+      }
     }
 
-    if (out.length >= maxKeys) break;
+    if (
+      output.length >= maxKeys
+    ) {
+      break;
+    }
   } while (cursor !== 0);
 
-  return out;
+  return output;
 }
 
-export async function pushJsonLog(redis, key, value, limit = DEFAULT_LOG_LIMIT) {
+export async function pushJsonLog(
+  redis,
+  key,
+  value,
+  limit = DEFAULT_LOG_LIMIT
+) {
   const redisKey = normalizeKey(key);
 
   if (!redis || !redisKey) {
-    throw new Error('PUSH_SHORT_JSON_LOG_INVALID_REDIS_OR_KEY');
+    throw new Error(
+      'PUSH_SHORT_JSON_LOG_INVALID_REDIS_OR_KEY'
+    );
   }
 
-  assertShortNormalizedKey(redisKey);
+  assertShortNormalizedKey(
+    redisKey
+  );
 
-  const safeLimit = normalizeLimit(limit, DEFAULT_LOG_LIMIT);
-  const payload = stringifyJsonValue(withShortMeta(value), redisKey);
+  const safeLimit =
+    normalizeLimit(
+      limit,
+      DEFAULT_LOG_LIMIT
+    );
 
-  await redis.lpush(redisKey, payload);
-  await redis.ltrim(redisKey, 0, safeLimit - 1);
+  const payload =
+    stringifyJsonValue(
+      withShortMeta(value),
+      redisKey
+    );
+
+  await redis.lpush(
+    redisKey,
+    payload
+  );
+
+  await redis.ltrim(
+    redisKey,
+    0,
+    safeLimit - 1
+  );
 
   return true;
 }
 
-export async function readJsonLogs(redis, key, limit = 100) {
+export async function readJsonLogs(
+  redis,
+  key,
+  limit = 100
+) {
   const redisKey = normalizeKey(key);
 
-  if (!redis || !redisKey) return [];
+  if (!redis || !redisKey) {
+    return [];
+  }
 
-  assertShortNormalizedKey(redisKey);
+  assertShortNormalizedKey(
+    redisKey
+  );
 
-  const safeLimit = normalizeLimit(limit, 100);
-  const rows = await redis.lrange(redisKey, 0, safeLimit - 1);
+  const safeLimit =
+    normalizeLimit(
+      limit,
+      100
+    );
 
-  return (Array.isArray(rows) ? rows : [])
+  const rows =
+    await redis.lrange(
+      redisKey,
+      0,
+      safeLimit - 1
+    );
+
+  return (
+    Array.isArray(rows)
+      ? rows
+      : []
+  )
     .map((row) => {
-      if (row === null || row === undefined) return null;
+      if (
+        row === null ||
+        row === undefined
+      ) {
+        return null;
+      }
 
-      if (typeof row !== 'string') {
+      if (
+        typeof row !== 'string'
+      ) {
         return withShortMeta(row);
       }
 
-      const parsed = parseJsonValue(row, null);
+      const parsed =
+        parseJsonValue(
+          row,
+          null
+        );
 
       return parsed === null
         ? {
-          raw: row,
-          ...modeFlags()
-        }
+            raw: row,
+            ...modeFlags()
+          }
         : withShortMeta(parsed);
     })
     .filter(Boolean);
 }
 
 export async function pingRedis(redis) {
-  if (!redis) return false;
+  if (!redis) {
+    return false;
+  }
 
   try {
-    const result = await redis.ping();
+    const result =
+      await redis.ping();
 
-    return result === 'PONG' || result === 'pong' || result === true;
+    return (
+      result === 'PONG' ||
+      result === 'pong' ||
+      result === true
+    );
   } catch {
     return false;
   }
@@ -774,21 +1289,28 @@ export async function pingRedis(redis) {
 export default {
   getVolatileRedis,
   getDurableRedis,
+
   hasVolatileRedisEnv,
   hasDurableRedisEnv,
   hasRedisEnv,
+
   normalizeRedisKey,
   normalizeRedisPattern,
+
   isShortRedisKey,
   isPublicMarketRedisKey,
+
   redisModeFlags,
+
   getJson,
   setJson,
   setNxJson,
   delJson,
   delPattern,
   getKeys,
+
   pushJsonLog,
   readJsonLogs,
+
   pingRedis
 };
