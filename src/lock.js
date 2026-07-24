@@ -1,141 +1,289 @@
 // ================= FILE: src/lock.js =================
 // COMPLEET distributed lock management
+//
+// SHORT-only Redis lock management.
+//
+// Redis-contract:
+// - locks worden opgeslagen in de volatile Redis
+// - keys.lock(resource) levert de logische lock-key
+// - redis.js normaliseert deze automatisch naar de SHORT namespace
+// - lock verkrijgen gebeurt atomair via SET NX EX
+// - alleen de eigenaar met het juiste lockId mag normaal vrijgeven
 
-import { getRedis } from './redis.js';
+import {
+  getVolatileRedis,
+  getJson,
+  setNxJson,
+  delJson,
+  getKeys
+} from './redis.js';
+
 import { keys } from './keys.js';
 import { now, randomId } from './utils.js';
 
-function createLockId() {
-  return randomId('lock');
+const DEFAULT_TIMEOUT_SECONDS = 30;
+const DEFAULT_MAX_WAIT_MS = 30000;
+const DEFAULT_POLL_INTERVAL_MS = 100;
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_BACKOFF_MS = 100;
+
+const MIN_TIMEOUT_SECONDS = 1;
+const MAX_TIMEOUT_SECONDS = 60 * 60;
+
+const MIN_POLL_INTERVAL_MS = 25;
+const MAX_POLL_INTERVAL_MS = 5000;
+
+const LOCK_PATTERN = 'LOCK:*';
+const MAX_LOCK_LIST_RESULTS = 1000;
+
+function errorMessage(error) {
+  return error instanceof Error
+    ? error.message
+    : String(error || 'UNKNOWN_ERROR');
 }
 
 function sleep(ms = 0) {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+  const delay = Math.max(0, Math.floor(Number(ms) || 0));
+
+  return new Promise((resolve) => {
+    setTimeout(resolve, delay);
+  });
 }
 
-function normalizeTimeoutSeconds(value, fallback = 30) {
-  const parsed = Number(value);
+function normalizeResource(resource = '') {
+  return String(resource || '').trim();
+}
+
+function normalizeLockId(lockId = '') {
+  return String(lockId || '').trim();
+}
+
+function normalizeTimeoutSeconds(
+  value,
+  fallback = DEFAULT_TIMEOUT_SECONDS
+) {
+  const parsed = Math.floor(Number(value));
 
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
   }
 
-  return Math.max(1, Math.floor(parsed));
+  return Math.max(
+    MIN_TIMEOUT_SECONDS,
+    Math.min(MAX_TIMEOUT_SECONDS, parsed)
+  );
 }
 
-function normalizeWaitMs(value, fallback = 30000) {
-  const parsed = Number(value);
+function normalizePositiveInteger(
+  value,
+  fallback,
+  minimum = 1,
+  maximum = Number.MAX_SAFE_INTEGER
+) {
+  const parsed = Math.floor(Number(value));
 
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  if (!Number.isFinite(parsed) || parsed < minimum) {
     return fallback;
   }
 
-  return Math.max(0, Math.floor(parsed));
+  return Math.max(
+    minimum,
+    Math.min(maximum, parsed)
+  );
 }
 
-function normalizeLockValue(value) {
-  if (!value) return null;
+function normalizeMaxWaitMs(value) {
+  const parsed = Math.floor(Number(value));
 
-  if (typeof value === 'object') {
-    return value;
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_MAX_WAIT_MS;
   }
 
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-
-      if (parsed && typeof parsed === 'object') {
-        return parsed;
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
+  return parsed;
 }
 
-function redisDelete(redis, key) {
-  if (typeof redis.delete === 'function') {
-    return redis.delete(key);
+function normalizePollIntervalMs(value) {
+  return normalizePositiveInteger(
+    value,
+    DEFAULT_POLL_INTERVAL_MS,
+    MIN_POLL_INTERVAL_MS,
+    MAX_POLL_INTERVAL_MS
+  );
+}
+
+function createLockId() {
+  return randomId('lock');
+}
+
+function buildLockKey(resource = '') {
+  const cleanResource = normalizeResource(resource);
+
+  if (!cleanResource) {
+    throw new Error('LOCK_RESOURCE_REQUIRED');
   }
 
-  if (typeof redis.del === 'function') {
-    return redis.del(key);
+  return keys.lock(cleanResource);
+}
+
+function normalizeStoredLock(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
   }
 
-  throw new Error('REDIS_DELETE_METHOD_NOT_AVAILABLE');
+  const id = normalizeLockId(value.id);
+  const resource = normalizeResource(value.resource);
+  const acquiredAt = Number(value.acquiredAt || 0);
+  const expiresAt = Number(value.expiresAt || 0);
+  const timeoutSeconds = Number(value.timeoutSeconds || 0);
+
+  if (!id || !resource) {
+    return null;
+  }
+
+  return {
+    ...value,
+    id,
+    resource,
+    acquiredAt: Number.isFinite(acquiredAt) ? acquiredAt : 0,
+    expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+    timeoutSeconds: Number.isFinite(timeoutSeconds)
+      ? timeoutSeconds
+      : 0
+  };
+}
+
+function lockIsExpired(lock, timestamp = now()) {
+  const expiresAt = Number(lock?.expiresAt || 0);
+
+  return (
+    Number.isFinite(expiresAt) &&
+    expiresAt > 0 &&
+    expiresAt <= timestamp
+  );
+}
+
+function nxInsertSucceeded(result) {
+  return (
+    result === 'OK' ||
+    result === 'ok' ||
+    result === true ||
+    result === 1
+  );
 }
 
 function deletedCount(result) {
-  if (typeof result === 'number') {
-    return result;
-  }
+  const parsed = Number(result);
 
-  if (result && typeof result === 'object') {
-    if (typeof result.deleted === 'number') return result.deleted;
-    if (typeof result.result === 'number') return result.result;
+  if (Number.isFinite(parsed)) {
+    return parsed;
   }
 
   return result ? 1 : 0;
 }
 
-async function setLockIfAbsent(redis, lockKey, lockData, timeoutSeconds) {
-  /*
-   * Upstash ondersteunt:
-   *
-   * redis.set(key, value, {
-   *   nx: true,
-   *   ex: timeoutSeconds
-   * })
-   *
-   * Dit is atomair. Daardoor kunnen twee processen niet tegelijk dezelfde
-   * lock verkrijgen.
-   */
-  const result = await redis.set(lockKey, lockData, {
-    nx: true,
-    ex: timeoutSeconds
-  });
+async function readLock(redis, lockKey) {
+  const value = await getJson(
+    redis,
+    lockKey,
+    null
+  );
 
-  return result === 'OK' || result === true;
+  return normalizeStoredLock(value);
 }
 
-async function removeExpiredLock(redis, lockKey, expectedLock = null) {
-  const currentRaw = await redis.get(lockKey);
-  const currentLock = normalizeLockValue(currentRaw);
+async function removeExpiredLock(
+  redis,
+  lockKey,
+  expectedLockId = ''
+) {
+  const current = await readLock(
+    redis,
+    lockKey
+  );
 
-  if (!currentLock) {
+  if (!current) {
     return {
+      ok: true,
       removed: false,
       reason: 'LOCK_NOT_FOUND'
     };
   }
 
-  if (expectedLock?.id && currentLock.id !== expectedLock.id) {
+  if (
+    expectedLockId &&
+    current.id !== expectedLockId
+  ) {
     return {
+      ok: false,
       removed: false,
-      reason: 'LOCK_CHANGED'
+      reason: 'LOCK_OWNER_CHANGED',
+      currentLockId: current.id
     };
   }
 
-  if (Number(currentLock.expiresAt || 0) >= now()) {
+  if (!lockIsExpired(current)) {
     return {
+      ok: true,
       removed: false,
-      reason: 'LOCK_NOT_EXPIRED'
+      reason: 'LOCK_NOT_EXPIRED',
+      lock: current
     };
   }
 
-  const result = await redisDelete(redis, lockKey);
+  /*
+   * Nogmaals controleren vlak vóór verwijderen.
+   * Hiermee wordt voorkomen dat een inmiddels vernieuwde lock
+   * op basis van verouderde informatie wordt verwijderd.
+   */
+  const verification = await readLock(
+    redis,
+    lockKey
+  );
+
+  if (!verification) {
+    return {
+      ok: true,
+      removed: false,
+      reason: 'LOCK_ALREADY_REMOVED'
+    };
+  }
+
+  if (verification.id !== current.id) {
+    return {
+      ok: false,
+      removed: false,
+      reason: 'LOCK_OWNER_CHANGED',
+      currentLockId: verification.id
+    };
+  }
+
+  if (!lockIsExpired(verification)) {
+    return {
+      ok: true,
+      removed: false,
+      reason: 'LOCK_NOT_EXPIRED',
+      lock: verification
+    };
+  }
+
+  const deleted = await delJson(
+    redis,
+    lockKey
+  );
 
   return {
-    removed: deletedCount(result) > 0,
+    ok: true,
+    removed: deletedCount(deleted) > 0,
     reason: 'EXPIRED_LOCK_REMOVED'
   };
 }
 
-export async function acquireLock(resource = '', timeoutSeconds = 30) {
+export async function acquireLock(
+  resource = '',
+  timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
+) {
   try {
-    const cleanResource = String(resource || '').trim();
+    const cleanResource = normalizeResource(resource);
 
     if (!cleanResource) {
       return {
@@ -145,87 +293,138 @@ export async function acquireLock(resource = '', timeoutSeconds = 30) {
       };
     }
 
-    const redis = getRedis();
-    const lockKey = keys.lock(cleanResource);
-    const cleanTimeoutSeconds = normalizeTimeoutSeconds(timeoutSeconds);
+    const redis = getVolatileRedis();
+    const lockKey = buildLockKey(cleanResource);
+
+    const cleanTimeoutSeconds =
+      normalizeTimeoutSeconds(timeoutSeconds);
+
     const lockId = createLockId();
-    const timestamp = now();
-    const expirationTime = timestamp + cleanTimeoutSeconds * 1000;
+    const acquiredAt = now();
+    const expiresAt =
+      acquiredAt + cleanTimeoutSeconds * 1000;
 
     const lockData = {
       id: lockId,
       resource: cleanResource,
-      acquiredAt: timestamp,
-      expiresAt: expirationTime,
-      timeoutSeconds: cleanTimeoutSeconds
+      acquiredAt,
+      expiresAt,
+      timeoutSeconds: cleanTimeoutSeconds,
+      ownerToken: lockId,
+      status: 'HELD'
     };
 
-    let acquired = await setLockIfAbsent(
+    /*
+     * setNxJson gebruikt in redis.js:
+     *
+     * redis.set(key, payload, {
+     *   ex: timeout,
+     *   nx: true
+     * })
+     *
+     * Dit is de atomische lock-claim.
+     */
+    let insertResult = await setNxJson(
       redis,
       lockKey,
       lockData,
-      cleanTimeoutSeconds
+      {
+        ex: cleanTimeoutSeconds
+      }
     );
 
-    if (!acquired) {
-      const existingRaw = await redis.get(lockKey);
-      const existingLock = normalizeLockValue(existingRaw);
+    let acquired =
+      nxInsertSucceeded(insertResult);
 
+    if (!acquired) {
+      const existingLock = await readLock(
+        redis,
+        lockKey
+      );
+
+      /*
+       * Redis EX verwijdert normaal automatisch verlopen keys.
+       * Deze extra controle ruimt oude locks op wanneer een key
+       * door afwijkende of oudere data nog aanwezig is.
+       */
       if (
         existingLock &&
-        Number(existingLock.expiresAt || 0) > 0 &&
-        Number(existingLock.expiresAt) < now()
+        lockIsExpired(existingLock)
       ) {
-        await removeExpiredLock(redis, lockKey, existingLock);
+        await removeExpiredLock(
+          redis,
+          lockKey,
+          existingLock.id
+        );
 
-        acquired = await setLockIfAbsent(
+        insertResult = await setNxJson(
           redis,
           lockKey,
           lockData,
-          cleanTimeoutSeconds
+          {
+            ex: cleanTimeoutSeconds
+          }
         );
-      }
 
-      if (!acquired) {
-        const currentRaw = await redis.get(lockKey);
-        const currentLock = normalizeLockValue(currentRaw);
-
-        return {
-          ok: false,
-          acquired: false,
-          reason: 'LOCK_HELD',
-          resource: cleanResource,
-          lock: currentLock
-        };
+        acquired =
+          nxInsertSucceeded(insertResult);
       }
+    }
+
+    if (!acquired) {
+      const currentLock = await readLock(
+        redis,
+        lockKey
+      );
+
+      return {
+        ok: false,
+        acquired: false,
+        reason: 'LOCK_HELD',
+        resource: cleanResource,
+        lockKey,
+        lock: currentLock
+      };
     }
 
     return {
       ok: true,
       acquired: true,
-      lockId,
-      expirationTime,
-      expiresAt: expirationTime,
-      timeoutSeconds: cleanTimeoutSeconds,
       resource: cleanResource,
+      lockKey,
+      lockId,
+      ownerToken: lockId,
+      acquiredAt,
+      expirationTime: expiresAt,
+      expiresAt,
+      timeoutSeconds: cleanTimeoutSeconds,
       lock: lockData
     };
-  } catch (err) {
-    console.error('acquireLock error:', err);
+  } catch (error) {
+    console.error(
+      'acquireLock error:',
+      error
+    );
 
     return {
       ok: false,
       acquired: false,
       reason: 'LOCK_ACQUIRE_ERROR',
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(error)
     };
   }
 }
 
-export async function releaseLock(resource = '', lockId = '') {
+export async function releaseLock(
+  resource = '',
+  lockId = ''
+) {
   try {
-    const cleanResource = String(resource || '').trim();
-    const cleanLockId = String(lockId || '').trim();
+    const cleanResource =
+      normalizeResource(resource);
+
+    const cleanLockId =
+      normalizeLockId(lockId);
 
     if (!cleanResource) {
       return {
@@ -239,22 +438,26 @@ export async function releaseLock(resource = '', lockId = '') {
       return {
         ok: false,
         released: false,
-        reason: 'LOCK_ID_REQUIRED'
+        reason: 'LOCK_ID_REQUIRED',
+        resource: cleanResource
       };
     }
 
-    const redis = getRedis();
-    const lockKey = keys.lock(cleanResource);
+    const redis = getVolatileRedis();
+    const lockKey = buildLockKey(cleanResource);
 
-    const currentRaw = await redis.get(lockKey);
-    const currentLock = normalizeLockValue(currentRaw);
+    const currentLock = await readLock(
+      redis,
+      lockKey
+    );
 
     if (!currentLock) {
       return {
         ok: true,
         released: false,
         reason: 'LOCK_NOT_FOUND',
-        resource: cleanResource
+        resource: cleanResource,
+        lockKey
       };
     }
 
@@ -263,60 +466,79 @@ export async function releaseLock(resource = '', lockId = '') {
         ok: false,
         released: false,
         reason: 'LOCK_ID_MISMATCH',
-        message: 'Cannot release lock owned by another process',
-        resource: cleanResource
+        message:
+          'Cannot release lock owned by another process',
+        resource: cleanResource,
+        lockKey,
+        expectedLockId: cleanLockId,
+        currentLockId: currentLock.id
       };
     }
 
     /*
-     * Controleer de eigenaar direct vóór verwijderen.
-     * Dit beperkt het risico dat een verlopen lock van een nieuw proces wordt
-     * verwijderd. Volledig atomair vergelijken en verwijderen vereist een
-     * Redis Lua-script, maar deze eigenaarcontrole voorkomt normale mismatches.
+     * Eigenaar nogmaals controleren vlak vóór het verwijderen.
+     * Een volledig atomische compare-and-delete vereist Lua/EVAL.
+     * Deze dubbele controle beschermt tegen normale owner-wisselingen.
      */
-    const verifyRaw = await redis.get(lockKey);
-    const verifyLock = normalizeLockValue(verifyRaw);
+    const verification = await readLock(
+      redis,
+      lockKey
+    );
 
-    if (!verifyLock) {
+    if (!verification) {
       return {
         ok: true,
         released: false,
         reason: 'LOCK_ALREADY_REMOVED',
-        resource: cleanResource
+        resource: cleanResource,
+        lockKey
       };
     }
 
-    if (verifyLock.id !== cleanLockId) {
+    if (verification.id !== cleanLockId) {
       return {
         ok: false,
         released: false,
         reason: 'LOCK_OWNER_CHANGED',
-        resource: cleanResource
+        resource: cleanResource,
+        lockKey,
+        currentLockId: verification.id
       };
     }
 
-    const result = await redisDelete(redis, lockKey);
+    const deleted = await delJson(
+      redis,
+      lockKey
+    );
 
     return {
       ok: true,
-      released: deletedCount(result) > 0,
-      resource: cleanResource
+      released: deletedCount(deleted) > 0,
+      resource: cleanResource,
+      lockKey,
+      lockId: cleanLockId
     };
-  } catch (err) {
-    console.error('releaseLock error:', err);
+  } catch (error) {
+    console.error(
+      'releaseLock error:',
+      error
+    );
 
     return {
       ok: false,
       released: false,
       reason: 'LOCK_RELEASE_ERROR',
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(error)
     };
   }
 }
 
-export async function isLocked(resource = '') {
+export async function isLocked(
+  resource = ''
+) {
   try {
-    const cleanResource = String(resource || '').trim();
+    const cleanResource =
+      normalizeResource(resource);
 
     if (!cleanResource) {
       return {
@@ -326,30 +548,39 @@ export async function isLocked(resource = '') {
       };
     }
 
-    const redis = getRedis();
-    const lockKey = keys.lock(cleanResource);
-    const rawLock = await redis.get(lockKey);
-    const lock = normalizeLockValue(rawLock);
+    const redis = getVolatileRedis();
+    const lockKey = buildLockKey(cleanResource);
+
+    const lock = await readLock(
+      redis,
+      lockKey
+    );
 
     if (!lock) {
       return {
         ok: true,
         locked: false,
-        resource: cleanResource
+        resource: cleanResource,
+        lockKey
       };
     }
 
-    if (
-      Number(lock.expiresAt || 0) > 0 &&
-      Number(lock.expiresAt) < now()
-    ) {
-      await removeExpiredLock(redis, lockKey, lock);
+    if (lockIsExpired(lock)) {
+      const cleanup =
+        await removeExpiredLock(
+          redis,
+          lockKey,
+          lock.id
+        );
 
       return {
         ok: true,
         locked: false,
         expired: true,
-        resource: cleanResource
+        expiredLockRemoved:
+          cleanup.removed === true,
+        resource: cleanResource,
+        lockKey
       };
     }
 
@@ -357,27 +588,32 @@ export async function isLocked(resource = '') {
       ok: true,
       locked: true,
       resource: cleanResource,
+      lockKey,
       lock
     };
-  } catch (err) {
-    console.error('isLocked error:', err);
+  } catch (error) {
+    console.error(
+      'isLocked error:',
+      error
+    );
 
     return {
       ok: false,
       locked: false,
       reason: 'LOCK_CHECK_ERROR',
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(error)
     };
   }
 }
 
 export async function waitForLock(
   resource = '',
-  maxWaitMs = 30000,
-  pollIntervalMs = 100
+  maxWaitMs = DEFAULT_MAX_WAIT_MS,
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS
 ) {
   try {
-    const cleanResource = String(resource || '').trim();
+    const cleanResource =
+      normalizeResource(resource);
 
     if (!cleanResource) {
       return {
@@ -387,24 +623,31 @@ export async function waitForLock(
       };
     }
 
-    const cleanMaxWaitMs = normalizeWaitMs(maxWaitMs, 30000);
-    const cleanPollIntervalMs = Math.max(
-      25,
-      normalizeWaitMs(pollIntervalMs, 100)
-    );
+    const cleanMaxWaitMs =
+      normalizeMaxWaitMs(maxWaitMs);
 
-    const startTime = now();
-    const maxTime = startTime + cleanMaxWaitMs;
+    const cleanPollIntervalMs =
+      normalizePollIntervalMs(
+        pollIntervalMs
+      );
 
-    while (now() <= maxTime) {
-      const lockCheck = await isLocked(cleanResource);
+    const startedAt = now();
+    const deadlineAt =
+      startedAt + cleanMaxWaitMs;
 
-      if (lockCheck.ok && !lockCheck.locked) {
+    while (now() <= deadlineAt) {
+      const lockCheck =
+        await isLocked(cleanResource);
+
+      if (
+        lockCheck.ok &&
+        !lockCheck.locked
+      ) {
         return {
           ok: true,
           available: true,
           resource: cleanResource,
-          waitedMs: now() - startTime
+          waitedMs: now() - startedAt
         };
       }
 
@@ -412,36 +655,49 @@ export async function waitForLock(
         return {
           ok: false,
           available: false,
+          reason:
+            lockCheck.reason ||
+            'LOCK_CHECK_FAILED',
+          error:
+            lockCheck.error || null,
           resource: cleanResource,
-          reason: lockCheck.reason || 'LOCK_CHECK_FAILED',
-          error: lockCheck.error
+          waitedMs: now() - startedAt
         };
       }
 
-      const remainingMs = maxTime - now();
+      const remainingMs =
+        deadlineAt - now();
 
       if (remainingMs <= 0) {
         break;
       }
 
-      await sleep(Math.min(cleanPollIntervalMs, remainingMs));
+      await sleep(
+        Math.min(
+          cleanPollIntervalMs,
+          remainingMs
+        )
+      );
     }
 
     return {
       ok: false,
       available: false,
-      resource: cleanResource,
       reason: 'TIMEOUT',
-      waitedMs: now() - startTime
+      resource: cleanResource,
+      waitedMs: now() - startedAt
     };
-  } catch (err) {
-    console.error('waitForLock error:', err);
+  } catch (error) {
+    console.error(
+      'waitForLock error:',
+      error
+    );
 
     return {
       ok: false,
       available: false,
       reason: 'LOCK_WAIT_ERROR',
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(error)
     };
   }
 }
@@ -449,9 +705,9 @@ export async function waitForLock(
 export async function withLock(
   resource = '',
   fn = null,
-  timeoutSeconds = 30
+  timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
 ) {
-  let lockId = '';
+  let acquiredLock = null;
 
   try {
     if (typeof fn !== 'function') {
@@ -462,47 +718,84 @@ export async function withLock(
       };
     }
 
-    const lockAcquire = await acquireLock(resource, timeoutSeconds);
+    acquiredLock = await acquireLock(
+      resource,
+      timeoutSeconds
+    );
 
-    if (!lockAcquire.ok || !lockAcquire.acquired) {
+    if (
+      !acquiredLock.ok ||
+      !acquiredLock.acquired
+    ) {
       return {
         ok: false,
         executed: false,
-        reason: lockAcquire.reason || 'COULD_NOT_ACQUIRE_LOCK',
-        lock: lockAcquire.lock || null
+        reason:
+          acquiredLock.reason ||
+          'COULD_NOT_ACQUIRE_LOCK',
+        resource:
+          normalizeResource(resource),
+        lock:
+          acquiredLock.lock || null
       };
     }
 
-    lockId = lockAcquire.lockId;
-
     const result = await fn({
-      resource,
-      lockId,
-      expiresAt: lockAcquire.expiresAt
+      resource:
+        acquiredLock.resource,
+      lockId:
+        acquiredLock.lockId,
+      ownerToken:
+        acquiredLock.ownerToken,
+      acquiredAt:
+        acquiredLock.acquiredAt,
+      expiresAt:
+        acquiredLock.expiresAt
     });
 
     return {
       ok: true,
       executed: true,
+      resource:
+        acquiredLock.resource,
       result,
-      lockId
+      lockId:
+        acquiredLock.lockId,
+      ownerToken:
+        acquiredLock.ownerToken
     };
-  } catch (err) {
-    console.error('withLock error:', err);
+  } catch (error) {
+    console.error(
+      'withLock error:',
+      error
+    );
 
     return {
       ok: false,
       executed: false,
       reason: 'LOCKED_CALLBACK_ERROR',
-      error: err instanceof Error ? err.message : String(err),
-      lockId: lockId || null
+      error: errorMessage(error),
+      resource:
+        normalizeResource(resource),
+      lockId:
+        acquiredLock?.lockId || null
     };
   } finally {
-    if (lockId) {
-      const releaseResult = await releaseLock(resource, lockId);
+    if (
+      acquiredLock?.acquired &&
+      acquiredLock?.lockId
+    ) {
+      const releaseResult =
+        await releaseLock(
+          acquiredLock.resource,
+          acquiredLock.lockId
+        );
 
       if (!releaseResult.ok) {
-        console.error('withLock release error:', releaseResult);
+        console.error(
+          'withLock release error:',
+          releaseResult
+        );
       }
     }
   }
@@ -511,9 +804,11 @@ export async function withLock(
 export async function withLockRetry(
   resource = '',
   fn = null,
-  maxRetries = 3,
-  initialBackoffMs = 100,
-  timeoutSeconds = 30
+  maxRetries = DEFAULT_MAX_RETRIES,
+  initialBackoffMs =
+    DEFAULT_INITIAL_BACKOFF_MS,
+  timeoutSeconds =
+    DEFAULT_TIMEOUT_SECONDS
 ) {
   try {
     if (typeof fn !== 'function') {
@@ -524,89 +819,101 @@ export async function withLockRetry(
       };
     }
 
-    const cleanMaxRetries = Math.max(
-      1,
-      Math.floor(Number(maxRetries) || 3)
-    );
+    const cleanMaxRetries =
+      normalizePositiveInteger(
+        maxRetries,
+        DEFAULT_MAX_RETRIES,
+        1,
+        100
+      );
 
-    const cleanInitialBackoffMs = Math.max(
-      25,
-      Math.floor(Number(initialBackoffMs) || 100)
-    );
+    const cleanInitialBackoffMs =
+      normalizePositiveInteger(
+        initialBackoffMs,
+        DEFAULT_INITIAL_BACKOFF_MS,
+        25,
+        60000
+      );
 
     let attempt = 0;
     let lastError = null;
+    let lastReason = null;
 
     while (attempt < cleanMaxRetries) {
       attempt += 1;
 
-      try {
-        const execResult = await withLock(
-          resource,
-          fn,
-          timeoutSeconds
-        );
+      const result = await withLock(
+        resource,
+        fn,
+        timeoutSeconds
+      );
 
-        if (execResult.ok && execResult.executed) {
-          return {
-            ok: true,
-            executed: true,
-            result: execResult.result,
-            attempts: attempt,
-            lockId: execResult.lockId
-          };
-        }
-
-        lastError =
-          execResult.reason ||
-          execResult.error ||
-          'Could not acquire lock';
-
-        if (attempt >= cleanMaxRetries) {
-          break;
-        }
-
-        const backoffMs =
-          cleanInitialBackoffMs * Math.pow(2, attempt - 1);
-
-        await sleep(backoffMs);
-      } catch (err) {
-        lastError =
-          err instanceof Error ? err.message : String(err);
-
-        if (attempt >= cleanMaxRetries) {
-          break;
-        }
-
-        const backoffMs =
-          cleanInitialBackoffMs * Math.pow(2, attempt - 1);
-
-        await sleep(backoffMs);
+      if (
+        result.ok &&
+        result.executed
+      ) {
+        return {
+          ok: true,
+          executed: true,
+          result: result.result,
+          lockId: result.lockId,
+          ownerToken:
+            result.ownerToken,
+          attempts: attempt
+        };
       }
+
+      lastReason =
+        result.reason ||
+        'COULD_NOT_ACQUIRE_LOCK';
+
+      lastError =
+        result.error ||
+        result.reason ||
+        null;
+
+      if (attempt >= cleanMaxRetries) {
+        break;
+      }
+
+      const backoffMs =
+        cleanInitialBackoffMs *
+        Math.pow(2, attempt - 1);
+
+      await sleep(
+        Math.min(backoffMs, 60000)
+      );
     }
 
     return {
       ok: false,
       executed: false,
       reason: 'MAX_RETRIES_EXCEEDED',
+      lastReason,
       lastError,
-      attempts: cleanMaxRetries
+      attempts: attempt
     };
-  } catch (err) {
-    console.error('withLockRetry error:', err);
+  } catch (error) {
+    console.error(
+      'withLockRetry error:',
+      error
+    );
 
     return {
       ok: false,
       executed: false,
       reason: 'LOCK_RETRY_ERROR',
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(error)
     };
   }
 }
 
-export async function forceReleaseLock(resource = '') {
+export async function forceReleaseLock(
+  resource = ''
+) {
   try {
-    const cleanResource = String(resource || '').trim();
+    const cleanResource =
+      normalizeResource(resource);
 
     if (!cleanResource) {
       return {
@@ -616,78 +923,119 @@ export async function forceReleaseLock(resource = '') {
       };
     }
 
-    const redis = getRedis();
-    const lockKey = keys.lock(cleanResource);
-    const result = await redisDelete(redis, lockKey);
+    const redis = getVolatileRedis();
+    const lockKey = buildLockKey(cleanResource);
+
+    const currentLock = await readLock(
+      redis,
+      lockKey
+    );
+
+    const deleted = await delJson(
+      redis,
+      lockKey
+    );
 
     return {
       ok: true,
-      released: deletedCount(result) > 0,
-      resource: cleanResource
+      released: deletedCount(deleted) > 0,
+      forced: true,
+      resource: cleanResource,
+      lockKey,
+      previousLock:
+        currentLock || null
     };
-  } catch (err) {
-    console.error('forceReleaseLock error:', err);
+  } catch (error) {
+    console.error(
+      'forceReleaseLock error:',
+      error
+    );
 
     return {
       ok: false,
       released: false,
-      reason: 'FORCE_LOCK_RELEASE_ERROR',
-      error: err instanceof Error ? err.message : String(err)
+      forced: true,
+      reason:
+        'FORCE_LOCK_RELEASE_ERROR',
+      error: errorMessage(error)
     };
   }
 }
 
 export async function getAllLocks() {
   try {
-    const redis = getRedis();
-    const pattern = 'SHORT:LOCK:*';
+    const redis = getVolatileRedis();
 
-    if (typeof redis.keys !== 'function') {
-      return {
-        ok: false,
-        locks: [],
-        count: 0,
-        reason: 'REDIS_KEYS_METHOD_NOT_AVAILABLE'
-      };
-    }
+    /*
+     * getKeys() gebruikt SCAN en normaliseert LOCK:*
+     * automatisch naar SHORT:LOCK:*.
+     */
+    const lockKeys = await getKeys(
+      redis,
+      LOCK_PATTERN,
+      MAX_LOCK_LIST_RESULTS
+    );
 
-    const lockKeys = await redis.keys(pattern);
     const locks = [];
+    let expiredRemoved = 0;
 
-    for (const key of Array.isArray(lockKeys) ? lockKeys : []) {
-      const rawLock = await redis.get(key);
-      const lock = normalizeLockValue(rawLock);
+    for (const lockKey of lockKeys) {
+      const lock = await readLock(
+        redis,
+        lockKey
+      );
 
-      if (!lock) continue;
+      if (!lock) {
+        continue;
+      }
 
-      if (
-        Number(lock.expiresAt || 0) > 0 &&
-        Number(lock.expiresAt) < now()
-      ) {
-        await removeExpiredLock(redis, key, lock);
+      if (lockIsExpired(lock)) {
+        const cleanup =
+          await removeExpiredLock(
+            redis,
+            lockKey,
+            lock.id
+          );
+
+        if (cleanup.removed) {
+          expiredRemoved += 1;
+        }
+
         continue;
       }
 
       locks.push({
-        key,
+        key: lockKey,
         ...lock
       });
     }
 
+    locks.sort((left, right) => {
+      return (
+        Number(left.expiresAt || 0) -
+        Number(right.expiresAt || 0)
+      );
+    });
+
     return {
       ok: true,
       locks,
-      count: locks.length
+      count: locks.length,
+      expiredRemoved
     };
-  } catch (err) {
-    console.error('getAllLocks error:', err);
+  } catch (error) {
+    console.error(
+      'getAllLocks error:',
+      error
+    );
 
     return {
       ok: false,
       reason: 'GET_ALL_LOCKS_ERROR',
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(error),
       locks: [],
-      count: 0
+      count: 0,
+      expiredRemoved: 0
     };
   }
 }
