@@ -56,6 +56,10 @@ const DEFAULT_RUN_META_ACTION_SAMPLE_LIMIT = 20;
 const DEFAULT_MAX_TRADE_RUN_META_BYTES = 1_000_000;
 const SNAPSHOT_SEARCH_LIMIT = 12;
 
+const CANDIDATE_ORDER_VERSION = 'SNAPSHOT_ID_ROTATION_V1';
+const LEGACY_CANDIDATE_ORDER_VERSION = 'LEGACY_SCANNER_ORDER_V0';
+const SNAPSHOT_SELECTION_POLICY = 'UNFINISHED_PROGRESS_FIRST_THEN_LATEST_V1';
+
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const TARGET_SCANNER_SIDE = 'bear';
@@ -2067,6 +2071,40 @@ function compactRunMetaForStorage(
         compact.snapshotProcessingComplete
       ),
 
+    candidateOrderVersion:
+      compact.candidateOrderVersion ||
+      null,
+
+    candidateRotationOffset:
+      safeNumber(
+        compact.candidateRotationOffset,
+        0
+      ),
+
+    candidateOrderDeterministic:
+      Boolean(
+        compact.candidateOrderDeterministic
+      ),
+
+    legacyProgressOrderPreserved:
+      Boolean(
+        compact.legacyProgressOrderPreserved
+      ),
+
+    snapshotSelectionPolicy:
+      compact.snapshotSelectionPolicy ||
+      SNAPSHOT_SELECTION_POLICY,
+
+    resumedUnfinishedSnapshot:
+      Boolean(
+        compact.resumedUnfinishedSnapshot
+      ),
+
+    continuationProgressStale:
+      Boolean(
+        compact.continuationProgressStale
+      ),
+
     batchProcessingComplete:
       Boolean(
         compact.batchProcessingComplete
@@ -2232,9 +2270,181 @@ function positionSymbolKey(
   );
 }
 
+function stableStringHash(value = '') {
+  const text = String(value || '');
+
+  let hash = 2166136261;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+function normalizeRotationOffset(value, length) {
+  const size = Math.max(
+    0,
+    Math.floor(
+      safeNumber(
+        length,
+        0
+      )
+    )
+  );
+
+  if (size <= 0) return 0;
+
+  const raw = Math.floor(
+    safeNumber(
+      value,
+      0
+    )
+  );
+
+  return (
+    (
+      raw % size
+    ) +
+    size
+  ) % size;
+}
+
+function deterministicCandidateRotationOffset(
+  snapshotId,
+  candidateCount
+) {
+  const count = Math.max(
+    0,
+    Math.floor(
+      safeNumber(
+        candidateCount,
+        0
+      )
+    )
+  );
+
+  if (count <= 1) return 0;
+
+  return stableStringHash(
+    `${SHORT_NAMESPACE}|${snapshotId}|${CANDIDATE_ORDER_VERSION}`
+  ) % count;
+}
+
+function buildSnapshotCandidateOrder({
+  snapshotId,
+  candidates = [],
+  progress = null
+} = {}) {
+  const rows =
+    Array.isArray(candidates)
+      ? [...candidates]
+      : [];
+
+  const hasMatchingProgress =
+    Boolean(
+      progress &&
+      progress.snapshotId === snapshotId
+    );
+
+  const progressVersion =
+    hasMatchingProgress
+      ? String(
+          progress.candidateOrderVersion ||
+          ''
+        ).trim()
+      : '';
+
+  const resumeLegacyOrder =
+    hasMatchingProgress &&
+    !progressVersion &&
+    safeNumber(
+      progress.nextCandidateIndex,
+      0
+    ) > 0;
+
+  const candidateOrderVersion =
+    resumeLegacyOrder ||
+    progressVersion ===
+      LEGACY_CANDIDATE_ORDER_VERSION
+      ? LEGACY_CANDIDATE_ORDER_VERSION
+      : CANDIDATE_ORDER_VERSION;
+
+  if (
+    rows.length <= 1 ||
+    candidateOrderVersion ===
+      LEGACY_CANDIDATE_ORDER_VERSION
+  ) {
+    return {
+      candidates:
+        rows,
+
+      candidateOrderVersion,
+
+      candidateRotationOffset:
+        0,
+
+      candidateOrderDeterministic:
+        candidateOrderVersion ===
+        CANDIDATE_ORDER_VERSION,
+
+      legacyProgressOrderPreserved:
+        resumeLegacyOrder ||
+        candidateOrderVersion ===
+          LEGACY_CANDIDATE_ORDER_VERSION
+    };
+  }
+
+  const calculatedOffset =
+    deterministicCandidateRotationOffset(
+      snapshotId,
+      rows.length
+    );
+
+  const candidateRotationOffset =
+    hasMatchingProgress &&
+    progressVersion ===
+      CANDIDATE_ORDER_VERSION
+      ? normalizeRotationOffset(
+          progress.candidateRotationOffset,
+          rows.length
+        )
+      : calculatedOffset;
+
+  const rotated =
+    candidateRotationOffset === 0
+      ? rows
+      : [
+          ...rows.slice(
+            candidateRotationOffset
+          ),
+          ...rows.slice(
+            0,
+            candidateRotationOffset
+          )
+        ];
+
+  return {
+    candidates:
+      rotated,
+
+    candidateOrderVersion:
+      CANDIDATE_ORDER_VERSION,
+
+    candidateRotationOffset,
+
+    candidateOrderDeterministic:
+      true,
+
+    legacyProgressOrderPreserved:
+      false
+  };
+}
+
 async function loadSnapshotProgress(
   redis,
-  snapshotId
+  snapshotId = null
 ) {
   const value =
     await getJson(
@@ -2246,6 +2456,13 @@ async function loadSnapshotProgress(
   if (
     !value ||
     typeof value !== 'object' ||
+    !value.snapshotId
+  ) {
+    return null;
+  }
+
+  if (
+    snapshotId &&
     value.snapshotId !== snapshotId
   ) {
     return null;
@@ -2289,6 +2506,32 @@ async function saveSnapshotProgress(
             )
           )
         ),
+
+      candidateOrderVersion:
+        progress.candidateOrderVersion ||
+        CANDIDATE_ORDER_VERSION,
+
+      candidateRotationOffset:
+        Math.max(
+          0,
+          Math.floor(
+            safeNumber(
+              progress.candidateRotationOffset,
+              0
+            )
+          )
+        ),
+
+      candidateOrderDeterministic:
+        progress.candidateOrderDeterministic !== false,
+
+      legacyProgressOrderPreserved:
+        Boolean(
+          progress.legacyProgressOrderPreserved
+        ),
+
+      snapshotSelectionPolicy:
+        SNAPSHOT_SELECTION_POLICY,
 
       completed:
         Boolean(
@@ -4071,6 +4314,62 @@ function normalizeSelectedSnapshot(snapshot = {}, meta = {}) {
   };
 }
 
+async function getSnapshotById(snapshotId) {
+  const requestedSnapshotId =
+    String(snapshotId || '').trim();
+
+  if (!requestedSnapshotId) return null;
+
+  const volatileRedis = getVolatileRedis();
+
+  const direct = await safeGetSnapshotJson(
+    volatileRedis,
+    SHORT_KEYS.scan.snapshot(requestedSnapshotId),
+    null
+  );
+
+  if (hasFullSnapshotShape(direct)) {
+    return normalizeSelectedSnapshot(direct, {
+      source: 'SHORT:SCAN:SNAPSHOT_BY_ACTIVE_PROGRESS_ID',
+      reason: 'RESUME_UNFINISHED_SNAPSHOT_BEFORE_LATEST'
+    });
+  }
+
+  const latest = await safeGetSnapshotJson(
+    volatileRedis,
+    SHORT_KEYS.scan.latest,
+    null
+  );
+
+  const latestSnapshotId = extractSnapshotId(latest);
+
+  if (
+    hasFullSnapshotShape(latest) &&
+    latestSnapshotId === requestedSnapshotId
+  ) {
+    return normalizeSelectedSnapshot(latest, {
+      source: 'SHORT:SCAN:LATEST_MATCHED_ACTIVE_PROGRESS_ID',
+      reason: 'RESUME_UNFINISHED_SNAPSHOT_BEFORE_LATEST'
+    });
+  }
+
+  const recent = await loadRecentTargetSnapshots(
+    volatileRedis
+  );
+
+  const matched = recent.find((item) => (
+    item.snapshot?.snapshotId ===
+      requestedSnapshotId
+  ));
+
+  if (!matched) return null;
+
+  return normalizeSelectedSnapshot(matched.snapshot, {
+    source: `SHORT:SCAN:RECENT_PROGRESS_SEARCH:${matched.key}`,
+    reason: 'RESUME_UNFINISHED_SNAPSHOT_BEFORE_LATEST'
+  });
+}
+
 async function getLatestSnapshot() {
   const volatileRedis = getVolatileRedis();
 
@@ -5467,7 +5766,95 @@ export async function runTradeSystem(options = {}) {
     });
   }
 
-  const snapshot = await getLatestSnapshot();
+  if (forceProcessSnapshot) {
+    await clearSnapshotProgress(
+      durableRedis
+    );
+  }
+
+  let snapshotProgress =
+    forceProcessSnapshot
+      ? null
+      : await loadSnapshotProgress(
+          durableRedis
+        );
+
+  if (
+    snapshotProgress?.completed === true
+  ) {
+    await clearSnapshotProgress(
+      durableRedis
+    );
+
+    snapshotProgress =
+      null;
+  }
+
+  const progressUpdatedAt =
+    safeNumber(
+      snapshotProgress?.updatedAt ??
+      snapshotProgress?.processedAt,
+      0
+    );
+
+  const progressAgeSec =
+    progressUpdatedAt > 0
+      ? (
+          now() -
+          progressUpdatedAt
+        ) / 1000
+      : 0;
+
+  const continuationProgressStale =
+    Boolean(
+      snapshotProgress &&
+      progressAgeSec >
+        cfg.maxContinuationAgeSec
+    );
+
+  let snapshot =
+    null;
+
+  let resumedUnfinishedSnapshot =
+    false;
+
+  let abandonedSnapshotProgressId =
+    null;
+
+  let abandonedSnapshotProgressReason =
+    null;
+
+  if (
+    snapshotProgress?.snapshotId
+  ) {
+    snapshot =
+      await getSnapshotById(
+        snapshotProgress.snapshotId
+      );
+
+    if (snapshot?.snapshotId) {
+      resumedUnfinishedSnapshot =
+        true;
+    } else {
+      abandonedSnapshotProgressId =
+        snapshotProgress.snapshotId;
+
+      abandonedSnapshotProgressReason =
+        'UNFINISHED_SNAPSHOT_PAYLOAD_NOT_FOUND';
+
+      await clearSnapshotProgress(
+        durableRedis
+      );
+
+      snapshotProgress =
+        null;
+    }
+  }
+
+  if (!snapshot?.snapshotId) {
+    snapshot =
+      await getLatestSnapshot();
+  }
 
   if (!snapshot?.snapshotId) {
     const actions = [];
@@ -5486,6 +5873,12 @@ export async function runTradeSystem(options = {}) {
       reason: 'NO_SHORT_SCANNER_SNAPSHOT',
       actionCounts: buildRunActionCounts(actions, virtualExits),
       marketContext,
+      snapshotSelectionPolicy:
+        SNAPSHOT_SELECTION_POLICY,
+      resumedUnfinishedSnapshot,
+      continuationProgressStale,
+      abandonedSnapshotProgressId,
+      abandonedSnapshotProgressReason,
       monitorOpenPositions: true,
       monitorOpenPositionsFirst: true,
       processScannerSnapshot: true,
@@ -5501,51 +5894,6 @@ export async function runTradeSystem(options = {}) {
         0
       )
     ) / 1000;
-
-  if (forceProcessSnapshot) {
-    await clearSnapshotProgress(
-      durableRedis
-    );
-  }
-
-  let snapshotProgress =
-    forceProcessSnapshot
-      ? null
-      : await loadSnapshotProgress(
-          durableRedis,
-          snapshot.snapshotId
-        );
-
-  const progressUpdatedAt =
-    safeNumber(
-      snapshotProgress?.updatedAt ??
-      snapshotProgress?.processedAt,
-      0
-    );
-
-  const progressAgeSec =
-    progressUpdatedAt > 0
-      ? (
-          now() -
-          progressUpdatedAt
-        ) / 1000
-      : 0;
-
-  if (
-    snapshotProgress &&
-    (
-      snapshotProgress.completed === true ||
-      progressAgeSec >
-        cfg.maxContinuationAgeSec
-    )
-  ) {
-    await clearSnapshotProgress(
-      durableRedis
-    );
-
-    snapshotProgress =
-      null;
-  }
 
   const continuationActive =
     Boolean(
@@ -5818,7 +6166,7 @@ export async function runTradeSystem(options = {}) {
 
   const alertContext = buildSelectedAlertContext(activeRotation);
 
-  const allCandidates =
+  const rawCandidates =
     (
       Array.isArray(
         snapshot.candidates
@@ -5837,6 +6185,37 @@ export async function runTradeSystem(options = {}) {
         0,
         cfg.maxCandidatesPerSnapshot
       );
+
+  const candidateOrder =
+    buildSnapshotCandidateOrder({
+      snapshotId:
+        snapshot.snapshotId,
+
+      candidates:
+        rawCandidates,
+
+      progress:
+        snapshotProgress
+    });
+
+  const allCandidates =
+    candidateOrder.candidates;
+
+  const candidateOrderVersion =
+    candidateOrder
+      .candidateOrderVersion;
+
+  const candidateRotationOffset =
+    candidateOrder
+      .candidateRotationOffset;
+
+  const candidateOrderDeterministic =
+    candidateOrder
+      .candidateOrderDeterministic;
+
+  const legacyProgressOrderPreserved =
+    candidateOrder
+      .legacyProgressOrderPreserved;
 
   const totalSnapshotCandidateCount =
     allCandidates.length;
@@ -5954,6 +6333,25 @@ export async function runTradeSystem(options = {}) {
       snapshotCandidateCount:
         totalSnapshotCandidateCount,
 
+      candidateOrderVersion,
+
+      candidateRotationOffset,
+
+      candidateOrderDeterministic,
+
+      legacyProgressOrderPreserved,
+
+      snapshotSelectionPolicy:
+        SNAPSHOT_SELECTION_POLICY,
+
+      resumedUnfinishedSnapshot,
+
+      continuationProgressStale,
+
+      abandonedSnapshotProgressId,
+
+      abandonedSnapshotProgressReason,
+
       snapshotProcessingComplete:
         true,
 
@@ -6037,6 +6435,25 @@ export async function runTradeSystem(options = {}) {
       snapshotCandidateCount:
         totalSnapshotCandidateCount,
 
+      candidateOrderVersion,
+
+      candidateRotationOffset,
+
+      candidateOrderDeterministic,
+
+      legacyProgressOrderPreserved,
+
+      snapshotSelectionPolicy:
+        SNAPSHOT_SELECTION_POLICY,
+
+      resumedUnfinishedSnapshot,
+
+      continuationProgressStale,
+
+      abandonedSnapshotProgressId,
+
+      abandonedSnapshotProgressReason,
+
       snapshotProcessingComplete:
         true,
 
@@ -6093,6 +6510,21 @@ export async function runTradeSystem(options = {}) {
 
         snapshotCandidateCount:
           totalSnapshotCandidateCount,
+
+        candidateOrderVersion,
+
+        candidateRotationOffset,
+
+        candidateOrderDeterministic,
+
+        legacyProgressOrderPreserved,
+
+        snapshotSelectionPolicy:
+          SNAPSHOT_SELECTION_POLICY,
+
+        resumedUnfinishedSnapshot,
+
+        continuationProgressStale,
 
         completed:
           false,
@@ -6164,6 +6596,25 @@ export async function runTradeSystem(options = {}) {
 
       snapshotCandidateCount:
         totalSnapshotCandidateCount,
+
+      candidateOrderVersion,
+
+      candidateRotationOffset,
+
+      candidateOrderDeterministic,
+
+      legacyProgressOrderPreserved,
+
+      snapshotSelectionPolicy:
+        SNAPSHOT_SELECTION_POLICY,
+
+      resumedUnfinishedSnapshot,
+
+      continuationProgressStale,
+
+      abandonedSnapshotProgressId,
+
+      abandonedSnapshotProgressReason,
 
       snapshotProcessingComplete:
         false,
@@ -6853,6 +7304,25 @@ export async function runTradeSystem(options = {}) {
 
     totalSnapshotCandidateCount,
 
+    candidateOrderVersion,
+
+    candidateRotationOffset,
+
+    candidateOrderDeterministic,
+
+    legacyProgressOrderPreserved,
+
+    snapshotSelectionPolicy:
+      SNAPSHOT_SELECTION_POLICY,
+
+    resumedUnfinishedSnapshot,
+
+    continuationProgressStale,
+
+    abandonedSnapshotProgressId,
+
+    abandonedSnapshotProgressReason,
+
     batchProcessingComplete,
 
     snapshotProcessingComplete,
@@ -6885,6 +7355,25 @@ export async function runTradeSystem(options = {}) {
 
     snapshotCandidateCount:
       totalSnapshotCandidateCount,
+
+    candidateOrderVersion,
+
+    candidateRotationOffset,
+
+    candidateOrderDeterministic,
+
+    legacyProgressOrderPreserved,
+
+    snapshotSelectionPolicy:
+      SNAPSHOT_SELECTION_POLICY,
+
+    resumedUnfinishedSnapshot,
+
+    continuationProgressStale,
+
+    abandonedSnapshotProgressId,
+
+    abandonedSnapshotProgressReason,
 
     batchCandidateCount:
       candidates.length,
@@ -7315,6 +7804,21 @@ export async function runTradeSystem(options = {}) {
         snapshotCandidateCount:
           totalSnapshotCandidateCount,
 
+        candidateOrderVersion,
+
+        candidateRotationOffset,
+
+        candidateOrderDeterministic,
+
+        legacyProgressOrderPreserved,
+
+        snapshotSelectionPolicy:
+          SNAPSHOT_SELECTION_POLICY,
+
+        resumedUnfinishedSnapshot,
+
+        continuationProgressStale,
+
         batchCandidateCount:
           candidates.length,
 
@@ -7438,6 +7942,25 @@ export async function runTradeSystem(options = {}) {
 
     snapshotCandidateCount:
       totalSnapshotCandidateCount,
+
+    candidateOrderVersion,
+
+    candidateRotationOffset,
+
+    candidateOrderDeterministic,
+
+    legacyProgressOrderPreserved,
+
+    snapshotSelectionPolicy:
+      SNAPSHOT_SELECTION_POLICY,
+
+    resumedUnfinishedSnapshot,
+
+    continuationProgressStale,
+
+    abandonedSnapshotProgressId,
+
+    abandonedSnapshotProgressReason,
 
     batchCandidateCount:
       candidates.length,
