@@ -95,3 +95,23 @@ This is a research+signal system with cost-aware learning. It does not place exc
 orders by itself - `TradeSystem` maintains virtual positions and Discord alerts. Wire your
 own execution layer to the `ENTRY`/`EXIT` actions when you are satisfied with net results.
 Nothing here is financial advice; validate on your own capital at your own risk.
+
+## Current SHORT learning taxonomy
+
+The runtime uses two structural levels and one user-facing selection level:
+
+1. **Parent-15** — `MICRO_SHORT_{SETUP}_{REGIME}`; context and aggregation only.
+2. **Exact child-75** — `MICRO_SHORT_{SETUP}_{REGIME}_{CONFIRMATION_PROFILE}`.
+3. **Micro-micro selection** — the exact child-75 ID is the finest stable, selectable identity in this release. The aliases `microMicroFamilyId` and `exactMicroMicroFamilyId` deliberately point to that same ID; no symbol, raw score, or random hash is added, preventing sample fragmentation.
+
+Every valid SHORT candidate is observed for learning. Virtual positions preserve the exact entry identity. Closed positions are recorded once using net R after costs. Weekly rotation and Discord use exact-ID matching, so only the manually selected best micro-micro family can publish entry/exit signals while all valid families continue collecting data.
+
+## Validation
+
+Run before deployment:
+
+```bash
+npm run validate
+```
+
+This checks JavaScript syntax, all local named import/export contracts, and the required Analyze-engine interface without needing Redis credentials.
