@@ -29,6 +29,7 @@ const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
 const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_PERSISTENCE_SNAPSHOT_V2';
 
 const SOURCE_VIRTUAL = 'VIRTUAL';
 const SOURCE_REAL = 'REAL';
@@ -168,6 +169,220 @@ function finiteOrNull(value) {
   const n = Number(value);
 
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCurrentFitLabel(value = '') {
+  const raw = upper(value);
+
+  if (
+    raw === 'MATCH' ||
+    raw === 'FIT'
+  ) {
+    return 'FIT';
+  }
+
+  if (
+    raw === 'WEAK_MATCH' ||
+    raw === 'WEAKMATCH' ||
+    raw === 'OK'
+  ) {
+    return 'OK';
+  }
+
+  if (raw === 'NEUTRAL') return 'NEUTRAL';
+  if (raw === 'MISFIT') return 'MISFIT';
+
+  return 'UNKNOWN';
+}
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(
+    object || {},
+    key
+  );
+}
+
+function hasUsableCurrentFitSnapshot(value = {}) {
+  const label = normalizeCurrentFitLabel(
+    value.currentFit ||
+      value.currentFitLabel ||
+      value.entryCurrentFit ||
+      value.lastKnownCurrentFit
+  );
+
+  return (
+    label !== 'UNKNOWN' ||
+    value.currentMarketWeatherAvailable === true ||
+    value.currentFitScoreBuilt === true
+  );
+}
+
+function applyCurrentFitSnapshot(stats = {}, row = {}) {
+  const hasExplicitLabel =
+    hasOwn(row, 'currentFit') ||
+    hasOwn(row, 'currentFitLabel') ||
+    hasOwn(row, 'entryCurrentFit');
+
+  const hasExplicitScore =
+    hasOwn(row, 'currentFitScore') ||
+    hasOwn(row, 'fitScore');
+
+  const hasExplicitConfidence =
+    hasOwn(row, 'currentFitConfidence') ||
+    hasOwn(row, 'entryCurrentFitConfidence') ||
+    hasOwn(row, 'currentMarketFitConfidence');
+
+  const hasWeatherContext = Boolean(
+    row.currentMarketWeather ||
+    row.entryMarketWeather ||
+    row.currentMarketWeatherAvailable === true ||
+    row.currentRegime ||
+    row.currentMarketRegime ||
+    row.currentTrendSide ||
+    row.currentMarketTrendSide
+  );
+
+  if (
+    !hasExplicitLabel &&
+    !hasExplicitScore &&
+    !hasExplicitConfidence &&
+    !hasWeatherContext
+  ) {
+    return stats;
+  }
+
+  const label = normalizeCurrentFitLabel(
+    row.currentFit ||
+      row.currentFitLabel ||
+      row.entryCurrentFit
+  );
+
+  const score = finiteOrNull(
+    row.currentFitScore ??
+      row.fitScore
+  );
+
+  const confidence = finiteOrNull(
+    row.currentFitConfidence ??
+      row.entryCurrentFitConfidence ??
+      row.currentMarketFitConfidence
+  );
+
+  const reasons = Array.isArray(row.currentFitReasons)
+    ? row.currentFitReasons
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .slice(0, 20)
+    : [];
+
+  const updatedAt = safeNumber(
+    row.currentFitUpdatedAt ??
+      row.liveDataTs ??
+      row.updatedAt ??
+      row.createdAt ??
+      row.ts,
+    now()
+  );
+
+  if (hasExplicitLabel) {
+    stats.currentFit = label;
+    stats.currentFitLabel = label;
+  } else {
+    stats.currentFit ||= 'UNKNOWN';
+    stats.currentFitLabel ||= stats.currentFit;
+  }
+
+  if (score !== null) {
+    stats.currentFitScore = score;
+    stats.fitScore = score;
+  }
+
+  if (confidence !== null) {
+    stats.currentFitConfidence = confidence;
+  }
+
+  stats.currentFitReason =
+    row.currentFitReason ||
+    stats.currentFitReason ||
+    null;
+
+  if (reasons.length > 0) {
+    stats.currentFitReasons = reasons;
+  } else if (!Array.isArray(stats.currentFitReasons)) {
+    stats.currentFitReasons = [];
+  }
+
+  stats.currentRegime =
+    row.currentRegime ||
+    row.currentMarketRegime ||
+    stats.currentRegime ||
+    'UNKNOWN';
+
+  stats.currentMarketRegime =
+    row.currentMarketRegime ||
+    row.currentRegime ||
+    stats.currentMarketRegime ||
+    'UNKNOWN';
+
+  stats.currentTrendSide =
+    row.currentTrendSide ||
+    row.currentMarketTrendSide ||
+    stats.currentTrendSide ||
+    'UNKNOWN';
+
+  stats.currentMarketTrendSide =
+    row.currentMarketTrendSide ||
+    row.currentTrendSide ||
+    stats.currentMarketTrendSide ||
+    'UNKNOWN';
+
+  stats.currentBullishPct = finiteOrNull(
+    row.currentBullishPct ??
+      row.bullishPct
+  ) ?? stats.currentBullishPct ?? null;
+
+  stats.currentBearishPct = finiteOrNull(
+    row.currentBearishPct ??
+      row.bearishPct
+  ) ?? stats.currentBearishPct ?? null;
+
+  stats.currentSqueezePct = finiteOrNull(
+    row.currentSqueezePct ??
+      row.squeezePct
+  ) ?? stats.currentSqueezePct ?? null;
+
+  stats.currentMarketWeatherAgeSec = finiteOrNull(
+    row.currentMarketWeatherAgeSec
+  ) ?? stats.currentMarketWeatherAgeSec ?? null;
+
+  stats.currentMarketWeatherStale = Boolean(
+    row.currentMarketWeatherStale
+  );
+
+  stats.currentMarketWeatherAvailable = Boolean(
+    row.currentMarketWeatherAvailable === true ||
+    row.currentMarketWeather ||
+    row.entryMarketWeather
+  );
+
+  stats.currentFitVersion =
+    row.currentFitVersion ||
+    stats.currentFitVersion ||
+    CURRENT_FIT_VERSION;
+
+  stats.currentFitUpdatedAt = updatedAt;
+  stats.currentFitScoreBuilt =
+    label !== 'UNKNOWN' &&
+    score !== null;
+
+  if (label !== 'UNKNOWN') {
+    stats.lastKnownCurrentFit = label;
+    stats.lastKnownCurrentFitScore = score ?? safeNumber(stats.currentFitScore, 0);
+    stats.lastKnownCurrentFitConfidence = confidence ?? safeNumber(stats.currentFitConfidence, 0);
+    stats.lastKnownCurrentFitAt = updatedAt;
+  }
+
+  return stats;
 }
 
 function inc(obj, key, amount = 1) {
@@ -1062,7 +1277,7 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
   stats.adaptiveLayerBuilt = false;
   stats.adaptiveScoreBuilt = false;
   stats.recentMomentumScoreBuilt = false;
-  stats.currentFitScoreBuilt = false;
+  stats.currentFitScoreBuilt = hasUsableCurrentFitSnapshot(stats);
   stats.parentDiversificationBuilt = false;
 
   stats.validShortRiskShape = 'entry > 0 && tp < entry && sl > entry';
@@ -1813,6 +2028,30 @@ export function createMicroStats({
     rankingUsesAvgR: true,
     rankingUsesAvgCostR: true,
 
+    currentFit: 'UNKNOWN',
+    currentFitLabel: 'UNKNOWN',
+    currentFitScore: 0,
+    fitScore: 0,
+    currentFitConfidence: 0,
+    currentFitReason: null,
+    currentFitReasons: [],
+    currentFitVersion: CURRENT_FIT_VERSION,
+    currentFitUpdatedAt: null,
+    lastKnownCurrentFit: 'UNKNOWN',
+    lastKnownCurrentFitScore: 0,
+    lastKnownCurrentFitConfidence: 0,
+    lastKnownCurrentFitAt: null,
+    currentRegime: 'UNKNOWN',
+    currentMarketRegime: 'UNKNOWN',
+    currentTrendSide: 'UNKNOWN',
+    currentMarketTrendSide: 'UNKNOWN',
+    currentBullishPct: null,
+    currentBearishPct: null,
+    currentSqueezePct: null,
+    currentMarketWeatherAgeSec: null,
+    currentMarketWeatherStale: false,
+    currentMarketWeatherAvailable: false,
+
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
@@ -1874,6 +2113,23 @@ function ensureStatsShape(stats = {}) {
   stats.source ||= SOURCE_VIRTUAL;
 
   stats.minCompletedForActiveLearning = MIN_COMPLETED_ACTIVE;
+
+  stats.currentFit = normalizeCurrentFitLabel(
+    stats.currentFit ||
+      stats.currentFitLabel ||
+      stats.entryCurrentFit
+  );
+  stats.currentFitLabel = stats.currentFit;
+  stats.currentFitReasons = Array.isArray(stats.currentFitReasons)
+    ? stats.currentFitReasons
+    : [];
+  stats.currentFitVersion ||= CURRENT_FIT_VERSION;
+  stats.currentMarketRegime ||= stats.currentRegime || 'UNKNOWN';
+  stats.currentRegime ||= stats.currentMarketRegime || 'UNKNOWN';
+  stats.currentMarketTrendSide ||= stats.currentTrendSide || 'UNKNOWN';
+  stats.currentTrendSide ||= stats.currentMarketTrendSide || 'UNKNOWN';
+  stats.currentMarketWeatherAvailable = Boolean(stats.currentMarketWeatherAvailable);
+  stats.currentMarketWeatherStale = Boolean(stats.currentMarketWeatherStale);
 
   applySideIdentity(stats);
 
@@ -1965,6 +2221,12 @@ function ensureStatsShape(stats = {}) {
     'balancedScore',
     'dashboardBalancedScore',
 
+    'currentFitScore',
+    'fitScore',
+    'currentFitConfidence',
+    'lastKnownCurrentFitScore',
+    'lastKnownCurrentFitConfidence',
+
     'directSLPct',
     'nearTpPct',
     'reachedHalfRPct',
@@ -2001,7 +2263,7 @@ function ensureStatsShape(stats = {}) {
   stats.adaptiveLayerBuilt = false;
   stats.adaptiveScoreBuilt = false;
   stats.recentMomentumScoreBuilt = false;
-  stats.currentFitScoreBuilt = false;
+  stats.currentFitScoreBuilt = hasUsableCurrentFitSnapshot(stats);
   stats.parentDiversificationBuilt = false;
 
   stats.createdAt ||= now();
@@ -2018,6 +2280,7 @@ export function updateObservation(stats, row = {}) {
   }
 
   applySideIdentity(stats, row);
+  applyCurrentFitSnapshot(stats, row);
 
   const dedupeKey = observationDedupeKey({
     ...stats,
@@ -2114,6 +2377,25 @@ export function updateObservation(stats, row = {}) {
       slHitRule: 'SHORT: price >= sl',
       grossRFormula: '(entry - exitPrice) / (initialSl - entry)',
       currentRFormula: '(entry - currentPrice) / (initialSl - entry)',
+      currentFit: normalizeCurrentFitLabel(
+        row.currentFit ||
+        row.currentFitLabel ||
+        row.entryCurrentFit
+      ),
+      currentFitScore: safeNumber(row.currentFitScore ?? row.fitScore, 0),
+      currentFitConfidence: safeNumber(
+        row.currentFitConfidence ??
+        row.entryCurrentFitConfidence,
+        0
+      ),
+      currentFitReason: row.currentFitReason || null,
+      currentRegime: row.currentRegime || row.currentMarketRegime || null,
+      currentTrendSide: row.currentTrendSide || row.currentMarketTrendSide || null,
+      currentMarketWeatherAvailable: Boolean(
+        row.currentMarketWeatherAvailable === true ||
+        row.currentMarketWeather ||
+        row.entryMarketWeather
+      ),
       currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
       currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
 
@@ -2139,6 +2421,7 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   }
 
   applySideIdentity(stats, row);
+  applyCurrentFitSnapshot(stats, row);
 
   if (outcomeIsDuplicate(row)) {
     stats.outcomeDuplicateSkippedCount = safeNumber(stats.outcomeDuplicateSkippedCount, 0) + 1;
@@ -2317,6 +2600,26 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     entryCurrentFit: row.entryCurrentFit ?? row.currentFit ?? null,
     entryCurrentFitConfidence: safeNumber(row.entryCurrentFitConfidence ?? row.currentMarketFitConfidence, null),
     entryWeatherFitMatchedFamily: row.entryWeatherFitMatchedFamily ?? null,
+
+    currentFit: normalizeCurrentFitLabel(
+      row.currentFit ||
+      row.currentFitLabel ||
+      row.entryCurrentFit
+    ),
+    currentFitScore: safeNumber(row.currentFitScore ?? row.fitScore, 0),
+    currentFitConfidence: safeNumber(
+      row.currentFitConfidence ??
+      row.entryCurrentFitConfidence,
+      0
+    ),
+    currentFitReason: row.currentFitReason || null,
+    currentRegime: row.currentRegime || row.currentMarketRegime || null,
+    currentTrendSide: row.currentTrendSide || row.currentMarketTrendSide || null,
+    currentMarketWeatherAvailable: Boolean(
+      row.currentMarketWeatherAvailable === true ||
+      row.currentMarketWeather ||
+      row.entryMarketWeather
+    ),
 
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
@@ -2826,6 +3129,23 @@ export function refreshStats(stats) {
     rankingUsesAvgR: true,
     rankingUsesAvgCostR: true,
 
+    currentFit: normalizeCurrentFitLabel(
+      stats.currentFit ||
+      stats.currentFitLabel ||
+      stats.lastKnownCurrentFit
+    ),
+    currentFitLabel: normalizeCurrentFitLabel(
+      stats.currentFit ||
+      stats.currentFitLabel ||
+      stats.lastKnownCurrentFit
+    ),
+    currentFitScore: round4(stats.currentFitScore),
+    fitScore: round4(stats.fitScore ?? stats.currentFitScore),
+    currentFitConfidence: round4(stats.currentFitConfidence),
+    currentFitVersion: stats.currentFitVersion || CURRENT_FIT_VERSION,
+    currentFitReasons: Array.isArray(stats.currentFitReasons)
+      ? stats.currentFitReasons.slice(0, 20)
+      : [],
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
@@ -2837,7 +3157,7 @@ export function refreshStats(stats) {
     adaptiveLayerBuilt: false,
     adaptiveScoreBuilt: false,
     recentMomentumScoreBuilt: false,
-    currentFitScoreBuilt: false,
+    currentFitScoreBuilt: hasUsableCurrentFitSnapshot(stats),
     parentDiversificationBuilt: false,
 
     validShortRiskShape: 'entry > 0 && tp < entry && sl > entry',
