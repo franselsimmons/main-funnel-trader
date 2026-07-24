@@ -8,18 +8,24 @@
 //
 // In this project the exact 75-child identity is the finest selectable layer
 // (the user-facing "micro-micro family"). Parent-15 remains context-only.
+//
+// Compatibility:
+// - ondersteunt keys.js met export `KEYS`
+// - ondersteunt oudere keys.js met export `keys`
+// - veroorzaakt geen ESM-importfout wanneer
+//   `assertKeyAllowedForWriteScope` niet wordt geëxporteerd
+// - fallback-writeguard staat uitsluitend SHORT:ANALYZE:* toe
 
 import { CONFIG } from '../config.js';
-import {
-  keys,
-  assertKeyAllowedForWriteScope
-} from '../keys.js';
+import * as KeysApi from '../keys.js';
+
 import {
   getDurableRedis,
   getJson,
   setJson,
   setNxJson
 } from '../redis.js';
+
 import {
   getIsoWeekKey,
   normalizeBaseSymbol,
@@ -31,7 +37,11 @@ import {
   isSelectableShortTrueMicroFamilyId,
   validLearningId
 } from '../utils.js';
-import { attachMicroFamilies } from './microFamilies.js';
+
+import {
+  attachMicroFamilies
+} from './microFamilies.js';
+
 import {
   createMicroStats,
   updateObservation,
@@ -39,17 +49,38 @@ import {
   refreshStats
 } from './scoring.js';
 
+const KEYS =
+  KeysApi.KEYS ||
+  KeysApi.keys ||
+  null;
+
+if (
+  !KEYS ||
+  typeof KEYS !== 'object' ||
+  !KEYS.analyze
+) {
+  throw new Error(
+    'ANALYZE_ENGINE_KEYS_API_MISSING: keys.js must export KEYS.analyze or keys.analyze'
+  );
+}
+
 const TARGET_TRADE_SIDE = 'SHORT';
 const TARGET_DASHBOARD_SIDE = 'bear';
 const TARGET_SCANNER_SIDE = 'bear';
 
 const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
+const ANALYZE_KEY_PREFIX = `${SHORT_KEY_PREFIX}ANALYZE:`;
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
-const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
-const MICRO_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+const TRUE_MICRO_SCHEMA =
+  'FIXED_TAXONOMY_75';
+
+const PARENT_TRUE_MICRO_SCHEMA =
+  'FIXED_TAXONOMY_15';
+
+const MICRO_MICRO_SCHEMA =
+  TRUE_MICRO_SCHEMA;
 
 const LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
@@ -57,7 +88,9 @@ const LEARNING_GRANULARITY =
 const PARENT_LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const WRITE_SCOPE = 'ANALYZE_PARTIAL';
+const WRITE_SCOPE =
+  KEYS.scopes?.ANALYZE_PARTIAL ||
+  'ANALYZE_PARTIAL';
 
 const DEFAULT_OBSERVATION_TTL_SEC =
   60 * 60 * 24 * 62;
@@ -65,27 +98,34 @@ const DEFAULT_OBSERVATION_TTL_SEC =
 const DEFAULT_OUTCOME_TTL_SEC =
   60 * 60 * 24 * 365;
 
-const DEFAULT_RECENT_OUTCOME_LIMIT = 250;
+const DEFAULT_RECENT_OUTCOME_LIMIT =
+  250;
 
 function now() {
   return Date.now();
 }
 
 function upper(value) {
-  return String(value || '').trim().toUpperCase();
+  return String(value || '')
+    .trim()
+    .toUpperCase();
 }
 
 function asObject(value) {
-  return value &&
+  return (
+    value &&
     typeof value === 'object' &&
     !Array.isArray(value)
+  )
     ? value
     : {};
 }
 
 function plainClone(value) {
   try {
-    return JSON.parse(JSON.stringify(value));
+    return JSON.parse(
+      JSON.stringify(value)
+    );
   } catch {
     return {
       ...asObject(value)
@@ -96,25 +136,131 @@ function plainClone(value) {
 function uniqueStrings(values = []) {
   return [
     ...new Set(
-      (Array.isArray(values) ? values : [values])
+      (
+        Array.isArray(values)
+          ? values
+          : [values]
+      )
         .flat(Infinity)
-        .map((value) => String(value || '').trim())
+        .map(
+          (value) =>
+            String(value || '').trim()
+        )
         .filter(Boolean)
     )
   ];
 }
 
-function assertAnalyzeWrite(key) {
-  return assertKeyAllowedForWriteScope(
-    WRITE_SCOPE,
-    key
+function nxInsertSucceeded(result) {
+  return (
+    result === 'OK' ||
+    result === 'ok' ||
+    result === true ||
+    result === 1
   );
 }
 
-function resolveWeekKey(value) {
-  const raw = String(value || '').trim();
+function assertAnalyzeWrite(key) {
+  const normalizedKey =
+    String(key || '').trim();
 
-  return raw || PERSISTENT_LEARNING_KEY;
+  if (!normalizedKey) {
+    throw new Error(
+      'ANALYZE_WRITE_KEY_REQUIRED'
+    );
+  }
+
+  /*
+   * Gebruik de centrale write-scopeguard wanneer de
+   * actieve keys.js-versie deze functie exporteert.
+   *
+   * Door de namespace-import ontstaat geen ESM-importfout
+   * wanneer deze export in een oudere versie ontbreekt.
+   */
+  if (
+    typeof KeysApi.assertKeyAllowedForWriteScope ===
+    'function'
+  ) {
+    return KeysApi.assertKeyAllowedForWriteScope(
+      WRITE_SCOPE,
+      normalizedKey
+    );
+  }
+
+  /*
+   * Compatibiliteitsfallback:
+   * Analyze mag uitsluitend onder SHORT:ANALYZE:* schrijven.
+   */
+  if (
+    !normalizedKey.startsWith(
+      ANALYZE_KEY_PREFIX
+    )
+  ) {
+    const error = new Error(
+      'ANALYZE_WRITE_SCOPE_VIOLATION_SHORT_ONLY'
+    );
+
+    error.details = {
+      scopeName:
+        WRITE_SCOPE,
+
+      key:
+        normalizedKey,
+
+      requiredPrefix:
+        ANALYZE_KEY_PREFIX,
+
+      namespace:
+        SHORT_NAMESPACE,
+
+      keyPrefix:
+        SHORT_KEY_PREFIX,
+
+      targetTradeSide:
+        TARGET_TRADE_SIDE,
+
+      dashboardSide:
+        TARGET_DASHBOARD_SIDE,
+
+      scannerSide:
+        TARGET_SCANNER_SIDE,
+
+      shortOnly:
+        true,
+
+      longDisabled:
+        true,
+
+      longRootTouched:
+        false,
+
+      virtualOnly:
+        true,
+
+      realOrdersDisabled:
+        true,
+
+      bitgetOrdersDisabled:
+        true,
+
+      exchangeOrdersDisabled:
+        true
+    };
+
+    throw error;
+  }
+
+  return true;
+}
+
+function resolveWeekKey(value) {
+  const raw =
+    String(value || '').trim();
+
+  return (
+    raw ||
+    PERSISTENT_LEARNING_KEY
+  );
 }
 
 function observationTtlSec() {
@@ -122,8 +268,11 @@ function observationTtlSec() {
     60,
     Math.floor(
       safeNumber(
-        CONFIG.short?.analyze?.observationDedupeTtlSec ??
-          CONFIG.analyze?.observationDedupeTtlSec,
+        CONFIG.short?.analyze
+          ?.observationDedupeTtlSec ??
+          CONFIG.analyze
+            ?.observationDedupeTtlSec,
+
         DEFAULT_OBSERVATION_TTL_SEC
       )
     )
@@ -135,8 +284,11 @@ function outcomeTtlSec() {
     60,
     Math.floor(
       safeNumber(
-        CONFIG.short?.analyze?.outcomeDedupeTtlSec ??
-          CONFIG.analyze?.outcomeDedupeTtlSec,
+        CONFIG.short?.analyze
+          ?.outcomeDedupeTtlSec ??
+          CONFIG.analyze
+            ?.outcomeDedupeTtlSec,
+
         DEFAULT_OUTCOME_TTL_SEC
       )
     )
@@ -148,8 +300,11 @@ function recentOutcomeLimit() {
     20,
     Math.floor(
       safeNumber(
-        CONFIG.short?.analyze?.recentOutcomeLimit ??
-          CONFIG.analyze?.recentOutcomeLimit,
+        CONFIG.short?.analyze
+          ?.recentOutcomeLimit ??
+          CONFIG.analyze
+            ?.recentOutcomeLimit,
+
         DEFAULT_RECENT_OUTCOME_LIMIT
       )
     )
@@ -157,7 +312,8 @@ function recentOutcomeLimit() {
 }
 
 function normalizeSource(value) {
-  const source = upper(value || 'VIRTUAL');
+  const source =
+    upper(value || 'VIRTUAL');
 
   return source === 'SHADOW'
     ? 'SHADOW'
@@ -178,41 +334,81 @@ function isExplicitNonShort(row = {}) {
       value !== ''
   );
 
-  return candidates.some((value) => {
-    const side = sideToTradeSide(value);
+  return candidates.some(
+    (value) => {
+      const side =
+        sideToTradeSide(value);
 
-    return side && side !== TARGET_TRADE_SIDE;
-  });
+      return (
+        side &&
+        side !== TARGET_TRADE_SIDE
+      );
+    }
+  );
 }
 
 function shortIdentityFlags() {
   return {
-    targetTradeSide: TARGET_TRADE_SIDE,
-    tradeSide: TARGET_TRADE_SIDE,
-    positionSide: TARGET_TRADE_SIDE,
-    direction: TARGET_TRADE_SIDE,
+    targetTradeSide:
+      TARGET_TRADE_SIDE,
 
-    side: TARGET_DASHBOARD_SIDE,
-    dashboardSide: TARGET_DASHBOARD_SIDE,
+    tradeSide:
+      TARGET_TRADE_SIDE,
 
-    scannerSide: TARGET_SCANNER_SIDE,
-    actualScannerSide: TARGET_SCANNER_SIDE,
+    positionSide:
+      TARGET_TRADE_SIDE,
 
-    shortOnly: true,
-    longDisabled: true,
-    longOnly: false,
-    shortDisabled: false,
+    direction:
+      TARGET_TRADE_SIDE,
 
-    virtualOnly: true,
-    virtualLearning: true,
+    side:
+      TARGET_DASHBOARD_SIDE,
 
-    realOrdersDisabled: true,
-    exchangeOrdersDisabled: true,
-    bitgetOrdersDisabled: true,
+    dashboardSide:
+      TARGET_DASHBOARD_SIDE,
 
-    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
-    exactTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    scannerSide:
+      TARGET_SCANNER_SIDE,
+
+    actualScannerSide:
+      TARGET_SCANNER_SIDE,
+
+    shortOnly:
+      true,
+
+    longDisabled:
+      true,
+
+    longOnly:
+      false,
+
+    shortDisabled:
+      false,
+
+    virtualOnly:
+      true,
+
+    virtualLearning:
+      true,
+
+    realOrdersDisabled:
+      true,
+
+    exchangeOrdersDisabled:
+      true,
+
+    bitgetOrdersDisabled:
+      true,
+
+    trueMicroFamilySchema:
+      TRUE_MICRO_SCHEMA,
+
+    childTrueMicroFamilySchema:
+      TRUE_MICRO_SCHEMA,
+
+    exactTrueMicroFamilySchema:
+      TRUE_MICRO_SCHEMA,
+
     parentTrueMicroFamilySchema:
       PARENT_TRUE_MICRO_SCHEMA,
 
@@ -231,24 +427,41 @@ function shortIdentityFlags() {
     userFacingSelectionLayer:
       'MICRO_MICRO_FAMILY',
 
-    redisNamespace: SHORT_NAMESPACE,
-    redisKeyPrefix: SHORT_KEY_PREFIX,
+    redisNamespace:
+      SHORT_NAMESPACE,
+
+    redisKeyPrefix:
+      SHORT_KEY_PREFIX,
 
     persistentLearningKey:
       PERSISTENT_LEARNING_KEY,
 
-    redisKeysSeparatedFromLongRoot: true,
-    longRootTouched: false,
+    redisKeysSeparatedFromLongRoot:
+      true,
+
+    longRootTouched:
+      false,
 
     completedDefinition:
       'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
 
-    scoringRSource: 'netR',
-    winsLossesFlatsSource: 'netR',
-    winrateDefinition: 'netR > 0',
-    avgRSource: 'netR',
-    totalRSource: 'netR',
-    avgCostRShown: true,
+    scoringRSource:
+      'netR',
+
+    winsLossesFlatsSource:
+      'netR',
+
+    winrateDefinition:
+      'netR > 0',
+
+    avgRSource:
+      'netR',
+
+    totalRSource:
+      'netR',
+
+    avgCostRShown:
+      true,
 
     riskGeometryRule:
       'SHORT: tp < entry < sl',
@@ -265,8 +478,11 @@ function shortIdentityFlags() {
     currentRFormula:
       '(entry - currentPrice) / (initialSl - entry)',
 
-    currentFitSoftOnly: true,
-    currentFitBlocksLearning: false,
+    currentFitSoftOnly:
+      true,
+
+    currentFitBlocksLearning:
+      false,
 
     currentFitPolarity:
       'BEARISH_POSITIVE_BULLISH_NEGATIVE',
@@ -276,24 +492,28 @@ function shortIdentityFlags() {
   };
 }
 
-function normalizeAnalyzeIdentity(input = {}) {
+function normalizeAnalyzeIdentity(
+  input = {}
+) {
   if (isExplicitNonShort(input)) {
     return null;
   }
 
-  const attached = attachMicroFamilies({
-    ...input,
-    ...shortIdentityFlags()
-  });
+  const attached =
+    attachMicroFamilies({
+      ...input,
+      ...shortIdentityFlags()
+    });
 
-  const candidateId = upper(
-    attached.trueMicroFamilyId ||
-      attached.childTrueMicroFamilyId ||
-      attached.microFamilyId ||
+  const candidateId =
+    upper(
+      attached?.trueMicroFamilyId ||
+      attached?.childTrueMicroFamilyId ||
+      attached?.microFamilyId ||
       input.trueMicroFamilyId ||
       input.childTrueMicroFamilyId ||
       input.microFamilyId
-  );
+    );
 
   if (
     !candidateId ||
@@ -311,86 +531,138 @@ function normalizeAnalyzeIdentity(input = {}) {
   }
 
   const parsed =
-    parseShortTaxonomyMicroId(candidateId);
+    parseShortTaxonomyMicroId(
+      candidateId
+    );
 
-  if (!parsed.isChild) {
+  if (
+    !parsed ||
+    !parsed.isChild
+  ) {
     return null;
   }
 
   const parentId =
-    parsed.parentTrueMicroFamilyId;
+    upper(
+      parsed.parentTrueMicroFamilyId
+    );
 
   const childId =
-    parsed.childTrueMicroFamilyId;
+    upper(
+      parsed.childTrueMicroFamilyId
+    );
+
+  if (
+    !parentId ||
+    !childId
+  ) {
+    return null;
+  }
 
   return {
     ...input,
     ...attached,
     ...shortIdentityFlags(),
 
-    setup: parsed.setup,
-    setupType: parsed.setup,
+    setup:
+      parsed.setup,
 
-    regimeBucket: parsed.regime,
+    setupType:
+      parsed.setup,
+
+    regimeBucket:
+      parsed.regime,
 
     confirmationProfile:
       parsed.confirmationProfile,
 
-    parentTrueMicroFamilyId: parentId,
-    parentMicroFamilyId: parentId,
-    parentMacroFamilyId: parentId,
-    macroFamilyId: parentId,
-    coarseMicroFamilyId: parentId,
+    parentTrueMicroFamilyId:
+      parentId,
 
-    childTrueMicroFamilyId: childId,
-    microFamilyId: childId,
-    trueMicroFamilyId: childId,
+    parentMicroFamilyId:
+      parentId,
 
-    analyzeMicroFamilyId: childId,
-    learningMicroFamilyId: childId,
+    parentMacroFamilyId:
+      parentId,
+
+    macroFamilyId:
+      parentId,
+
+    coarseMicroFamilyId:
+      parentId,
+
+    childTrueMicroFamilyId:
+      childId,
+
+    microFamilyId:
+      childId,
+
+    trueMicroFamilyId:
+      childId,
+
+    analyzeMicroFamilyId:
+      childId,
+
+    learningMicroFamilyId:
+      childId,
 
     /*
      * Dashboard/product-alias.
      * Er wordt geen extra taxonomielaag gemaakt.
      */
-    microMicroFamilyId: childId,
-    exactMicroMicroFamilyId: childId,
+    microMicroFamilyId:
+      childId,
 
-    selectable: true,
-    selectableChild: true,
+    exactMicroMicroFamilyId:
+      childId,
 
-    exactTrueMicroOnly: true,
-    exactTrueMicroFamilyRequired: true
+    selectable:
+      true,
+
+    selectableChild:
+      true,
+
+    exactTrueMicroOnly:
+      true,
+
+    exactTrueMicroFamilyRequired:
+      true
   };
 }
 
 function observationIdentity(row = {}) {
-  const snapshotId = String(
-    row.snapshotId ||
+  const snapshotId =
+    String(
+      row.snapshotId ||
       row.scanId ||
       row.batchId ||
       'NO_SNAPSHOT'
-  ).trim();
+    ).trim();
 
   const symbol =
     normalizeBaseSymbol(
       row.symbol ||
-        row.baseSymbol ||
-        row.contractSymbol
+      row.baseSymbol ||
+      row.contractSymbol
     ) || 'UNKNOWN';
 
-  const microId = upper(
-    row.trueMicroFamilyId ||
+  const microId =
+    upper(
+      row.trueMicroFamilyId ||
       row.microFamilyId
-  );
+    );
 
-  const entry = safeNumber(
-    row.entry ?? row.entryPrice,
-    0
-  );
+  const entry =
+    safeNumber(
+      row.entry ??
+      row.entryPrice,
+      0
+    );
 
   const raw =
-    `${snapshotId}|${symbol}|${microId}|` +
+    `${snapshotId}|` +
+    `${symbol}|` +
+    `${microId}|` +
     `${entry || 'NO_ENTRY'}`;
 
   return {
@@ -398,78 +670,90 @@ function observationIdentity(row = {}) {
     symbol,
     microId,
 
-    key: upper(
-      row.observationDedupeKey ||
+    key:
+      upper(
+        row.observationDedupeKey ||
         raw
-    ),
+      ),
 
-    redisKey: keys.analyze.obsLast(
-      snapshotId,
-      symbol,
-      microId
-    )
+    redisKey:
+      KEYS.analyze.obsLast(
+        snapshotId,
+        symbol,
+        microId
+      )
   };
 }
 
 function outcomeIdentity(row = {}) {
-  const microId = upper(
-    row.trueMicroFamilyId ||
+  const microId =
+    upper(
+      row.trueMicroFamilyId ||
       row.microFamilyId ||
       row.childTrueMicroFamilyId
-  );
+    );
 
-  const positionId = String(
-    row.positionId ||
+  const positionId =
+    String(
+      row.positionId ||
       row.tradeId ||
       row.id ||
       row.outcomeId ||
       row.entryId ||
       ''
-  ).trim();
+    ).trim();
 
   const symbol =
     normalizeBaseSymbol(
       row.symbol ||
-        row.baseSymbol ||
-        row.contractSymbol
+      row.baseSymbol ||
+      row.contractSymbol
     ) || 'UNKNOWN';
 
-  const closedAt = safeNumber(
-    row.closedAt ??
+  const closedAt =
+    safeNumber(
+      row.closedAt ??
       row.completedAt ??
       row.exitAt,
-    0
-  );
+      0
+    );
 
-  const exitReason = upper(
-    row.exitReason ||
+  const exitReason =
+    upper(
+      row.exitReason ||
       row.reason ||
       'UNKNOWN'
-  );
+    );
 
-  const fallback = stableHash(
-    {
-      microId,
-      symbol,
-      closedAt,
-      exitReason,
-      exitPrice: row.exitPrice
-    },
-    20
-  );
+  const fallback =
+    stableHash(
+      {
+        microId,
+        symbol,
+        closedAt,
+        exitReason,
+        exitPrice:
+          row.exitPrice
+      },
+      20
+    );
 
-  const id = positionId || fallback;
+  const id =
+    positionId ||
+    fallback;
 
   return {
     id,
 
-    key: `${id}|${microId}`,
+    key:
+      `${id}|${microId}`,
 
-    redisKey: keys.analyze.obsLast(
-      `OUTCOME_${id}`,
-      symbol,
-      microId
-    )
+    redisKey:
+      KEYS.analyze.obsLast(
+        `OUTCOME_${id}`,
+        symbol,
+        microId
+      )
   };
 }
 
@@ -498,14 +782,21 @@ function createParentStatsFor(row = {}) {
   const parentId =
     row.parentTrueMicroFamilyId;
 
-  const ts = now();
+  const timestamp =
+    now();
 
   return {
-    parentTrueMicroFamilyId: parentId,
+    parentTrueMicroFamilyId:
+      parentId,
 
-    microFamilyId: parentId,
-    trueMicroFamilyId: parentId,
-    familyId: parentId,
+    microFamilyId:
+      parentId,
+
+    trueMicroFamilyId:
+      parentId,
+
+    familyId:
+      parentId,
 
     schema:
       PARENT_TRUE_MICRO_SCHEMA,
@@ -525,36 +816,70 @@ function createParentStatsFor(row = {}) {
     regimeBucket:
       row.regimeBucket || null,
 
-    seen: 0,
-    observations: 0,
+    seen:
+      0,
 
-    completed: 0,
-    wins: 0,
-    losses: 0,
-    flats: 0,
+    observations:
+      0,
 
-    totalR: 0,
-    netTotalR: 0,
-    totalCostR: 0,
-    grossTotalR: 0,
+    completed:
+      0,
 
-    avgR: 0,
-    avgCostR: 0,
-    winrate: 0,
+    wins:
+      0,
 
-    recentOutcomes: [],
-    children: [],
+    losses:
+      0,
 
-    observationDedupeKeys: [],
+    flats:
+      0,
 
-    createdAt: ts,
-    updatedAt: ts,
+    totalR:
+      0,
+
+    netTotalR:
+      0,
+
+    totalCostR:
+      0,
+
+    grossTotalR:
+      0,
+
+    avgR:
+      0,
+
+    avgCostR:
+      0,
+
+    winrate:
+      0,
+
+    recentOutcomes:
+      [],
+
+    children:
+      [],
+
+    observationDedupeKeys:
+      [],
+
+    createdAt:
+      timestamp,
+
+    updatedAt:
+      timestamp,
 
     ...shortIdentityFlags(),
 
-    selectable: false,
-    parentSelectable: false,
-    childSelectable: true
+    selectable:
+      false,
+
+    parentSelectable:
+      false,
+
+    childSelectable:
+      true
   };
 }
 
@@ -570,9 +895,10 @@ function updateParentObservation(
   const childId =
     row.trueMicroFamilyId;
 
-  const obsKey = String(
-    row.observationDedupeKey || ''
-  );
+  const obsKey =
+    String(
+      row.observationDedupeKey || ''
+    );
 
   const dedupeKeys =
     Array.isArray(
@@ -589,22 +915,33 @@ function updateParentObservation(
   }
 
   out.seen =
-    safeNumber(out.seen, 0) + 1;
+    safeNumber(
+      out.seen,
+      0
+    ) + 1;
 
   out.observations =
-    safeNumber(out.observations, 0) + 1;
+    safeNumber(
+      out.observations,
+      0
+    ) + 1;
 
-  out.children = uniqueStrings([
-    out.children || [],
-    childId
-  ]);
+  out.children =
+    uniqueStrings([
+      out.children || [],
+      childId
+    ]);
 
   out.observationDedupeKeys =
     obsKey
-      ? [...dedupeKeys, obsKey].slice(-5000)
+      ? [
+          ...dedupeKeys,
+          obsKey
+        ].slice(-5000)
       : dedupeKeys;
 
-  out.updatedAt = now();
+  out.updatedAt =
+    now();
 
   return out;
 }
@@ -618,80 +955,126 @@ function updateParentOutcome(
     ...asObject(stats)
   };
 
-  const netR = safeNumber(
-    row.netR ??
+  const netR =
+    safeNumber(
+      row.netR ??
       row.exitR ??
       row.netPnlR,
-    0
-  );
+      0
+    );
 
-  const grossR = safeNumber(
-    row.grossR ??
+  const grossR =
+    safeNumber(
+      row.grossR ??
       row.rawR,
-    netR
-  );
+      netR
+    );
 
-  const costR = safeNumber(
-    row.costR,
-    Math.max(0, grossR - netR)
-  );
+  const costR =
+    safeNumber(
+      row.costR,
+      Math.max(
+        0,
+        grossR - netR
+      )
+    );
 
   out.completed =
-    safeNumber(out.completed, 0) + 1;
+    safeNumber(
+      out.completed,
+      0
+    ) + 1;
 
   out.wins =
-    safeNumber(out.wins, 0) +
-    (netR > 0 ? 1 : 0);
+    safeNumber(
+      out.wins,
+      0
+    ) +
+    (
+      netR > 0
+        ? 1
+        : 0
+    );
 
   out.losses =
-    safeNumber(out.losses, 0) +
-    (netR < 0 ? 1 : 0);
+    safeNumber(
+      out.losses,
+      0
+    ) +
+    (
+      netR < 0
+        ? 1
+        : 0
+    );
 
   out.flats =
-    safeNumber(out.flats, 0) +
-    (netR === 0 ? 1 : 0);
+    safeNumber(
+      out.flats,
+      0
+    ) +
+    (
+      netR === 0
+        ? 1
+        : 0
+    );
 
   out.totalR =
-    safeNumber(out.totalR, 0) +
+    safeNumber(
+      out.totalR,
+      0
+    ) +
     netR;
 
   out.netTotalR =
     out.totalR;
 
   out.grossTotalR =
-    safeNumber(out.grossTotalR, 0) +
+    safeNumber(
+      out.grossTotalR,
+      0
+    ) +
     grossR;
 
   out.totalCostR =
-    safeNumber(out.totalCostR, 0) +
+    safeNumber(
+      out.totalCostR,
+      0
+    ) +
     costR;
 
   out.avgR =
     out.completed > 0
-      ? out.totalR / out.completed
+      ? out.totalR /
+        out.completed
       : 0;
 
   out.avgCostR =
     out.completed > 0
-      ? out.totalCostR / out.completed
+      ? out.totalCostR /
+        out.completed
       : 0;
 
   out.winrate =
     out.completed > 0
-      ? out.wins / out.completed
+      ? out.wins /
+        out.completed
       : 0;
 
-  out.children = uniqueStrings([
-    out.children || [],
-    row.trueMicroFamilyId
-  ]);
+  out.children =
+    uniqueStrings([
+      out.children || [],
+      row.trueMicroFamilyId
+    ]);
 
   out.recentOutcomes = [
     ...(
-      Array.isArray(out.recentOutcomes)
+      Array.isArray(
+        out.recentOutcomes
+      )
         ? out.recentOutcomes
         : []
     ),
+
     {
       outcomeId:
         row.outcomeId || null,
@@ -711,9 +1094,12 @@ function updateParentOutcome(
         row.completedAt ||
         now()
     }
-  ].slice(-recentOutcomeLimit());
+  ].slice(
+    -recentOutcomeLimit()
+  );
 
-  out.updatedAt = now();
+  out.updatedAt =
+    now();
 
   return out;
 }
@@ -735,32 +1121,37 @@ async function saveAggregate(
 }
 
 export async function getWeekMicros(
-  weekKey = PERSISTENT_LEARNING_KEY
+  weekKey =
+    PERSISTENT_LEARNING_KEY
 ) {
-  const redis = getDurableRedis();
+  const redis =
+    getDurableRedis();
 
   const key =
-    keys.analyze.weekMicros(
+    KEYS.analyze.weekMicros(
       resolveWeekKey(weekKey)
     );
 
-  const value = await getJson(
-    redis,
-    key,
-    {}
-  );
+  const value =
+    await getJson(
+      redis,
+      key,
+      {}
+    );
 
   return asObject(value);
 }
 
 export async function saveWeekMicros(
-  weekKey = PERSISTENT_LEARNING_KEY,
+  weekKey =
+    PERSISTENT_LEARNING_KEY,
   micros = {}
 ) {
-  const redis = getDurableRedis();
+  const redis =
+    getDurableRedis();
 
   const key =
-    keys.analyze.weekMicros(
+    KEYS.analyze.weekMicros(
       resolveWeekKey(weekKey)
     );
 
@@ -772,32 +1163,37 @@ export async function saveWeekMicros(
 }
 
 export async function getWeekParents(
-  weekKey = PERSISTENT_LEARNING_KEY
+  weekKey =
+    PERSISTENT_LEARNING_KEY
 ) {
-  const redis = getDurableRedis();
+  const redis =
+    getDurableRedis();
 
   const key =
-    keys.analyze.weekParents(
+    KEYS.analyze.weekParents(
       resolveWeekKey(weekKey)
     );
 
-  const value = await getJson(
-    redis,
-    key,
-    {}
-  );
+  const value =
+    await getJson(
+      redis,
+      key,
+      {}
+    );
 
   return asObject(value);
 }
 
 export async function saveWeekParents(
-  weekKey = PERSISTENT_LEARNING_KEY,
+  weekKey =
+    PERSISTENT_LEARNING_KEY,
   parents = {}
 ) {
-  const redis = getDurableRedis();
+  const redis =
+    getDurableRedis();
 
   const key =
-    keys.analyze.weekParents(
+    KEYS.analyze.weekParents(
       resolveWeekKey(weekKey)
     );
 
@@ -814,23 +1210,28 @@ async function updateObservationInWeek(
   row
 ) {
   const key =
-    keys.analyze.weekMicros(
+    KEYS.analyze.weekMicros(
       weekKey
     );
 
-  const micros = asObject(
-    await getJson(
-      redis,
-      key,
-      {}
-    )
-  );
+  const micros =
+    asObject(
+      await getJson(
+        redis,
+        key,
+        {}
+      )
+    );
 
   const current =
-    micros[row.trueMicroFamilyId] ||
+    micros[
+      row.trueMicroFamilyId
+    ] ||
     createStatsFor(row);
 
-  micros[row.trueMicroFamilyId] =
+  micros[
+    row.trueMicroFamilyId
+  ] =
     refreshStats(
       updateObservation(
         current,
@@ -855,17 +1256,18 @@ async function updateParentObservationInWeek(
   row
 ) {
   const key =
-    keys.analyze.weekParents(
+    KEYS.analyze.weekParents(
       weekKey
     );
 
-  const parents = asObject(
-    await getJson(
-      redis,
-      key,
-      {}
-    )
-  );
+  const parents =
+    asObject(
+      await getJson(
+        redis,
+        key,
+        {}
+      )
+    );
 
   const parentId =
     row.parentTrueMicroFamilyId;
@@ -892,23 +1294,28 @@ async function updateOutcomeInWeek(
   source
 ) {
   const key =
-    keys.analyze.weekMicros(
+    KEYS.analyze.weekMicros(
       weekKey
     );
 
-  const micros = asObject(
-    await getJson(
-      redis,
-      key,
-      {}
-    )
-  );
+  const micros =
+    asObject(
+      await getJson(
+        redis,
+        key,
+        {}
+      )
+    );
 
   const current =
-    micros[row.trueMicroFamilyId] ||
+    micros[
+      row.trueMicroFamilyId
+    ] ||
     createStatsFor(row);
 
-  micros[row.trueMicroFamilyId] =
+  micros[
+    row.trueMicroFamilyId
+  ] =
     refreshStats(
       updateOutcome(
         current,
@@ -934,17 +1341,18 @@ async function updateParentOutcomeInWeek(
   row
 ) {
   const key =
-    keys.analyze.weekParents(
+    KEYS.analyze.weekParents(
       weekKey
     );
 
-  const parents = asObject(
-    await getJson(
-      redis,
-      key,
-      {}
-    )
-  );
+  const parents =
+    asObject(
+      await getJson(
+        redis,
+        key,
+        {}
+      )
+    );
 
   const parentId =
     row.parentTrueMicroFamilyId;
@@ -976,8 +1384,12 @@ export async function recordObservation(
 
   if (!row) {
     return {
-      ok: false,
-      skipped: true,
+      ok:
+        false,
+
+      skipped:
+        true,
+
       reason:
         'INVALID_OR_NON_SHORT_EXACT_75_CHILD_ID'
     };
@@ -1010,20 +1422,32 @@ export async function recordObservation(
     identity.redisKey
   );
 
-  const inserted = await setNxJson(
-    redis,
-    identity.redisKey,
-    dedupeValue,
-    {
-      ex: observationTtlSec()
-    }
-  );
+  const insertResult =
+    await setNxJson(
+      redis,
+      identity.redisKey,
+      dedupeValue,
+      {
+        ex:
+          observationTtlSec()
+      }
+    );
+
+  const inserted =
+    nxInsertSucceeded(
+      insertResult
+    );
 
   if (!inserted) {
     return {
-      ok: true,
-      skipped: true,
-      duplicate: true,
+      ok:
+        true,
+
+      skipped:
+        true,
+
+      duplicate:
+        true,
 
       reason:
         'OBSERVATION_ALREADY_RECORDED',
@@ -1043,6 +1467,9 @@ export async function recordObservation(
     };
   }
 
+  const observedAt =
+    now();
+
   const enriched = {
     ...row,
 
@@ -1061,17 +1488,17 @@ export async function recordObservation(
     observationAlwaysCounted:
       false,
 
-    observedAt:
-      now(),
+    observedAt,
 
     createdAt:
-      row.createdAt || now()
+      row.createdAt ||
+      observedAt
   };
 
   const requestedWeekKey =
     resolveWeekKey(
       options.weekKey ||
-        options.persistentLearningKey
+      options.persistentLearningKey
     );
 
   const isoWeekKey =
@@ -1088,7 +1515,10 @@ export async function recordObservation(
 
   const childStats = [];
 
-  for (const weekKey of weekKeys) {
+  for (
+    const weekKey
+    of weekKeys
+  ) {
     childStats.push(
       await updateObservationInWeek(
         redis,
@@ -1104,14 +1534,17 @@ export async function recordObservation(
     );
   }
 
+  const primaryStats =
+    childStats[0] || null;
+
   await saveAggregate(
     redis,
 
-    keys.analyze.microStats(
+    KEYS.analyze.microStats(
       enriched.trueMicroFamilyId
     ),
 
-    childStats[0]
+    primaryStats
   );
 
   const requestedParents =
@@ -1119,7 +1552,7 @@ export async function recordObservation(
       await getJson(
         redis,
 
-        keys.analyze.weekParents(
+        KEYS.analyze.weekParents(
           requestedWeekKey
         ),
 
@@ -1130,7 +1563,7 @@ export async function recordObservation(
   await saveAggregate(
     redis,
 
-    keys.analyze.parentStats(
+    KEYS.analyze.parentStats(
       enriched.parentTrueMicroFamilyId
     ),
 
@@ -1140,9 +1573,14 @@ export async function recordObservation(
   );
 
   return {
-    ok: true,
-    skipped: false,
-    duplicate: false,
+    ok:
+      true,
+
+    skipped:
+      false,
+
+    duplicate:
+      false,
 
     recordId:
       identity.redisKey,
@@ -1151,7 +1589,7 @@ export async function recordObservation(
       enriched,
 
     stats:
-      childStats[0] || null
+      primaryStats
   };
 }
 
@@ -1160,7 +1598,9 @@ export async function analyzeCandidate(
   options = {}
 ) {
   const identity =
-    normalizeAnalyzeIdentity(candidate);
+    normalizeAnalyzeIdentity(
+      candidate
+    );
 
   if (!identity) {
     return null;
@@ -1176,25 +1616,32 @@ export async function analyzeCandidate(
     ...identity,
 
     observationRecorded:
-      result.ok &&
-      !result.skipped,
+      Boolean(
+        result.ok &&
+        !result.skipped
+      ),
 
     observationDuplicate:
-      Boolean(result.duplicate),
+      Boolean(
+        result.duplicate
+      ),
 
     observationDedupeKey:
-      result.row?.observationDedupeKey ||
-      observationIdentity(identity).key,
+      result.row
+        ?.observationDedupeKey ||
+      observationIdentity(
+        identity
+      ).key,
 
     analyzeObservationResult: {
       ok:
-        result.ok,
+        Boolean(result.ok),
 
       skipped:
-        result.skipped,
+        Boolean(result.skipped),
 
       duplicate:
-        result.duplicate,
+        Boolean(result.duplicate),
 
       reason:
         result.reason || null
@@ -1214,10 +1661,13 @@ export async function analyzeCandidatesBatch(
   const output = [];
 
   /*
-   * Sequentiële writes voorkomen verloren updates in het
-   * gedeelde Redis JSON-aggregate.
+   * Sequentiële writes voorkomen verloren updates in
+   * het gedeelde Redis JSON-aggregate.
    */
-  for (const candidate of rows) {
+  for (
+    const candidate
+    of rows
+  ) {
     const analyzed =
       await analyzeCandidate(
         candidate,
@@ -1236,23 +1686,26 @@ function calculateGrossR(
   position = {},
   exitPrice
 ) {
-  const entry = safeNumber(
-    position.entry ??
+  const entry =
+    safeNumber(
+      position.entry ??
       position.entryPrice,
-    0
-  );
+      0
+    );
 
-  const initialSl = safeNumber(
-    position.initialSl ??
+  const initialSl =
+    safeNumber(
+      position.initialSl ??
       position.sl,
-    0
-  );
+      0
+    );
 
-  const exit = safeNumber(
-    exitPrice ??
+  const exit =
+    safeNumber(
+      exitPrice ??
       position.exitPrice,
-    0
-  );
+      0
+    );
 
   const risk =
     initialSl - entry;
@@ -1269,9 +1722,8 @@ function calculateGrossR(
   }
 
   return (
-    (entry - exit) /
-    risk
-  );
+    entry - exit
+  ) / risk;
 }
 
 export function buildOutcomeFromPosition({
@@ -1287,8 +1739,11 @@ export function buildOutcomeFromPosition({
 
   if (!identity) {
     return {
-      ok: false,
-      learnable: false,
+      ok:
+        false,
+
+      learnable:
+        false,
 
       reason:
         'INVALID_POSITION_LEARNING_ID',
@@ -1300,40 +1755,55 @@ export function buildOutcomeFromPosition({
     };
   }
 
+  const normalizedExitPrice =
+    safeNumber(
+      exitPrice,
+      safeNumber(
+        position.exitPrice,
+        0
+      )
+    );
+
   const grossR =
     calculateGrossR(
       position,
-      exitPrice
+      normalizedExitPrice
     );
 
   const closedAt =
     safeNumber(
       position.closedAt ??
-        position.completedAt,
+      position.completedAt,
       now()
     );
 
   const outcomeId =
     String(
       position.outcomeId ||
-        position.positionId ||
-        position.tradeId ||
-        position.id ||
-        randomId('outcome')
+      position.positionId ||
+      position.tradeId ||
+      position.id ||
+      randomId('outcome')
     );
 
   const normalizedNetR =
     safeNumber(
       position.netR ??
-        position.netPnlR ??
-        position.exitR,
+      position.netPnlR ??
+      position.exitR,
       grossR
     );
+
+  const normalizedSource =
+    normalizeSource(source);
 
   return {
     ...plainClone(position),
     ...identity,
     ...shortIdentityFlags(),
+
+    ok:
+      true,
 
     outcomeId,
 
@@ -1343,10 +1813,10 @@ export function buildOutcomeFromPosition({
       null,
 
     source:
-      normalizeSource(source),
+      normalizedSource,
 
     outcomeSource:
-      normalizeSource(source),
+      normalizedSource,
 
     learnable:
       true,
@@ -1355,26 +1825,22 @@ export function buildOutcomeFromPosition({
       'CLOSED',
 
     exitPrice:
-      safeNumber(
-        exitPrice,
-        safeNumber(
-          position.exitPrice,
-          0
-        )
-      ),
+      normalizedExitPrice,
 
     exitReason:
       upper(
         exitReason ||
-          position.exitReason ||
-          'UNKNOWN'
+        position.exitReason ||
+        'UNKNOWN'
       ),
 
     closedAt,
+
     completedAt:
       closedAt,
 
     grossR,
+
     shortGrossR:
       grossR,
 
@@ -1392,20 +1858,21 @@ export function buildOutcomeFromPosition({
         position.costR,
         Math.max(
           0,
-          grossR - normalizedNetR
+          grossR -
+          normalizedNetR
         )
       ),
 
     directToSL:
       Boolean(
         position.directToSL ??
-          position.directSL
+        position.directSL
       ),
 
     directSL:
       Boolean(
         position.directSL ??
-          position.directToSL
+        position.directToSL
       ),
 
     createdAt:
@@ -1433,8 +1900,11 @@ export async function recordOutcome(
     outcome.learnable === false
   ) {
     return {
-      ok: false,
-      skipped: true,
+      ok:
+        false,
+
+      skipped:
+        true,
 
       reason:
         'INVALID_OR_NON_SHORT_OUTCOME_ID'
@@ -1444,8 +1914,8 @@ export async function recordOutcome(
   const source =
     normalizeSource(
       options.source ||
-        row.source ||
-        row.outcomeSource
+      row.source ||
+      row.outcomeSource
     );
 
   const redis =
@@ -1458,7 +1928,7 @@ export async function recordOutcome(
     identity.redisKey
   );
 
-  const inserted =
+  const insertResult =
     await setNxJson(
       redis,
 
@@ -1479,15 +1949,26 @@ export async function recordOutcome(
       },
 
       {
-        ex: outcomeTtlSec()
+        ex:
+          outcomeTtlSec()
       }
+    );
+
+  const inserted =
+    nxInsertSucceeded(
+      insertResult
     );
 
   if (!inserted) {
     return {
-      ok: true,
-      skipped: true,
-      duplicate: true,
+      ok:
+        true,
+
+      skipped:
+        true,
+
+      duplicate:
+        true,
 
       reason:
         'OUTCOME_ALREADY_RECORDED',
@@ -1500,14 +1981,14 @@ export async function recordOutcome(
   const closedAt =
     safeNumber(
       row.closedAt ??
-        row.completedAt,
+      row.completedAt,
       now()
     );
 
   const completedAt =
     safeNumber(
       row.completedAt ??
-        row.closedAt,
+      row.closedAt,
       closedAt
     );
 
@@ -1534,6 +2015,7 @@ export async function recordOutcome(
       true,
 
     source,
+
     outcomeSource:
       source,
 
@@ -1541,13 +2023,14 @@ export async function recordOutcome(
       'CLOSED',
 
     closedAt,
+
     completedAt
   };
 
   const requestedWeekKey =
     resolveWeekKey(
       options.weekKey ||
-        options.persistentLearningKey
+      options.persistentLearningKey
     );
 
   const isoWeekKey =
@@ -1564,7 +2047,10 @@ export async function recordOutcome(
 
   const childStats = [];
 
-  for (const weekKey of weekKeys) {
+  for (
+    const weekKey
+    of weekKeys
+  ) {
     childStats.push(
       await updateOutcomeInWeek(
         redis,
@@ -1587,7 +2073,7 @@ export async function recordOutcome(
   await saveAggregate(
     redis,
 
-    keys.analyze.microStats(
+    KEYS.analyze.microStats(
       enriched.trueMicroFamilyId
     ),
 
@@ -1595,7 +2081,7 @@ export async function recordOutcome(
   );
 
   const outcomeKey =
-    keys.analyze.microOutcomes(
+    KEYS.analyze.microOutcomes(
       enriched.trueMicroFamilyId
     );
 
@@ -1612,10 +2098,13 @@ export async function recordOutcome(
 
     [
       ...(
-        Array.isArray(priorOutcomes)
+        Array.isArray(
+          priorOutcomes
+        )
           ? priorOutcomes
           : []
       ),
+
       enriched
     ].slice(
       -recentOutcomeLimit()
@@ -1627,7 +2116,7 @@ export async function recordOutcome(
       await getJson(
         redis,
 
-        keys.analyze.weekParents(
+        KEYS.analyze.weekParents(
           requestedWeekKey
         ),
 
@@ -1638,7 +2127,7 @@ export async function recordOutcome(
   await saveAggregate(
     redis,
 
-    keys.analyze.parentStats(
+    KEYS.analyze.parentStats(
       enriched.parentTrueMicroFamilyId
     ),
 
@@ -1648,9 +2137,14 @@ export async function recordOutcome(
   );
 
   return {
-    ok: true,
-    skipped: false,
-    duplicate: false,
+    ok:
+      true,
+
+    skipped:
+      false,
+
+    duplicate:
+      false,
 
     outcomeId:
       identity.id,
