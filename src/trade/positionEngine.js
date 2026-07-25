@@ -41,7 +41,8 @@ const POSITION_SOURCE = 'VIRTUAL';
 const OUTCOME_SOURCE = 'VIRTUAL';
 
 const COST_MODEL_VERSION = 'POSITION_ENGINE_SHORT_NET_COST_V8';
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const EXIT_FILL_MODEL_VERSION = 'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2';
 
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
@@ -1155,6 +1156,61 @@ function detectExit({
   };
 }
 
+function resolveExitFill({
+  position,
+  observedPrice,
+  exitReason
+} = {}) {
+  const reason = upper(exitReason);
+  const observed = roundPrice(observedPrice);
+  const tp = roundPrice(position?.tp);
+  const sl = roundPrice(position?.sl);
+
+  let fillPrice = observed;
+  let triggerPrice = null;
+  let fillSource = 'OBSERVED_MARKET_PRICE';
+  let triggerBoundaryFillApplied = false;
+
+  if (reason === 'TP' && tp > 0) {
+    fillPrice = tp;
+    triggerPrice = tp;
+    fillSource = 'TP_TRIGGER_BOUNDARY';
+    triggerBoundaryFillApplied = true;
+  } else if (reason === 'SL' && sl > 0) {
+    fillPrice = sl;
+    triggerPrice = sl;
+    fillSource = 'SL_TRIGGER_BOUNDARY';
+    triggerBoundaryFillApplied = true;
+  } else if (reason === 'TIME_STOP') {
+    fillPrice = observed;
+    fillSource = 'TIME_STOP_OBSERVED_MARKET_PRICE';
+  }
+
+  if (fillPrice <= 0) {
+    throw new Error('EXIT_FILL_PRICE_INVALID');
+  }
+
+  const observedVsFillPct =
+    observed > 0 && fillPrice > 0
+      ? (observed - fillPrice) / fillPrice
+      : 0;
+
+  return {
+    exitPrice: fillPrice,
+    exitFillPrice: fillPrice,
+    exitObservedPrice: observed,
+    exitTriggerPrice: triggerPrice,
+    exitFillSource: fillSource,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    triggerBoundaryFillApplied,
+    observedVsFillPct: round6(observedVsFillPct),
+    observedBeyondTriggerPct: round6(Math.abs(observedVsFillPct)),
+    exitFillAssumption: triggerBoundaryFillApplied
+      ? 'TRIGGER_BOUNDARY_PLUS_COST_MODEL'
+      : 'OBSERVED_MARKET_PRICE_PLUS_COST_MODEL'
+  };
+}
+
 function identityFlags() {
   return {
     virtualLearning: true,
@@ -1194,6 +1250,9 @@ function identityFlags() {
     avgCostRShown: true,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+    exitFillAssumption: 'TRIGGER_BOUNDARY_PLUS_COST_MODEL',
     directSLDefinition: 'SL_EXIT_WITHOUT_MEANINGFUL_MFE',
     directSLMfeThresholdR: 0.25,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
@@ -1535,6 +1594,9 @@ function applyNetCostModelToOutcome({
     costModelVersion: COST_MODEL_VERSION,
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    exitFillModelVersion: outcome.exitFillModelVersion || position.exitFillModelVersion || EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+    exitFillAssumption: outcome.exitFillAssumption || position.exitFillAssumption || null,
 
     scoringRSource: 'netR',
     winsLossesFlatsSource: 'netR',
@@ -1866,6 +1928,10 @@ export function buildOpenPositionFromEntry(entry) {
     currentFitDefinition: 'SHORT_MIRRORED_CURRENT_FIT',
     learningRemainsBroad: true,
 
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+    exitFillAssumption: 'TRIGGER_BOUNDARY_PLUS_COST_MODEL',
+
     validShortRiskShape: validShortRiskGeometry(normalizedEntry),
     shortRiskFormula: 'tp < entry < sl',
     shortGrossRFormula: '(entry - exitPrice) / (initialSl - entry)',
@@ -2053,6 +2119,17 @@ function enrichOutcomeIdentity(outcome = {}, position = {}) {
     directToSL: directSL,
     directSL,
 
+    exitFillPrice: safeNumber(outcome.exitFillPrice ?? position.exitFillPrice ?? outcome.exitPrice, 0),
+    exitObservedPrice: safeNumber(outcome.exitObservedPrice ?? position.exitObservedPrice ?? outcome.exitPrice, 0),
+    exitTriggerPrice: safeNumber(outcome.exitTriggerPrice ?? position.exitTriggerPrice, 0) || null,
+    exitFillSource: outcome.exitFillSource || position.exitFillSource || null,
+    exitFillModelVersion: outcome.exitFillModelVersion || position.exitFillModelVersion || EXIT_FILL_MODEL_VERSION,
+    triggerBoundaryFillApplied: Boolean(outcome.triggerBoundaryFillApplied ?? position.triggerBoundaryFillApplied),
+    observedVsFillPct: safeNumber(outcome.observedVsFillPct ?? position.observedVsFillPct, 0),
+    observedBeyondTriggerPct: safeNumber(outcome.observedBeyondTriggerPct ?? position.observedBeyondTriggerPct, 0),
+    exitFillAssumption: outcome.exitFillAssumption || position.exitFillAssumption || null,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
     tpExitTriggered: exitReason === 'TP',
     slExitTriggered: exitReason === 'SL',
     timeStopExitTriggered: exitReason === 'TIME_STOP',
@@ -2184,13 +2261,45 @@ async function monitorOnePosition({
   position.priceFetchFailures = 0;
   position.lastPriceFetchFailedAt = null;
 
-  updatePathMetrics(position, price);
-
-  const exit = detectExit({
+  let exit = detectExit({
     position,
     price,
     timestamp
   });
+
+  let exitFill = null;
+
+  if (exit.shouldExit) {
+    exitFill = resolveExitFill({
+      position,
+      observedPrice: price,
+      exitReason: exit.reason
+    });
+
+    // TP/SL padmetingen stoppen op de vooraf ingestelde triggerprijs.
+    // Daardoor kan een late monitor-tick geen kunstmatige +15R of -4R creëren.
+    updatePathMetrics(
+      position,
+      exitFill.exitFillPrice
+    );
+  } else {
+    updatePathMetrics(position, price);
+
+    // Een tweede controle bewaart TIME_STOP en eventueel aangescherpte stops.
+    exit = detectExit({
+      position,
+      price,
+      timestamp
+    });
+
+    if (exit.shouldExit) {
+      exitFill = resolveExitFill({
+        position,
+        observedPrice: price,
+        exitReason: exit.reason
+      });
+    }
+  }
 
   if (!exit.shouldExit) {
     await saveExistingOpenPosition(position);
@@ -2202,8 +2311,16 @@ async function monitorOnePosition({
     };
   }
 
+  if (!exitFill) {
+    exitFill = resolveExitFill({
+      position,
+      observedPrice: price,
+      exitReason: exit.reason
+    });
+  }
+
   const closedAt = timestamp;
-  const exitPrice = roundPrice(price);
+  const exitPrice = exitFill.exitFillPrice;
   const directSL = isDirectSLExit({
     position,
     exitReason: exit.reason
@@ -2211,6 +2328,7 @@ async function monitorOnePosition({
 
   const closedPosition = forceShortPositionFields({
     ...position,
+    ...exitFill,
     status: 'CLOSED',
     closedAt,
     completedAt: closedAt,
@@ -2236,6 +2354,7 @@ async function monitorOnePosition({
       status: 'CLOSED',
       closedAt,
       completedAt: closedAt,
+      ...exitFill,
       exitPrice,
       exitReason: exit.reason,
       exitTrigger: exit.trigger,
