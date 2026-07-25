@@ -28,7 +28,10 @@ const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2';
+const PREVIOUS_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const EXIT_FILL_MODEL_VERSION = 'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
+const OUTCOME_MEASUREMENT_GATE_MODE = 'STRICT_EXACT_VERSION';
 const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_PERSISTENCE_SNAPSHOT_V2';
 
 const SOURCE_VIRTUAL = 'VIRTUAL';
@@ -169,6 +172,224 @@ function finiteOrNull(value) {
   const n = Number(value);
 
   return Number.isFinite(n) ? n : null;
+}
+
+
+function normalizeMeasurementFixVersion(value = '') {
+  return upper(value);
+}
+
+function rowMeasurementFixVersion(row = {}) {
+  return normalizeMeasurementFixVersion(
+    row.measurementFixVersion ??
+      row.outcomeMeasurementVersion ??
+      row.positionMeasurementFixVersion ??
+      row.measurementVersion ??
+      row.exitMeasurementVersion ??
+      ''
+  );
+}
+
+function isCurrentMeasurementOutcome(row = {}) {
+  return rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
+}
+
+function outcomeResetNumericFields() {
+  return [
+    'virtualCompleted',
+    'realCompleted',
+    'shadowCompleted',
+    'completed',
+    'winrateSample',
+
+    'wins',
+    'losses',
+    'flats',
+
+    'virtualWins',
+    'virtualLosses',
+    'virtualFlats',
+
+    'realWins',
+    'realLosses',
+    'realFlats',
+
+    'shadowWins',
+    'shadowLosses',
+    'shadowFlats',
+
+    'totalR',
+    'virtualTotalR',
+    'realTotalR',
+    'shadowTotalR',
+
+    'totalPnlPct',
+    'virtualTotalPnlPct',
+    'realTotalPnlPct',
+    'shadowTotalPnlPct',
+
+    'totalCostR',
+    'virtualTotalCostR',
+    'realTotalCostR',
+    'shadowTotalCostR',
+
+    'grossWinR',
+    'grossLossR',
+
+    'virtualGrossWinR',
+    'virtualGrossLossR',
+    'realGrossWinR',
+    'realGrossLossR',
+    'shadowGrossWinR',
+    'shadowGrossLossR',
+
+    'avgR',
+    'avgWinR',
+    'avgLossR',
+    'sampleAdjustedAvgR',
+    'avgRScore',
+    'avgPnlPct',
+    'avgCostR',
+
+    'directSLCount',
+    'nearTpCount',
+    'reachedHalfRCount',
+    'reachedOneRCount',
+
+    'beWouldExitCount',
+    'gaveBackAfterHalfRCount',
+    'gaveBackAfterOneRCount',
+    'nearTpThenLossCount',
+
+    'winrate',
+    'bayesianWinrate',
+    'wilsonLowerBound',
+    'fairWinrate',
+    'sampleAdjustedWinrate',
+
+    'sampleRawWinrate',
+    'sampleBayesianWinrate',
+    'sampleWilsonLowerBound',
+    'sampleReliabilityOld',
+
+    'profitFactor',
+    'sampleReliability',
+    'balancedScore',
+    'dashboardBalancedScore',
+
+    'directSLPct',
+    'nearTpPct',
+    'reachedHalfRPct',
+    'reachedOneRPct',
+
+    'beWouldExitPct',
+    'gaveBackAfterHalfRPct',
+    'gaveBackAfterOneRPct',
+    'nearTpThenLossPct'
+  ];
+}
+
+function hasStoredOutcomeMeasurementData(stats = {}) {
+  if (
+    Array.isArray(stats.recentOutcomes) &&
+    stats.recentOutcomes.length > 0
+  ) {
+    return true;
+  }
+
+  return outcomeResetNumericFields().some(
+    (field) => safeNumber(stats[field], 0) !== 0
+  );
+}
+
+function applyOutcomeMeasurementPolicyFlags(stats = {}) {
+  stats.measurementFixVersion = MEASUREMENT_FIX_VERSION;
+  stats.outcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
+  stats.acceptedOutcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
+  stats.previousSupportedMeasurementFixVersion = PREVIOUS_MEASUREMENT_FIX_VERSION;
+
+  stats.outcomeMeasurementGateMode = OUTCOME_MEASUREMENT_GATE_MODE;
+  stats.outcomeMeasurementVersionRequired = true;
+  stats.strictOutcomeMeasurementGate = true;
+  stats.legacyOutcomeMeasurementsExcluded = true;
+  stats.completedCurrentMeasurementOnly = true;
+
+  stats.exitFillModelVersion = EXIT_FILL_MODEL_VERSION;
+  stats.exitFillPolicy = 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE';
+  stats.exitFillAssumption = 'TRIGGER_BOUNDARY_PLUS_COST_MODEL';
+
+  return stats;
+}
+
+function migrateOutcomeMeasurementVersion(stats = {}) {
+  const storedVersion = rowMeasurementFixVersion(stats);
+  const alreadyCurrent = storedVersion === MEASUREMENT_FIX_VERSION;
+
+  if (alreadyCurrent) {
+    stats.recentOutcomes = Array.isArray(stats.recentOutcomes)
+      ? stats.recentOutcomes
+          .filter(isCurrentMeasurementOutcome)
+          .slice(-50)
+      : [];
+
+    return applyOutcomeMeasurementPolicyFlags(stats);
+  }
+
+  const migrationAt = now();
+  const hadLegacyOutcomeData = hasStoredOutcomeMeasurementData(stats);
+
+  const legacyCompleted = safeNumber(
+    stats.completed,
+    safeNumber(stats.virtualCompleted, 0) +
+      safeNumber(stats.shadowCompleted, 0)
+  );
+
+  const legacyTotalR = safeNumber(stats.totalR, 0);
+  const legacyTotalCostR = safeNumber(stats.totalCostR, 0);
+  const legacyAvgR = legacyCompleted > 0
+    ? legacyTotalR / legacyCompleted
+    : 0;
+
+  const legacyRecentOutcomeCount = Array.isArray(stats.recentOutcomes)
+    ? stats.recentOutcomes.length
+    : 0;
+
+  for (const field of outcomeResetNumericFields()) {
+    stats[field] = 0;
+  }
+
+  stats.recentOutcomes = [];
+  stats.costStatsInferredFromRecent = false;
+  stats.directSLStatsInferredFromRecent = false;
+
+  stats.learningStatus = 'OBSERVING';
+  stats.status = 'OBSERVING';
+  stats.awaitingOutcomes = safeNumber(stats.seen, 0) > 0;
+  stats.tooEarly = true;
+
+  stats.previousMeasurementFixVersion =
+    storedVersion ||
+    'UNVERSIONED';
+
+  stats.outcomeMeasurementMigrationApplied = true;
+  stats.outcomeMeasurementMigrationAt =
+    stats.outcomeMeasurementMigrationAt ||
+    migrationAt;
+
+  stats.outcomeMeasurementMigrationReason =
+    'LEGACY_TRIGGER_OVERSHOOT_OUTCOMES_EXCLUDED_FROM_CLEAN_DATASET';
+
+  stats.legacyOutcomeDataWasPresent = hadLegacyOutcomeData;
+  stats.legacyExcludedCompleted = round4(legacyCompleted);
+  stats.legacyExcludedTotalR = round4(legacyTotalR);
+  stats.legacyExcludedAvgR = round4(legacyAvgR);
+  stats.legacyExcludedTotalCostR = round4(legacyTotalCostR);
+  stats.legacyExcludedRecentOutcomeCount = legacyRecentOutcomeCount;
+
+  stats.lastOutcomeMeasurementResetAt = migrationAt;
+  stats.updatedAt = migrationAt;
+
+  return applyOutcomeMeasurementPolicyFlags(stats);
 }
 
 function normalizeCurrentFitLabel(value = '') {
@@ -1244,6 +1465,8 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
 
   stats.completedDefinition = 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES';
   stats.completedOnlyClosedVirtualOrShadow = true;
+  stats.completedMeasurementFilter = MEASUREMENT_FIX_VERSION;
+  stats.completedCurrentMeasurementOnly = true;
   stats.scoringRSource = 'netR';
   stats.winsLossesFlatsSource = 'netR';
   stats.winrateDefinition = 'netR > 0';
@@ -1252,7 +1475,7 @@ function applyLearningIdentityFlags(stats = {}, row = {}) {
   stats.avgCostRShown = true;
   stats.avgCostRSource = 'costR';
 
-  stats.measurementFixVersion = MEASUREMENT_FIX_VERSION;
+  applyOutcomeMeasurementPolicyFlags(stats);
   stats.seenDefinition = 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY';
   stats.observationDedupeRequired = true;
   stats.observationAlwaysCounted = false;
@@ -1634,7 +1857,9 @@ function aggregateRecentOutcomes(stats = {}) {
   const statsId = rowMicroId(stats);
 
   const outcomes = Array.isArray(stats.recentOutcomes)
-    ? stats.recentOutcomes.filter(isShortRow)
+    ? stats.recentOutcomes
+        .filter(isShortRow)
+        .filter(isCurrentMeasurementOutcome)
     : [];
 
   return outcomes.reduce(
@@ -2007,6 +2232,8 @@ export function createMicroStats({
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     completedOnlyClosedVirtualOrShadow: true,
+    completedMeasurementFilter: MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
     scoringRSource: 'netR',
     winsLossesFlatsSource: 'netR',
     winrateDefinition: 'netR > 0',
@@ -2016,6 +2243,19 @@ export function createMicroStats({
     avgCostRSource: 'costR',
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    previousSupportedMeasurementFixVersion: PREVIOUS_MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+    outcomeMeasurementVersionRequired: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    completedCurrentMeasurementOnly: true,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+    exitFillAssumption: 'TRIGGER_BOUNDARY_PLUS_COST_MODEL',
+    measurementVersionAcceptedOutcomeCount: 0,
+    measurementVersionRejectedOutcomeCount: 0,
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     observationDedupeRequired: true,
 
@@ -2083,6 +2323,8 @@ export function createMicroStats({
 }
 
 function ensureStatsShape(stats = {}) {
+  migrateOutcomeMeasurementVersion(stats);
+
   stats.counters ||= makeCounters();
   stats.counters.rsiZone ||= {};
   stats.counters.flow ||= {};
@@ -2093,7 +2335,10 @@ function ensureStatsShape(stats = {}) {
 
   stats.examples = Array.isArray(stats.examples) ? stats.examples.filter(isShortRow) : [];
   stats.recentOutcomes = Array.isArray(stats.recentOutcomes)
-    ? stats.recentOutcomes.filter(isShortRow)
+    ? stats.recentOutcomes
+        .filter(isShortRow)
+        .filter(isCurrentMeasurementOutcome)
+        .slice(-50)
     : [];
 
   stats.definitionParts = Array.isArray(stats.definitionParts)
@@ -2138,6 +2383,8 @@ function ensureStatsShape(stats = {}) {
     'observations',
     'observationDuplicateSkippedCount',
     'outcomeDuplicateSkippedCount',
+    'measurementVersionAcceptedOutcomeCount',
+    'measurementVersionRejectedOutcomeCount',
 
     'virtualCompleted',
     'realCompleted',
@@ -2265,6 +2512,8 @@ function ensureStatsShape(stats = {}) {
   stats.recentMomentumScoreBuilt = false;
   stats.currentFitScoreBuilt = hasUsableCurrentFitSnapshot(stats);
   stats.parentDiversificationBuilt = false;
+
+  applyOutcomeMeasurementPolicyFlags(stats);
 
   stats.createdAt ||= now();
   stats.updatedAt ||= now();
@@ -2423,6 +2672,27 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   applySideIdentity(stats, row);
   applyCurrentFitSnapshot(stats, row);
 
+  const incomingMeasurementVersion = rowMeasurementFixVersion(row);
+
+  if (!isCurrentMeasurementOutcome(row)) {
+    stats.measurementVersionRejectedOutcomeCount =
+      safeNumber(stats.measurementVersionRejectedOutcomeCount, 0) + 1;
+
+    stats.lastRejectedOutcomeMeasurementVersion =
+      incomingMeasurementVersion ||
+      'UNVERSIONED';
+
+    stats.lastRejectedOutcomeMeasurementAt = now();
+    stats.lastRejectedOutcomeMeasurementReason =
+      'OUTCOME_MEASUREMENT_VERSION_NOT_CURRENT';
+
+    stats.outcomeRecorded = false;
+    stats.outcomeMeasurementRejected = true;
+    stats.updatedAt = now();
+
+    return refreshStats(stats);
+  }
+
   if (outcomeIsDuplicate(row)) {
     stats.outcomeDuplicateSkippedCount = safeNumber(stats.outcomeDuplicateSkippedCount, 0) + 1;
     stats.outcomeDuplicateLastSkippedAt = now();
@@ -2443,6 +2713,15 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
   if (src !== SOURCE_VIRTUAL && src !== SOURCE_SHADOW) {
     return refreshStats(stats);
   }
+
+  stats.measurementVersionAcceptedOutcomeCount =
+    safeNumber(stats.measurementVersionAcceptedOutcomeCount, 0) + 1;
+
+  stats.lastAcceptedOutcomeMeasurementVersion =
+    incomingMeasurementVersion;
+
+  stats.lastAcceptedOutcomeMeasurementAt = now();
+  stats.outcomeMeasurementRejected = false;
 
   const weight = sourceWeight(src);
   const geometry = shortRiskGeometry(row);
@@ -2537,6 +2816,18 @@ export function updateOutcome(stats, row = {}, source = SOURCE_VIRTUAL) {
     confirmationProfile: row.confirmationProfile || stats.confirmationProfile || parsed.confirmationProfile || null,
 
     exitReason: row.exitReason || row.reason || null,
+
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    exitFillModelVersion: row.exitFillModelVersion || EXIT_FILL_MODEL_VERSION,
+    exitFillSource: row.exitFillSource || null,
+    exitFillAssumption: row.exitFillAssumption || null,
+    triggerBoundaryFillApplied: Boolean(row.triggerBoundaryFillApplied),
+    exitObservedPrice: safeNumber(row.exitObservedPrice, null),
+    exitFillPrice: safeNumber(row.exitFillPrice ?? row.exitPrice, null),
+    exitTriggerPrice: safeNumber(row.exitTriggerPrice, null),
+    observedVsFillPct: safeNumber(row.observedVsFillPct, 0),
+    observedBeyondTriggerPct: safeNumber(row.observedBeyondTriggerPct, 0),
 
     entry: geometry.entry || row.entry || row.entryPrice || null,
     exit: geometry.exitPrice || row.exit || row.exitPrice || null,
@@ -3107,6 +3398,8 @@ export function refreshStats(stats) {
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     completedOnlyClosedVirtualOrShadow: true,
+    completedMeasurementFilter: MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
     scoringRSource: 'netR',
     winsLossesFlatsSource: 'netR',
     winrateDefinition: 'netR > 0',
@@ -3116,6 +3409,19 @@ export function refreshStats(stats) {
     avgCostRSource: 'costR',
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    previousSupportedMeasurementFixVersion: PREVIOUS_MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+    outcomeMeasurementVersionRequired: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    completedCurrentMeasurementOnly: true,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+    exitFillAssumption: 'TRIGGER_BOUNDARY_PLUS_COST_MODEL',
+    measurementVersionAcceptedOutcomeCount: round4(stats.measurementVersionAcceptedOutcomeCount),
+    measurementVersionRejectedOutcomeCount: round4(stats.measurementVersionRejectedOutcomeCount),
     seenDefinition: 'UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY',
     observationDedupeRequired: true,
     observationAlwaysCounted: false,
