@@ -1,33 +1,14 @@
 // ================= FILE: src/analyze/analyzeEngine.js =================
 // SHORT-only Analyze engine.
 //
-// Pipeline contract:
-// scanner candidate -> exact 75-child true micro-family observation
-// closed virtual/shadow position -> cost-aware netR outcome
-// persistent + ISO-week aggregates -> weekly manual rotation -> Discord
-//
-// In this project the exact 75-child identity is the finest selectable layer
-// (the user-facing "micro-micro family"). Parent-15 remains context-only.
-//
-// Storage safety:
-// - MICRO_OUTCOMES stores compact outcome rows only;
-// - full scanner payloads, candle arrays, definition arrays and
-//   currentMarketWeather.rows are never persisted in outcome history;
-// - existing oversized histories are compacted automatically;
-// - a hard byte budget keeps every MICRO_OUTCOMES value safely below
-//   the Upstash request limit.
-//
-// Runtime safety:
-// - observations are processed as one Redis batch per week key;
-// - dedupe writes use limited concurrency;
-// - each child/parent aggregate is read and written once per batch;
-// - all original learning, scoring, taxonomy and outcome behavior remains.
-//
-// Compatibility:
-// - supports keys.js with export `KEYS`;
-// - supports older keys.js with export `keys`;
-// - no ESM import failure when assertKeyAllowedForWriteScope is absent;
-// - fallback write guard allows SHORT:ANALYZE:* only.
+// Main guarantees:
+// - exact 75-child true micro-family learning only;
+// - observations are deduplicated per snapshot/symbol/micro/entry;
+// - batch observation processing reads and writes each aggregate once;
+// - outcome history is compact and remains below the Upstash request limit;
+// - heavy scanner, candle, order-book and market-universe payloads are never
+//   stored inside Analyze aggregates or outcome histories;
+// - all writes stay inside SHORT:ANALYZE:*.
 
 import { CONFIG } from '../config.js';
 import * as KeysApi from '../keys.js';
@@ -81,6 +62,18 @@ const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const MICRO_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
+
+const MEASUREMENT_FIX_VERSION =
+  'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2';
+
+const PREVIOUS_MEASUREMENT_FIX_VERSION =
+  'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+
+const EXIT_FILL_MODEL_VERSION =
+  'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
+
+const OUTCOME_MEASUREMENT_GATE_MODE =
+  'STRICT_EXACT_VERSION';
 
 const LEARNING_GRANULARITY =
   'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
@@ -139,6 +132,50 @@ function now() {
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function normalizeMeasurementFixVersion(value = '') {
+  return upper(value);
+}
+
+function rowMeasurementFixVersion(row = {}) {
+  return normalizeMeasurementFixVersion(
+    row.measurementFixVersion ??
+      row.outcomeMeasurementVersion ??
+      row.positionMeasurementFixVersion ??
+      row.measurementVersion ??
+      row.exitMeasurementVersion ??
+      ''
+  );
+}
+
+function isCurrentMeasurementOutcome(row = {}) {
+  return rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
+}
+
+function currentMeasurementPolicyFields(row = {}) {
+  return {
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    previousSupportedMeasurementFixVersion:
+      PREVIOUS_MEASUREMENT_FIX_VERSION,
+
+    outcomeMeasurementGateMode:
+      OUTCOME_MEASUREMENT_GATE_MODE,
+
+    outcomeMeasurementVersionRequired: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    completedCurrentMeasurementOnly: true,
+
+    exitFillModelVersion:
+      row.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION,
+
+    exitFillPolicy:
+      'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE'
+  };
 }
 
 function asObject(value) {
@@ -543,6 +580,76 @@ function compactOutcomeRecord(input = {}, overrides = {}) {
     outcomeSource: source,
     status: compactText(row.status || 'CLOSED', 40),
 
+    measurementFixVersion: compactText(
+      rowMeasurementFixVersion(row),
+      120
+    ),
+    outcomeMeasurementVersion: compactText(
+      row.outcomeMeasurementVersion ||
+        row.measurementFixVersion,
+      120
+    ),
+    acceptedOutcomeMeasurementVersion: compactText(
+      row.acceptedOutcomeMeasurementVersion,
+      120
+    ),
+    previousSupportedMeasurementFixVersion: compactText(
+      row.previousSupportedMeasurementFixVersion,
+      120
+    ),
+    outcomeMeasurementGateMode: compactText(
+      row.outcomeMeasurementGateMode,
+      80
+    ),
+    outcomeMeasurementVersionRequired:
+      row.outcomeMeasurementVersionRequired === true,
+    strictOutcomeMeasurementGate:
+      row.strictOutcomeMeasurementGate === true,
+    legacyOutcomeMeasurementsExcluded:
+      row.legacyOutcomeMeasurementsExcluded === true,
+    completedCurrentMeasurementOnly:
+      row.completedCurrentMeasurementOnly === true,
+
+    exitFillModelVersion: compactText(
+      row.exitFillModelVersion,
+      120
+    ),
+    exitFillPolicy: compactText(
+      row.exitFillPolicy,
+      180
+    ),
+    exitFillSource: compactText(
+      row.exitFillSource,
+      100
+    ),
+    exitFillAssumption: compactText(
+      row.exitFillAssumption,
+      180
+    ),
+    triggerBoundaryFillApplied:
+      row.triggerBoundaryFillApplied === true,
+
+    exitObservedPrice: safeNumber(
+      row.exitObservedPrice,
+      0
+    ),
+    exitFillPrice: safeNumber(
+      row.exitFillPrice ?? row.exitPrice,
+      0
+    ),
+    exitTriggerPrice: safeNumber(
+      row.exitTriggerPrice,
+      0
+    ),
+    observedVsFillPct: safeNumber(
+      row.observedVsFillPct,
+      0
+    ),
+    observedBeyondTriggerPct: safeNumber(
+      row.observedBeyondTriggerPct,
+      0
+    ),
+
     shortOnly: true,
     longDisabled: true,
     virtualOnly: true,
@@ -661,6 +768,29 @@ function minimalOutcomeRecord(row = {}) {
     contractSymbol: compact.contractSymbol,
     source: compact.source,
     status: compact.status,
+
+    measurementFixVersion: compact.measurementFixVersion,
+    outcomeMeasurementVersion:
+      compact.outcomeMeasurementVersion,
+    exitFillModelVersion:
+      compact.exitFillModelVersion,
+    exitFillSource:
+      compact.exitFillSource,
+    exitFillAssumption:
+      compact.exitFillAssumption,
+    triggerBoundaryFillApplied:
+      compact.triggerBoundaryFillApplied,
+    exitObservedPrice:
+      compact.exitObservedPrice,
+    exitFillPrice:
+      compact.exitFillPrice,
+    exitTriggerPrice:
+      compact.exitTriggerPrice,
+    observedVsFillPct:
+      compact.observedVsFillPct,
+    observedBeyondTriggerPct:
+      compact.observedBeyondTriggerPct,
+
     trueMicroFamilyId: compact.trueMicroFamilyId,
     parentTrueMicroFamilyId: compact.parentTrueMicroFamilyId,
     setupType: compact.setupType,
@@ -836,7 +966,10 @@ function compactOutcomeHistory(
     maxBytes = maxMicroOutcomeHistoryBytes()
   } = {}
 ) {
-  const sourceRows = Array.isArray(rows) ? rows : [];
+  const sourceRows = Array.isArray(rows)
+    ? rows.filter(isCurrentMeasurementOutcome)
+    : [];
+
   const deduped = new Map();
 
   for (const row of sourceRows) {
@@ -1124,11 +1257,24 @@ function outcomeIdentity(row = {}) {
   );
 
   const id = positionId || fallback;
+  const measurementVersion =
+    rowMeasurementFixVersion(row) ||
+    'UNVERSIONED';
+
+  const versionToken = stableHash(
+    measurementVersion,
+    12
+  );
 
   return {
     id,
-    key: `${id}|${microId}`,
-    redisKey: KEYS.analyze.obsLast(`OUTCOME_${id}`, symbol, microId)
+    measurementVersion,
+    key: `${measurementVersion}|${id}|${microId}`,
+    redisKey: KEYS.analyze.obsLast(
+      `OUTCOME_${versionToken}_${id}`,
+      symbol,
+      microId
+    )
   };
 }
 
@@ -1182,6 +1328,15 @@ function createParentStatsFor(row = {}) {
     children: [],
     observationDedupeKeys: [],
 
+    ...currentMeasurementPolicyFields(),
+
+    measurementVersionAcceptedOutcomeCount: 0,
+    measurementVersionRejectedOutcomeCount: 0,
+    outcomeMeasurementMigrationApplied: false,
+    legacyExcludedCompleted: 0,
+    legacyExcludedTotalR: 0,
+    legacyExcludedTotalCostR: 0,
+
     createdAt: timestamp,
     updatedAt: timestamp,
 
@@ -1193,11 +1348,75 @@ function createParentStatsFor(row = {}) {
   };
 }
 
-function updateParentObservation(stats = {}, row = {}) {
+
+function migrateParentStatsToCurrentMeasurement(stats = {}, row = {}) {
   const out = {
     ...createParentStatsFor(row),
     ...asObject(stats)
   };
+
+  if (rowMeasurementFixVersion(out) === MEASUREMENT_FIX_VERSION) {
+    return {
+      ...out,
+      ...currentMeasurementPolicyFields(out)
+    };
+  }
+
+  const legacyCompleted = safeNumber(out.completed, 0);
+  const legacyTotalR = safeNumber(
+    out.totalR ?? out.netTotalR,
+    0
+  );
+  const legacyTotalCostR = safeNumber(
+    out.totalCostR,
+    0
+  );
+
+  out.previousMeasurementFixVersion =
+    rowMeasurementFixVersion(out) ||
+    'UNVERSIONED';
+
+  out.legacyExcludedCompleted =
+    legacyCompleted;
+
+  out.legacyExcludedTotalR =
+    legacyTotalR;
+
+  out.legacyExcludedTotalCostR =
+    legacyTotalCostR;
+
+  out.completed = 0;
+  out.wins = 0;
+  out.losses = 0;
+  out.flats = 0;
+  out.totalR = 0;
+  out.netTotalR = 0;
+  out.totalCostR = 0;
+  out.grossTotalR = 0;
+  out.avgR = 0;
+  out.avgCostR = 0;
+  out.winrate = 0;
+  out.recentOutcomes = [];
+
+  out.outcomeMeasurementMigrationApplied = true;
+  out.outcomeMeasurementMigrationAt =
+    out.outcomeMeasurementMigrationAt ||
+    now();
+
+  out.outcomeMeasurementMigrationReason =
+    'LEGACY_TRIGGER_OVERSHOOT_PARENT_OUTCOMES_EXCLUDED';
+
+  return {
+    ...out,
+    ...currentMeasurementPolicyFields(out)
+  };
+}
+
+function updateParentObservation(stats = {}, row = {}) {
+  const out = migrateParentStatsToCurrentMeasurement(
+    stats,
+    row
+  );
 
   const childId = row.trueMicroFamilyId;
   const obsKey = String(row.observationDedupeKey || '');
@@ -1219,10 +1438,38 @@ function updateParentObservation(stats = {}, row = {}) {
 }
 
 function updateParentOutcome(stats = {}, row = {}) {
-  const out = {
-    ...createParentStatsFor(row),
-    ...asObject(stats)
-  };
+  const out = migrateParentStatsToCurrentMeasurement(
+    stats,
+    row
+  );
+
+  if (!isCurrentMeasurementOutcome(row)) {
+    out.measurementVersionRejectedOutcomeCount =
+      safeNumber(
+        out.measurementVersionRejectedOutcomeCount,
+        0
+      ) + 1;
+
+    out.lastRejectedOutcomeMeasurementVersion =
+      rowMeasurementFixVersion(row) ||
+      'UNVERSIONED';
+
+    out.lastRejectedOutcomeMeasurementAt = now();
+    out.updatedAt = now();
+
+    return compactStatsRecord(out);
+  }
+
+  out.measurementVersionAcceptedOutcomeCount =
+    safeNumber(
+      out.measurementVersionAcceptedOutcomeCount,
+      0
+    ) + 1;
+
+  out.lastAcceptedOutcomeMeasurementVersion =
+    MEASUREMENT_FIX_VERSION;
+
+  out.lastAcceptedOutcomeMeasurementAt = now();
 
   const netR = safeNumber(row.netR ?? row.exitR ?? row.netPnlR, 0);
   const grossR = safeNumber(row.grossR ?? row.rawR, netR);
@@ -1263,6 +1510,112 @@ async function saveAggregate(redis, key, value) {
   return compactValue;
 }
 
+
+function normalizeStoredChildStatsMap(value = {}) {
+  const input = asObject(value);
+  const out = {};
+
+  for (const [key, rawRow] of Object.entries(input)) {
+    const row = asObject(rawRow);
+
+    const candidateId = upper(
+      row.trueMicroFamilyId ||
+        row.childTrueMicroFamilyId ||
+        row.microFamilyId ||
+        row.analyzeMicroFamilyId ||
+        row.learningMicroFamilyId ||
+        key
+    );
+
+    if (
+      candidateId &&
+      validLearningId(candidateId) &&
+      isSelectableShortTrueMicroFamilyId(candidateId)
+    ) {
+      const parsed = parseShortTaxonomyMicroId(candidateId);
+
+      const normalized = {
+        ...row,
+        ...shortIdentityFlags(),
+
+        trueMicroFamilyId: candidateId,
+        childTrueMicroFamilyId: candidateId,
+        microFamilyId: candidateId,
+        analyzeMicroFamilyId: candidateId,
+        learningMicroFamilyId: candidateId,
+
+        parentTrueMicroFamilyId:
+          parsed.parentTrueMicroFamilyId,
+
+        parentMicroFamilyId:
+          parsed.parentTrueMicroFamilyId,
+
+        parentMacroFamilyId:
+          parsed.parentTrueMicroFamilyId,
+
+        macroFamilyId:
+          parsed.parentTrueMicroFamilyId,
+
+        coarseMicroFamilyId:
+          parsed.parentTrueMicroFamilyId
+      };
+
+      out[candidateId] = compactStatsRecord(
+        refreshStats(normalized)
+      );
+
+      continue;
+    }
+
+    out[key] = compactStatsRecord(row);
+  }
+
+  return out;
+}
+
+function normalizeStoredParentStatsMap(value = {}) {
+  const input = asObject(value);
+  const out = {};
+
+  for (const [key, rawRow] of Object.entries(input)) {
+    const row = asObject(rawRow);
+
+    const parentId = upper(
+      row.parentTrueMicroFamilyId ||
+        row.trueMicroFamilyId ||
+        row.microFamilyId ||
+        key
+    );
+
+    const parsed = parseShortTaxonomyMicroId(parentId);
+
+    if (parsed?.isParent) {
+      out[parentId] = compactStatsRecord(
+        migrateParentStatsToCurrentMeasurement(
+          {
+            ...row,
+            parentTrueMicroFamilyId: parentId,
+            trueMicroFamilyId: parentId,
+            microFamilyId: parentId
+          },
+          {
+            ...row,
+            parentTrueMicroFamilyId: parentId,
+            setupType: parsed.setup,
+            regimeBucket: parsed.regime
+          }
+        )
+      );
+
+      continue;
+    }
+
+    out[key] = compactStatsRecord(row);
+  }
+
+  return out;
+}
+
 async function readWeekMaps(redis, weekKeys = []) {
   const entries = await Promise.all(
     weekKeys.map(async (weekKey) => {
@@ -1279,8 +1632,8 @@ async function readWeekMaps(redis, weekKeys = []) {
         {
           microsKey,
           parentsKey,
-          micros: compactStatsMap(micros),
-          parents: compactStatsMap(parents)
+          micros: normalizeStoredChildStatsMap(micros),
+          parents: normalizeStoredParentStatsMap(parents)
         }
       ];
     })
@@ -1317,7 +1670,7 @@ export async function getWeekMicros(
   const redis = getDurableRedis();
   const key = KEYS.analyze.weekMicros(resolveWeekKey(weekKey));
   const value = await getJson(redis, key, {});
-  return compactStatsMap(value);
+  return normalizeStoredChildStatsMap(value);
 }
 
 export async function saveWeekMicros(
@@ -1326,7 +1679,12 @@ export async function saveWeekMicros(
 ) {
   const redis = getDurableRedis();
   const key = KEYS.analyze.weekMicros(resolveWeekKey(weekKey));
-  return saveAggregate(redis, key, micros);
+
+  return saveAggregate(
+    redis,
+    key,
+    normalizeStoredChildStatsMap(micros)
+  );
 }
 
 export async function getWeekParents(
@@ -1335,7 +1693,7 @@ export async function getWeekParents(
   const redis = getDurableRedis();
   const key = KEYS.analyze.weekParents(resolveWeekKey(weekKey));
   const value = await getJson(redis, key, {});
-  return compactStatsMap(value);
+  return normalizeStoredParentStatsMap(value);
 }
 
 export async function saveWeekParents(
@@ -1344,7 +1702,12 @@ export async function saveWeekParents(
 ) {
   const redis = getDurableRedis();
   const key = KEYS.analyze.weekParents(resolveWeekKey(weekKey));
-  return saveAggregate(redis, key, parents);
+
+  return saveAggregate(
+    redis,
+    key,
+    normalizeStoredParentStatsMap(parents)
+  );
 }
 
 async function recordObservationsBatchInternal(candidates = [], options = {}) {
@@ -1741,6 +2104,52 @@ export function buildOutcomeFromPosition({
     grossR,
     shortGrossR: grossR,
     rawR: grossR,
+
+    measurementFixVersion:
+      rowMeasurementFixVersion(position),
+
+    outcomeMeasurementVersion:
+      position.outcomeMeasurementVersion ||
+      position.measurementFixVersion,
+
+    exitFillModelVersion:
+      position.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION,
+
+    exitFillPolicy:
+      position.exitFillPolicy ||
+      'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
+    exitFillSource:
+      position.exitFillSource ||
+      null,
+
+    exitFillAssumption:
+      position.exitFillAssumption ||
+      null,
+
+    triggerBoundaryFillApplied:
+      position.triggerBoundaryFillApplied === true,
+
+    exitObservedPrice:
+      safeNumber(position.exitObservedPrice, 0),
+
+    exitFillPrice:
+      safeNumber(
+        position.exitFillPrice ??
+          normalizedExitPrice,
+        normalizedExitPrice
+      ),
+
+    exitTriggerPrice:
+      safeNumber(position.exitTriggerPrice, 0),
+
+    observedVsFillPct:
+      safeNumber(position.observedVsFillPct, 0),
+
+    observedBeyondTriggerPct:
+      safeNumber(position.observedBeyondTriggerPct, 0),
+
     netR: normalizedNetR,
     exitR: normalizedNetR,
     costR: safeNumber(
@@ -1761,9 +2170,33 @@ export function buildOutcomeFromPosition({
 }
 
 export async function recordOutcome(outcome = {}, options = {}) {
+  const incomingMeasurementVersion =
+    rowMeasurementFixVersion(outcome);
+
+  if (incomingMeasurementVersion !== MEASUREMENT_FIX_VERSION) {
+    return {
+      ok: false,
+      skipped: true,
+      duplicate: false,
+      reason: 'OUTCOME_MEASUREMENT_VERSION_NOT_CURRENT',
+      expectedMeasurementFixVersion:
+        MEASUREMENT_FIX_VERSION,
+      receivedMeasurementFixVersion:
+        incomingMeasurementVersion ||
+        'UNVERSIONED'
+    };
+  }
+
   const row = normalizeAnalyzeIdentity({
     ...outcome,
-    ...shortIdentityFlags()
+    ...shortIdentityFlags(),
+    ...currentMeasurementPolicyFields(outcome),
+
+    measurementFixVersion:
+      incomingMeasurementVersion,
+
+    outcomeMeasurementVersion:
+      incomingMeasurementVersion
   });
 
   if (!row || outcome.learnable === false) {
@@ -1789,6 +2222,8 @@ export async function recordOutcome(outcome = {}, options = {}) {
     {
       outcomeDedupeKey: identity.key,
       outcomeId: identity.id,
+      measurementFixVersion:
+        identity.measurementVersion,
       trueMicroFamilyId: row.trueMicroFamilyId,
       createdAt: now()
     },
@@ -1823,7 +2258,49 @@ export async function recordOutcome(outcome = {}, options = {}) {
     outcomeSource: source,
     status: 'CLOSED',
     closedAt,
-    completedAt
+    completedAt,
+
+    ...currentMeasurementPolicyFields(row),
+
+    measurementFixVersion:
+      MEASUREMENT_FIX_VERSION,
+
+    outcomeMeasurementVersion:
+      MEASUREMENT_FIX_VERSION,
+
+    exitFillModelVersion:
+      row.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION,
+
+    exitFillSource:
+      row.exitFillSource ||
+      null,
+
+    exitFillAssumption:
+      row.exitFillAssumption ||
+      null,
+
+    triggerBoundaryFillApplied:
+      row.triggerBoundaryFillApplied === true,
+
+    exitObservedPrice:
+      safeNumber(row.exitObservedPrice, 0),
+
+    exitFillPrice:
+      safeNumber(
+        row.exitFillPrice ??
+          row.exitPrice,
+        0
+      ),
+
+    exitTriggerPrice:
+      safeNumber(row.exitTriggerPrice, 0),
+
+    observedVsFillPct:
+      safeNumber(row.observedVsFillPct, 0),
+
+    observedBeyondTriggerPct:
+      safeNumber(row.observedBeyondTriggerPct, 0)
   });
 
   const requestedWeekKey = resolveWeekKey(
@@ -1894,6 +2371,9 @@ export async function recordOutcome(outcome = {}, options = {}) {
       skipped: false,
       duplicate: false,
       outcomeId: identity.id,
+      measurementFixVersion:
+        MEASUREMENT_FIX_VERSION,
+      outcomeMeasurementAccepted: true,
       outcome: enriched,
       stats: primaryStats,
       outcomeHistory: {
