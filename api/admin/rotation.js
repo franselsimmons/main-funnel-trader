@@ -21,9 +21,21 @@ const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
+const EMPIRICAL_VETO_MIN_COMPLETED = 35;
+const EMPIRICAL_VETO_MAX_AVG_R = 0;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
-const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY';
+const MEASUREMENT_FIX_VERSION =
+  'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2';
+
+const EXIT_FILL_MODEL_VERSION =
+  'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
+
+const EMPIRICAL_VETO_POLICY_VERSION =
+  'SHORT_EXACT_75_CHILD_NET_EDGE_VETO_V1';
+
+const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
+const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
@@ -152,6 +164,25 @@ function modeFlags() {
     totalRSource: 'netR',
     avgCostRShown: true,
 
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
+    empiricalVetoEnabled: true,
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoMinCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+    empiricalVetoMaxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
+    empiricalVetoRule:
+      'completed >= 35 && avgR <= 0',
+    empiricalVetoBlocksAdaptiveSelection: true,
+    empiricalVetoBlocksManualActivation: true,
+    empiricalVetoRemovesActiveDiscordSelection: true,
+    empiricalVetoCanRecover: true,
+
     noRealOrders: true,
     realOrdersDisabled: true,
     bitgetOrdersDisabled: true,
@@ -236,6 +267,14 @@ function modeFlags() {
       ACTIVE_LEARNING: `completed >= ${MIN_COMPLETED_ACTIVE_LEARNING}`
     },
 
+    activationGateRules: {
+      OBSERVING: `completed < ${EMPIRICAL_VETO_MIN_COMPLETED}`,
+      PASSED:
+        `completed >= ${EMPIRICAL_VETO_MIN_COMPLETED} && avgR > ${EMPIRICAL_VETO_MAX_AVG_R}`,
+      EMPIRICAL_VETO:
+        `completed >= ${EMPIRICAL_VETO_MIN_COMPLETED} && avgR <= ${EMPIRICAL_VETO_MAX_AVG_R}`
+    },
+
     redisNamespace: SHORT_NAMESPACE,
     redisKeyPrefix: SHORT_KEY_PREFIX,
     redisKeysSeparatedFromLongRoot: true,
@@ -246,6 +285,8 @@ function modeFlags() {
 function taxonomyMeta() {
   return {
     trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     learningGranularity: LEARNING_GRANULARITY,
 
     parentMicroFamilyCount: 15,
@@ -1018,7 +1059,53 @@ function outcomeCounts(row = {}) {
   };
 }
 
+function rowMeasurementFixVersion(row = {}) {
+  return upper(
+    row.measurementFixVersion ??
+      row.outcomeMeasurementVersion ??
+      row.acceptedOutcomeMeasurementVersion ??
+      row.positionMeasurementFixVersion ??
+      row.measurementVersion ??
+      row.exitMeasurementVersion ??
+      ''
+  );
+}
+
+function hasStoredOutcomeData(row = {}) {
+  return (
+    num(row.completed, 0) > 0 ||
+    num(row.virtualCompleted, 0) > 0 ||
+    num(row.shadowCompleted, 0) > 0 ||
+    num(row.totalR ?? row.netTotalR ?? row.totalNetR, 0) !== 0 ||
+    (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0)
+  );
+}
+
+function isCurrentMeasurementOutcome(row = {}) {
+  const source = upper(row.source || row.outcomeSource);
+  const hasR = Number.isFinite(Number(
+    row.netR ??
+      row.exitR ??
+      row.realizedNetR ??
+      row.realizedR ??
+      row.r
+  ));
+
+  return (
+    hasR &&
+    ['VIRTUAL', 'SHADOW'].includes(source) &&
+    rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION
+  );
+}
+
 function completedSample(row = {}) {
+  if (
+    hasStoredOutcomeData(row) &&
+    rowMeasurementFixVersion(row) !== MEASUREMENT_FIX_VERSION
+  ) {
+    return 0;
+  }
+
   return outcomeCounts(row).total;
 }
 
@@ -1053,6 +1140,7 @@ function totalR(row = {}) {
   if (Array.isArray(row.recentOutcomes)) {
     return row.recentOutcomes
       .filter(Boolean)
+      .filter(isCurrentMeasurementOutcome)
       .filter((outcome) => inferTradeSide({ ...row, ...outcome }) !== OPPOSITE_TRADE_SIDE)
       .reduce((sum, outcome) => sum + outcomeNetR(outcome), 0);
   }
@@ -1091,6 +1179,62 @@ function avgCostR(row = {}) {
   if (completed <= 0) return 0;
 
   return totalCostR(row) / completed;
+}
+
+function empiricalActivationGate(row = {}) {
+  const completed = completedSample(row);
+  const averageR = avgR(row);
+  const netTotalR = totalR(row);
+  const measurementVersion =
+    rowMeasurementFixVersion(row) ||
+    MEASUREMENT_FIX_VERSION;
+
+  if (completed < EMPIRICAL_VETO_MIN_COMPLETED) {
+    return {
+      status: 'OBSERVING',
+      blocked: false,
+      discordEligible: true,
+      reason: `COMPLETED_BELOW_${EMPIRICAL_VETO_MIN_COMPLETED}`,
+      completed,
+      minCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+      avgR: averageR,
+      totalR: netTotalR,
+      maxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
+      measurementVersion
+    };
+  }
+
+  if (averageR <= EMPIRICAL_VETO_MAX_AVG_R) {
+    return {
+      status: 'EMPIRICAL_VETO',
+      blocked: true,
+      discordEligible: false,
+      reason: 'CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE',
+      completed,
+      minCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+      avgR: averageR,
+      totalR: netTotalR,
+      maxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
+      measurementVersion
+    };
+  }
+
+  return {
+    status: 'PASSED',
+    blocked: false,
+    discordEligible: true,
+    reason: null,
+    completed,
+    minCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+    avgR: averageR,
+    totalR: netTotalR,
+    maxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
+    measurementVersion
+  };
+}
+
+function isEmpiricallyVetoed(row = {}) {
+  return empiricalActivationGate(row).blocked === true;
 }
 
 function marketBiasHaystack(row = {}) {
@@ -1219,6 +1363,7 @@ function eligibilityTier(row = {}) {
   const completed = completedSample(row);
   const observed = observationSample(row);
 
+  if (isEmpiricallyVetoed(row)) return 'EMPIRICAL_VETO';
   if (completed >= MIN_COMPLETED_ACTIVE_LEARNING) return 'HARD';
   if (completed > 0) return 'SOFT';
   if (observed > 0) return 'OBSERVATION';
@@ -1230,6 +1375,7 @@ function learningQualityRank(row = {}) {
   const completed = completedSample(row);
   const observed = observationSample(row);
 
+  if (isEmpiricallyVetoed(row)) return -1;
   if (completed >= MIN_COMPLETED_ACTIVE_LEARNING) return 3;
   if (completed > 0) return 2;
   if (observed > 0) return 1;
@@ -1255,7 +1401,11 @@ function normalizeRotationRow(row = {}, index = 0) {
   const counts = outcomeCounts(row);
   const completed = completedSample(row);
   const observed = observationSample(row);
-  const tier = row.selectedTier || row.rotationEligibilityTier || eligibilityTier(row);
+  const gate = empiricalActivationGate(row);
+  const computedTier = eligibilityTier(row);
+  const tier = gate.blocked
+    ? 'EMPIRICAL_VETO'
+    : row.selectedTier || row.rotationEligibilityTier || computedTier;
   const risk = getShortRiskGeometry(row);
   const fit = getShortCurrentFit(row);
 
@@ -1293,9 +1443,49 @@ function normalizeRotationRow(row = {}, index = 0) {
     inferredTradeSide: rawSide === 'UNKNOWN' ? TARGET_TRADE_SIDE : rawSide,
     inferredFromShortOnlyMode: rawSide === 'UNKNOWN',
 
-    schema: row.schema || row.microFamilySchema || TRUE_MICRO_SCHEMA,
-    microFamilySchema: row.microFamilySchema || row.schema || TRUE_MICRO_SCHEMA,
+    schema: TRUE_MICRO_SCHEMA,
+    microFamilySchema: TRUE_MICRO_SCHEMA,
+    trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    childTrueMicroFamilySchema: TRUE_MICRO_SCHEMA,
+    parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
     version: row.version || null,
+
+    measurementFixVersion:
+      rowMeasurementFixVersion(row) ||
+      MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion:
+      row.acceptedOutcomeMeasurementVersion ||
+      MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    exitFillModelVersion:
+      row.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy:
+      row.exitFillPolicy ||
+      'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
+    activationGateStatus: gate.status,
+    activationGateReason: gate.reason,
+    activationGatePassed: gate.status === 'PASSED',
+    empiricalVeto: gate.blocked,
+    empiricalVetoed: gate.blocked,
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoMinCompleted: gate.minCompleted,
+    empiricalVetoMaxAvgR: gate.maxAvgR,
+    empiricalVetoCompleted: gate.completed,
+    empiricalVetoAvgR: round(gate.avgR, 4),
+    empiricalVetoTotalR: round(gate.totalR, 4),
+    empiricalVetoReason: gate.blocked ? gate.reason : null,
+    empiricalVetoBlocksAdaptiveSelection: true,
+    empiricalVetoBlocksManualActivation: true,
+    empiricalVetoCanRecover: true,
+    discordEligible: gate.discordEligible,
+    discordBlocked: gate.blocked,
+    discordBlockReason: gate.blocked
+      ? 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
+      : null,
 
     isTrueMicro: true,
     isLegacyMacro: false,
@@ -1626,23 +1816,52 @@ function manualActiveRowFromId(id, index = 0) {
 function compactActiveRotation(rotation = null) {
   if (!rotation || typeof rotation !== 'object') return null;
 
-  const activeMicroFamilyIds = extractIdsFromRotation(rotation);
-  const activeMacroFamilyIds = extractMacroIdsFromRotation(rotation);
+  const requestedActiveMicroFamilyIds = extractIdsFromRotation(rotation);
+  const requestedActiveMacroFamilyIds = extractMacroIdsFromRotation(rotation);
+  const explicitlyRemovedIds = new Set(
+    uniqueStrings(rotation.empiricalVetoRemovedMicroFamilyIds || [])
+  );
 
   const rowList = Array.isArray(rotation.microFamilies)
     ? rotation.microFamilies
     : [];
 
-  const rows = rowList
+  const normalizedRows = rowList
     .map((row, index) => normalizeRotationRow(row, index))
     .filter(Boolean)
     .filter(isShortRow)
     .filter(isTrueMicroFamilyRow);
 
-  const existing = new Set(rows.map((row) => row.trueMicroFamilyId || row.microFamilyId).filter(Boolean));
+  const vetoedRows = normalizedRows.filter(
+    (row) => row.empiricalVeto === true ||
+      row.empiricalVetoed === true ||
+      row.discordBlocked === true
+  );
 
-  for (const id of activeMicroFamilyIds) {
+  const rows = normalizedRows.filter(
+    (row) => !(
+      row.empiricalVeto === true ||
+      row.empiricalVetoed === true ||
+      row.discordBlocked === true
+    )
+  );
+
+  const vetoedIds = new Set([
+    ...explicitlyRemovedIds,
+    ...vetoedRows
+      .map((row) => row.trueMicroFamilyId || row.microFamilyId)
+      .filter(Boolean)
+  ]);
+
+  const existing = new Set(
+    rows
+      .map((row) => row.trueMicroFamilyId || row.microFamilyId)
+      .filter(Boolean)
+  );
+
+  for (const id of requestedActiveMicroFamilyIds) {
     if (existing.has(id)) continue;
+    if (vetoedIds.has(id)) continue;
 
     const manualRow = manualActiveRowFromId(id, rows.length);
     if (!manualRow) continue;
@@ -1652,6 +1871,19 @@ function compactActiveRotation(rotation = null) {
   }
 
   rows.sort(compareRows);
+
+  const activeMicroFamilyIds = uniqueStrings(
+    rows.map((row) => row.trueMicroFamilyId || row.microFamilyId)
+  ).filter(isSelectableTrueMicroId);
+
+  const activeMacroFamilyIds = uniqueStrings([
+    rows.map((row) => row.parentTrueMicroFamilyId),
+    requestedActiveMacroFamilyIds.filter((parentId) =>
+      rows.some((row) => row.parentTrueMicroFamilyId === parentId)
+    )
+  ])
+    .filter(validLearningId)
+    .filter(isFixedShortParentMicroId);
 
   return {
     rotationId: rotation.rotationId || null,
@@ -1671,9 +1903,15 @@ function compactActiveRotation(rotation = null) {
     autoRotation: false,
     liveSelectable: activeMicroFamilyIds.length > 0,
 
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoRemovedCount: vetoedIds.size,
+    empiricalVetoRemovedMicroFamilyIds: [...vetoedIds],
+
     empty: activeMicroFamilyIds.length === 0,
     emptyReason: activeMicroFamilyIds.length === 0
-      ? 'NO_MANUAL_SHORT_75_CHILD_TRUE_MICRO_SELECTION_ACTIVE'
+      ? vetoedIds.size > 0
+        ? 'ACTIVE_ROTATION_REMOVED_BY_EMPIRICAL_VETO'
+        : 'NO_MANUAL_SHORT_75_CHILD_TRUE_MICRO_SELECTION_ACTIVE'
       : null,
 
     microFamilyIds: activeMicroFamilyIds,
@@ -1768,7 +2006,9 @@ function normalizeAction(body = {}) {
 
 function buildTierSummary(rows = []) {
   return rows.reduce((acc, row) => {
-    const tier = row.rotationEligibilityTier || row.selectedTier || eligibilityTier(row);
+    const tier = row.empiricalVeto === true
+      ? 'EMPIRICAL_VETO'
+      : row.rotationEligibilityTier || row.selectedTier || eligibilityTier(row);
 
     acc.total += 1;
     acc[tier] = (acc[tier] || 0) + 1;
@@ -1779,7 +2019,8 @@ function buildTierSummary(rows = []) {
     HARD: 0,
     SOFT: 0,
     OBSERVATION: 0,
-    RAW: 0
+    RAW: 0,
+    EMPIRICAL_VETO: 0
   });
 }
 
@@ -1931,6 +2172,13 @@ async function handleGet(req, res) {
     availableCount: availableRows.length,
 
     availableTierSummary: buildTierSummary(availableRows),
+    availableEmpiricalVetoCount: availableRows.filter(
+      (row) => row.empiricalVeto === true
+    ).length,
+    availableEmpiricalVetoMicroFamilyIds: availableRows
+      .filter((row) => row.empiricalVeto === true)
+      .map((row) => row.trueMicroFamilyId)
+      .filter(Boolean),
 
     sourceRows: {
       currentWeekRows: availableResult.currentRows,
@@ -2095,8 +2343,27 @@ async function handlePost(req, res) {
 
   const active = compactActiveRotation(activation);
 
+  const activationIgnoredRequestedIds = [
+    ...selected.ignoredRequestedIds,
+    ...(Array.isArray(activation?.ignoredRequestedIds)
+      ? activation.ignoredRequestedIds
+      : [])
+  ];
+
+  const activationIgnoredIdSet = new Set(
+    activationIgnoredRequestedIds
+      .map((row) => upper(row?.normalizedId || row?.id))
+      .filter(Boolean)
+  );
+
+  const acceptedRequestedIds = resolved.microFamilyIds
+    .filter((id) => !activationIgnoredIdSet.has(upper(id)));
+
   return res.status(200).json({
-    ok: true,
+    ok: activation?.ok !== false,
+    skipped: activation?.skipped === true,
+    changed: activation?.changed === true,
+    reason: activation?.reason || null,
     action,
 
     ...modeFlags(),
@@ -2122,13 +2389,18 @@ async function handlePost(req, res) {
     macroExpansionDisabled: true,
     parentExpansionDisabled: true,
 
-    acceptedIds: resolved.microFamilyIds,
-    ignoredRequestedIds: [
-      ...selected.ignoredRequestedIds,
-      ...(Array.isArray(activation?.ignoredRequestedIds)
-        ? activation.ignoredRequestedIds
-        : [])
-    ],
+    acceptedIds: acceptedRequestedIds,
+    ignoredRequestedIds: activationIgnoredRequestedIds,
+
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoBlockedCount:
+      num(activation?.empiricalVetoBlockedCount, 0),
+    empiricalVetoBlockedMicroFamilyIds:
+      activation?.empiricalVetoBlockedMicroFamilyIds || [],
+    empiricalVetoRemovedFromActiveCount:
+      num(active?.empiricalVetoRemovedCount, 0),
+    empiricalVetoRemovedFromActiveMicroFamilyIds:
+      active?.empiricalVetoRemovedMicroFamilyIds || [],
 
     activeRotation: active,
     active,
@@ -2162,14 +2434,22 @@ async function handlePost(req, res) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Rotation-Mode', 'short-only-manual-selection-exact-75-child-true-micro-v1');
+  res.setHeader('X-Admin-Rotation-Mode', 'short-only-manual-selection-exact-75-child-true-micro-v2-empirical-veto');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
   res.setHeader('X-True-Micro-Only', 'true');
   res.setHeader('X-Exact-True-Micro-Only', 'true');
   res.setHeader('X-True-Micro-Family-Schema', TRUE_MICRO_SCHEMA);
+  res.setHeader('X-Parent-True-Micro-Family-Schema', PARENT_TRUE_MICRO_SCHEMA);
   res.setHeader('X-Learning-Granularity', LEARNING_GRANULARITY);
+  res.setHeader('X-Measurement-Fix-Version', MEASUREMENT_FIX_VERSION);
+  res.setHeader('X-Accepted-Outcome-Measurement-Version', MEASUREMENT_FIX_VERSION);
+  res.setHeader('X-Exit-Fill-Model-Version', EXIT_FILL_MODEL_VERSION);
+  res.setHeader('X-Empirical-Veto-Policy-Version', EMPIRICAL_VETO_POLICY_VERSION);
+  res.setHeader('X-Empirical-Veto-Min-Completed', String(EMPIRICAL_VETO_MIN_COMPLETED));
+  res.setHeader('X-Empirical-Veto-Max-Avg-R', String(EMPIRICAL_VETO_MAX_AVG_R));
+  res.setHeader('X-Empirical-Veto-Blocks-Manual-Activation', 'true');
   res.setHeader('X-Selectable-Child-Micro-Families', '75');
   res.setHeader('X-Parent-Micro-Families', '15');
   res.setHeader('X-Manual-Selection-Match-Mode', 'EXACT_TRUE_MICRO_FAMILY_ID');
