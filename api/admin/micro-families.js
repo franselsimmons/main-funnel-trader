@@ -45,8 +45,11 @@ const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
 const LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1';
 const PARENT_LEARNING_GRANULARITY = 'SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1';
 
-const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V2';
+const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2';
+const PREVIOUS_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
+const EXIT_FILL_MODEL_VERSION = 'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
+const OUTCOME_MEASUREMENT_GATE_MODE = 'STRICT_EXACT_VERSION';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MEASUREMENT_GATE_V3';
 const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V2';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
@@ -190,6 +193,247 @@ function upper(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function rowMeasurementFixVersion(row = {}) {
+  return upper(
+    row.measurementFixVersion ??
+      row.outcomeMeasurementVersion ??
+      row.positionMeasurementFixVersion ??
+      row.measurementVersion ??
+      row.exitMeasurementVersion ??
+      ''
+  );
+}
+
+function isCurrentMeasurementOutcome(row = {}) {
+  return rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
+}
+
+function legacyOutcomeResetFields() {
+  return [
+    'completed',
+    'outcomeSample',
+    'winrateSample',
+
+    'virtualCompleted',
+    'shadowCompleted',
+    'realCompleted',
+
+    'wins',
+    'losses',
+    'flats',
+
+    'virtualWins',
+    'virtualLosses',
+    'virtualFlats',
+
+    'shadowWins',
+    'shadowLosses',
+    'shadowFlats',
+
+    'realWins',
+    'realLosses',
+    'realFlats',
+
+    'totalR',
+    'netTotalR',
+    'shortNetTotalR',
+    'totalNetR',
+
+    'virtualTotalR',
+    'shadowTotalR',
+    'realTotalR',
+
+    'totalPnlPct',
+    'virtualTotalPnlPct',
+    'shadowTotalPnlPct',
+    'realTotalPnlPct',
+
+    'totalCostR',
+    'virtualTotalCostR',
+    'shadowTotalCostR',
+    'realTotalCostR',
+
+    'grossWinR',
+    'grossLossR',
+    'virtualGrossWinR',
+    'virtualGrossLossR',
+    'shadowGrossWinR',
+    'shadowGrossLossR',
+
+    'avgR',
+    'avgNetR',
+    'netAvgR',
+    'avgWinR',
+    'avgLossR',
+    'profitFactor',
+
+    'winrate',
+    'bayesianWinrate',
+    'wilsonLowerBound',
+    'fairWinrate',
+    'sampleAdjustedWinrate',
+    'sampleRawWinrate',
+    'sampleBayesianWinrate',
+    'sampleWilsonLowerBound',
+    'sampleReliability',
+
+    'directSLCount',
+    'directSLPct',
+    'virtualDirectSLCount',
+    'shadowDirectSLCount',
+
+    'nearTpCount',
+    'nearTpPct',
+    'reachedHalfRCount',
+    'reachedHalfRPct',
+    'reachedOneRCount',
+    'reachedOneRPct',
+
+    'beWouldExitCount',
+    'beWouldExitPct',
+    'gaveBackAfterHalfRCount',
+    'gaveBackAfterHalfRPct',
+    'gaveBackAfterOneRCount',
+    'gaveBackAfterOneRPct',
+    'nearTpThenLossCount',
+    'nearTpThenLossPct',
+
+    'avgCostR',
+    'costR',
+    'netCostR',
+    'estimatedCostR',
+
+    'balancedScore',
+    'dashboardBalancedScore',
+    'adaptiveScore',
+    'recentMomentumScore'
+  ];
+}
+
+function sanitizeMeasurementRow(row = {}) {
+  const source = row && typeof row === 'object'
+    ? { ...row }
+    : {};
+
+  const storedVersion =
+    rowMeasurementFixVersion(source);
+
+  if (storedVersion === MEASUREMENT_FIX_VERSION) {
+    source.recentOutcomes = Array.isArray(source.recentOutcomes)
+      ? source.recentOutcomes
+          .filter(isCurrentMeasurementOutcome)
+          .slice(-50)
+      : [];
+
+    source.measurementFixVersion =
+      MEASUREMENT_FIX_VERSION;
+
+    source.outcomeMeasurementVersion =
+      MEASUREMENT_FIX_VERSION;
+
+    source.acceptedOutcomeMeasurementVersion =
+      MEASUREMENT_FIX_VERSION;
+
+    source.outcomeMeasurementGateMode =
+      OUTCOME_MEASUREMENT_GATE_MODE;
+
+    source.strictOutcomeMeasurementGate = true;
+    source.legacyOutcomeMeasurementsExcluded = true;
+    source.completedCurrentMeasurementOnly = true;
+    source.exitFillModelVersion =
+      source.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION;
+
+    return source;
+  }
+
+  const legacyCompleted = num(
+    source.completed ??
+      source.virtualCompleted ??
+      source.shadowCompleted,
+    0
+  );
+
+  const legacyTotalR = num(
+    source.totalR ??
+      source.netTotalR ??
+      source.shortNetTotalR,
+    0
+  );
+
+  const legacyTotalCostR = num(
+    source.totalCostR,
+    0
+  );
+
+  for (const field of legacyOutcomeResetFields()) {
+    source[field] = 0;
+  }
+
+  source.recentOutcomes = [];
+
+  source.previousMeasurementFixVersion =
+    storedVersion ||
+    'UNVERSIONED';
+
+  source.legacyExcludedCompleted =
+    num(
+      source.legacyExcludedCompleted,
+      legacyCompleted
+    );
+
+  source.legacyExcludedTotalR =
+    num(
+      source.legacyExcludedTotalR,
+      legacyTotalR
+    );
+
+  source.legacyExcludedTotalCostR =
+    num(
+      source.legacyExcludedTotalCostR,
+      legacyTotalCostR
+    );
+
+  source.measurementFixVersion =
+    MEASUREMENT_FIX_VERSION;
+
+  source.outcomeMeasurementVersion =
+    MEASUREMENT_FIX_VERSION;
+
+  source.acceptedOutcomeMeasurementVersion =
+    MEASUREMENT_FIX_VERSION;
+
+  source.previousSupportedMeasurementFixVersion =
+    PREVIOUS_MEASUREMENT_FIX_VERSION;
+
+  source.outcomeMeasurementGateMode =
+    OUTCOME_MEASUREMENT_GATE_MODE;
+
+  source.outcomeMeasurementVersionRequired = true;
+  source.strictOutcomeMeasurementGate = true;
+  source.legacyOutcomeMeasurementsExcluded = true;
+  source.completedCurrentMeasurementOnly = true;
+
+  source.exitFillModelVersion =
+    EXIT_FILL_MODEL_VERSION;
+
+  source.exitFillPolicy =
+    'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE';
+
+  source.outcomeMeasurementMigrationApplied = true;
+  source.outcomeMeasurementMigrationReason =
+    'ADMIN_DISPLAY_EXCLUDES_LEGACY_TRIGGER_OVERSHOOT_OUTCOMES';
+
+  source.learningStatus = 'OBSERVING';
+  source.status = 'OBSERVING';
+  source.awaitingOutcomes =
+    num(source.seen ?? source.observations, 0) > 0;
+
+  source.tooEarly = true;
+
+  return source;
+}
+
 function getArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -324,7 +568,7 @@ function modePayload() {
     netOutcomesOnly: true,
     learningOutcomesOnly: true,
     outcomesSourceMode: 'VIRTUAL_AND_SHADOW_NET_OUTCOMES',
-    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
+    completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES_CURRENT_MEASUREMENT_ONLY',
     completedOnlyClosedVirtualOrShadow: true,
 
     scoringRSource: 'netR',
@@ -336,6 +580,16 @@ function modePayload() {
     avgCostRSource: 'costR',
 
     measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    previousSupportedMeasurementFixVersion: PREVIOUS_MEASUREMENT_FIX_VERSION,
+    outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+    outcomeMeasurementVersionRequired: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    completedCurrentMeasurementOnly: true,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
     avgCostRFixEnabled: true,
     directSLFixEnabled: true,
     observationDedupeRequired: true,
@@ -1220,7 +1474,7 @@ function outcomeNetR(row = {}) {
 
 function aggregateRecentOutcomes(row = {}) {
   const outcomes = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes
+    ? row.recentOutcomes.filter(isCurrentMeasurementOutcome)
     : [];
 
   return outcomes.reduce(
@@ -1425,6 +1679,7 @@ function hasCostEvidence(row = {}) {
   if (Array.isArray(row.recentOutcomes)) {
     return row.recentOutcomes.some((outcome) => (
       outcome &&
+      isCurrentMeasurementOutcome(outcome) &&
       isLearningOutcomeSource(outcome.source || outcome.outcomeSource || 'VIRTUAL') &&
       (
         num(outcome.costR, 0) > 0 ||
@@ -1482,6 +1737,7 @@ function getTotalCostR(row = {}) {
   if (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0) {
     const relevant = row.recentOutcomes
       .filter(Boolean)
+      .filter(isCurrentMeasurementOutcome)
       .filter(isShortRow)
       .filter((outcome) => isLearningOutcomeSource(outcome.source || outcome.outcomeSource || 'VIRTUAL'));
 
@@ -1638,6 +1894,7 @@ function getDirectSLCount(row = {}) {
   if (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0) {
     return row.recentOutcomes
       .filter(Boolean)
+      .filter(isCurrentMeasurementOutcome)
       .filter(isShortRow)
       .filter((outcome) => isLearningOutcomeSource(outcome.source || outcome.outcomeSource || 'VIRTUAL'))
       .filter((outcome) => Boolean(outcome.directSL || outcome.directToSL || outcome.directStopLoss || outcome.isDirectSL))
@@ -2701,6 +2958,11 @@ function currentFitForMicro(row = {}, marketWeather = null) {
 }
 
 function buildRawMicroRow(row = {}, key = '', index = 0) {
+  const measurementSafeRow =
+    sanitizeMeasurementRow(row);
+
+  row = measurementSafeRow;
+
   const trueMicroFamilyId = getTrueMicroFamilyId(row, key);
 
   if (!trueMicroFamilyId) return null;
@@ -3028,7 +3290,13 @@ function decorateMicroRow(row = {}, marketWeather = null) {
 function buildRowsFromMicros(micros = {}, marketWeather = null) {
   return sourceEntriesFromMicros(micros)
     .map(([key, row], index) => {
-      const id = getTrueMicroFamilyId(row, key);
+      const measurementSafeRow =
+        sanitizeMeasurementRow(row);
+
+      const id = getTrueMicroFamilyId(
+        measurementSafeRow,
+        key
+      );
 
       if (!id) return null;
       if (!validLearningId(id)) return null;
@@ -3037,7 +3305,7 @@ function buildRowsFromMicros(micros = {}, marketWeather = null) {
       const parsed = parseShortTaxonomyMicroId(id);
 
       const baseRow = {
-        ...(row || {}),
+        ...measurementSafeRow,
         key,
         microFamilyId: id,
         trueMicroFamilyId: id,
@@ -3336,6 +3604,36 @@ function normalizeMicroRow(
     sourceWeekKey: row.sourceWeekKey || PERSISTENT_LEARNING_KEY,
     sourceWeekPrimary: row.sourceWeekPrimary !== false,
     sourceWeekFallback: Boolean(row.sourceWeekFallback),
+
+    measurementFixVersion:
+      MEASUREMENT_FIX_VERSION,
+
+    outcomeMeasurementVersion:
+      MEASUREMENT_FIX_VERSION,
+
+    acceptedOutcomeMeasurementVersion:
+      MEASUREMENT_FIX_VERSION,
+
+    previousMeasurementFixVersion:
+      row.previousMeasurementFixVersion ||
+      null,
+
+    outcomeMeasurementGateMode:
+      OUTCOME_MEASUREMENT_GATE_MODE,
+
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    completedCurrentMeasurementOnly: true,
+
+    exitFillModelVersion:
+      row.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION,
+
+    legacyExcludedCompleted:
+      num(row.legacyExcludedCompleted, 0),
+
+    legacyExcludedTotalR:
+      num(row.legacyExcludedTotalR, 0),
 
     active,
     macroActive,
@@ -4354,7 +4652,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-true-micro-net-outcome-currentfit-v1');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-current-measurement-gate-currentfit-v3');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -4383,7 +4681,11 @@ export default async function handler(req, res) {
   res.setHeader('X-Week-Reset-Disabled', 'true');
   res.setHeader('X-Default-Sort', 'ADAPTIVE_BALANCED_SCORE_NOT_RAW_WINRATE');
   res.setHeader('X-Measurement-Fix-Version', MEASUREMENT_FIX_VERSION);
-  res.setHeader('X-Completed-Definition', 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES');
+  res.setHeader('X-Outcome-Measurement-Gate-Mode', OUTCOME_MEASUREMENT_GATE_MODE);
+  res.setHeader('X-Legacy-Outcome-Measurements-Excluded', 'true');
+  res.setHeader('X-Completed-Current-Measurement-Only', 'true');
+  res.setHeader('X-Exit-Fill-Model-Version', EXIT_FILL_MODEL_VERSION);
+  res.setHeader('X-Completed-Definition', 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES_CURRENT_MEASUREMENT_ONLY');
   res.setHeader('X-Scoring-R-Source', 'netR');
   res.setHeader('X-Wins-Losses-Flats-Source', 'netR');
   res.setHeader('X-Avg-Cost-R-Source', 'costR');
@@ -4625,6 +4927,14 @@ export default async function handler(req, res) {
     const fitCounts = currentFitCounts(mergedRows);
     const currentFitUnknownRows = fitCounts.UNKNOWN || 0;
 
+    const legacyMeasurementRowsSanitized =
+      sourceEntriesFromMicros(weekResult.micros)
+        .filter(([, row]) => (
+          rowMeasurementFixVersion(row) !==
+          MEASUREMENT_FIX_VERSION
+        ))
+        .length;
+
     const warnings = uniqueStrings([
       requestedQueryWeekKey !== PERSISTENT_LEARNING_KEY
         ? `QUERY_WEEKKEY_IGNORED_USING_PERSISTENT:${requestedQueryWeekKey}`
@@ -4635,6 +4945,9 @@ export default async function handler(req, res) {
         : null,
       currentFitUnknownRows >= mergedRows.length
         ? 'CURRENTFIT_ALL_UNKNOWN_MARKET_WEATHER_NOT_USABLE'
+        : null,
+      legacyMeasurementRowsSanitized > 0
+        ? `LEGACY_MEASUREMENT_ROWS_SANITIZED:${legacyMeasurementRowsSanitized}`
         : null,
       weekRows.length === 0 && activeFallbackRows.length > 0
         ? 'USED_ACTIVE_ROTATION_FALLBACK_ROWS'
@@ -4675,11 +4988,18 @@ export default async function handler(req, res) {
 
       measurementPolicy: {
         version: MEASUREMENT_FIX_VERSION,
-        avgCostR: 'avgCostR = totalCostR / closedVirtualShadowCompleted, fallback avgCostR/costR/recentOutcomes.costR',
-        totalCostR: 'virtualTotalCostR + shadowTotalCostR when > 0, fallback totalCostR, fallback avgCostR * completed, fallback costR * completed, fallback recentOutcomes.costR * completed',
+        previousVersion: PREVIOUS_MEASUREMENT_FIX_VERSION,
+        gateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+        strictExactVersionRequired: true,
+        legacyOutcomeMeasurementsExcluded: true,
+        completedCurrentMeasurementOnly: true,
+        exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+        exitFillPolicy: 'TP and SL use their trigger boundary; TIME_STOP uses observed market price; cost model is applied afterwards',
+        avgCostR: 'avgCostR = totalCostR / closedVirtualShadowCompleted, fallback avgCostR/costR/current-version recentOutcomes.costR',
+        totalCostR: 'virtualTotalCostR + shadowTotalCostR when > 0, fallback totalCostR, fallback avgCostR * completed, fallback costR * completed, fallback current-version recentOutcomes.costR * completed',
         directSL: 'directSLCount / closedVirtualShadowCompleted',
         seen: 'seen and observations come only from unique observation dedupe keys',
-        completed: 'closed VIRTUAL + SHADOW outcomes only',
+        completed: 'only closed VIRTUAL + SHADOW outcomes carrying the exact current measurementFixVersion',
         scoringRSource: 'netR',
         winsLossesFlatsSource: 'netR',
         rawWinrateRankingDisabled: true
@@ -4726,6 +5046,10 @@ export default async function handler(req, res) {
         slHit: 'price >= sl',
         grossR: '(entry - exitPrice) / (initialSl - entry)',
         currentR: '(entry - currentPrice) / (initialSl - entry)',
+        tpExitFill: 'exitPrice = tp trigger boundary',
+        slExitFill: 'exitPrice = active sl trigger boundary',
+        timeStopExitFill: 'exitPrice = observed market price',
+        exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
         realOrdersDisabled: true,
         virtualOutcomesIncluded: true,
         shadowOutcomesIncluded: true,
@@ -4872,6 +5196,7 @@ export default async function handler(req, res) {
       rawExecutionFingerprintRowsHidden,
       parentRowsHidden,
       nonSelectableRowsHidden,
+      legacyMeasurementRowsSanitized,
 
       rawSideCounts: sideCounts(mergedRows),
       filteredSideCounts: sideCounts(rankedRows),
@@ -4919,7 +5244,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnly75ChildPersistentLearningNetOutcomeObservationFirstAnalyzeTrueMicroOnlyScannerFingerprintMetadataOnlyCurrentFitMarketWeatherAvgCostRFallbackFix',
+        path: 'shortOnly75ChildCurrentMeasurementGateTriggerBoundaryFillCurrentFitMarketWeather',
         best75Source: 'persistentLearningMergedRowsBeforeFilters'
       },
 
