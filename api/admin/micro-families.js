@@ -213,6 +213,47 @@ function isCurrentMeasurementOutcome(row = {}) {
   return rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
 }
 
+function measurementAggregateIntegrity(row = {}) {
+  const sourceCompleted =
+    num(row.virtualCompleted, 0) +
+    num(row.shadowCompleted, 0);
+
+  const completed = Math.max(
+    sourceCompleted,
+    num(row.completed, 0),
+    num(row.outcomeSample, 0),
+    0
+  );
+
+  const acceptedOutcomeCount = Math.max(
+    0,
+    num(row.measurementVersionAcceptedOutcomeCount, 0)
+  );
+
+  const recentOutcomes = Array.isArray(row.recentOutcomes)
+    ? row.recentOutcomes
+    : [];
+
+  const nonCurrentRecentOutcomeCount = recentOutcomes
+    .filter((outcome) => !isCurrentMeasurementOutcome(outcome))
+    .length;
+
+  const currentVersion =
+    rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
+
+  return {
+    valid:
+      currentVersion &&
+      (completed <= 0 || acceptedOutcomeCount >= completed) &&
+      nonCurrentRecentOutcomeCount === 0,
+    currentVersion,
+    completed,
+    acceptedOutcomeCount,
+    recentOutcomeCount: recentOutcomes.length,
+    nonCurrentRecentOutcomeCount
+  };
+}
+
 function legacyOutcomeResetFields() {
   return [
     'completed',
@@ -320,45 +361,38 @@ function sanitizeMeasurementRow(row = {}) {
     ? { ...row }
     : {};
 
-  const storedVersion =
-    rowMeasurementFixVersion(source);
+  const storedVersion = rowMeasurementFixVersion(source);
+  const integrity = measurementAggregateIntegrity(source);
 
-  if (storedVersion === MEASUREMENT_FIX_VERSION) {
+  if (integrity.valid) {
     source.recentOutcomes = Array.isArray(source.recentOutcomes)
       ? source.recentOutcomes
           .filter(isCurrentMeasurementOutcome)
           .slice(-50)
       : [];
 
-    source.measurementFixVersion =
-      MEASUREMENT_FIX_VERSION;
-
-    source.outcomeMeasurementVersion =
-      MEASUREMENT_FIX_VERSION;
-
-    source.acceptedOutcomeMeasurementVersion =
-      MEASUREMENT_FIX_VERSION;
-
-    source.outcomeMeasurementGateMode =
-      OUTCOME_MEASUREMENT_GATE_MODE;
-
+    source.measurementFixVersion = MEASUREMENT_FIX_VERSION;
+    source.outcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
+    source.acceptedOutcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
+    source.outcomeMeasurementGateMode = OUTCOME_MEASUREMENT_GATE_MODE;
+    source.outcomeMeasurementVersionRequired = true;
     source.strictOutcomeMeasurementGate = true;
     source.legacyOutcomeMeasurementsExcluded = true;
     source.completedCurrentMeasurementOnly = true;
     source.exitFillModelVersion =
-      source.exitFillModelVersion ||
-      EXIT_FILL_MODEL_VERSION;
+      source.exitFillModelVersion || EXIT_FILL_MODEL_VERSION;
+
+    source.currentMeasurementAggregateIntegrityValid = true;
+    source.currentMeasurementAggregateIntegrityCheckedAt = now();
+    source.currentMeasurementAggregateCompleted = integrity.completed;
+    source.currentMeasurementAcceptedOutcomeCount =
+      integrity.acceptedOutcomeCount;
+    source.currentMeasurementNonCurrentRecentOutcomeCount = 0;
 
     return source;
   }
 
-  const legacyCompleted = num(
-    source.completed ??
-      source.virtualCompleted ??
-      source.shadowCompleted,
-    0
-  );
-
+  const legacyCompleted = integrity.completed;
   const legacyTotalR = num(
     source.totalR ??
       source.netTotalR ??
@@ -366,74 +400,77 @@ function sanitizeMeasurementRow(row = {}) {
     0
   );
 
-  const legacyTotalCostR = num(
-    source.totalCostR,
-    0
-  );
+  const legacyTotalCostR = num(source.totalCostR, 0);
+  const legacyRecentOutcomeCount = integrity.recentOutcomeCount;
 
   for (const field of legacyOutcomeResetFields()) {
     source[field] = 0;
   }
 
+  source.measurementVersionAcceptedOutcomeCount = 0;
+  source.lastAcceptedOutcomeMeasurementVersion = null;
+  source.lastAcceptedOutcomeMeasurementAt = null;
   source.recentOutcomes = [];
 
   source.previousMeasurementFixVersion =
-    storedVersion ||
-    'UNVERSIONED';
+    storedVersion === MEASUREMENT_FIX_VERSION
+      ? 'CURRENT_VERSION_WITH_UNVERIFIED_AGGREGATES'
+      : storedVersion || 'UNVERSIONED';
 
   source.legacyExcludedCompleted =
-    num(
-      source.legacyExcludedCompleted,
-      legacyCompleted
-    );
+    num(source.legacyExcludedCompleted, 0) || legacyCompleted;
 
   source.legacyExcludedTotalR =
-    num(
-      source.legacyExcludedTotalR,
-      legacyTotalR
-    );
+    num(source.legacyExcludedTotalR, 0) || legacyTotalR;
 
   source.legacyExcludedTotalCostR =
-    num(
-      source.legacyExcludedTotalCostR,
-      legacyTotalCostR
-    );
+    num(source.legacyExcludedTotalCostR, 0) || legacyTotalCostR;
 
-  source.measurementFixVersion =
-    MEASUREMENT_FIX_VERSION;
+  source.legacyExcludedAcceptedOutcomeCount =
+    num(source.legacyExcludedAcceptedOutcomeCount, 0) ||
+    integrity.acceptedOutcomeCount;
 
-  source.outcomeMeasurementVersion =
-    MEASUREMENT_FIX_VERSION;
+  source.legacyExcludedRecentOutcomeCount =
+    num(source.legacyExcludedRecentOutcomeCount, 0) ||
+    legacyRecentOutcomeCount;
 
-  source.acceptedOutcomeMeasurementVersion =
-    MEASUREMENT_FIX_VERSION;
+  source.legacyExcludedNonCurrentRecentOutcomeCount =
+    num(source.legacyExcludedNonCurrentRecentOutcomeCount, 0) ||
+    integrity.nonCurrentRecentOutcomeCount;
 
+  source.measurementFixVersion = MEASUREMENT_FIX_VERSION;
+  source.outcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
+  source.acceptedOutcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
   source.previousSupportedMeasurementFixVersion =
     PREVIOUS_MEASUREMENT_FIX_VERSION;
-
-  source.outcomeMeasurementGateMode =
-    OUTCOME_MEASUREMENT_GATE_MODE;
-
+  source.outcomeMeasurementGateMode = OUTCOME_MEASUREMENT_GATE_MODE;
   source.outcomeMeasurementVersionRequired = true;
   source.strictOutcomeMeasurementGate = true;
   source.legacyOutcomeMeasurementsExcluded = true;
   source.completedCurrentMeasurementOnly = true;
 
-  source.exitFillModelVersion =
-    EXIT_FILL_MODEL_VERSION;
-
+  source.exitFillModelVersion = EXIT_FILL_MODEL_VERSION;
   source.exitFillPolicy =
     'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE';
 
   source.outcomeMeasurementMigrationApplied = true;
   source.outcomeMeasurementMigrationReason =
-    'ADMIN_DISPLAY_EXCLUDES_LEGACY_TRIGGER_OVERSHOOT_OUTCOMES';
+    storedVersion === MEASUREMENT_FIX_VERSION
+      ? 'ADMIN_CURRENT_VERSION_AGGREGATE_INTEGRITY_MISMATCH_EXCLUDED'
+      : 'ADMIN_DISPLAY_EXCLUDES_LEGACY_TRIGGER_OVERSHOOT_OUTCOMES';
+
+  source.currentMeasurementAggregateIntegrityValid = true;
+  source.currentMeasurementAggregateIntegrityMismatchDetected =
+    storedVersion === MEASUREMENT_FIX_VERSION;
+  source.currentMeasurementAggregateIntegrityCheckedAt = now();
+  source.currentMeasurementAggregateCompleted = 0;
+  source.currentMeasurementAcceptedOutcomeCount = 0;
+  source.currentMeasurementNonCurrentRecentOutcomeCount = 0;
 
   source.learningStatus = 'OBSERVING';
   source.status = 'OBSERVING';
   source.awaitingOutcomes =
     num(source.seen ?? source.observations, 0) > 0;
-
   source.tooEarly = true;
 
   return source;
@@ -5193,6 +5230,15 @@ export default async function handler(req, res) {
         ))
         .length;
 
+    const currentVersionAggregateIntegrityRowsSanitized =
+      sourceEntriesFromMicros(weekResult.micros)
+        .filter(([, row]) => (
+          rowMeasurementFixVersion(row) ===
+            MEASUREMENT_FIX_VERSION &&
+          !measurementAggregateIntegrity(row).valid
+        ))
+        .length;
+
     const warnings = uniqueStrings([
       requestedQueryWeekKey !== PERSISTENT_LEARNING_KEY
         ? `QUERY_WEEKKEY_IGNORED_USING_PERSISTENT:${requestedQueryWeekKey}`
@@ -5206,6 +5252,9 @@ export default async function handler(req, res) {
         : null,
       legacyMeasurementRowsSanitized > 0
         ? `LEGACY_MEASUREMENT_ROWS_SANITIZED:${legacyMeasurementRowsSanitized}`
+        : null,
+      currentVersionAggregateIntegrityRowsSanitized > 0
+        ? `CURRENT_VERSION_AGGREGATE_INTEGRITY_ROWS_SANITIZED:${currentVersionAggregateIntegrityRowsSanitized}`
         : null,
       empiricalVetoRows.length > 0
         ? `EMPIRICAL_VETO_ROWS_BLOCKED:${empiricalVetoRows.length}`
@@ -5496,6 +5545,7 @@ export default async function handler(req, res) {
       parentRowsHidden,
       nonSelectableRowsHidden,
       legacyMeasurementRowsSanitized,
+      currentVersionAggregateIntegrityRowsSanitized,
       empiricalVetoCount: empiricalVetoRows.length,
       empiricalVetoMicroFamilyIds,
 
