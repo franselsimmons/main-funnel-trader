@@ -1,5 +1,6 @@
 // ================= FILE: api/admin/micro-families.js =================
 
+import { CONFIG } from '../../src/config.js';
 import {
   sideToTradeSide,
   safeNumber
@@ -99,8 +100,8 @@ const VALID_MODES = new Set([
 ]);
 
 const WINRATE_Z = 1.96;
-const WINRATE_BAYES_ALPHA = 1;
-const WINRATE_BAYES_BETA = 1;
+const DEFAULT_PRIOR_TRADES = 24;
+const DEFAULT_PRIOR_WINRATE = 0.5;
 
 const SAMPLE_RELIABILITY_CAP = 50;
 const MIN_COMPLETED_ACTIVE_LEARNING = 20;
@@ -191,6 +192,29 @@ function clamp(value, min = 0, max = 1) {
 
 function upper(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function rotationNumber(key, fallback) {
+  return safeNumber(
+    CONFIG.short?.rotation?.[key] ??
+      CONFIG.rotation?.[key],
+    fallback
+  );
+}
+
+function priorTrades() {
+  return Math.max(
+    0,
+    rotationNumber('priorTrades', DEFAULT_PRIOR_TRADES)
+  );
+}
+
+function priorWinrate() {
+  return clamp(
+    rotationNumber('priorWinrate', DEFAULT_PRIOR_WINRATE),
+    0,
+    1
+  );
 }
 
 function rowMeasurementFixVersion(row = {}) {
@@ -1964,15 +1988,18 @@ function getSampleAdjustedWinrate(row = {}) {
     };
   }
 
-  const successes = counts.wins + counts.flats * 0.5;
+  // Exact dezelfde definitie als scoring.js:
+  // alleen netR > 0 telt als win; flats tellen niet als halve win.
+  const successes = counts.wins;
   const rawWinrate = clamp(successes / completedSample, 0, 1);
 
-  const bayesianWinrate = clamp(
-    (successes + WINRATE_BAYES_ALPHA) /
-      (completedSample + WINRATE_BAYES_ALPHA + WINRATE_BAYES_BETA),
-    0,
-    1
-  );
+  const priorN = priorTrades();
+  const priorW = priorN * priorWinrate();
+  const bayesianDenominator = completedSample + priorN;
+
+  const bayesianWinrate = bayesianDenominator > 0
+    ? clamp((successes + priorW) / bayesianDenominator, 0, 1)
+    : 0;
 
   const wilson = wilsonLowerBound(successes, completedSample);
   const reliability = sampleReliability(completedSample);
@@ -3203,12 +3230,36 @@ function decorateMicroRow(row = {}, marketWeather = null) {
   if (!isAnalyzeMicroRow(row)) return null;
 
   const winrate = getSampleAdjustedWinrate(row);
-  const dashboardBalancedScore = getDashboardBalancedScore(row, winrate);
+  const calculatedDashboardBalancedScore = getDashboardBalancedScore(row, winrate);
   const learningStatus = learningStatusFor(row, winrate);
   const tier = tierFor(row, winrate);
   const tooEarly = winrate.outcomeSample < MIN_COMPLETED_ACTIVE_LEARNING;
   const fit = currentFitForMicro(row, marketWeather);
 
+  // Na de V2-migratie zijn legacy performancevelden bewust op nul gezet.
+  // Bij 0 outcomes moet de rij daarom opnieuw op observatie-activiteit worden
+  // gescoord; een opgeslagen nul mag die berekening niet overschrijven.
+  const storedDashboardBalancedScore = firstFiniteNumber([
+    row.dashboardBalancedScore,
+    row.balancedScore
+  ]);
+
+  const storedBalancedScore = firstFiniteNumber([
+    row.balancedScore,
+    row.dashboardBalancedScore
+  ]);
+
+  const dashboardBalancedScore =
+    winrate.outcomeSample > 0 && storedDashboardBalancedScore !== null
+      ? storedDashboardBalancedScore
+      : calculatedDashboardBalancedScore;
+
+  const balancedScore =
+    winrate.outcomeSample > 0 && storedBalancedScore !== null
+      ? storedBalancedScore
+      : calculatedDashboardBalancedScore;
+
+  // CurrentFit is live en moet dus altijd opnieuw in adaptiveScore komen.
   const adaptiveScore =
     dashboardBalancedScore +
     fit.currentFitScore * 0.15 +
@@ -3262,9 +3313,9 @@ function decorateMicroRow(row = {}, marketWeather = null) {
     directSLCount: round(getDirectSLCount(row), 4),
     directSLPct: round(getDirectSLPct(row), 4),
 
-    dashboardBalancedScore: round(row.dashboardBalancedScore ?? dashboardBalancedScore, 4),
-    balancedScore: round(row.balancedScore ?? dashboardBalancedScore, 4),
-    adaptiveScore: round(row.adaptiveScore ?? adaptiveScore, 4),
+    dashboardBalancedScore: round(dashboardBalancedScore, 4),
+    balancedScore: round(balancedScore, 4),
+    adaptiveScore: round(adaptiveScore, 4),
     recentMomentumScore: round(row.recentMomentumScore ?? 0, 4),
 
     awaitingOutcomes: Boolean(winrate.awaitingOutcomes),
