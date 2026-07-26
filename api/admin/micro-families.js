@@ -49,7 +49,7 @@ const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FIL
 const PREVIOUS_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
 const EXIT_FILL_MODEL_VERSION = 'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
 const OUTCOME_MEASUREMENT_GATE_MODE = 'STRICT_EXACT_VERSION';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MEASUREMENT_GATE_EMPIRICAL_VETO_RANKING_FLAT_GATE_V5';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MEASUREMENT_GATE_EMPIRICAL_VETO_RANKING_FLAT_NULL_BREADTH_SEEN_RATIO_V6';
 const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V2';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
@@ -716,6 +716,9 @@ function modePayload() {
     currentFitBlocksShadowLearning: false,
     currentFitAffectsSelectionOnly: true,
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
+    currentFitNullBreadthPreserved: true,
+    missingBreadthIsNotZero: true,
+    seenCompletedRatioZeroWhenNoCompleted: true,
 
     adaptiveLayerBuilt: false,
     marketWeatherEngineBuilt: true,
@@ -1682,7 +1685,7 @@ function getSeenCompletedRatio(row = {}) {
   const completed = getCompletedSample(row);
   const seen = getObservationSample(row);
 
-  if (completed <= 0) return seen > 0 ? seen : 0;
+  if (completed <= 0) return 0;
 
   return seen / completed;
 }
@@ -2271,6 +2274,14 @@ function scannerMetadata(row = {}) {
 }
 
 function pct01To100(value, fallback = null) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return fallback;
+  }
+
   const n = Number(value);
 
   if (!Number.isFinite(n)) return fallback;
@@ -2440,6 +2451,17 @@ function timestampMs(value) {
 }
 
 function ratioCountToPct(count, total) {
+  if (
+    count === undefined ||
+    count === null ||
+    count === '' ||
+    total === undefined ||
+    total === null ||
+    total === ''
+  ) {
+    return null;
+  }
+
   const c = Number(count);
   const t = Number(total);
 
@@ -5000,7 +5022,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-current-measurement-currentfit-empirical-veto-ranking-flat-gate-v5');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-current-measurement-currentfit-empirical-veto-ranking-flat-null-breadth-seen-ratio-v6');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -5049,6 +5071,8 @@ export default async function handler(req, res) {
   res.setHeader('X-Current-Fit-Version', CURRENT_FIT_VERSION);
   res.setHeader('X-Current-Fit-Blocks-Learning', 'false');
   res.setHeader('X-Current-Fit-Score-Built', 'true');
+  res.setHeader('X-Current-Fit-Null-Breadth-Preserved', 'true');
+  res.setHeader('X-Seen-Completed-Ratio-Zero-Without-Outcomes', 'true');
   res.setHeader('X-MarketWeather-Engine-Built', 'true');
   res.setHeader('X-Redis-Namespace', SHORT_NAMESPACE);
   res.setHeader('X-Long-Root-Touched', 'false');
@@ -5480,7 +5504,9 @@ export default async function handler(req, res) {
         neutralBlocksDiscord: true,
         matchLabels: ['FIT', 'OK'],
         canonicalMatchLabels: ['MATCH', 'WEAK_MATCH'],
-        polarity: 'bearish market = positive for SHORT; bullish market = negative for SHORT'
+        polarity: 'bearish market = positive for SHORT; bullish market = negative for SHORT',
+        nullBreadthPreserved: true,
+        missingBreadthIsNotZero: true
       },
 
       riskOutcomePolicy: {
@@ -5571,7 +5597,9 @@ export default async function handler(req, res) {
         adaptiveLearningQualityFirst: true,
         zeroOutcomeReliabilityIsZero: true,
         flatsCountAsWins: false,
-        discordRequiresPassedActivationGate: true
+        discordRequiresPassedActivationGate: true,
+        missingBreadthIsNotZero: true,
+        seenCompletedRatioZeroWhenNoCompleted: true
       },
 
       adaptiveLayerPolicy: {
@@ -5714,7 +5742,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnly75ChildCurrentMeasurementGateTriggerBoundaryFillCurrentFitStrictDiscordRankingFlatFixV5',
+        path: 'shortOnly75ChildCurrentMeasurementGateTriggerBoundaryFillCurrentFitStrictDiscordRankingFlatNullBreadthSeenRatioFixV6',
         best75Source: 'persistentLearningMergedRowsBeforeFilters'
       },
 
