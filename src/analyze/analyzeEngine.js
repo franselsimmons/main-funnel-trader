@@ -697,6 +697,48 @@ function compactOutcomeRecord(input = {}, overrides = {}) {
     realizedR: safeNumber(row.realizedR, netR),
     costR,
 
+    riskPct: safeNumber(row.riskPct, 0),
+    rewardPct: safeNumber(row.rewardPct, 0),
+    grossMovePct: safeNumber(row.grossMovePct, 0),
+
+    feeR: safeNumber(row.feeR, 0),
+    slippageR: safeNumber(row.slippageR, 0),
+    marketImpactR: safeNumber(row.marketImpactR, 0),
+    spreadCostR: safeNumber(row.spreadCostR, 0),
+
+    feePct: safeNumber(row.feePct, 0),
+    slippagePct: safeNumber(row.slippagePct, 0),
+    costPct: safeNumber(row.costPct, 0),
+    grossPnlPct: safeNumber(row.grossPnlPct, 0),
+    netPnlPct: safeNumber(row.netPnlPct ?? row.pnlPct, 0),
+    pnlPct: safeNumber(row.pnlPct ?? row.netPnlPct, 0),
+
+    currentR: safeNumber(row.currentR, 0),
+    shortCurrentR: safeNumber(row.shortCurrentR ?? row.currentR, 0),
+    mfeR: safeNumber(row.mfeR, 0),
+    maeR: safeNumber(row.maeR, 0),
+    maxTpProgress: safeNumber(row.maxTpProgress, 0),
+    ticksObserved: safeNumber(row.ticksObserved, 0),
+    favorableTicks: safeNumber(row.favorableTicks, 0),
+    adverseTicks: safeNumber(row.adverseTicks, 0),
+
+    reachedHalfR: Boolean(row.reachedHalfR),
+    reachedOneR: Boolean(row.reachedOneR),
+    nearTpSeen: Boolean(row.nearTpSeen),
+
+    beArmed: Boolean(row.beArmed),
+    beWouldExit: Boolean(row.beWouldExit),
+    beExitR: safeNumber(row.beExitR, 0),
+
+    gaveBackAfterHalfR: Boolean(row.gaveBackAfterHalfR),
+    gaveBackAfterOneR: Boolean(row.gaveBackAfterOneR),
+    nearTpThenLoss: Boolean(row.nearTpThenLoss),
+
+    liveManaged: Boolean(row.liveManaged),
+    beLiveApplied: Boolean(row.beLiveApplied),
+    trailLiveApplied: Boolean(row.trailLiveApplied),
+    slManagementSource: compactText(row.slManagementSource, 40),
+
     directToSL: Boolean(row.directToSL ?? row.directSL),
     directSL: Boolean(row.directSL ?? row.directToSL),
 
@@ -709,7 +751,7 @@ function compactOutcomeRecord(input = {}, overrides = {}) {
     currentFit: compactText(
       typeof row.currentFit === 'string'
         ? row.currentFit
-        : row.currentFitLabel,
+        : row.currentFitLabel || row.entryCurrentFit,
       100
     ),
     currentFitScore: safeNumber(row.currentFitScore ?? row.fitScore, 0),
@@ -803,12 +845,32 @@ function minimalOutcomeRecord(row = {}) {
     grossR: compact.grossR,
     netR: compact.netR,
     costR: compact.costR,
+    netPnlPct: compact.netPnlPct,
+    pnlPct: compact.pnlPct,
+
+    currentR: compact.currentR,
+    shortCurrentR: compact.shortCurrentR,
+    mfeR: compact.mfeR,
+    maeR: compact.maeR,
+    maxTpProgress: compact.maxTpProgress,
+
+    reachedHalfR: compact.reachedHalfR,
+    reachedOneR: compact.reachedOneR,
+    nearTpSeen: compact.nearTpSeen,
+    beArmed: compact.beArmed,
+    beWouldExit: compact.beWouldExit,
+    beExitR: compact.beExitR,
+    gaveBackAfterHalfR: compact.gaveBackAfterHalfR,
+    gaveBackAfterOneR: compact.gaveBackAfterOneR,
+    nearTpThenLoss: compact.nearTpThenLoss,
+
     exitReason: compact.exitReason,
     openedAt: compact.openedAt,
     closedAt: compact.closedAt,
     directSL: compact.directSL,
     currentFit: compact.currentFit,
     currentFitScore: compact.currentFitScore,
+    currentFitConfidence: compact.currentFitConfidence,
     compactEmergencyRecord: true
   };
 }
@@ -1355,14 +1417,45 @@ function migrateParentStatsToCurrentMeasurement(stats = {}, row = {}) {
     ...asObject(stats)
   };
 
-  if (rowMeasurementFixVersion(out) === MEASUREMENT_FIX_VERSION) {
+  const storedVersion = rowMeasurementFixVersion(out);
+  const completed = Math.max(0, safeNumber(out.completed, 0));
+  const acceptedOutcomeCount = Math.max(
+    0,
+    safeNumber(out.measurementVersionAcceptedOutcomeCount, 0)
+  );
+
+  const recentOutcomes = Array.isArray(out.recentOutcomes)
+    ? out.recentOutcomes
+    : [];
+
+  const nonCurrentRecentOutcomeCount = recentOutcomes
+    .filter((outcome) => !isCurrentMeasurementOutcome(outcome))
+    .length;
+
+  const aggregateIntegrityValid =
+    storedVersion === MEASUREMENT_FIX_VERSION &&
+    (completed <= 0 || acceptedOutcomeCount >= completed) &&
+    nonCurrentRecentOutcomeCount === 0;
+
+  if (aggregateIntegrityValid) {
+    out.recentOutcomes = recentOutcomes
+      .filter(isCurrentMeasurementOutcome)
+      .slice(-recentOutcomeLimit());
+
+    out.currentMeasurementAggregateIntegrityValid = true;
+    out.currentMeasurementAggregateIntegrityCheckedAt =
+      out.currentMeasurementAggregateIntegrityCheckedAt || now();
+    out.currentMeasurementAggregateCompleted = completed;
+    out.currentMeasurementAcceptedOutcomeCount = acceptedOutcomeCount;
+    out.currentMeasurementNonCurrentRecentOutcomeCount = 0;
+
     return {
       ...out,
       ...currentMeasurementPolicyFields(out)
     };
   }
 
-  const legacyCompleted = safeNumber(out.completed, 0);
+  const legacyCompleted = completed;
   const legacyTotalR = safeNumber(
     out.totalR ?? out.netTotalR,
     0
@@ -1373,17 +1466,17 @@ function migrateParentStatsToCurrentMeasurement(stats = {}, row = {}) {
   );
 
   out.previousMeasurementFixVersion =
-    rowMeasurementFixVersion(out) ||
-    'UNVERSIONED';
+    storedVersion === MEASUREMENT_FIX_VERSION
+      ? 'CURRENT_VERSION_WITH_UNVERIFIED_AGGREGATES'
+      : storedVersion || 'UNVERSIONED';
 
-  out.legacyExcludedCompleted =
-    legacyCompleted;
-
-  out.legacyExcludedTotalR =
-    legacyTotalR;
-
-  out.legacyExcludedTotalCostR =
-    legacyTotalCostR;
+  out.legacyExcludedCompleted = legacyCompleted;
+  out.legacyExcludedTotalR = legacyTotalR;
+  out.legacyExcludedTotalCostR = legacyTotalCostR;
+  out.legacyExcludedAcceptedOutcomeCount = acceptedOutcomeCount;
+  out.legacyExcludedRecentOutcomeCount = recentOutcomes.length;
+  out.legacyExcludedNonCurrentRecentOutcomeCount =
+    nonCurrentRecentOutcomeCount;
 
   out.completed = 0;
   out.wins = 0;
@@ -1398,13 +1491,28 @@ function migrateParentStatsToCurrentMeasurement(stats = {}, row = {}) {
   out.winrate = 0;
   out.recentOutcomes = [];
 
+  out.measurementVersionAcceptedOutcomeCount = 0;
+  out.lastAcceptedOutcomeMeasurementVersion = null;
+  out.lastAcceptedOutcomeMeasurementAt = null;
+
   out.outcomeMeasurementMigrationApplied = true;
   out.outcomeMeasurementMigrationAt =
     out.outcomeMeasurementMigrationAt ||
     now();
 
   out.outcomeMeasurementMigrationReason =
-    'LEGACY_TRIGGER_OVERSHOOT_PARENT_OUTCOMES_EXCLUDED';
+    storedVersion === MEASUREMENT_FIX_VERSION
+      ? 'CURRENT_VERSION_PARENT_AGGREGATE_INTEGRITY_MISMATCH_EXCLUDED'
+      : 'LEGACY_TRIGGER_OVERSHOOT_PARENT_OUTCOMES_EXCLUDED';
+
+  out.currentMeasurementAggregateIntegrityValid = true;
+  out.currentMeasurementAggregateIntegrityMismatchDetected =
+    storedVersion === MEASUREMENT_FIX_VERSION;
+  out.currentMeasurementAggregateIntegrityCheckedAt =
+      out.currentMeasurementAggregateIntegrityCheckedAt || now();
+  out.currentMeasurementAggregateCompleted = 0;
+  out.currentMeasurementAcceptedOutcomeCount = 0;
+  out.currentMeasurementNonCurrentRecentOutcomeCount = 0;
 
   return {
     ...out,
