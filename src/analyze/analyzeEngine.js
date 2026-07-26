@@ -697,6 +697,48 @@ function compactOutcomeRecord(input = {}, overrides = {}) {
     realizedR: safeNumber(row.realizedR, netR),
     costR,
 
+    riskPct: safeNumber(row.riskPct, 0),
+    rewardPct: safeNumber(row.rewardPct, 0),
+    grossMovePct: safeNumber(row.grossMovePct, 0),
+
+    feeR: safeNumber(row.feeR, 0),
+    slippageR: safeNumber(row.slippageR, 0),
+    marketImpactR: safeNumber(row.marketImpactR, 0),
+    spreadCostR: safeNumber(row.spreadCostR, 0),
+
+    feePct: safeNumber(row.feePct, 0),
+    slippagePct: safeNumber(row.slippagePct, 0),
+    costPct: safeNumber(row.costPct, 0),
+    grossPnlPct: safeNumber(row.grossPnlPct, 0),
+    netPnlPct: safeNumber(row.netPnlPct ?? row.pnlPct, 0),
+    pnlPct: safeNumber(row.pnlPct ?? row.netPnlPct, 0),
+
+    currentR: safeNumber(row.currentR, 0),
+    shortCurrentR: safeNumber(row.shortCurrentR ?? row.currentR, 0),
+    mfeR: safeNumber(row.mfeR, 0),
+    maeR: safeNumber(row.maeR, 0),
+    maxTpProgress: safeNumber(row.maxTpProgress, 0),
+    ticksObserved: safeNumber(row.ticksObserved, 0),
+    favorableTicks: safeNumber(row.favorableTicks, 0),
+    adverseTicks: safeNumber(row.adverseTicks, 0),
+
+    reachedHalfR: Boolean(row.reachedHalfR),
+    reachedOneR: Boolean(row.reachedOneR),
+    nearTpSeen: Boolean(row.nearTpSeen),
+
+    beArmed: Boolean(row.beArmed),
+    beWouldExit: Boolean(row.beWouldExit),
+    beExitR: safeNumber(row.beExitR, 0),
+
+    gaveBackAfterHalfR: Boolean(row.gaveBackAfterHalfR),
+    gaveBackAfterOneR: Boolean(row.gaveBackAfterOneR),
+    nearTpThenLoss: Boolean(row.nearTpThenLoss),
+
+    liveManaged: Boolean(row.liveManaged),
+    beLiveApplied: Boolean(row.beLiveApplied),
+    trailLiveApplied: Boolean(row.trailLiveApplied),
+    slManagementSource: compactText(row.slManagementSource, 40),
+
     directToSL: Boolean(row.directToSL ?? row.directSL),
     directSL: Boolean(row.directSL ?? row.directToSL),
 
@@ -709,7 +751,7 @@ function compactOutcomeRecord(input = {}, overrides = {}) {
     currentFit: compactText(
       typeof row.currentFit === 'string'
         ? row.currentFit
-        : row.currentFitLabel,
+        : row.currentFitLabel || row.entryCurrentFit,
       100
     ),
     currentFitScore: safeNumber(row.currentFitScore ?? row.fitScore, 0),
@@ -803,12 +845,32 @@ function minimalOutcomeRecord(row = {}) {
     grossR: compact.grossR,
     netR: compact.netR,
     costR: compact.costR,
+    netPnlPct: compact.netPnlPct,
+    pnlPct: compact.pnlPct,
+
+    currentR: compact.currentR,
+    shortCurrentR: compact.shortCurrentR,
+    mfeR: compact.mfeR,
+    maeR: compact.maeR,
+    maxTpProgress: compact.maxTpProgress,
+
+    reachedHalfR: compact.reachedHalfR,
+    reachedOneR: compact.reachedOneR,
+    nearTpSeen: compact.nearTpSeen,
+    beArmed: compact.beArmed,
+    beWouldExit: compact.beWouldExit,
+    beExitR: compact.beExitR,
+    gaveBackAfterHalfR: compact.gaveBackAfterHalfR,
+    gaveBackAfterOneR: compact.gaveBackAfterOneR,
+    nearTpThenLoss: compact.nearTpThenLoss,
+
     exitReason: compact.exitReason,
     openedAt: compact.openedAt,
     closedAt: compact.closedAt,
     directSL: compact.directSL,
     currentFit: compact.currentFit,
     currentFitScore: compact.currentFitScore,
+    currentFitConfidence: compact.currentFitConfidence,
     compactEmergencyRecord: true
   };
 }
