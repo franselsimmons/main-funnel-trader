@@ -2372,10 +2372,34 @@ async function monitorOnePosition({
   const analyzeOutcome = clonePlainObject(outcome);
   const discordOutcome = clonePlainObject(outcome);
 
-  await recordOutcome(analyzeOutcome, {
+  const analyzeResult = await recordOutcome(analyzeOutcome, {
     source: OUTCOME_SOURCE,
     weekKey: PERSISTENT_LEARNING_KEY
   });
+
+  const analyzeAccepted =
+    analyzeResult?.ok === true &&
+    (
+      analyzeResult?.skipped !== true ||
+      analyzeResult?.duplicate === true
+    );
+
+  if (!analyzeAccepted) {
+    const error = new Error(
+      analyzeResult?.reason ||
+        'ANALYZE_OUTCOME_NOT_ACCEPTED'
+    );
+
+    error.details = {
+      positionId: closedPosition.positionId || closedPosition.id || null,
+      symbol: closedPosition.symbol || closedPosition.contractSymbol || null,
+      trueMicroFamilyId: rowMicroId(closedPosition),
+      measurementFixVersion: MEASUREMENT_FIX_VERSION,
+      analyzeResult
+    };
+
+    throw error;
+  }
 
   const discordResult = await maybeSendExitAlert(closedPosition, discordOutcome);
 
@@ -2386,6 +2410,9 @@ async function monitorOnePosition({
     position: closedPosition,
     outcome: {
       ...discordOutcome,
+      analyzeOutcomeAccepted: true,
+      analyzeOutcomeDuplicate: Boolean(analyzeResult?.duplicate),
+      analyzeOutcomeId: analyzeResult?.outcomeId || null,
       discordExitAlertResult: discordResult,
       discordExitAlertSent: Boolean(discordResult.sent)
     }
