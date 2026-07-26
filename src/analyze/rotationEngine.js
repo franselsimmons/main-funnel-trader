@@ -24,6 +24,15 @@ const SHORT_NAMESPACE = 'SHORT';
 const SHORT_KEY_PREFIX = `${SHORT_NAMESPACE}:`;
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 
+const MEASUREMENT_FIX_VERSION =
+  'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2';
+
+const EXIT_FILL_MODEL_VERSION =
+  'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
+
+const EMPIRICAL_VETO_POLICY_VERSION =
+  'SHORT_EXACT_75_CHILD_NET_EDGE_VETO_V1';
+
 const TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_75';
 const PARENT_TRUE_MICRO_SCHEMA = 'FIXED_TAXONOMY_15';
 const CHILD_TRUE_MICRO_SCHEMA = TRUE_MICRO_SCHEMA;
@@ -42,6 +51,10 @@ const ROTATION_SIDES = [TARGET_TRADE_SIDE];
 const DEFAULT_TOP_N_PER_SIDE = 1;
 const MAX_TOP_N_PER_SIDE = 160;
 const DEFAULT_MIN_WEIGHTED_COMPLETED = 20;
+const DEFAULT_EMPIRICAL_VETO_MIN_COMPLETED = 35;
+const DEFAULT_EMPIRICAL_VETO_MAX_AVG_R = 0;
+const EMPIRICAL_VETO_SCORE = -1_000_000;
+
 const DEFAULT_MIN_PRIMARY_ROWS_FOR_PREVIOUS_MERGE = 25;
 const DEFAULT_POSITION_TIME_STOP_MIN = 720;
 
@@ -214,6 +227,27 @@ function minWeightedCompleted() {
   );
 }
 
+function empiricalVetoMinCompleted() {
+  return Math.max(
+    minWeightedCompleted(),
+    Math.floor(
+      safeNumber(
+        CONFIG.short?.rotation?.empiricalVetoMinCompleted ??
+          CONFIG.rotation?.empiricalVetoMinCompleted,
+        DEFAULT_EMPIRICAL_VETO_MIN_COMPLETED
+      )
+    )
+  );
+}
+
+function empiricalVetoMaxAvgR() {
+  return safeNumber(
+    CONFIG.short?.rotation?.empiricalVetoMaxAvgR ??
+      CONFIG.rotation?.empiricalVetoMaxAvgR,
+    DEFAULT_EMPIRICAL_VETO_MAX_AVG_R
+  );
+}
+
 function topNPerSide() {
   const preferred =
     CONFIG.short?.rotation?.topNShort ??
@@ -364,10 +398,35 @@ function modeFlags() {
     avgCostRShown: true,
     avgCostRSource: 'costR',
 
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy: 'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
+    empiricalVetoEnabled: true,
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoMinCompleted: empiricalVetoMinCompleted(),
+    empiricalVetoMaxAvgR: empiricalVetoMaxAvgR(),
+    empiricalVetoRule:
+      'completed >= minCompleted && avgR <= maxAvgR',
+    empiricalVetoBlocksAdaptiveSelection: true,
+    empiricalVetoBlocksManualActivation: true,
+    empiricalVetoRemovesActiveDiscordSelection: true,
+    empiricalVetoCanRecover: true,
+
     statusRules: {
       OBSERVING: 'completed == 0',
       EARLY_OUTCOMES: `completed > 0 && completed < ${DEFAULT_MIN_WEIGHTED_COMPLETED}`,
       ACTIVE_LEARNING: `completed >= ${DEFAULT_MIN_WEIGHTED_COMPLETED}`
+    },
+
+    activationGateRules: {
+      OBSERVING: `completed < ${empiricalVetoMinCompleted()}`,
+      PASSED: `completed >= ${empiricalVetoMinCompleted()} && avgR > ${empiricalVetoMaxAvgR()}`,
+      EMPIRICAL_VETO: `completed >= ${empiricalVetoMinCompleted()} && avgR <= ${empiricalVetoMaxAvgR()}`
     },
 
     defaultRanking: 'adaptiveScore|dashboardBalancedScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
@@ -994,26 +1053,70 @@ function isKnownTrueMicroId(id = '') {
   return isFixedTaxonomyChildId(value);
 }
 
+function normalizeMeasurementFixVersion(value = '') {
+  return String(value || '').trim().toUpperCase();
+}
+
+function rowMeasurementFixVersion(row = {}) {
+  return normalizeMeasurementFixVersion(
+    row.measurementFixVersion ??
+      row.outcomeMeasurementVersion ??
+      row.acceptedOutcomeMeasurementVersion ??
+      row.positionMeasurementFixVersion ??
+      row.measurementVersion ??
+      row.exitMeasurementVersion ??
+      ''
+  );
+}
+
+function isCurrentMeasurementRow(row = {}) {
+  return rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
+}
+
+function hasStoredOutcomeData(row = {}) {
+  return (
+    safeNumber(row.completed, 0) > 0 ||
+    safeNumber(row.virtualCompleted, 0) > 0 ||
+    safeNumber(row.shadowCompleted, 0) > 0 ||
+    safeNumber(row.totalR ?? row.netTotalR ?? row.totalNetR, 0) !== 0 ||
+    (Array.isArray(row.recentOutcomes) && row.recentOutcomes.length > 0)
+  );
+}
+
+function isCurrentMeasurementOutcome(outcome = {}) {
+  const source = String(
+    outcome?.source || outcome?.outcomeSource || ''
+  ).trim().toUpperCase();
+
+  const hasR = Number.isFinite(Number(
+    outcome?.netR ??
+      outcome?.exitR ??
+      outcome?.realizedNetR ??
+      outcome?.realizedR ??
+      outcome?.r
+  ));
+
+  return (
+    hasR &&
+    ['VIRTUAL', 'SHADOW'].includes(source) &&
+    rowMeasurementFixVersion(outcome) === MEASUREMENT_FIX_VERSION
+  );
+}
+
+function currentMeasurementRecentOutcomes(row = {}) {
+  return (Array.isArray(row.recentOutcomes) ? row.recentOutcomes : [])
+    .filter(isCurrentMeasurementOutcome);
+}
+
 function recentClosedVirtualOutcomeCount(row = {}) {
-  const recent = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes
-    : [];
-
-  return recent.filter((outcome) => {
-    const source = String(outcome?.source || outcome?.outcomeSource || '').toUpperCase();
-    const hasR = Number.isFinite(Number(
-      outcome?.netR ??
-        outcome?.exitR ??
-        outcome?.realizedNetR ??
-        outcome?.realizedR ??
-        outcome?.r
-    ));
-
-    return hasR && ['VIRTUAL', 'SHADOW'].includes(source);
-  }).length;
+  return currentMeasurementRecentOutcomes(row).length;
 }
 
 function completedCount(row = {}) {
+  if (hasStoredOutcomeData(row) && !isCurrentMeasurementRow(row)) {
+    return 0;
+  }
+
   const virtualCompleted = safeNumber(row.virtualCompleted, 0);
   const shadowCompleted = safeNumber(row.shadowCompleted, 0);
   const closed = virtualCompleted + shadowCompleted;
@@ -1024,11 +1127,109 @@ function completedCount(row = {}) {
 
   if (recentClosed > 0) return recentClosed;
 
-  if (allowLegacyCompletedFallback()) {
+  if (allowLegacyCompletedFallback() && isCurrentMeasurementRow(row)) {
     return Math.max(0, safeNumber(row.completed, 0));
   }
 
   return 0;
+}
+
+function currentMeasurementTotalR(row = {}) {
+  const completed = completedCount(row);
+
+  if (completed <= 0) return 0;
+
+  const explicit = finiteOrNull(
+    row.totalR ??
+      row.netTotalR ??
+      row.totalNetR ??
+      row.shortNetTotalR ??
+      row.netShortTotalR
+  );
+
+  if (explicit !== null) return explicit;
+
+  return currentMeasurementRecentOutcomes(row)
+    .reduce((sum, outcome) => sum + safeNumber(
+      outcome.netR ??
+        outcome.exitR ??
+        outcome.realizedNetR ??
+        outcome.realizedR ??
+        outcome.r,
+      0
+    ), 0);
+}
+
+function currentMeasurementAvgR(row = {}) {
+  const completed = completedCount(row);
+
+  if (completed <= 0) return 0;
+
+  const explicit = finiteOrNull(
+    row.avgR ??
+      row.avgNetR ??
+      row.netAvgR
+  );
+
+  if (explicit !== null) return explicit;
+
+  return currentMeasurementTotalR(row) / completed;
+}
+
+function empiricalActivationGate(row = {}) {
+  const completed = completedCount(row);
+  const minCompleted = empiricalVetoMinCompleted();
+  const maxAvgR = empiricalVetoMaxAvgR();
+  const avgR = currentMeasurementAvgR(row);
+  const totalR = currentMeasurementTotalR(row);
+  const measurementVersion = rowMeasurementFixVersion(row);
+
+  if (completed < minCompleted) {
+    return {
+      status: 'OBSERVING',
+      blocked: false,
+      discordEligible: true,
+      reason: `COMPLETED_BELOW_${minCompleted}`,
+      completed,
+      minCompleted,
+      avgR,
+      totalR,
+      maxAvgR,
+      measurementVersion: measurementVersion || MEASUREMENT_FIX_VERSION
+    };
+  }
+
+  if (avgR <= maxAvgR) {
+    return {
+      status: 'EMPIRICAL_VETO',
+      blocked: true,
+      discordEligible: false,
+      reason: 'CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE',
+      completed,
+      minCompleted,
+      avgR,
+      totalR,
+      maxAvgR,
+      measurementVersion: measurementVersion || MEASUREMENT_FIX_VERSION
+    };
+  }
+
+  return {
+    status: 'PASSED',
+    blocked: false,
+    discordEligible: true,
+    reason: null,
+    completed,
+    minCompleted,
+    avgR,
+    totalR,
+    maxAvgR,
+    measurementVersion: measurementVersion || MEASUREMENT_FIX_VERSION
+  };
+}
+
+function isEmpiricallyVetoed(row = {}) {
+  return empiricalActivationGate(row).blocked === true;
 }
 
 function observationSample(row = {}) {
@@ -1053,6 +1254,7 @@ function learningStatus(row = {}) {
 function isEligible(row = {}) {
   if (!isShortRotationRow(row)) return false;
   if (!isTrueMicroFamily(row)) return false;
+  if (isEmpiricallyVetoed(row)) return false;
 
   return completedCount(row) >= minWeightedCompleted();
 }
@@ -1061,6 +1263,7 @@ function isSoftEligible(row = {}) {
   if (!allowSoftRotationFallback()) return false;
   if (!isShortRotationRow(row)) return false;
   if (!isTrueMicroFamily(row)) return false;
+  if (isEmpiricallyVetoed(row)) return false;
 
   const completed = completedCount(row);
   const adaptiveScore = adaptiveSelectionScore(row);
@@ -1086,6 +1289,7 @@ function isObservationEligible(row = {}) {
   if (!allowObservationRotationFallback()) return false;
   if (!isShortRotationRow(row)) return false;
   if (!isTrueMicroFamily(row)) return false;
+  if (isEmpiricallyVetoed(row)) return false;
 
   return observationSample(row) > 0;
 }
@@ -1094,6 +1298,7 @@ function isRawFallbackEligible(row = {}) {
   if (!allowRawRotationFallback()) return false;
   if (!isShortRotationRow(row)) return false;
   if (!isTrueMicroFamily(row)) return false;
+  if (isEmpiricallyVetoed(row)) return false;
 
   return true;
 }
@@ -1318,22 +1523,13 @@ function currentContraPenalty(row = {}) {
 }
 
 function recentMomentumScore(row = {}) {
+  if (isEmpiricallyVetoed(row)) return -35;
+
   const explicit = finiteOrNull(row.recentMomentumScore);
 
   if (explicit !== null) return bounded(explicit, -100, 100);
 
-  const recent = Array.isArray(row.recentOutcomes)
-    ? row.recentOutcomes
-    : [];
-
-  if (!recent.length) return 0;
-
-  const rows = recent
-    .filter((outcome) => {
-      const source = String(outcome?.source || outcome?.outcomeSource || '').toUpperCase();
-
-      return source === 'VIRTUAL' || source === 'SHADOW';
-    })
+  const rows = currentMeasurementRecentOutcomes(row)
     .slice(-recentMomentumLookback());
 
   if (!rows.length) return 0;
@@ -1378,7 +1574,7 @@ function staleWinnerPenalty(row = {}) {
 
   const completed = completedCount(row);
   const observations = observationSample(row);
-  const totalR = safeNumber(row.totalR, 0);
+  const totalR = currentMeasurementTotalR(row);
   const updatedAt = safeNumber(row.updatedAt || row.lastOutcomeAt || row.lastSeenAt, 0);
 
   if (completed <= 0 || totalR <= 0) return 0;
@@ -1416,14 +1612,16 @@ function parentDiversificationBonus(row = {}, countsByParent = {}) {
 function adaptiveSelectionScore(row = {}, {
   countsByParent = null
 } = {}) {
+  if (isEmpiricallyVetoed(row)) return EMPIRICAL_VETO_SCORE;
+
   const explicit = finiteOrNull(row.adaptiveScore);
 
   if (explicit !== null) return explicit;
 
   const balanced = safeNumber(row.dashboardBalancedScore ?? row.balancedScore, 0);
   const fair = safeNumber(row.fairWinrate ?? row.sampleAdjustedWinrate, 0);
-  const totalR = safeNumber(row.totalR, 0);
-  const avgR = safeNumber(row.avgR, 0);
+  const totalR = currentMeasurementTotalR(row);
+  const avgR = currentMeasurementAvgR(row);
   const completed = completedCount(row);
   const observations = observationSample(row);
 
@@ -1531,6 +1729,8 @@ function compactRotationRow(row = {}, rank = 0) {
   const meta = schemaMeta();
   const completed = completedCount(refreshed);
   const status = learningStatus(refreshed);
+  const gate = empiricalActivationGate(refreshed);
+  const eligibility = rotationEligibilityTier(refreshed);
 
   const microFamilyId = rowId(refreshed);
   const taxonomy = taxonomyMetaForId(microFamilyId);
@@ -1602,12 +1802,49 @@ function compactRotationRow(row = {}, rank = 0) {
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
-    rotationEligibilityTier: rotationEligibilityTier(refreshed),
-    rotationEligible: rotationEligibilityTier(refreshed) !== 'NONE',
-    hardEligible: rotationEligibilityTier(refreshed) === 'HARD',
-    softEligible: rotationEligibilityTier(refreshed) === 'SOFT',
-    observationEligible: rotationEligibilityTier(refreshed) === 'OBSERVATION',
-    rawEligible: rotationEligibilityTier(refreshed) === 'RAW',
+    rotationEligibilityTier: eligibility,
+    rotationEligible: eligibility !== 'NONE',
+    hardEligible: eligibility === 'HARD',
+    softEligible: eligibility === 'SOFT',
+    observationEligible: eligibility === 'OBSERVATION',
+    rawEligible: eligibility === 'RAW',
+
+    measurementFixVersion:
+      rowMeasurementFixVersion(refreshed) ||
+      MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion:
+      refreshed.acceptedOutcomeMeasurementVersion ||
+      MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    exitFillModelVersion:
+      refreshed.exitFillModelVersion ||
+      EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy:
+      refreshed.exitFillPolicy ||
+      'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
+    activationGateStatus: gate.status,
+    activationGateReason: gate.reason,
+    activationGatePassed: gate.status === 'PASSED',
+    empiricalVeto: gate.blocked,
+    empiricalVetoed: gate.blocked,
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoMinCompleted: gate.minCompleted,
+    empiricalVetoMaxAvgR: gate.maxAvgR,
+    empiricalVetoCompleted: gate.completed,
+    empiricalVetoAvgR: gate.avgR,
+    empiricalVetoTotalR: gate.totalR,
+    empiricalVetoReason: gate.blocked ? gate.reason : null,
+    empiricalVetoBlocksAdaptiveSelection: true,
+    empiricalVetoBlocksManualActivation: true,
+    empiricalVetoCanRecover: true,
+    discordEligible: gate.discordEligible,
+    discordBlocked: gate.blocked,
+    discordBlockReason: gate.blocked
+      ? 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
+      : null,
 
     learningStatus: status,
     status,
@@ -1642,8 +1879,8 @@ function compactRotationRow(row = {}, rank = 0) {
     sampleAdjustedWinrate: safeNumber(refreshed.sampleAdjustedWinrate, 0),
     sampleReliability: safeNumber(refreshed.sampleReliability, 0),
 
-    avgR: safeNumber(refreshed.avgR ?? refreshed.avgNetR ?? refreshed.netAvgR, 0),
-    totalR: safeNumber(refreshed.totalR ?? refreshed.netTotalR ?? refreshed.totalNetR, 0),
+    avgR: currentMeasurementAvgR(refreshed),
+    totalR: currentMeasurementTotalR(refreshed),
     avgWinR: safeNumber(refreshed.avgWinR, 0),
     avgLossR: safeNumber(refreshed.avgLossR, 0),
 
@@ -1768,9 +2005,8 @@ function compactRotationRow(row = {}, rank = 0) {
       ? refreshed.examples.slice(0, 20)
       : [],
 
-    recentOutcomes: Array.isArray(refreshed.recentOutcomes)
-      ? refreshed.recentOutcomes.slice(0, 20)
-      : [],
+    recentOutcomes: currentMeasurementRecentOutcomes(refreshed)
+      .slice(-20),
 
     completedDefinition: 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES',
     completedOnlyClosedVirtualOrShadow: true,
@@ -1840,6 +2076,7 @@ function addSelectedRow({
   if (selectedIds.has(id)) return false;
   if (side !== TARGET_TRADE_SIDE) return false;
   if (!isTrueMicroFamily(row)) return false;
+  if (isEmpiricallyVetoed(row)) return false;
   if (!canUseParentSlot({ row, countsByParent })) return false;
 
   selectedIds.add(id);
@@ -1855,6 +2092,11 @@ function addSelectedRow({
     learningMicroFamilyId: id,
     parentTrueMicroFamilyId: parentTrueMicroFamilyIdFrom(row),
     adaptiveScore: adaptiveSelectionScore(row, { countsByParent }),
+    activationGateStatus: empiricalActivationGate(row).status,
+    empiricalVeto: false,
+    empiricalVetoed: false,
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    discordEligible: true,
     currentFitSoftOnly: true,
     currentFitBlocksLearning: false,
     currentFitPolarity: 'BEARISH_POSITIVE_BULLISH_NEGATIVE',
@@ -1927,6 +2169,10 @@ function selectRotationCandidates(rankedCandidates = []) {
       .filter(isTrueMicroFamily)
   );
 
+  const empiricalVetoed = sortAdaptiveRows(
+    trueShortCandidates.filter(isEmpiricallyVetoed)
+  );
+
   const hardEligible = sortAdaptiveRows(trueShortCandidates.filter(isEligible));
 
   const softEligible = sortAdaptiveRows(
@@ -1989,6 +2235,7 @@ function selectRotationCandidates(rankedCandidates = []) {
     softEligible,
     observationEligible,
     rawFallback,
+    empiricalVetoed,
 
     usedSoftFallback: state.selected.some((row) => rotationEligibilityTier(row) === 'SOFT'),
     usedObservationFallback: state.selected.some((row) => rotationEligibilityTier(row) === 'OBSERVATION'),
@@ -2182,6 +2429,7 @@ function buildEmptyRotation({
   softEligible = [],
   observationEligible = [],
   rawFallback = [],
+  empiricalVetoed = [],
   usedPreviousWeekMerge = false,
   usedPersistentLearningKey = false,
   primaryRows = 0,
@@ -2240,6 +2488,10 @@ function buildEmptyRotation({
     softEligibleCount: softEligible?.length || 0,
     observationEligibleCount: observationEligible?.length || 0,
     rawFallbackCount: rawFallback?.length || 0,
+    empiricalVetoCount: empiricalVetoed?.length || 0,
+    empiricalVetoMicroFamilyIds: empiricalVetoed
+      .map((row) => rowId(row))
+      .filter(Boolean),
     rankedCount: ranked.length,
     microCount: Object.keys(micros || {}).length,
     trueMicroCount: countByPredicate(micros, (row) => isTrueMicroFamily(row) && isShortRotationRow(row)),
@@ -2314,6 +2566,7 @@ export async function buildRotationFromWeek({
     softEligible,
     observationEligible,
     rawFallback,
+    empiricalVetoed,
     usedSoftFallback,
     usedObservationFallback,
     usedRawFallback,
@@ -2332,6 +2585,7 @@ export async function buildRotationFromWeek({
       softEligible,
       observationEligible,
       rawFallback,
+      empiricalVetoed,
       usedPreviousWeekMerge,
       usedPersistentLearningKey,
       primaryRows,
@@ -2402,6 +2656,10 @@ export async function buildRotationFromWeek({
     softEligibleCount: softEligible.length,
     observationEligibleCount: observationEligible.length,
     rawFallbackCount: rawFallback.length,
+    empiricalVetoCount: empiricalVetoed.length,
+    empiricalVetoMicroFamilyIds: empiricalVetoed
+      .map((row) => rowId(row))
+      .filter(Boolean),
     rankedCount: rankedCandidates.length,
     allRankedCount: rankedAll.length,
     microCount: Object.keys(micros || {}).length,
@@ -2512,6 +2770,11 @@ export async function freezeWeeklyRotation({
       candidateTrueMicroFamilies: rotation.trueMicroFamilyIds.length,
       candidateParentTrueMicroFamilies: rotation.parentTrueMicroFamilyIds.length,
 
+      empiricalVetoCount: safeNumber(rotation.empiricalVetoCount, 0),
+      empiricalVetoMicroFamilyIds:
+        rotation.empiricalVetoMicroFamilyIds || [],
+      empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+
       parentDiversificationEnabled: rotation.parentDiversificationEnabled,
       parentSelectionCounts: rotation.parentSelectionCounts || {},
 
@@ -2555,6 +2818,11 @@ export async function freezeWeeklyRotation({
     candidateTrueMicroFamilies: rotation.trueMicroFamilyIds.length,
     candidateParentTrueMicroFamilies: rotation.parentTrueMicroFamilyIds.length,
 
+    empiricalVetoCount: safeNumber(rotation.empiricalVetoCount, 0),
+    empiricalVetoMicroFamilyIds:
+      rotation.empiricalVetoMicroFamilyIds || [],
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+
     parentDiversificationEnabled: rotation.parentDiversificationEnabled,
     parentSelectionCounts: rotation.parentSelectionCounts || {},
 
@@ -2586,7 +2854,7 @@ function sanitizeActiveRotation(rotation = {}, {
     ? rotation.microFamilies
     : [];
 
-  const shortRows = sortAdaptiveRows(
+  const compactRows = sortAdaptiveRows(
     rows
       .filter(isShortRotationRow)
       .filter(isTrueMicroFamily)
@@ -2594,6 +2862,20 @@ function sanitizeActiveRotation(rotation = {}, {
     .map((row, index) => compactRotationRow(row, index + 1))
     .filter((row) => row.microFamilyId)
     .filter((row) => isKnownTrueMicroId(row.microFamilyId));
+
+  const vetoedRows = compactRows.filter(
+    (row) => row.empiricalVeto === true ||
+      row.empiricalVetoed === true ||
+      row.discordBlocked === true
+  );
+
+  const shortRows = compactRows.filter(
+    (row) => !(
+      row.empiricalVeto === true ||
+      row.empiricalVetoed === true ||
+      row.discordBlocked === true
+    )
+  );
 
   const indexes = buildSelectionIndexes(shortRows);
   const manual = isManualActiveRotation(rotation);
@@ -2635,9 +2917,17 @@ function sanitizeActiveRotation(rotation = {}, {
 
     parentDiversificationEnabled: parentDiversificationEnabled(),
 
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoRemovedCount: vetoedRows.length,
+    empiricalVetoRemovedMicroFamilyIds: vetoedRows
+      .map((row) => row.microFamilyId)
+      .filter(Boolean),
+
     empty: shortRows.length === 0,
     emptyReason: shortRows.length === 0
-      ? 'ACTIVE_ROTATION_CONTAINED_NO_MANUAL_SHORT_75_CHILD_TRUE_MICRO_FAMILIES'
+      ? vetoedRows.length > 0
+        ? 'ACTIVE_ROTATION_REMOVED_BY_EMPIRICAL_VETO'
+        : 'ACTIVE_ROTATION_CONTAINED_NO_MANUAL_SHORT_75_CHILD_TRUE_MICRO_FAMILIES'
       : null
   };
 }
@@ -2669,11 +2959,34 @@ export async function getActiveRotation() {
     requireManual: true
   });
 
-  if (!sanitized || sanitized.empty || !sanitized.microFamilyIds?.length) {
+  if (!sanitized) {
     return null;
   }
 
-  if (
+  const rawIds = uniqueStrings([
+    raw?.activeMicroFamilyIds || [],
+    raw?.trueMicroFamilyIds || [],
+    raw?.childTrueMicroFamilyIds || [],
+    raw?.microFamilyIds || []
+  ])
+    .map(cleanLearningMicroId)
+    .filter(Boolean)
+    .sort();
+
+  const sanitizedIds = uniqueStrings([
+    sanitized?.activeMicroFamilyIds || [],
+    sanitized?.trueMicroFamilyIds || [],
+    sanitized?.childTrueMicroFamilyIds || [],
+    sanitized?.microFamilyIds || []
+  ])
+    .map(cleanLearningMicroId)
+    .filter(Boolean)
+    .sort();
+
+  const selectionChanged =
+    rawIds.join('|') !== sanitizedIds.join('|');
+
+  const shouldPersistSanitized =
     raw?.longOnly === true ||
     raw?.shortDisabled === true ||
     raw?.targetTradeSide === OPPOSITE_TRADE_SIDE ||
@@ -2681,13 +2994,20 @@ export async function getActiveRotation() {
     raw?.manualOnly !== true ||
     raw?.liveSelectable !== true ||
     raw?.autoRotation === true ||
-    raw?.trueMicroFamilySchema !== TRUE_MICRO_SCHEMA
-  ) {
+    raw?.trueMicroFamilySchema !== TRUE_MICRO_SCHEMA ||
+    sanitized.empiricalVetoRemovedCount > 0 ||
+    selectionChanged;
+
+  if (shouldPersistSanitized) {
     await setJson(
       redis,
       activeRotationKey(),
       sanitized
     ).catch(() => null);
+  }
+
+  if (sanitized.empty || !sanitized.microFamilyIds?.length) {
+    return null;
   }
 
   return sanitized;
@@ -2808,6 +3128,32 @@ function buildManualOnlyRow(id, rank) {
     softEligible: false,
     observationEligible: false,
     rawEligible: false,
+
+    measurementFixVersion: MEASUREMENT_FIX_VERSION,
+    acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+    completedCurrentMeasurementOnly: true,
+    strictOutcomeMeasurementGate: true,
+    legacyOutcomeMeasurementsExcluded: true,
+    exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+    exitFillPolicy:
+      'TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE',
+
+    activationGateStatus: 'OBSERVING',
+    activationGateReason:
+      `COMPLETED_BELOW_${empiricalVetoMinCompleted()}`,
+    activationGatePassed: false,
+    empiricalVeto: false,
+    empiricalVetoed: false,
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+    empiricalVetoMinCompleted: empiricalVetoMinCompleted(),
+    empiricalVetoMaxAvgR: empiricalVetoMaxAvgR(),
+    empiricalVetoCompleted: 0,
+    empiricalVetoAvgR: 0,
+    empiricalVetoTotalR: 0,
+    empiricalVetoReason: null,
+    discordEligible: true,
+    discordBlocked: false,
+    discordBlockReason: null,
 
     learningStatus: 'OBSERVING',
     status: 'OBSERVING',
@@ -2934,6 +3280,7 @@ function resolveManualSelection({
     if (!isShortRotationRow(row)) return;
     if (!isTrueMicroFamily(row)) return;
     if (!isKnownTrueMicroId(id)) return;
+    if (isEmpiricallyVetoed(row)) return;
 
     seen.add(id);
     selectedRows.push({
@@ -3003,6 +3350,26 @@ function resolveManualSelection({
       isTrueMicroFamily(row) &&
       isManualEligible(row)
     ) {
+      const gate = empiricalActivationGate(row);
+
+      if (gate.blocked) {
+        ignoredIds.push({
+          id: requestedId,
+          normalizedId: id,
+          side,
+          reason: 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE',
+          activationGateStatus: gate.status,
+          empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+          completed: gate.completed,
+          minCompleted: gate.minCompleted,
+          avgR: gate.avgR,
+          totalR: gate.totalR,
+          maxAvgR: gate.maxAvgR,
+          measurementFixVersion: gate.measurementVersion
+        });
+        continue;
+      }
+
       addRow(row);
       continue;
     }
@@ -3052,6 +3419,16 @@ function buildPreservedActiveResponse({
   weekKey,
   mode
 }) {
+  const empiricalVetoBlockedRows = (Array.isArray(ignoredIds) ? ignoredIds : [])
+    .filter((row) =>
+      row?.reason ===
+      'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
+    );
+
+  const allRequestedBlockedByEmpiricalVeto =
+    requestedIds.length > 0 &&
+    empiricalVetoBlockedRows.length === requestedIds.length;
+
   const preserved = existingActive
     ? {
       ...existingActive,
@@ -3059,7 +3436,9 @@ function buildPreservedActiveResponse({
       skipped: true,
       changed: false,
       activePreserved: true,
-      reason: 'NO_VALID_SHORT_75_CHILD_TRUE_MICRO_IDS_SELECTED_ACTIVE_ROTATION_PRESERVED'
+      reason: allRequestedBlockedByEmpiricalVeto
+        ? 'ALL_REQUESTED_IDS_BLOCKED_BY_EMPIRICAL_VETO_ACTIVE_ROTATION_PRESERVED'
+        : 'NO_VALID_SHORT_75_CHILD_TRUE_MICRO_IDS_SELECTED_ACTIVE_ROTATION_PRESERVED'
     }
     : {
       ok: false,
@@ -3083,8 +3462,12 @@ function buildPreservedActiveResponse({
       autoRotation: false,
       liveSelectable: false,
       empty: true,
-      emptyReason: 'NO_VALID_SHORT_75_CHILD_TRUE_MICRO_IDS_SELECTED',
-      reason: 'NO_VALID_SHORT_75_CHILD_TRUE_MICRO_IDS_SELECTED',
+      emptyReason: allRequestedBlockedByEmpiricalVeto
+        ? 'ALL_REQUESTED_IDS_BLOCKED_BY_EMPIRICAL_VETO'
+        : 'NO_VALID_SHORT_75_CHILD_TRUE_MICRO_IDS_SELECTED',
+      reason: allRequestedBlockedByEmpiricalVeto
+        ? 'ALL_REQUESTED_IDS_BLOCKED_BY_EMPIRICAL_VETO'
+        : 'NO_VALID_SHORT_75_CHILD_TRUE_MICRO_IDS_SELECTED',
       microFamilies: [],
       microFamilyIds: [],
       activeMicroFamilyIds: [],
@@ -3107,6 +3490,11 @@ function buildPreservedActiveResponse({
     ...preserved,
     requestedMicroFamilyIds: requestedIds,
     ignoredRequestedIds: ignoredIds,
+    empiricalVetoBlockedCount: empiricalVetoBlockedRows.length,
+    empiricalVetoBlockedMicroFamilyIds: empiricalVetoBlockedRows
+      .map((row) => row.normalizedId || row.id)
+      .filter(Boolean),
+    empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
     expandedFromMacro
   };
 }
@@ -3165,9 +3553,27 @@ export async function activateSelectedMicroFamilies(options = {}) {
     .filter((row) => isKnownTrueMicroId(row.microFamilyId));
 
   if (microFamilies.length === 0) {
-    const existingActive = sanitizeActiveRotation(existingRawActive, {
+    const sanitizedExistingActive = sanitizeActiveRotation(existingRawActive, {
       requireManual: true
     });
+
+    const existingActive =
+      sanitizedExistingActive &&
+      !sanitizedExistingActive.empty &&
+      sanitizedExistingActive.microFamilyIds?.length
+        ? sanitizedExistingActive
+        : null;
+
+    if (
+      sanitizedExistingActive &&
+      sanitizedExistingActive.empiricalVetoRemovedCount > 0
+    ) {
+      await setJson(
+        redis,
+        activeRotationKey(),
+        sanitizedExistingActive
+      ).catch(() => null);
+    }
 
     return buildPreservedActiveResponse({
       existingActive,
@@ -3387,6 +3793,15 @@ export async function getRotationDashboard() {
 
     usedRawFallback: Boolean(active?.usedRawFallback),
     nextUsedRawFallback: Boolean(next?.usedRawFallback),
+
+    activeEmpiricalVetoRemovedCount:
+      safeNumber(active?.empiricalVetoRemovedCount, 0),
+    activeEmpiricalVetoRemovedMicroFamilyIds:
+      active?.empiricalVetoRemovedMicroFamilyIds || [],
+    nextEmpiricalVetoCount:
+      safeNumber(next?.empiricalVetoCount, 0),
+    nextEmpiricalVetoMicroFamilyIds:
+      next?.empiricalVetoMicroFamilyIds || [],
 
     usedPreviousWeekMerge: Boolean(active?.usedPreviousWeekMerge),
     nextUsedPreviousWeekMerge: Boolean(next?.usedPreviousWeekMerge),
