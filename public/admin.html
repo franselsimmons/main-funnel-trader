@@ -337,6 +337,9 @@
     .pill.weakfit { background: #ccfbf1; color: #0f766e; }
     .pill.neutral { background: #f1f5f9; color: #475569; }
     .pill.misfit { background: #fee2e2; color: #991b1b; }
+    .pill.passed { background: #dcfce7; color: #166534; }
+    .pill.veto { background: #7f1d1d; color: #ffffff; }
+    .pill.blocked { background: #fee2e2; color: #991b1b; }
 
     .score-bar {
       height: 8px;
@@ -795,8 +798,18 @@
     const LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_X_CONFIRMATION_V1";
     const PARENT_LEARNING_GRANULARITY = "SHORT_FIXED_TAXONOMY_SETUP_X_REGIME_V1";
 
-    const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1";
+    const MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FILL_V2";
+    const PREVIOUS_MEASUREMENT_FIX_VERSION = "SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1";
+    const OUTCOME_MEASUREMENT_GATE_MODE = "STRICT_EXACT_VERSION";
+    const EXIT_FILL_MODEL_VERSION = "SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1";
+
+    const EMPIRICAL_VETO_POLICY_VERSION = "SHORT_EXACT_75_CHILD_NET_EDGE_VETO_V1";
+    const EMPIRICAL_VETO_MIN_COMPLETED = 35;
+    const EMPIRICAL_VETO_MAX_AVG_R = 0;
+
+    const CURRENT_FIT_VERSION = "SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V2";
     const ADAPTIVE_UI_VERSION = "SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_V1";
+    const FRONTEND_FIX_VERSION = "SHORT_ADMIN_FRONTEND_MEASUREMENT_V2_EMPIRICAL_VETO_V1";
 
     const SHORT_FIXED_SETUP_TYPES = new Set([
       "BREAKOUT",
@@ -832,8 +845,8 @@
       microMode: "adaptive",
       microSearch: "",
       apiTimeoutMs: 22000,
-      microLimit: 180,
-      bestLimit: 140
+      microLimit: 75,
+      bestLimit: 75
     };
 
     const endpoints = {
@@ -1412,7 +1425,29 @@
       return symbol || "COIN";
     }
 
+    function outcomeMeasurementVersion(row = {}) {
+      return String(
+        row.outcomeMeasurementVersion ||
+        row.measurementFixVersion ||
+        row.acceptedOutcomeMeasurementVersion ||
+        ""
+      ).trim();
+    }
+
+    function isCurrentMeasurementRow(row = {}) {
+      const version = outcomeMeasurementVersion(row);
+
+      if (version) return version === MEASUREMENT_FIX_VERSION;
+
+      return (
+        row.completedCurrentMeasurementOnly === true &&
+        row.legacyOutcomeMeasurementsExcluded === true
+      );
+    }
+
     function completed(row = {}) {
+      if (!isCurrentMeasurementRow(row)) return 0;
+
       const explicitVirtual = num(row.virtualCompleted, 0);
       const explicitShadow = num(row.shadowCompleted, 0);
       const closed = explicitVirtual + explicitShadow;
@@ -1420,10 +1455,10 @@
       if (closed > 0) return closed;
 
       const outcome = Number(row.outcomeSample);
-      if (Number.isFinite(outcome)) return outcome;
+      if (Number.isFinite(outcome) && outcome >= 0) return outcome;
 
       const explicit = Number(row.completed);
-      if (Number.isFinite(explicit) && explicit > 0) return explicit;
+      if (Number.isFinite(explicit) && explicit >= 0) return explicit;
 
       const wins = num(row.wins, 0);
       const losses = num(row.losses, 0);
@@ -1443,6 +1478,11 @@
       );
     }
 
+    function seenCompletedRatio(row = {}) {
+      const done = completed(row);
+      return done > 0 ? observationSample(row) / done : 0;
+    }
+
     function learningStatus(row = {}) {
       const done = completed(row);
 
@@ -1456,7 +1496,62 @@
       return completed(row) < MIN_COMPLETED_ACTIVE_LEARNING;
     }
 
+    function activationGateStatus(row = {}) {
+      const explicit = upper(
+        row.activationGateStatus ||
+        row.discordActivationGateStatus ||
+        row.empiricalGateStatus ||
+        ""
+      );
+
+      if (["PASSED", "OBSERVING", "EMPIRICAL_VETO"].includes(explicit)) {
+        return explicit;
+      }
+
+      const done = completed(row);
+      if (done < EMPIRICAL_VETO_MIN_COMPLETED) return "OBSERVING";
+
+      return netAvgR(row) > EMPIRICAL_VETO_MAX_AVG_R
+        ? "PASSED"
+        : "EMPIRICAL_VETO";
+    }
+
+    function isEmpiricalVeto(row = {}) {
+      return (
+        row.empiricalVeto === true ||
+        row.empiricalVetoed === true ||
+        activationGateStatus(row) === "EMPIRICAL_VETO"
+      );
+    }
+
+    function activationGatePassed(row = {}) {
+      if (isEmpiricalVeto(row)) return false;
+      if (row.activationGatePassed === true || row.discordActivationGatePassed === true) return true;
+
+      return activationGateStatus(row) === "PASSED";
+    }
+
+    function discordSelectionAllowed(row = {}) {
+      return (
+        isSelectableTrueMicroId(microId(row)) &&
+        isCurrentMeasurementRow(row) &&
+        activationGatePassed(row) &&
+        !isEmpiricalVeto(row)
+      );
+    }
+
+    function discordSelectionBlockReason(row = {}) {
+      if (!isSelectableTrueMicroId(microId(row))) return "INVALID_75_CHILD_ID";
+      if (!isCurrentMeasurementRow(row)) return "NOT_CURRENT_MEASUREMENT_V2";
+      if (isEmpiricalVeto(row)) return "EMPIRICAL_VETO";
+      if (activationGateStatus(row) === "OBSERVING") return "COMPLETED_BELOW_35";
+
+      return String(row.discordBlockReason || row.activationGateReason || "ACTIVATION_GATE_NOT_PASSED");
+    }
+
     function tier(row = {}) {
+      if (isEmpiricalVeto(row)) return "EMPIRICAL_VETO";
+
       const done = completed(row);
       const obs = observationSample(row);
 
@@ -1544,69 +1639,54 @@
       return clamp(score, -80, 100);
     }
 
+    function canonicalCurrentFit(value = "") {
+      const fit = upper(value);
+
+      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(fit)) return "MATCH";
+      if (["WEAK_MATCH", "OK", "PARTIAL_MATCH", "SOFT_MATCH"].includes(fit)) return "WEAK_MATCH";
+      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(fit)) return "MISFIT";
+      if (["NEUTRAL", "MIXED"].includes(fit)) return "NEUTRAL";
+      if (["UNKNOWN", "NA", "N/A"].includes(fit)) return "UNKNOWN";
+
+      return "";
+    }
+
     function currentFit(row = {}) {
-      const label = upper(
-        row.currentFitLabel ||
-        row.entryCurrentFitLabel ||
-        row.currentMarketFitLabel ||
-        row.fitLabel ||
-        row.marketFitLabel ||
-        ""
-      );
+      const explicitValues = [
+        row.currentFitCanonical,
+        row.currentFit,
+        row.currentFitLabel,
+        row.entryCurrentFitCanonical,
+        row.entryCurrentFit,
+        row.entryCurrentFitLabel,
+        row.currentMarketFit,
+        row.currentMarketFitLabel,
+        row.fit,
+        row.fitLabel,
+        row.marketFit,
+        row.marketFitLabel
+      ];
 
-      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(label)) return "MATCH";
-      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH"].includes(label)) return "WEAK_MATCH";
-      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(label)) return "MISFIT";
-      if (["NEUTRAL", "MIXED"].includes(label)) return "NEUTRAL";
-
-      const raw = upper(
-        row.currentFit ||
-        row.entryCurrentFit ||
-        row.currentMarketFit ||
-        row.fit ||
-        row.marketFit ||
-        ""
-      );
-
-      if (["MATCH", "GOOD", "FIT", "ALIGNED", "STRONG_MATCH"].includes(raw)) return "MATCH";
-      if (["WEAK_MATCH", "PARTIAL_MATCH", "SOFT_MATCH"].includes(raw)) return "WEAK_MATCH";
-      if (["MISFIT", "BAD", "AGAINST", "CONTRA", "NO_FIT"].includes(raw)) return "MISFIT";
-      if (["NEUTRAL", "MIXED"].includes(raw)) return "NEUTRAL";
+      for (const value of explicitValues) {
+        const canonical = canonicalCurrentFit(value);
+        if (canonical) return canonical;
+      }
 
       const score = currentFitScore(row);
-
       if (score >= 70) return "MATCH";
       if (score >= 45) return "WEAK_MATCH";
-      if (score >= 20) return "NEUTRAL";
       if (score <= -20) return "MISFIT";
+      if (score !== 0) return "NEUTRAL";
 
       return "UNKNOWN";
     }
 
-    function marketBiasHaystack(row = {}) {
-      return [
-        row.currentMarketTrendSide,
-        row.marketTrendSide,
-        row.trendSide,
-        row.dashboardSide,
-        row.marketSide,
-        row.marketBias,
-        row.bias,
-        row.direction,
-        row.currentRegime,
-        row.marketRegime,
-        row.regime,
-        row.scannerReason,
-        row.reason,
-        row.currentFitReason,
-        Array.isArray(row.currentFitReasons) ? row.currentFitReasons.join("|") : ""
-      ]
-        .map((value) => upper(value))
-        .join(" | ");
-    }
-
     function currentFitScore(row = {}) {
-      const explicitShort = firstFinite(
+      const direct = firstFinite(
+        row.currentFitScore,
+        row.entryCurrentFitScore,
+        row.currentMarketFitScore,
+        row.fitScore,
         row.shortCurrentFit,
         row.bearCurrentFit,
         row.currentFitShort,
@@ -1615,7 +1695,7 @@
         row.bearFitScore
       );
 
-      if (explicitShort !== null) return explicitShort;
+      if (direct !== null) return direct;
 
       const explicitLong = firstFinite(
         row.longCurrentFit,
@@ -1629,68 +1709,16 @@
 
       if (explicitLong !== null) return -Math.abs(explicitLong);
 
-      const direct = firstFinite(
-        row.currentFitScore,
-        row.entryCurrentFitScore,
-        row.currentMarketFitScore,
-        row.fitScore
-      );
-
-      if (direct !== null) {
-        const haystack = marketBiasHaystack(row);
-
-        if (
-          haystack.includes("BEAR") ||
-          haystack.includes("BEARISH") ||
-          haystack.includes("SHORT") ||
-          haystack.includes("SELL") ||
-          haystack.includes("DOWNSIDE")
-        ) {
-          return Math.abs(direct);
-        }
-
-        if (
-          haystack.includes("BULL") ||
-          haystack.includes("BULLISH") ||
-          haystack.includes("LONG") ||
-          haystack.includes("BUY") ||
-          haystack.includes("UPSIDE")
-        ) {
-          return -Math.abs(direct);
-        }
-
-        return -direct;
-      }
-
-      const numericFit = firstFinite(
-        row.currentFit,
-        row.entryCurrentFit,
-        row.currentMarketFit,
-        row.fit,
-        row.marketFit
-      );
-
-      if (numericFit !== null) {
-        const marketTrend = currentMarketTrendForFit();
-
-        if (marketTrend === "SHORT") return Math.abs(numericFit);
-        if (marketTrend === "LONG") return -Math.abs(numericFit);
-
-        return -numericFit;
-      }
-
-      const fit = upper(
-        row.currentFitLabel ||
-        row.entryCurrentFitLabel ||
-        row.currentFit ||
-        row.entryCurrentFit ||
-        ""
-      );
+      const fit =
+        canonicalCurrentFit(row.currentFitCanonical) ||
+        canonicalCurrentFit(row.currentFit) ||
+        canonicalCurrentFit(row.currentFitLabel) ||
+        "UNKNOWN";
 
       if (fit === "MATCH") return 80;
       if (fit === "WEAK_MATCH") return 60;
-      if (fit === "NEUTRAL") return 40;
-      if (fit === "MISFIT") return 20;
+      if (fit === "MISFIT") return -60;
+      if (fit === "NEUTRAL") return 0;
 
       return fallbackCurrentFitScore(row);
     }
@@ -1708,40 +1736,30 @@
 
       if (direct !== null) return direct;
 
-      const score = currentFitScore(row);
-
-      if (score >= 70) return 80;
-      if (score >= 45) return 60;
-      if (score >= 20) return 40;
-      if (score <= -20) return 35;
+      const fit = currentFit(row);
+      if (fit === "MATCH") return 0.8;
+      if (fit === "WEAK_MATCH") return 0.6;
+      if (fit === "NEUTRAL") return 0.4;
+      if (fit === "MISFIT") return 0.7;
 
       return 0;
+    }
+
+    function confidencePercent(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return 0;
+      return n <= 1 ? n * 100 : n;
     }
 
     function currentFitPill(row = {}) {
       const fit = currentFit(row);
       const score = currentFitScore(row);
-      const conf = currentFitConfidence(row);
+      const conf = confidencePercent(currentFitConfidence(row));
 
-      if (fit === "MATCH") {
-        return `<span class="pill fit">FIT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
-
-      if (fit === "WEAK_MATCH") {
-        return `<span class="pill weakfit">WEAK FIT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
-
-      if (fit === "MISFIT") {
-        return `<span class="pill misfit">MISFIT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
-
-      if (fit === "NEUTRAL") {
-        return `<span class="pill neutral">NEUTRAL ${escapeHtml(fmt(conf, 0))}</span>`;
-      }
-
-      if (score !== 0) {
-        return `<span class="pill neutral">SOFT ${escapeHtml(fmt(score, 0))}</span>`;
-      }
+      if (fit === "MATCH") return `<span class="pill fit">FIT ${escapeHtml(fmt(score, 0))}</span>`;
+      if (fit === "WEAK_MATCH") return `<span class="pill weakfit">OK ${escapeHtml(fmt(score, 0))}</span>`;
+      if (fit === "MISFIT") return `<span class="pill misfit">MISFIT ${escapeHtml(fmt(score, 0))}</span>`;
+      if (fit === "NEUTRAL") return `<span class="pill neutral">NEUTRAL ${escapeHtml(fmt(conf, 0))}%</span>`;
 
       return '<span class="pill raw">UNKNOWN</span>';
     }
@@ -1806,6 +1824,8 @@
     }
 
     function adaptiveScore(row = {}) {
+      if (isEmpiricalVeto(row)) return -1000000;
+
       const direct = firstFinite(
         row.adaptiveScore,
         row.selectionScore,
@@ -1827,6 +1847,7 @@
     function tierPill(value) {
       const t = String(value || "NA").toUpperCase();
 
+      if (t === "EMPIRICAL_VETO") return '<span class="pill veto">EMPIRICAL VETO</span>';
       if (t === "HARD") return '<span class="pill active">ACTIVE</span>';
       if (t === "SOFT") return '<span class="pill soft">EARLY</span>';
       if (t === "OBSERVATION") return '<span class="pill observation">OBS</span>';
@@ -1849,6 +1870,15 @@
       }
 
       return '<span class="pill observation">OBSERVING</span>';
+    }
+
+    function activationGatePill(row = {}) {
+      const gate = activationGateStatus(row);
+
+      if (gate === "PASSED") return '<span class="pill passed">PASSED ≥35 + avgR &gt; 0</span>';
+      if (gate === "EMPIRICAL_VETO") return '<span class="pill veto">EMPIRICAL VETO</span>';
+
+      return `<span class="pill observation">GATE OBSERVING ${escapeHtml(fmt(completed(row), 0))}/${EMPIRICAL_VETO_MIN_COMPLETED}</span>`;
     }
 
     function jsonBlock(data) {
@@ -2307,10 +2337,31 @@
         parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
         selectionGranularity: "EXACT_75_CHILD",
 
-        measurementFixVersion: row.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+        measurementFixVersion: outcomeMeasurementVersion(row) || MEASUREMENT_FIX_VERSION,
+        outcomeMeasurementVersion: outcomeMeasurementVersion(row) || MEASUREMENT_FIX_VERSION,
+        acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+        previousSupportedMeasurementFixVersion: PREVIOUS_MEASUREMENT_FIX_VERSION,
+        outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+        strictOutcomeMeasurementGate: true,
+        legacyOutcomeMeasurementsExcluded: true,
+        completedCurrentMeasurementOnly: true,
+        exitFillModelVersion: row.exitFillModelVersion || EXIT_FILL_MODEL_VERSION,
+        exitFillPolicy: row.exitFillPolicy || "TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE",
         adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+        frontendFixVersion: FRONTEND_FIX_VERSION,
 
-        completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
+        empiricalVetoPolicyVersion: row.empiricalVetoPolicyVersion || EMPIRICAL_VETO_POLICY_VERSION,
+        empiricalVetoMinCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+        empiricalVetoMaxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
+        activationGateStatus: activationGateStatus(row),
+        activationGatePassed: activationGatePassed(row),
+        empiricalVeto: isEmpiricalVeto(row),
+        empiricalVetoed: isEmpiricalVeto(row),
+        discordEligible: discordSelectionAllowed(row),
+        discordBlocked: !discordSelectionAllowed(row),
+        discordBlockReason: discordSelectionAllowed(row) ? null : discordSelectionBlockReason(row),
+
+        completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES_CURRENT_MEASUREMENT_ONLY",
         completedOnlyClosedVirtualOrShadow: true,
         scoringRSource: "netR",
         winsLossesFlatsSource: "netR",
@@ -2326,6 +2377,7 @@
         grossRFormula: "(entry - exitPrice) / (initialSl - entry)",
         currentRFormula: "(entry - currentPrice) / (initialSl - entry)",
 
+        currentFitVersion: row.currentFitVersion || CURRENT_FIT_VERSION,
         currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
         currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
         currentFitSoftOnly: true,
@@ -2352,21 +2404,24 @@
     function rankMicroRows(rows = [], mode = state.microMode) {
       return rows
         .filter(isRealAnalyzeMicroRow)
-        .map(normalizeMicroRowForUi)
-        .sort((a, b) => compareMicroRows(a, b, mode))
-        .map((row, index) => ({
-          ...row,
-          rank: index + 1
-        }));
+        .map((row) => ({
+          ...normalizeMicroRowForUi(row),
+          apiRank: Number.isFinite(Number(row.rank)) ? Number(row.rank) : null
+        }))
+        .sort((a, b) => {
+          const vetoOrder = Number(isEmpiricalVeto(a)) - Number(isEmpiricalVeto(b));
+          if (vetoOrder !== 0) return vetoOrder;
+
+          if (a.apiRank !== null && b.apiRank !== null) return a.apiRank - b.apiRank;
+
+          return compareMicroRows(a, b, mode);
+        })
+        .map((row, index) => ({ ...row, rank: index + 1 }));
     }
 
     function microApiUrl() {
       const params = new URLSearchParams();
-      const apiMode = state.microMode === "adaptive" || state.microMode === "currentFit" || state.microMode === "cost"
-        ? "balanced"
-        : state.microMode;
-
-      params.set("mode", apiMode);
+      params.set("mode", state.microMode);
       params.set("side", ONLY_SIDE);
       params.set("tradeSide", ONLY_SIDE);
       params.set("targetTradeSide", ONLY_SIDE);
@@ -2564,7 +2619,10 @@
           currentFitBlocksVirtualLearning: false,
           currentFitBlocksShadowLearning: false,
           learningRemainsBroad: true,
-          measurementFixVersion: MEASUREMENT_FIX_VERSION
+          measurementFixVersion: MEASUREMENT_FIX_VERSION,
+          outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+          exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+          currentFitVersion: CURRENT_FIT_VERSION
         };
 
         const market = extractMarketData(data);
@@ -2708,6 +2766,8 @@
         const parentId = parentMicroId(row);
         const active = activeSet.has(id);
         const obs = observationSample(row);
+        const selectable = discordSelectionAllowed(row);
+        const selectionReason = selectable ? "" : discordSelectionBlockReason(row);
 
         return `
           <tr>
@@ -2722,6 +2782,7 @@
             <td><span class="pill short">SHORT</span></td>
             <td>${tierPill(tier(row))}</td>
             <td>${statusPill(row)}</td>
+            <td>${activationGatePill(row)}</td>
             <td>${tooEarly(row)
               ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>`
               : '<span class="pill active">OK</span>'
@@ -2737,7 +2798,7 @@
             <td><strong>${escapeHtml(fmt(adaptiveScore(row), 2))}</strong></td>
             <td>
               <div class="micro-actions">
-                <button type="button" class="small short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+                <button type="button" class="small short-action" data-activate-one="${escapeAttr(id)}" title="${escapeAttr(selectionReason)}" ${selectable ? "" : "disabled"}>Select exact</button>
                 <button type="button" class="small" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
               </div>
             </td>
@@ -2750,6 +2811,8 @@
         const parentId = parentMicroId(row);
         const active = activeSet.has(id);
         const obs = observationSample(row);
+        const selectable = discordSelectionAllowed(row);
+        const selectionReason = selectable ? "" : discordSelectionBlockReason(row);
 
         return `
           <article class="micro-card">
@@ -2774,6 +2837,7 @@
             <div class="toolbar">
               ${tierPill(tier(row))}
               ${statusPill(row)}
+              ${activationGatePill(row)}
               ${tooEarly(row)
                 ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>`
                 : '<span class="pill active">OK</span>'
@@ -2795,7 +2859,7 @@
             </div>
 
             <div class="toolbar">
-              <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact</button>
+              <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" title="${escapeAttr(selectionReason)}" ${selectable ? "" : "disabled"}>Select exact</button>
               <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
             </div>
           </article>
@@ -2814,6 +2878,7 @@
                 <th>Side</th>
                 <th>Tier</th>
                 <th>Status</th>
+                <th>Activation gate</th>
                 <th>Sample</th>
                 <th>Seen</th>
                 <th>Completed</th>
@@ -2886,7 +2951,23 @@
         timeoutMs: 22000
       });
 
-      const rawRows = extractMicroRowsFromApiPayload(data);
+      const acceptedMeasurementVersion = String(
+        data.acceptedOutcomeMeasurementVersion ||
+        data.outcomeMeasurementVersion ||
+        data.measurementFixVersion ||
+        MEASUREMENT_FIX_VERSION
+      );
+
+      const rawRows = extractMicroRowsFromApiPayload(data).map((row) => ({
+        ...row,
+        measurementFixVersion: row.measurementFixVersion || acceptedMeasurementVersion,
+        outcomeMeasurementVersion: row.outcomeMeasurementVersion || acceptedMeasurementVersion,
+        acceptedOutcomeMeasurementVersion: acceptedMeasurementVersion,
+        exitFillModelVersion: row.exitFillModelVersion || data.exitFillModelVersion || EXIT_FILL_MODEL_VERSION,
+        outcomeMeasurementGateMode: row.outcomeMeasurementGateMode || data.outcomeMeasurementGateMode || OUTCOME_MEASUREMENT_GATE_MODE,
+        completedCurrentMeasurementOnly: row.completedCurrentMeasurementOnly ?? data.completedCurrentMeasurementOnly ?? true,
+        legacyOutcomeMeasurementsExcluded: row.legacyOutcomeMeasurementsExcluded ?? data.legacyOutcomeMeasurementsExcluded ?? true
+      }));
       const rows = rankMicroRows(rawRows, state.microMode);
 
       return {
@@ -2959,6 +3040,8 @@
       const observing = microRows.filter((row) => learningStatus(row) === "OBSERVING").length;
       const early = microRows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES").length;
       const active = microRows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING").length;
+      const gatePassed = microRows.filter((row) => activationGateStatus(row) === "PASSED").length;
+      const empiricalVeto = microRows.filter((row) => isEmpiricalVeto(row)).length;
       const avgCost = microRows.length ? microRows.reduce((sum, row) => sum + avgCostR(row), 0) / microRows.length : 0;
       const avgDirectSL = microRows.length ? microRows.reduce((sum, row) => sum + directSLPct(row), 0) / microRows.length : 0;
 
@@ -2978,7 +3061,9 @@
           ${metricCard("OBSERVING", fmtInt(observing), "completed = 0")}
           ${metricCard("EARLY_OUTCOMES", fmtInt(early), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1}`)}
           ${metricCard("ACTIVE_LEARNING", fmtInt(active), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
-          ${metricCard("Ranking", "adaptive", "adaptive → balanced → fair → netR → cost")}
+          ${metricCard("Gate PASSED", fmtInt(gatePassed), `completed ≥ ${EMPIRICAL_VETO_MIN_COMPLETED} en avgR > 0`)}
+          ${metricCard("EMPIRICAL VETO", fmtInt(empiricalVeto), `completed ≥ ${EMPIRICAL_VETO_MIN_COMPLETED} en avgR ≤ 0`)}
+          ${metricCard("Ranking", "adaptive", "veto last → API rank → netR/cost")}
           ${metricCard("AvgCostR", fmt(avgCost, 3), "gemiddelde over zichtbare 75-child rows")}
           ${metricCard("Avg DirectSL", fmtPct(avgDirectSL), "directSL hoort correct te tellen")}
           ${metricCard("Market regime", market.regime || "UNKNOWN", market.ageText)}
@@ -3003,7 +3088,11 @@
             <h3>Meetlat</h3>
             ${jsonBlock({
               measurementFixVersion: MEASUREMENT_FIX_VERSION,
-              completed: "closed virtual/shadow outcomes only",
+              previousMeasurementFixVersion: PREVIOUS_MEASUREMENT_FIX_VERSION,
+              outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+              exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+              empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+              completed: "closed virtual/shadow outcomes, exact current measurement only",
               scoring: "netR after costs",
               avgCostR: "costR",
               directSL: "directToSL/directSL/SL before meaningful favorable excursion",
@@ -3354,12 +3443,23 @@
             parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
             selectionGranularity: "EXACT_75_CHILD",
 
-            completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES",
+            completedDefinition: "CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES_CURRENT_MEASUREMENT_ONLY",
             scoringRSource: "netR",
             winsLossesFlatsSource: "netR",
             avgCostRSource: "costR",
             seenDefinition: "UNIQUE_OBSERVATION_DEDUPE_KEY_ONLY",
+            measurementFixVersion: MEASUREMENT_FIX_VERSION,
+            outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+            acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+            outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+            strictOutcomeMeasurementGate: true,
+            exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+            exitFillPolicy: "TP_SL_USE_TRIGGER_BOUNDARY_TIME_STOP_USES_OBSERVED_PRICE",
+            empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+            empiricalVetoMinCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+            empiricalVetoMaxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
 
+            currentFitVersion: CURRENT_FIT_VERSION,
             currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
             currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
             currentFitSoftOnly: true,
@@ -3413,6 +3513,8 @@
       const id = microId(row);
       const parentId = parentMicroId(row);
       const isActive = activeMicroIds().includes(id);
+      const selectable = discordSelectionAllowed(row);
+      const selectionReason = selectable ? "" : discordSelectionBlockReason(row);
 
       return `
         <div class="manual-card">
@@ -3424,6 +3526,7 @@
             ${isActive ? '<span class="pill active">DISCORD ACTIVE</span>' : '<span class="pill info">NOT SELECTED</span>'}
             ${tierPill(tier(row))}
             ${statusPill(row)}
+            ${activationGatePill(row)}
             ${currentFitPill(row)}
             ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
           </div>
@@ -3442,6 +3545,7 @@
             <div class="manual-stat"><span>Seen</span><strong>${escapeHtml(fmt(observationSample(row), 2))}</strong></div>
             <div class="manual-stat"><span>Completed</span><strong>${escapeHtml(fmt(completed(row), 2))}</strong></div>
             <div class="manual-stat"><span>Status</span><strong>${escapeHtml(learningStatus(row))}</strong></div>
+            <div class="manual-stat"><span>Activation gate</span><strong>${escapeHtml(activationGateStatus(row))}</strong></div>
             <div class="manual-stat"><span>Sample</span><strong>${tooEarly(row) ? `TE VROEG ${fmt(completed(row), 0)}/${MIN_COMPLETED_ACTIVE_LEARNING}` : "OK"}</strong></div>
             <div class="manual-stat"><span>Fair WR</span><strong>${escapeHtml(fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}</strong></div>
             <div class="manual-stat"><span>Net TotalR</span><strong>${escapeHtml(fmt(row.totalR, 3))}</strong></div>
@@ -3460,7 +3564,7 @@
           </div>
 
           <div class="toolbar">
-            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Select exact 75-child</button>
+            <button type="button" class="short-action" data-activate-one="${escapeAttr(id)}" title="${escapeAttr(selectionReason)}" ${selectable ? "" : "disabled"}>Select exact 75-child</button>
             <button type="button" data-copy="${escapeAttr(id)}" ${isSelectableTrueMicroId(id) ? "" : "disabled"}>Copy</button>
           </div>
         </div>
@@ -3482,11 +3586,14 @@
       }
 
       const rows = currentMicroRows();
-      const top = rows[0] || null;
+      const top = rows.find(discordSelectionAllowed) || rows[0] || null;
 
       const observingRows = rows.filter((row) => learningStatus(row) === "OBSERVING");
       const earlyRows = rows.filter((row) => learningStatus(row) === "EARLY_OUTCOMES");
       const activeRows = rows.filter((row) => learningStatus(row) === "ACTIVE_LEARNING");
+      const passedRows = rows.filter((row) => activationGateStatus(row) === "PASSED");
+      const vetoRows = rows.filter((row) => isEmpiricalVeto(row));
+      const gateObservingRows = rows.filter((row) => activationGateStatus(row) === "OBSERVING");
       const misfitRows = rows.filter((row) => currentFit(row) === "MISFIT");
 
       $("micros").innerHTML = `
@@ -3500,7 +3607,7 @@
           <input id="microSearch" type="search" placeholder="Zoek 75-child, parent 15, setup, regime, confirmation..." value="${escapeAttr(state.microSearch)}" />
 
           <button type="button" class="success" id="copyVisibleIdsBtn">Copy visible 75-child IDs</button>
-          <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible exact IDs</button>
+          <button type="button" class="success" id="activateVisibleIdsBtn">Activate visible PASSED IDs</button>
           <button type="button" id="exportMicrosBtn">Export JSON</button>
         </div>
 
@@ -3536,6 +3643,9 @@
           ${metricCard("OBSERVING", fmtInt(observingRows.length), "completed = 0")}
           ${metricCard("EARLY_OUTCOMES", fmtInt(earlyRows.length), `completed 1-${MIN_COMPLETED_ACTIVE_LEARNING - 1}`)}
           ${metricCard("ACTIVE_LEARNING", fmtInt(activeRows.length), `completed ≥ ${MIN_COMPLETED_ACTIVE_LEARNING}`)}
+          ${metricCard("Gate PASSED", fmtInt(passedRows.length), `completed ≥ ${EMPIRICAL_VETO_MIN_COMPLETED} en avgR > 0`)}
+          ${metricCard("Gate OBSERVING", fmtInt(gateObservingRows.length), `completed < ${EMPIRICAL_VETO_MIN_COMPLETED}`)}
+          ${metricCard("EMPIRICAL VETO", fmtInt(vetoRows.length), `completed ≥ ${EMPIRICAL_VETO_MIN_COMPLETED} en avgR ≤ 0`)}
           ${metricCard("CurrentFit MISFIT", fmtInt(misfitRows.length), "blocks Discord only")}
           ${metricCard("Discord active 75-child IDs", fmtInt(activeMicroIds().length))}
           ${metricCard("Parent 15 active context", fmtInt(activeParentIds().length), "does not trigger Discord")}
@@ -3559,8 +3669,15 @@
             trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
             parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
             rankingPolicy: "adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR",
-            measurementFixVersion: MEASUREMENT_FIX_VERSION,
+            measurementFixVersion: state.micros?.measurementFixVersion || MEASUREMENT_FIX_VERSION,
+            outcomeMeasurementVersion: state.micros?.outcomeMeasurementVersion || MEASUREMENT_FIX_VERSION,
+            outcomeMeasurementGateMode: state.micros?.outcomeMeasurementGateMode || OUTCOME_MEASUREMENT_GATE_MODE,
+            exitFillModelVersion: state.micros?.exitFillModelVersion || EXIT_FILL_MODEL_VERSION,
+            empiricalVetoPolicyVersion: state.micros?.empiricalVetoPolicyVersion || EMPIRICAL_VETO_POLICY_VERSION,
+            empiricalVetoCount: vetoRows.length,
             adaptiveUiVersion: ADAPTIVE_UI_VERSION,
+            frontendFixVersion: FRONTEND_FIX_VERSION,
+            currentFitVersion: state.micros?.currentFitVersion || CURRENT_FIT_VERSION,
             currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
             riskGeometryRule: "SHORT: tp < entry < sl",
             warnings: state.micros?.warnings || [],
@@ -3592,7 +3709,7 @@
       });
 
       $("activateVisibleIdsBtn")?.addEventListener("click", () => {
-        const ids = uniqueStrings(rows.map(microId)).filter(idAllowedInShortOnly);
+        const ids = uniqueStrings(rows.filter(discordSelectionAllowed).map(microId)).filter(idAllowedInShortOnly);
         activateSelectedMicroFamilies(ids);
       });
 
@@ -3649,7 +3766,7 @@
         <div class="section-title">
           <div>
             <h2>Manual Discord selection</h2>
-            <p>Geen auto-rotatie. Alleen exact geselecteerde SHORT 75-child trueMicroFamilyIds. CurrentFit maakt Discord strenger.</p>
+            <p>Geen auto-rotatie. Alleen PASSED exacte SHORT 75-child trueMicroFamilyIds. Empirical veto en completed < 35 worden geweigerd.</p>
           </div>
         </div>
 
@@ -3674,7 +3791,7 @@
           <textarea id="manualMicroIds" placeholder="MICRO_SHORT_..._A_STRONG_ALIGN">${escapeHtml(activeIds.join("\n"))}</textarea>
 
           <div class="toolbar">
-            <button type="button" class="short-action" id="activateManualBtn">Save exact Discord selection</button>
+            <button type="button" class="short-action" id="activateManualBtn">Save PASSED exact selection</button>
             <button type="button" id="clearManualBtn">Clear input</button>
             <button type="button" class="success" id="copyActiveBtn">Copy active 75-child IDs</button>
             <button type="button" id="exportRotationBtn">Export JSON</button>
@@ -3717,27 +3834,38 @@
     }
 
     async function activateSelectedMicroFamilies(ids = []) {
-      const microFamilyIds = uniqueStrings(ids).filter(idAllowedInShortOnly);
-      const rejectedIds = uniqueStrings(ids).filter((id) => !idAllowedInShortOnly(id));
+      const requestedIds = uniqueStrings(ids);
+      const invalidIds = requestedIds.filter((id) => !idAllowedInShortOnly(id));
+
+      await ensureMicrosLoaded();
+
+      const rowMap = new Map((state.micros?.rows || []).map((row) => [microId(row), row]));
+      const missingIds = requestedIds.filter((id) => idAllowedInShortOnly(id) && !rowMap.has(id));
+      const blockedIds = requestedIds.filter((id) => rowMap.has(id) && !discordSelectionAllowed(rowMap.get(id)));
+      const microFamilyIds = requestedIds.filter((id) => rowMap.has(id) && discordSelectionAllowed(rowMap.get(id)));
+
+      const rejectionLines = [
+        ...invalidIds.map((id) => `${id}: INVALID_75_CHILD_ID`),
+        ...missingIds.map((id) => `${id}: NOT_FOUND_IN_CURRENT_75_ROWS`),
+        ...blockedIds.map((id) => `${id}: ${discordSelectionBlockReason(rowMap.get(id))}`)
+      ];
 
       if (!microFamilyIds.length) {
         setMessage(
-          rejectedIds.length
-            ? `Geen geldige SHORT 75-child trueMicroFamilyId geselecteerd.\nGeweigerd: ${rejectedIds.join(", ")}`
-            : "Geen geldige SHORT 75-child trueMicroFamilyId geselecteerd.",
+          `Geen Discord-eligible SHORT 75-child ID geselecteerd.` +
+          (rejectionLines.length ? `\n\nGeweigerd:\n${rejectionLines.join("\n")}` : ""),
           "warn"
         );
         return;
       }
 
       if (!confirm(
-        `Activeer Discord alerts voor ${microFamilyIds.length} exacte SHORT 75-child ID(s)?\n\n` +
+        `Activeer Discord alerts voor ${microFamilyIds.length} PASSED SHORT 75-child ID(s)?\n\n` +
         `${microFamilyIds.slice(0, 8).join("\n")}` +
         `${microFamilyIds.length > 8 ? "\n..." : ""}\n\n` +
-        "Virtual/shadow learning blijft breed doorlopen. CurrentFit mag Discord blokkeren."
-      )) {
-        return;
-      }
+        `Voorwaarde: completed ≥ ${EMPIRICAL_VETO_MIN_COMPLETED}, avgR > 0 en geen empirical veto. ` +
+        "CurrentFit wordt bij iedere Discord-trigger opnieuw streng gecontroleerd."
+      )) return;
 
       const data = await api(endpoints.rotation, {
         method: "POST",
@@ -3774,6 +3902,20 @@
           parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
           selectionGranularity: "EXACT_75_CHILD",
 
+          measurementFixVersion: MEASUREMENT_FIX_VERSION,
+          outcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+          acceptedOutcomeMeasurementVersion: MEASUREMENT_FIX_VERSION,
+          outcomeMeasurementGateMode: OUTCOME_MEASUREMENT_GATE_MODE,
+          strictOutcomeMeasurementGate: true,
+          exitFillModelVersion: EXIT_FILL_MODEL_VERSION,
+          empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
+          empiricalVetoMinCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+          empiricalVetoMaxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
+          discordRequiresPassedActivationGate: true,
+          discordRequiresMinCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+          discordRequiresPositiveAvgR: true,
+
+          currentFitVersion: CURRENT_FIT_VERSION,
           currentFitPolarity: "BEARISH_POSITIVE_BULLISH_NEGATIVE",
           currentFitDefinition: "SHORT_MIRRORED_CURRENT_FIT",
           currentFitSoftOnly: true,
@@ -3811,8 +3953,9 @@
       };
 
       setMessage(
-        `Manual Discord selection opgeslagen.\nActive SHORT 75-child IDs: ${activeIds.length}\nVirtual/shadow learning blijft breed doorlopen.`,
-        "ok"
+        `Manual Discord selection opgeslagen.\nActive SHORT 75-child IDs: ${activeIds.length}\nVirtual/shadow learning blijft breed doorlopen.` +
+        (rejectionLines.length ? `\n\nNiet geactiveerd:\n${rejectionLines.join("\n")}` : ""),
+        rejectionLines.length ? "warn" : "ok"
       );
 
       if (state.activeTab === "rotation") await renderRotation();
@@ -3857,9 +4000,10 @@
             <span class="pill short">SHORT</span>
             <span class="pill dark">75-child exact</span>
             ${statusPill(row)}
+            ${activationGatePill(row)}
             ${currentFitPill(row)}
             ${tooEarly(row) ? `<span class="pill warn">${escapeHtml(fmt(completed(row), 0))}/${MIN_COMPLETED_ACTIVE_LEARNING}</span>` : ""}
-            <button type="button" class="short-action" id="activateDrawerBtn" ${isSelectableTrueMicroId(microId(row)) ? "" : "disabled"}>Select exact</button>
+            <button type="button" class="short-action" id="activateDrawerBtn" title="${escapeAttr(discordSelectionBlockReason(row))}" ${discordSelectionAllowed(row) ? "" : "disabled"}>Select exact</button>
             <button type="button" id="copyDrawerBtn">Copy</button>
           </div>
 
@@ -3868,6 +4012,7 @@
             ${metricCard("Observations", fmtInt(observationSample(row)))}
             ${metricCard("Obs dedupe skipped", fmtInt(row.observationDuplicateSkippedCount))}
             ${metricCard("Completed", fmt(completed(row), 2), tooEarly(row) ? `minimum ${MIN_COMPLETED_ACTIVE_LEARNING}` : "active learning")}
+            ${metricCard("Activation gate", activationGateStatus(row), discordSelectionAllowed(row) ? "Discord selectable" : discordSelectionBlockReason(row))}
             ${metricCard("Winrate raw", fmtPct(row.winrate))}
             ${metricCard("Fair WR", fmtPct(row.fairWinrate ?? row.sampleAdjustedWinrate))}
             ${metricCard("AvgR net", fmt(row.avgR, 3))}
