@@ -1098,15 +1098,46 @@ function isCurrentMeasurementOutcome(row = {}) {
   );
 }
 
+function measurementAggregateIntegrity(row = {}) {
+  const counts = outcomeCounts(row);
+  const completed = Math.max(counts.total, 0);
+  const acceptedOutcomeCount = Math.max(
+    0,
+    num(row.measurementVersionAcceptedOutcomeCount, 0)
+  );
+
+  const recentOutcomes = Array.isArray(row.recentOutcomes)
+    ? row.recentOutcomes
+    : [];
+
+  const nonCurrentRecentOutcomeCount = recentOutcomes
+    .filter((outcome) => !isCurrentMeasurementOutcome(outcome))
+    .length;
+
+  const currentVersion =
+    rowMeasurementFixVersion(row) === MEASUREMENT_FIX_VERSION;
+
+  return {
+    valid:
+      currentVersion &&
+      (completed <= 0 || acceptedOutcomeCount >= completed) &&
+      nonCurrentRecentOutcomeCount === 0,
+    currentVersion,
+    completed,
+    acceptedOutcomeCount,
+    recentOutcomeCount: recentOutcomes.length,
+    nonCurrentRecentOutcomeCount
+  };
+}
+
 function completedSample(row = {}) {
-  if (
-    hasStoredOutcomeData(row) &&
-    rowMeasurementFixVersion(row) !== MEASUREMENT_FIX_VERSION
-  ) {
+  const integrity = measurementAggregateIntegrity(row);
+
+  if (hasStoredOutcomeData(row) && !integrity.valid) {
     return 0;
   }
 
-  return outcomeCounts(row).total;
+  return integrity.completed;
 }
 
 function observationSample(row = {}) {
@@ -1497,6 +1528,13 @@ function normalizeRotationRow(row = {}, index = 0) {
     virtualCompleted: round(row.virtualCompleted, 4),
     shadowCompleted: round(row.shadowCompleted, 4),
     realCompleted: 0,
+
+    currentMeasurementAggregateIntegrityValid:
+      measurementAggregateIntegrity(row).valid,
+    currentMeasurementAcceptedOutcomeCount:
+      measurementAggregateIntegrity(row).acceptedOutcomeCount,
+    currentMeasurementNonCurrentRecentOutcomeCount:
+      measurementAggregateIntegrity(row).nonCurrentRecentOutcomeCount,
 
     outcomeSample: round(completed, 4),
     observationSample: round(observed, 4),
