@@ -302,6 +302,48 @@ function hasStoredOutcomeMeasurementData(stats = {}) {
   );
 }
 
+function storedCompletedForMeasurementIntegrity(stats = {}) {
+  const sourceCompleted =
+    safeNumber(stats.virtualCompleted, 0) +
+    safeNumber(stats.shadowCompleted, 0);
+
+  return Math.max(
+    sourceCompleted,
+    safeNumber(stats.completed, 0),
+    0
+  );
+}
+
+function currentMeasurementAggregateIntegrity(stats = {}) {
+  const completed = storedCompletedForMeasurementIntegrity(stats);
+  const acceptedOutcomeCount = Math.max(
+    0,
+    safeNumber(stats.measurementVersionAcceptedOutcomeCount, 0)
+  );
+
+  const recentOutcomes = Array.isArray(stats.recentOutcomes)
+    ? stats.recentOutcomes
+    : [];
+
+  const nonCurrentRecentOutcomeCount = recentOutcomes
+    .filter((outcome) => !isCurrentMeasurementOutcome(outcome))
+    .length;
+
+  const acceptedCountCoversCompleted =
+    completed <= 0 || acceptedOutcomeCount >= completed;
+
+  return {
+    valid:
+      acceptedCountCoversCompleted &&
+      nonCurrentRecentOutcomeCount === 0,
+    completed,
+    acceptedOutcomeCount,
+    acceptedCountCoversCompleted,
+    recentOutcomeCount: recentOutcomes.length,
+    nonCurrentRecentOutcomeCount
+  };
+}
+
 function applyOutcomeMeasurementPolicyFlags(stats = {}) {
   stats.measurementFixVersion = MEASUREMENT_FIX_VERSION;
   stats.outcomeMeasurementVersion = MEASUREMENT_FIX_VERSION;
@@ -324,13 +366,22 @@ function applyOutcomeMeasurementPolicyFlags(stats = {}) {
 function migrateOutcomeMeasurementVersion(stats = {}) {
   const storedVersion = rowMeasurementFixVersion(stats);
   const alreadyCurrent = storedVersion === MEASUREMENT_FIX_VERSION;
+  const integrity = currentMeasurementAggregateIntegrity(stats);
 
-  if (alreadyCurrent) {
+  if (alreadyCurrent && integrity.valid) {
     stats.recentOutcomes = Array.isArray(stats.recentOutcomes)
       ? stats.recentOutcomes
           .filter(isCurrentMeasurementOutcome)
           .slice(-50)
       : [];
+
+    stats.currentMeasurementAggregateIntegrityValid = true;
+    stats.currentMeasurementAggregateIntegrityCheckedAt =
+      stats.currentMeasurementAggregateIntegrityCheckedAt || now();
+    stats.currentMeasurementAggregateCompleted = integrity.completed;
+    stats.currentMeasurementAcceptedOutcomeCount =
+      integrity.acceptedOutcomeCount;
+    stats.currentMeasurementNonCurrentRecentOutcomeCount = 0;
 
     return applyOutcomeMeasurementPolicyFlags(stats);
   }
@@ -338,12 +389,8 @@ function migrateOutcomeMeasurementVersion(stats = {}) {
   const migrationAt = now();
   const hadLegacyOutcomeData = hasStoredOutcomeMeasurementData(stats);
 
-  const legacyCompleted = safeNumber(
-    stats.completed,
-    safeNumber(stats.virtualCompleted, 0) +
-      safeNumber(stats.shadowCompleted, 0)
-  );
-
+  const legacyCompleted = integrity.completed;
+  const legacyAcceptedOutcomeCount = integrity.acceptedOutcomeCount;
   const legacyTotalR = safeNumber(stats.totalR, 0);
   const legacyTotalCostR = safeNumber(stats.totalCostR, 0);
   const legacyAvgR = legacyCompleted > 0
@@ -358,6 +405,10 @@ function migrateOutcomeMeasurementVersion(stats = {}) {
     stats[field] = 0;
   }
 
+  stats.measurementVersionAcceptedOutcomeCount = 0;
+  stats.lastAcceptedOutcomeMeasurementVersion = null;
+  stats.lastAcceptedOutcomeMeasurementAt = null;
+
   stats.recentOutcomes = [];
   stats.costStatsInferredFromRecent = false;
   stats.directSLStatsInferredFromRecent = false;
@@ -367,17 +418,25 @@ function migrateOutcomeMeasurementVersion(stats = {}) {
   stats.awaitingOutcomes = safeNumber(stats.seen, 0) > 0;
   stats.tooEarly = true;
 
-  stats.previousMeasurementFixVersion =
-    storedVersion ||
-    'UNVERSIONED';
+  stats.previousMeasurementFixVersion = alreadyCurrent
+    ? 'CURRENT_VERSION_WITH_UNVERIFIED_AGGREGATES'
+    : storedVersion || 'UNVERSIONED';
 
   stats.outcomeMeasurementMigrationApplied = true;
   stats.outcomeMeasurementMigrationAt =
     stats.outcomeMeasurementMigrationAt ||
     migrationAt;
 
-  stats.outcomeMeasurementMigrationReason =
-    'LEGACY_TRIGGER_OVERSHOOT_OUTCOMES_EXCLUDED_FROM_CLEAN_DATASET';
+  stats.outcomeMeasurementMigrationReason = alreadyCurrent
+    ? 'CURRENT_VERSION_AGGREGATE_INTEGRITY_MISMATCH_LEGACY_DATA_EXCLUDED'
+    : 'LEGACY_TRIGGER_OVERSHOOT_OUTCOMES_EXCLUDED_FROM_CLEAN_DATASET';
+
+  stats.currentMeasurementAggregateIntegrityValid = true;
+  stats.currentMeasurementAggregateIntegrityMismatchDetected = alreadyCurrent;
+  stats.currentMeasurementAggregateIntegrityCheckedAt = migrationAt;
+  stats.currentMeasurementAggregateCompleted = 0;
+  stats.currentMeasurementAcceptedOutcomeCount = 0;
+  stats.currentMeasurementNonCurrentRecentOutcomeCount = 0;
 
   stats.legacyOutcomeDataWasPresent = hadLegacyOutcomeData;
   stats.legacyExcludedCompleted = round4(legacyCompleted);
@@ -385,6 +444,11 @@ function migrateOutcomeMeasurementVersion(stats = {}) {
   stats.legacyExcludedAvgR = round4(legacyAvgR);
   stats.legacyExcludedTotalCostR = round4(legacyTotalCostR);
   stats.legacyExcludedRecentOutcomeCount = legacyRecentOutcomeCount;
+  stats.legacyExcludedAcceptedOutcomeCount = round4(
+    legacyAcceptedOutcomeCount
+  );
+  stats.legacyExcludedNonCurrentRecentOutcomeCount =
+    integrity.nonCurrentRecentOutcomeCount;
 
   stats.lastOutcomeMeasurementResetAt = migrationAt;
   stats.updatedAt = migrationAt;
