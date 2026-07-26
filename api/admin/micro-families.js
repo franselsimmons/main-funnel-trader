@@ -49,7 +49,7 @@ const MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_TRIGGER_BOUNDARY_EXIT_FIL
 const PREVIOUS_MEASUREMENT_FIX_VERSION = 'SHORT_MEASUREMENT_FIX_AVGCOST_DIRECTSL_SEEN_DEDUPE_V1';
 const EXIT_FILL_MODEL_VERSION = 'SHORT_TRIGGER_BOUNDARY_FILL_PLUS_COST_MODEL_V1';
 const OUTCOME_MEASUREMENT_GATE_MODE = 'STRICT_EXACT_VERSION';
-const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MEASUREMENT_GATE_EMPIRICAL_VETO_V4';
+const ADAPTIVE_UI_VERSION = 'SHORT_ADAPTIVE_UI_MARKETWEATHER_CURRENTFIT_MEASUREMENT_GATE_EMPIRICAL_VETO_RANKING_FLAT_GATE_V5';
 const CURRENT_FIT_VERSION = 'SHORT_CURRENTFIT_MARKETWEATHER_SOFT_V2';
 
 const SHORT_FIXED_SETUP_TYPES = new Set([
@@ -643,6 +643,12 @@ function modePayload() {
     empiricalVetoBlocksManualActivation: true,
     empiricalVetoRemovesActiveDiscordSelection: true,
     empiricalVetoCanRecover: true,
+
+    discordRequiresPassedActivationGate: true,
+    discordRequiresMinCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
+    discordRequiresPositiveAvgR: true,
+    discordAllowsObservingFamilies: false,
+    discordAllowsEarlyOutcomeFamilies: false,
 
     avgCostRFixEnabled: true,
     directSLFixEnabled: true,
@@ -1728,7 +1734,8 @@ function empiricalActivationGate(row = {}, meta = null) {
     return {
       status: 'OBSERVING',
       blocked: false,
-      discordEligible: true,
+      discordEligible: false,
+      manualActivationAllowed: false,
       reason: `COMPLETED_BELOW_${EMPIRICAL_VETO_MIN_COMPLETED}`,
       completed,
       minCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
@@ -1743,6 +1750,7 @@ function empiricalActivationGate(row = {}, meta = null) {
       status: 'EMPIRICAL_VETO',
       blocked: true,
       discordEligible: false,
+      manualActivationAllowed: false,
       reason: 'CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE',
       completed,
       minCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
@@ -1756,6 +1764,7 @@ function empiricalActivationGate(row = {}, meta = null) {
     status: 'PASSED',
     blocked: false,
     discordEligible: true,
+    manualActivationAllowed: true,
     reason: null,
     completed,
     minCompleted: EMPIRICAL_VETO_MIN_COMPLETED,
@@ -1767,6 +1776,49 @@ function empiricalActivationGate(row = {}, meta = null) {
 
 function isEmpiricallyVetoed(row = {}, meta = null) {
   return empiricalActivationGate(row, meta).blocked === true;
+}
+
+function discordEligibilityFor(row = {}, gate = null, fit = null) {
+  const resolvedGate = gate || empiricalActivationGate(row);
+  const currentFitAllowed =
+    fit?.discordCurrentFitAllowed === true ||
+    (
+      fit === null &&
+      row.discordCurrentFitAllowed === true
+    );
+
+  if (resolvedGate.status !== 'PASSED') {
+    return {
+      eligible: false,
+      blocked: true,
+      gatePassed: false,
+      currentFitAllowed,
+      reason: resolvedGate.status === 'EMPIRICAL_VETO'
+        ? 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
+        : resolvedGate.reason || 'DISCORD_BLOCKED_ACTIVATION_GATE_NOT_PASSED'
+    };
+  }
+
+  if (!currentFitAllowed) {
+    return {
+      eligible: false,
+      blocked: true,
+      gatePassed: true,
+      currentFitAllowed: false,
+      reason:
+        fit?.discordCurrentFitGateReason ||
+        row.discordCurrentFitGateReason ||
+        'DISCORD_BLOCKED_CURRENT_FIT_NOT_ALLOWED'
+    };
+  }
+
+  return {
+    eligible: true,
+    blocked: false,
+    gatePassed: true,
+    currentFitAllowed: true,
+    reason: null
+  };
 }
 
 function hasCostEvidence(row = {}) {
@@ -2054,7 +2106,7 @@ function getSampleAdjustedWinrate(row = {}) {
 
   if (completedSample <= 0) {
     return {
-      sample: observationSample,
+      sample: 0,
       outcomeSample: 0,
       observationSample,
       wins: 0,
@@ -2063,13 +2115,15 @@ function getSampleAdjustedWinrate(row = {}) {
       rawWinrate: 0,
       bayesianWinrate: 0,
       wilsonLowerBound: 0,
-      reliability: sampleReliability(observationSample),
+      reliability: 0,
+      observationReliability: sampleReliability(observationSample),
       score: 0,
       awaitingOutcomes: observationSample > 0
     };
   }
 
-  const successes = counts.wins + counts.flats * 0.5;
+  // Alleen netR > 0 telt als winst. Een flat blijft een flat.
+  const successes = counts.wins;
   const rawWinrate = clamp(successes / completedSample, 0, 1);
 
   const bayesianWinrate = clamp(
@@ -3315,6 +3369,9 @@ function decorateMicroRow(row = {}, marketWeather = null) {
   const tier = tierFor(row, winrate);
   const tooEarly = winrate.outcomeSample < MIN_COMPLETED_ACTIVE_LEARNING;
   const fit = currentFitForMicro(row, marketWeather);
+  const discord = discordEligibilityFor(row, gate, fit);
+  const storedActive = Boolean(row.storedActive ?? row.active);
+  const storedMacroActive = Boolean(row.storedMacroActive ?? row.macroActive);
 
   const adaptiveScore = gate.blocked
     ? -1_000_000
@@ -3330,23 +3387,19 @@ function decorateMicroRow(row = {}, marketWeather = null) {
     ...modePayload(),
     ...fit,
 
-    active: gate.blocked ? false : Boolean(row.active),
-    macroActive: gate.blocked ? false : Boolean(row.macroActive),
+    storedActive,
+    storedMacroActive,
+    active: storedActive && discord.eligible,
+    macroActive: storedMacroActive && discord.eligible,
+    selectionSuppressedByDiscordGate:
+      storedActive && !discord.eligible,
     empiricalVetoRemovedFromActiveDisplay:
-      gate.blocked && Boolean(row.active),
+      gate.blocked && storedActive,
 
-    discordEligible:
-      !gate.blocked &&
-      fit.discordCurrentFitAllowed === true,
-
-    discordBlocked:
-      gate.blocked ||
-      fit.discordCurrentFitAllowed !== true,
-
-    discordBlockReason:
-      gate.blocked
-        ? 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
-        : fit.discordCurrentFitGateReason || null,
+    discordEligible: discord.eligible,
+    discordBlocked: discord.blocked,
+    discordActivationGatePassed: discord.gatePassed,
+    discordBlockReason: discord.reason,
 
     completed: round(winrate.outcomeSample, 4),
     wins: round(winrate.wins, 4),
@@ -3359,24 +3412,22 @@ function decorateMicroRow(row = {}, marketWeather = null) {
     seenCompletedRatio: round(getSeenCompletedRatio(row), 4),
 
     winrateSample: round(winrate.sample, 4),
-    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate ?? winrate.score, 4),
-    sampleRawWinrate: round(row.sampleRawWinrate ?? winrate.rawWinrate, 4),
-    sampleBayesianWinrate: round(row.sampleBayesianWinrate ?? winrate.bayesianWinrate, 4),
-    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound ?? winrate.wilsonLowerBound, 4),
-    sampleReliability: round(row.sampleReliability ?? winrate.reliability, 4),
+    sampleAdjustedWinrate: round(winrate.score, 4),
+    sampleRawWinrate: round(winrate.rawWinrate, 4),
+    sampleBayesianWinrate: round(winrate.bayesianWinrate, 4),
+    sampleWilsonLowerBound: round(winrate.wilsonLowerBound, 4),
+    sampleReliability: round(winrate.reliability, 4),
+    observationReliability: round(
+      winrate.observationReliability ??
+        sampleReliability(winrate.observationSample),
+      4
+    ),
 
     winrate: round(winrate.rawWinrate, 4),
     bayesianWinrate: round(winrate.bayesianWinrate, 4),
     wilsonLowerBound: round(winrate.wilsonLowerBound, 4),
 
-    fairWinrate: round(
-      row.fairWinrate ??
-      row.sampleAdjustedWinrate ??
-      winrate.score ??
-      row.bayesianWinrate ??
-      row.wilsonLowerBound,
-      4
-    ),
+    fairWinrate: round(winrate.score, 4),
 
     totalR: round(getTotalR(row), 4),
     avgR: round(getAvgR(row), 4),
@@ -3520,6 +3571,18 @@ function mergeRows(primaryRows = [], fallbackRows = []) {
       ? {
         ...existing,
         ...row,
+        storedActive: Boolean(
+          existing.storedActive ||
+          row.storedActive ||
+          existing.active ||
+          row.active
+        ),
+        storedMacroActive: Boolean(
+          existing.storedMacroActive ||
+          row.storedMacroActive ||
+          existing.macroActive ||
+          row.macroActive
+        ),
         active: Boolean(existing.active || row.active),
         macroActive: Boolean(existing.macroActive || row.macroActive),
         selectedTier: row.selectedTier || existing.selectedTier,
@@ -3694,13 +3757,13 @@ function normalizeMicroRow(
   const familyId = parentTrueMicroFamilyId;
   const macroFamilyId = parentTrueMicroFamilyId;
 
-  const active = Boolean(row.active) || (
+  const storedActive = Boolean(row.storedActive ?? row.active) || (
     trueMicroFamilyId
       ? activeSet.has(trueMicroFamilyId)
       : false
   );
 
-  const macroActive = Boolean(row.macroActive) || (
+  const storedMacroActive = Boolean(row.storedMacroActive ?? row.macroActive) || (
     macroFamilyId
       ? activeMacroSet.has(macroFamilyId)
       : false
@@ -3708,6 +3771,7 @@ function normalizeMicroRow(
 
   const winrate = getSampleAdjustedWinrate(row);
   const gate = empiricalActivationGate(row, winrate);
+  const discord = discordEligibilityFor(row, gate, row);
   const tier = tierFor(row, winrate);
   const learningStatus = learningStatusFor(row, winrate);
   const tooEarly = winrate.outcomeSample < MIN_COMPLETED_ACTIVE_LEARNING;
@@ -3796,10 +3860,14 @@ function normalizeMicroRow(
     legacyExcludedTotalR:
       num(row.legacyExcludedTotalR, 0),
 
-    active: gate.blocked ? false : active,
-    macroActive: gate.blocked ? false : macroActive,
+    storedActive,
+    storedMacroActive,
+    active: storedActive && discord.eligible,
+    macroActive: storedMacroActive && discord.eligible,
+    selectionSuppressedByDiscordGate:
+      storedActive && !discord.eligible,
     empiricalVetoRemovedFromActiveDisplay:
-      gate.blocked && active,
+      gate.blocked && storedActive,
 
     activationGateStatus: gate.status,
     activationGateReason: gate.reason,
@@ -3873,14 +3941,19 @@ function normalizeMicroRow(
     winrate: round(winrate.rawWinrate, 4),
     bayesianWinrate: round(winrate.bayesianWinrate, 4),
     wilsonLowerBound: round(winrate.wilsonLowerBound, 4),
-    fairWinrate: round(row.fairWinrate ?? winrate.score, 4),
+    fairWinrate: round(winrate.score, 4),
 
     winrateSample: round(winrate.sample, 4),
-    sampleAdjustedWinrate: round(row.sampleAdjustedWinrate ?? winrate.score, 4),
-    sampleRawWinrate: round(row.sampleRawWinrate ?? winrate.rawWinrate, 4),
-    sampleBayesianWinrate: round(row.sampleBayesianWinrate ?? winrate.bayesianWinrate, 4),
-    sampleWilsonLowerBound: round(row.sampleWilsonLowerBound ?? winrate.wilsonLowerBound, 4),
-    sampleReliability: round(row.sampleReliability ?? winrate.reliability, 4),
+    sampleAdjustedWinrate: round(winrate.score, 4),
+    sampleRawWinrate: round(winrate.rawWinrate, 4),
+    sampleBayesianWinrate: round(winrate.bayesianWinrate, 4),
+    sampleWilsonLowerBound: round(winrate.wilsonLowerBound, 4),
+    sampleReliability: round(winrate.reliability, 4),
+    observationReliability: round(
+      winrate.observationReliability ??
+        sampleReliability(winrate.observationSample),
+      4
+    ),
 
     totalR: round(getTotalR(row), 4),
     virtualTotalR: round(row.virtualTotalR, 4),
@@ -3963,18 +4036,10 @@ function normalizeMicroRow(
     discordCurrentFitAllowed: row.discordCurrentFitAllowed === true,
     discordCurrentFitGateReason: row.discordCurrentFitGateReason || null,
 
-    discordEligible:
-      !gate.blocked &&
-      row.discordCurrentFitAllowed === true,
-
-    discordBlocked:
-      gate.blocked ||
-      row.discordCurrentFitAllowed !== true,
-
-    discordBlockReason:
-      gate.blocked
-        ? 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
-        : row.discordCurrentFitGateReason || null,
+    discordEligible: discord.eligible,
+    discordBlocked: discord.blocked,
+    discordActivationGatePassed: discord.gatePassed,
+    discordBlockReason: discord.reason,
 
     definition: row.definition || null,
     definitionParts: getDefinitionParts(row),
@@ -4031,6 +4096,9 @@ function compactBestRow(row) {
   const parsed = parseShortTaxonomyMicroId(trueMicroFamilyId);
   const riskGeometry = getShortRiskGeometry(row);
   const gate = empiricalActivationGate(row);
+  const discord = discordEligibilityFor(row, gate, row);
+  const storedActive = Boolean(row.storedActive ?? row.active);
+  const storedMacroActive = Boolean(row.storedMacroActive ?? row.macroActive);
 
   return {
     microFamilyId: trueMicroFamilyId,
@@ -4059,8 +4127,12 @@ function compactBestRow(row) {
     learningGranularity: LEARNING_GRANULARITY,
     parentLearningGranularity: PARENT_LEARNING_GRANULARITY,
 
-    active: gate.blocked ? false : Boolean(row.active),
-    macroActive: gate.blocked ? false : Boolean(row.macroActive),
+    storedActive,
+    storedMacroActive,
+    active: storedActive && discord.eligible,
+    macroActive: storedMacroActive && discord.eligible,
+    selectionSuppressedByDiscordGate:
+      storedActive && !discord.eligible,
 
     activationGateStatus: gate.status,
     activationGateReason: gate.reason,
@@ -4153,18 +4225,10 @@ function compactBestRow(row) {
     currentFitBlocksDiscord: Boolean(row.currentFitBlocksDiscord),
     discordCurrentFitAllowed: row.discordCurrentFitAllowed === true,
 
-    discordEligible:
-      !gate.blocked &&
-      row.discordCurrentFitAllowed === true,
-
-    discordBlocked:
-      gate.blocked ||
-      row.discordCurrentFitAllowed !== true,
-
-    discordBlockReason:
-      gate.blocked
-        ? 'EMPIRICAL_VETO_CURRENT_MEASUREMENT_NET_EDGE_NOT_POSITIVE'
-        : row.discordCurrentFitGateReason || null
+    discordEligible: discord.eligible,
+    discordBlocked: discord.blocked,
+    discordActivationGatePassed: discord.gatePassed,
+    discordBlockReason: discord.reason
   };
 }
 
@@ -4343,7 +4407,7 @@ function rowPassesFilters(row = {}, filters, activeSet, activeMacroSet) {
   if (filters.regime && parsed.regime !== filters.regime) return false;
   if (filters.confirmationProfile && parsed.confirmationProfile !== filters.confirmationProfile) return false;
 
-  if (filters.activeOnly && !activeSet.has(exactId)) return false;
+  if (filters.activeOnly && row.active !== true) return false;
   if (filters.macroActiveOnly && !activeMacroSet.has(parentId)) return false;
 
   if (filters.includeEmpty === false && num(row.observationSample ?? getObservationSample(row), 0) <= 0) return false;
@@ -4426,6 +4490,10 @@ function compareRowsBalanced(a, b) {
 
 function compareRowsAdaptive(a, b) {
   return (
+    compareNumberDesc(
+      learningQualityRank(a),
+      learningQualityRank(b)
+    ) ||
     compareNumberDesc(a.adaptiveScore, b.adaptiveScore) ||
     compareRowsBestData(a, b)
   );
@@ -4677,7 +4745,7 @@ function buildSummary(rows = [], activeSet = new Set()) {
 
   const activeRows = safeRows.filter((row) =>
     activeSet.has(row.trueMicroFamilyId) &&
-    !isEmpiricallyVetoed(row)
+    discordEligibilityFor(row).eligible
   );
 
   let totalR = 0;
@@ -4932,7 +5000,7 @@ export default async function handler(req, res) {
   const startedAt = now();
 
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-current-measurement-currentfit-empirical-veto-v4');
+  res.setHeader('X-Admin-Micro-Families-Mode', 'short-only-75-child-current-measurement-currentfit-empirical-veto-ranking-flat-gate-v5');
   res.setHeader('X-Target-Trade-Side', TARGET_TRADE_SIDE);
   res.setHeader('X-Short-Only', 'true');
   res.setHeader('X-Long-Disabled', 'true');
@@ -4959,7 +5027,7 @@ export default async function handler(req, res) {
   res.setHeader('X-Parent-Learning-Granularity', PARENT_LEARNING_GRANULARITY);
   res.setHeader('X-Persistent-Learning-Key', PERSISTENT_LEARNING_KEY);
   res.setHeader('X-Week-Reset-Disabled', 'true');
-  res.setHeader('X-Default-Sort', 'ADAPTIVE_BALANCED_SCORE_NOT_RAW_WINRATE');
+  res.setHeader('X-Default-Sort', 'LEARNING_QUALITY_THEN_ADAPTIVE_SCORE_NOT_RAW_WINRATE');
   res.setHeader('X-Measurement-Fix-Version', MEASUREMENT_FIX_VERSION);
   res.setHeader('X-Outcome-Measurement-Gate-Mode', OUTCOME_MEASUREMENT_GATE_MODE);
   res.setHeader('X-Legacy-Outcome-Measurements-Excluded', 'true');
@@ -4970,6 +5038,9 @@ export default async function handler(req, res) {
   res.setHeader('X-Empirical-Veto-Max-Avg-R', String(EMPIRICAL_VETO_MAX_AVG_R));
   res.setHeader('X-Empirical-Veto-Blocks-Adaptive-Selection', 'true');
   res.setHeader('X-Empirical-Veto-Blocks-Manual-Activation', 'true');
+  res.setHeader('X-Discord-Requires-Passed-Activation-Gate', 'true');
+  res.setHeader('X-Discord-Min-Completed', String(EMPIRICAL_VETO_MIN_COMPLETED));
+  res.setHeader('X-Discord-Requires-Positive-Avg-R', 'true');
   res.setHeader('X-Completed-Definition', 'CLOSED_VIRTUAL_OR_SHADOW_OUTCOMES_CURRENT_MEASUREMENT_ONLY');
   res.setHeader('X-Scoring-R-Source', 'netR');
   res.setHeader('X-Wins-Losses-Flats-Source', 'netR');
@@ -5068,12 +5139,46 @@ export default async function handler(req, res) {
       const id = getTrueMicroFamilyId(row);
       const parent = getCoarseMicroFamilyId(row);
 
+      const storedActive = Boolean(
+        row.storedActive ||
+        row.active ||
+        activeSet.has(id)
+      );
+
+      const storedMacroActive = Boolean(
+        row.storedMacroActive ||
+        row.macroActive ||
+        activeMacroSet.has(parent)
+      );
+
+      const discord = discordEligibilityFor(row);
+
       return {
         ...row,
-        active: Boolean(row.active || activeSet.has(id)),
-        macroActive: Boolean(row.macroActive || activeMacroSet.has(parent))
+        storedActive,
+        storedMacroActive,
+        active: storedActive && discord.eligible,
+        macroActive: storedMacroActive && discord.eligible,
+        selectionSuppressedByDiscordGate:
+          storedActive && !discord.eligible,
+        discordEligible: discord.eligible,
+        discordBlocked: discord.blocked,
+        discordActivationGatePassed: discord.gatePassed,
+        discordBlockReason: discord.reason
       };
     });
+
+    const storedActiveMicroFamilyIds = [...activeMicroFamilyIds];
+
+    const effectiveDiscordActiveMicroFamilyIds = mergedRows
+      .filter((row) => row.active === true)
+      .map((row) => row.trueMicroFamilyId)
+      .filter(Boolean);
+
+    const suppressedActiveMicroFamilyIds = mergedRows
+      .filter((row) => row.selectionSuppressedByDiscordGate === true)
+      .map((row) => row.trueMicroFamilyId)
+      .filter(Boolean);
 
     let filteredRows = mergedRows.filter((row) => (
       rowPassesFilters(row, filters, activeSet, activeMacroSet)
@@ -5259,6 +5364,9 @@ export default async function handler(req, res) {
       empiricalVetoRows.length > 0
         ? `EMPIRICAL_VETO_ROWS_BLOCKED:${empiricalVetoRows.length}`
         : null,
+      suppressedActiveMicroFamilyIds.length > 0
+        ? `STORED_ACTIVE_IDS_SUPPRESSED_BY_STRICT_DISCORD_GATE:${suppressedActiveMicroFamilyIds.length}`
+        : null,
       weekRows.length === 0 && activeFallbackRows.length > 0
         ? 'USED_ACTIVE_ROTATION_FALLBACK_ROWS'
         : null,
@@ -5313,6 +5421,9 @@ export default async function handler(req, res) {
         completed: 'only closed VIRTUAL + SHADOW outcomes carrying the exact current measurementFixVersion',
         scoringRSource: 'netR',
         winsLossesFlatsSource: 'netR',
+        winDefinition: 'netR > 0',
+        flatDefinition: 'netR == 0 and does not count as a win',
+        zeroOutcomeReliability: 0,
         rawWinrateRankingDisabled: true
       },
 
@@ -5325,6 +5436,7 @@ export default async function handler(req, res) {
         maxAvgR: EMPIRICAL_VETO_MAX_AVG_R,
         observingRule:
           `completed < ${EMPIRICAL_VETO_MIN_COMPLETED}`,
+        observingDiscordEligible: false,
         passedRule:
           `completed >= ${EMPIRICAL_VETO_MIN_COMPLETED} && avgR > ${EMPIRICAL_VETO_MAX_AVG_R}`,
         vetoRule:
@@ -5421,7 +5533,7 @@ export default async function handler(req, res) {
       rankingPolicy: {
         defaultMode: 'adaptive',
         activeMode: mode,
-        defaultSort: 'adaptiveScore/dashboardBalancedScore/fairWinrate/totalR/avgR/avgCostR/directSL/completed',
+        defaultSort: 'learningQualityRank/adaptiveScore/dashboardBalancedScore/fairWinrate/totalR/avgR/avgCostR/directSL/completed',
         bestDataFirst: true,
         completedBeforeRawScore: true,
         rawWinrateIsNeverDefault: true,
@@ -5455,7 +5567,11 @@ export default async function handler(req, res) {
         empiricalVetoEnabled: true,
         empiricalVetoPolicyVersion: EMPIRICAL_VETO_POLICY_VERSION,
         empiricalVetoBlocksAdaptiveSelection: true,
-        empiricalVetoRowsSortLast: true
+        empiricalVetoRowsSortLast: true,
+        adaptiveLearningQualityFirst: true,
+        zeroOutcomeReliabilityIsZero: true,
+        flatsCountAsWins: false,
+        discordRequiresPassedActivationGate: true
       },
 
       adaptiveLayerPolicy: {
@@ -5564,7 +5680,10 @@ export default async function handler(req, res) {
         ? activeRotation
         : compactActiveRotation(activeRotation),
 
-      activeMicroFamilyIds,
+      storedActiveMicroFamilyIds,
+      effectiveDiscordActiveMicroFamilyIds,
+      suppressedActiveMicroFamilyIds,
+      activeMicroFamilyIds: effectiveDiscordActiveMicroFamilyIds,
       activeMacroFamilyIds,
 
       bestShort: compactBestRow(bestShort),
@@ -5581,8 +5700,8 @@ export default async function handler(req, res) {
 
       trueMicroFamilySchema: TRUE_MICRO_SCHEMA,
       parentTrueMicroFamilySchema: PARENT_TRUE_MICRO_SCHEMA,
-      rankingPolicyText: 'adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR|currentFitScore',
-      rankingPolicyShort: 'adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
+      rankingPolicyText: 'learningQualityRank|adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR|currentFitScore',
+      rankingPolicyShort: 'learningQualityRank|adaptiveScore|balancedScore|fairWinrate|totalR|avgR|avgCostR',
       measurementFixVersion: MEASUREMENT_FIX_VERSION,
       adaptiveUiVersion: ADAPTIVE_UI_VERSION,
       currentFitVersion: CURRENT_FIT_VERSION,
@@ -5595,7 +5714,7 @@ export default async function handler(req, res) {
         weekMicrosCacheHit: Boolean(weekResult.cacheHit),
         weekMicrosCacheStale: Boolean(weekResult.stale),
         weekMicrosCacheSize: cache.weekMicros.size,
-        path: 'shortOnly75ChildCurrentMeasurementGateTriggerBoundaryFillCurrentFitMarketWeather',
+        path: 'shortOnly75ChildCurrentMeasurementGateTriggerBoundaryFillCurrentFitStrictDiscordRankingFlatFixV5',
         best75Source: 'persistentLearningMergedRowsBeforeFilters'
       },
 
