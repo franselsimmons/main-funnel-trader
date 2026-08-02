@@ -6,6 +6,7 @@
 // - Uses the authoritative rotationEngine instead of a second, divergent generator.
 // - The authoritative generator creates exactly three week-composition proposals.
 // - Optional ?activate=1&plan=BALANCED performs freeze + forced activation + plan activation.
+// - V2 route lock bypasses the stale V1 lock left by the failed oversized Redis write.
 
 import { KEYS } from '../../src/keys.js';
 import { getDurableRedis } from '../../src/redis.js';
@@ -28,7 +29,7 @@ const REDIS_NAMESPACE = 'SHORT';
 const REDIS_PREFIX = 'SHORT:';
 const PERSISTENT_LEARNING_KEY = 'SHORT_LIVE';
 const DEFAULT_PLAN = 'BALANCED';
-const DEFAULT_LOCK_TTL_SEC = 600;
+const DEFAULT_LOCK_TTL_SEC = 300;
 const ALLOWED_PLANS = new Set(['CONSERVATIVE', 'BALANCED', 'PERFORMANCE']);
 
 function now() {
@@ -129,7 +130,7 @@ function freezeLockKey() {
   // Route-level lock must be different from the authoritative engine lock.
   // This prevents PREVIOUS_SHORT_RUN_STILL_ACTIVE when an older engine also
   // protects freezeWeeklyRotation() with ANALYZE:WEEKLY_FREEZE_LOCK.
-  return `${REDIS_PREFIX}API:ANALYZE:WEEKLY_FREEZE_ROUTE_LOCK`;
+  return `${REDIS_PREFIX}API:ANALYZE:WEEKLY_FREEZE_ROUTE_LOCK_V2`;
 }
 
 async function readBody(req) {
@@ -421,7 +422,7 @@ export default async function handler(req, res) {
   res.setHeader('X-Redis-Namespace', REDIS_NAMESPACE);
   res.setHeader('X-Real-Orders-Disabled', 'true');
   res.setHeader('X-Weekly-Freeze-Core', 'rotationEngine.freezeWeeklyRotation');
-  res.setHeader('X-Weekly-Freeze-Route-Lock', `${REDIS_PREFIX}API:ANALYZE:WEEKLY_FREEZE_ROUTE_LOCK`);
+  res.setHeader('X-Weekly-Freeze-Route-Lock', `${REDIS_PREFIX}API:ANALYZE:WEEKLY_FREEZE_ROUTE_LOCK_V2`);
 
   if (!['GET', 'POST'].includes(method)) {
     res.setHeader('Allow', 'GET, POST');
