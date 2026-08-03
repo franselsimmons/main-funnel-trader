@@ -56,10 +56,14 @@ const SETUPS = new Set(SETUP_ORDER);
 const REGIMES = new Set(REGIME_ORDER);
 const CONFIRMATIONS = new Set(CONFIRMATION_PROFILE_ORDER);
 const NON_CRYPTO_BASE_SYMBOLS = new Set([
-'AAPL','AMZN','GOOG','GOOGL','META','MSFT','NVDA','TSLA','NFLX','AMD','INTC','AVGO','ORCL','CRM','COIN','MSTR','HOOD','PLTR',
-'SPY','QQQ','DIA','IWM','VOO','VTI','ARKK','GLD','SLV','TLT','EEM','VIX','DXY','USO',
-'XAU','XAG','XAUT','PAXG','WTI','BRENT','EUR','GBP','JPY','CHF','AUD','CAD','NZD'
+'AAPL','AMZN','GOOG','GOOGL','META','MSFT','NVDA','TSLA','NFLX','AMD','INTC','AVGO',
+'ORCL','CRM','COIN','MSTR','HOOD','PLTR','SPY','QQQ','DIA','IWM','VOO','VTI',
+'ARKK','GLD','SLV','TLT','EEM','VIX','DXY','USO','SOXL','SOXS','KORU','SPCX',
+'SPX','MU','MUU','SNDK','SKHY','SKHYNIX','SAMSUNG','DRAM','SNXX','NBIS','MRVL','BANK',
+'CRC','CRCL','CBRS','BZ','CL','CLUS','XAU','XAG','XAUT','PAXG','WTI','BRENT',
+'EUR','GBP','JPY','CHF','AUD','CAD','NZD'
 ]);
+const MARKET_DATA_UNIT_VERSION = 'MARKET_DATA_FUTURES_OPEN24H_RWA_FAIL_CLOSED_V3';
 const WEATHER_REGIME = Object.freeze({
 TREND: 'TREND',
 CHOP: 'CHOP',
@@ -536,12 +540,17 @@ row.quoteVolume ?? row.quoteVolume24h ?? row.turnover24h ?? row.volumeUsd ?? row
 0
 );
 const baseVolume = safeNumber(row.volume ?? row.baseVolume ?? row.volume24h, 0);
+const explicitNonCrypto = row.cryptoBreadthEligible === false ||
+String(row.instrumentClass || '').toUpperCase().includes('NON_CRYPTO') ||
+String(row.instrumentClass || '').toUpperCase().includes('RWA') ||
+['YES','TRUE','1','RWA'].includes(String(row.isRwa ?? row.raw?.isRwa ?? '').trim().toUpperCase());
+const cryptoBreadthEligible = !explicitNonCrypto && !NON_CRYPTO_BASE_SYMBOLS.has(baseSymbol);
 return {
 raw: row,
 symbol,
 baseSymbol,
-instrumentClass: NON_CRYPTO_BASE_SYMBOLS.has(baseSymbol) ? 'NON_CRYPTO_TOKENIZED' : 'CRYPTO',
-cryptoBreadthEligible: !NON_CRYPTO_BASE_SYMBOLS.has(baseSymbol),
+instrumentClass: cryptoBreadthEligible ? 'CRYPTO' : 'NON_CRYPTO_TOKENIZED',
+cryptoBreadthEligible,
 change1h,
 change24h,
 absChange1h: Math.abs(change1h),
@@ -549,6 +558,7 @@ absChange24h: Math.abs(change24h),
 rangePct,
 atrPct,
 realizedVolPct,
+marketDataUnitVersion: MARKET_DATA_UNIT_VERSION,
 quoteVolume,
 baseVolume,
 spreadPct: safeNumber(row.spreadPct ?? row.spread ?? row.bidAskSpreadPct, 0),
