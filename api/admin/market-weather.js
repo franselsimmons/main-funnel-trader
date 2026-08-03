@@ -1293,25 +1293,50 @@ function resolveShortCurrentFit({
   if (normalizedSide === 'LONG') return -1;
   return 0;
 }
+function firstKnownNormalizedValue(normalizer, values = []) {
+ for (const value of values) {
+   const normalized = normalizer(value);
+   if (normalized !== 'UNKNOWN') return normalized;
+ }
+ return 'UNKNOWN';
+}
+function normalizeAdminBtcState(value = '') {
+ const raw = String(value || '').trim().toUpperCase();
+ if (!raw || ['UNKNOWN', 'UNAVAILABLE', 'N/A', 'NA', 'NONE'].includes(raw)) return 'UNKNOWN';
+ if (raw.includes('STRONG_BULL') || raw.includes('VERY_BULL') || raw.includes('HARD_BULL')) return 'STRONG_BULLISH';
+ if (raw.includes('STRONG_BEAR') || raw.includes('VERY_BEAR') || raw.includes('HARD_BEAR')) return 'STRONG_BEARISH';
+ if (['LONG', 'BULL', 'BULLISH', 'BUY', 'UP', 'RISK_ON'].some((token) => raw.includes(token))) return 'BULLISH';
+ if (['SHORT', 'BEAR', 'BEARISH', 'SELL', 'DOWN', 'RISK_OFF'].some((token) => raw.includes(token))) return 'BEARISH';
+ if (['NEUTRAL', 'MIXED', 'FLAT', 'SIDEWAYS', 'CHOP'].some((token) => raw.includes(token))) return 'NEUTRAL';
+ return 'UNKNOWN';
+}
 function normalizeWeatherForAdmin(weatherInput = {}) {
     const weather = weatherInput && typeof weatherInput === 'object'
          ? weatherInput
          : makeFallbackWeather('INVALID_WEATHER');
     const breadth = weather.breadth || {};
-    const currentRegime = normalizeRegime(
-         weather.currentRegime ||
-         weather.regime ||
-         weather.marketRegime ||
-         weather.breadthRegime
-    );
-    const currentTrendSide = normalizeTrendSide(
-         weather.currentTrendSide ||
-         weather.trendSide ||
-         weather.marketTrendSide ||
-         weather.marketSide ||
-         weather.side ||
-         weather.direction
-    );
+    const weatherSources = [
+   weather,
+   weather.currentMarketWeather,
+   weather.marketWeather,
+   weather.weather,
+   weather.latest,
+   weather.snapshot,
+   weather.raw,
+   weather.source
+ ].filter((value) => value && typeof value === 'object' && !Array.isArray(value));
+ const currentRegime = firstKnownNormalizedValue(normalizeRegime,
+   weatherSources.flatMap((value) => [
+     value.currentRegime, value.regime, value.marketRegime,
+     value.breadthRegime, value.volatilityRegime
+   ])
+ );
+ const currentTrendSide = firstKnownNormalizedValue(normalizeTrendSide,
+   weatherSources.flatMap((value) => [
+     value.currentTrendSide, value.trendSide, value.marketTrendSide,
+     value.marketSide, value.side, value.direction, value.breadthSide
+   ])
+ );
     const confidence = clamp(
          weather.currentMarketFitConfidence ??
               weather.confidence ??
@@ -1336,28 +1361,28 @@ const createdAt = firstFinite(
      weather.createdAt,
      weather.ts
 );
-const bearishPct = pct(firstFinite(
-     weather.bearishPct,
-     weather.shortPct,
-     weather.downPct,
-     weather.breadthBearishPct,
-     breadth.bearishPct,
-     breadth.shortPct,
-     breadth.downPct,
-     breadth.declinePct,
-     breadth.declineRatio
-));
 const bullishPct = pct(firstFinite(
-     weather.bullishPct,
-     weather.longPct,
-     weather.upPct,
-     weather.breadthBullishPct,
-     breadth.bullishPct,
-     breadth.longPct,
-     breadth.upPct,
-     breadth.advancePct,
-     breadth.advanceRatio
-));
+   weather.bullishPct,
+   weather.longPct,
+   weather.upPct,
+   weather.breadthBullishPct,
+   breadth.bullishPct,
+   breadth.longPct,
+   breadth.upPct,
+   breadth.advancePct,
+   breadth.advanceRatio
+ ));
+ const bearishPct = pct(firstFinite(
+   weather.bearishPct,
+   weather.shortPct,
+   weather.downPct,
+   weather.breadthBearishPct,
+   breadth.bearishPct,
+   breadth.shortPct,
+   breadth.downPct,
+   breadth.declinePct,
+   breadth.declineRatio
+ ));
 const neutralPct = pct(firstFinite(
      weather.neutralPct,
      weather.flatPct,
@@ -1384,7 +1409,22 @@ const ok =
   sampleSize > 0 ||
   currentRegime !== 'UNKNOWN' ||
   currentTrendSide !== 'UNKNOWN';
-return {
+const marketWeatherKey = currentRegime !== 'UNKNOWN' && currentTrendSide !== 'UNKNOWN'
+     ? `${currentRegime}|${currentTrendSide}`
+     : 'UNKNOWN';
+ const btcObjects = weatherSources.flatMap((value) => [value.btc, value.btcContext, value.btcRouterContext])
+   .filter((value) => value && typeof value === 'object' && !Array.isArray(value));
+ const btcRouterState = firstKnownNormalizedValue(normalizeAdminBtcState, [
+   ...weatherSources.flatMap((value) => [
+     value.btcRouterState, value.currentBtcRouterState, value.btcState,
+     value.btcDirection, value.btcTrendSide, value.currentBtcRelation
+   ]),
+   ...btcObjects.flatMap((value) => [
+     value.btcRouterState, value.btcState, value.state,
+     value.direction, value.trendSide, value.side
+   ])
+ ]);
+ return {
   ...temporalPolicyPayload(createdAt || Date.now()),
   ...weather,
   ok,
@@ -1418,6 +1458,12 @@ return {
   currentRegime,
   regime: currentRegime,
   currentTrendSide,
+   currentMarketWeatherKey: marketWeatherKey,
+   marketWeatherKey,
+   btcRouterState,
+   currentBtcRouterState: btcRouterState,
+   btcState: btcRouterState,
+   btcDirection: btcRouterState,
   trendSide: dashboardTrendSide(currentTrendSide),
   marketTrendSide: dashboardTrendSide(currentTrendSide),
   confidence,
@@ -1492,6 +1538,12 @@ function buildResponse(weather, extra = {}) {
          ...extra,
          currentRegime: normalized.currentRegime,
          currentTrendSide: normalized.currentTrendSide,
+   currentMarketWeatherKey: normalized.currentMarketWeatherKey || normalized.marketWeatherKey || 'UNKNOWN',
+   marketWeatherKey: normalized.marketWeatherKey || normalized.currentMarketWeatherKey || 'UNKNOWN',
+   btcRouterState: normalized.btcRouterState || normalized.btcState || 'UNKNOWN',
+   currentBtcRouterState: normalized.currentBtcRouterState || normalized.btcRouterState || normalized.btcState || 'UNKNOWN',
+   btcState: normalized.btcState || normalized.btcRouterState || 'UNKNOWN',
+   btcDirection: normalized.btcDirection || normalized.btcRouterState || normalized.btcState || 'UNKNOWN',
          regime: normalized.regime,
          trendSide: normalized.trendSide,
          marketTrendSide: normalized.marketTrendSide,
@@ -1586,7 +1638,7 @@ function buildMarketWeatherOptions({
          redis,
          save,
          refresh,
-         allowStale: true,
+         allowStale: false,
          tradeSide: TARGET_TRADE_SIDE,
          side: TARGET_DASHBOARD_SIDE,
          scannerSide: TARGET_SCANNER_SIDE,
