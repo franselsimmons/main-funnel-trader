@@ -77,7 +77,6 @@ const NON_CRYPTO_BASE_SYMBOLS = new Set([
 'EUR','GBP','JPY','CHF','AUD','CAD','NZD'
 ]);
 const MARKET_DATA_UNIT_VERSION = 'MARKET_DATA_FUTURES_OPEN24H_RWA_FAIL_CLOSED_V3';
-const CANONICAL_MARKET_WEATHER_WRITER_VERSION = 'SHORT_SCANNER_CANONICAL_MARKET_WEATHER_WRITER_V4';
 function now() {
 return Date.now();
 }
@@ -1330,7 +1329,7 @@ return dedupeByBaseSymbol(
 .sort(sortMarketUniverse)
 .slice(0, marketUniverseMaxSymbols());
 }
-function createCandleCache() {
+function createCandleCache(fetcher = fetchCandles) {
 const cache = new Map();
 return async function getCandles(symbol, timeframe = '15m', limit =
 candleLimit()) {
@@ -1342,7 +1341,7 @@ return [];
 }
 const key = `${contractSymbol}:${timeframe}:${requestedLimit}`;
 if (cache.has(key)) return cache.get(key);
-const promise = fetchCandles(contractSymbol, timeframe,
+const promise = fetcher(contractSymbol, timeframe,
 requestedLimit).catch(() => []);
 cache.set(key, promise);
 return promise;
@@ -2416,58 +2415,55 @@ completedAt,
 btcContext,
 options = {}
 }) {
-try {
-const marketWeatherModule = await import('./marketWeather.js');
-if (
-typeof marketWeatherModule.buildMarketWeatherFromTickers !== 'function' ||
-typeof marketWeatherModule.saveMarketWeather !== 'function'
-) {
-throw new Error('SHORT_CANONICAL_MARKET_WEATHER_EXPORTS_MISSING');
-}
-const canonicalPayload = marketWeatherModule.buildMarketWeatherFromTickers(rows, {
-source: 'SCANNER_MARKET_UNIVERSE',
-sourceKey: marketUniverseKeys(options)[0] || null,
+const keys = marketWeatherKeys(options);
+const payload = buildMarketWeatherPayload({
+rows,
 snapshotId,
-generatedAt: completedAt,
-limit: Math.max(1, rows.length)
+startedAt,
+completedAt,
+btcContext
 });
-const payload = {
-...canonicalPayload,
-scannerStartedAt: startedAt,
-scannerCompletedAt: completedAt,
-scannerBtcContext: btcContext,
-marketWeatherWriterVersion: CANONICAL_MARKET_WEATHER_WRITER_VERSION,
+const ttlSec = marketWeatherTtlSec();
+const savedKeys = [];
+for (const key of keys) {
+await setMarketWeatherJson(
+redis,
+key,
+{
+...payload,
 redisNamespace: SHORT_NAMESPACE,
 redisKeyPrefix: SHORT_KEY_PREFIX
-};
-const saved = await marketWeatherModule.saveMarketWeather(payload, { redis });
-return {
-ok: saved?.ok === true,
-savedKeys: Array.isArray(saved?.savedKeys) ? saved.savedKeys : [],
-payload: saved?.payload || payload,
-writerRole: 'SHORT_MARKET_WEATHER_LATEST',
-marketWeatherWriterVersion: CANONICAL_MARKET_WEATHER_WRITER_VERSION
-};
-} catch (error) {
-return {
-ok: false,
-skipped: true,
-reason: 'SHORT_CANONICAL_MARKET_WEATHER_WRITE_FAILED',
-error: error?.message || String(error),
-savedKeys: [],
-payload: null,
-marketWeatherWriterVersion: CANONICAL_MARKET_WEATHER_WRITER_VERSION
-};
+},
+{
+ex: ttlSec
+},
+{
+allowedKeys: keys,
+role: 'SHORT_MARKET_WEATHER_LATEST'
 }
-}
+);
 
+savedKeys.push(key);
+}
+return {
+ok: savedKeys.length > 0,
+savedKeys,
+payload
+};
+}
 export async function runScanner(options = {}) {
 const redis = getVolatileRedis();
 const marketRedis = getDurableRedis();
-const startedAt = now();
-const snapshotId = randomId('scan_short');
-const getCandles = createCandleCache();
-const rawTickers = await fetchBitgetTickers();
+const historicalMode = options.historicalMode === true || options.persist === false || Boolean(options.dataProvider);
+const persist = options.persist !== false && !historicalMode;
+const startedAt = Math.max(1, Math.floor(safeNumber(options.asOfTs ?? options.startedAt, now())));
+const snapshotId = String(options.snapshotIdOverride || options.snapshotId || randomId('scan_short'));
+const injectedCandleFetcher = options.fetchCandles || options.dataProvider?.fetchCandles;
+const getCandles = createCandleCache(typeof injectedCandleFetcher === 'function' ? injectedCandleFetcher : fetchCandles);
+const injectedRawTickers = Array.isArray(options.rawTickers) ? options.rawTickers : null;
+const rawTickers = injectedRawTickers || (typeof options.dataProvider?.fetchTickers === 'function'
+? await options.dataProvider.fetchTickers(startedAt)
+: await fetchBitgetTickers());
 const marketUniverseRows = await buildMarketUniverseRows({
 rawTickers,
 getCandles,
@@ -2511,25 +2507,13 @@ candidate.discoveryOnly ||
 candidate.analyzeOnly ||
 !candidate.scannerGatePassed
 ));
-const completedAt = now();
-const marketUniverseSave = await saveMarketUniverse({
-redis: marketRedis,
-rows: marketUniverseRows,
-snapshotId,
-startedAt,
-completedAt,
-btcContext,
-options
-});
-const marketWeatherSave = await saveMarketWeather({
-redis: marketRedis,
-rows: marketUniverseRows,
-snapshotId,
-startedAt,
-completedAt,
-btcContext,
-options
-});
+const completedAt = historicalMode ? startedAt : now();
+const marketUniverseSave = persist
+? await saveMarketUniverse({ redis: marketRedis, rows: marketUniverseRows, snapshotId, startedAt, completedAt, btcContext, options })
+: { ok: false, savedKeys: [], payload: buildMarketUniversePayload({ rows: marketUniverseRows, snapshotId, startedAt, completedAt, btcContext }) };
+const marketWeatherSave = persist
+? await saveMarketWeather({ redis: marketRedis, rows: marketUniverseRows, snapshotId, startedAt, completedAt, btcContext, options })
+: { ok: false, savedKeys: [], payload: buildMarketWeatherPayload({ rows: marketUniverseRows, snapshotId, startedAt, completedAt, btcContext }) };
 const rawLongCandidatesIgnored =
 results.filter((row) => row?.skippedTradeSide === OPPOSITE_TRADE_SIDE).length
 
@@ -2543,7 +2527,9 @@ const snapshotKey = shortScanSnapshotKey(snapshotId, options);
 const latestKey = shortScanLatestKey(options);
 const snapshot = {
 ok: true,
-persisted: true,
+persisted: persist,
+historicalReplay: historicalMode,
+historicalReplayProviderVersion: historicalMode ? 'SHORT_SCANNER_HISTORICAL_PROVIDER_V1' : null,
 ...sideFlags(),
 ...scopeFlags(),
 force: Boolean(options.force || options.forced),
@@ -2567,6 +2553,8 @@ marketWeatherInput: true,
 marketWeatherCount: marketUniverseRows.length,
 marketWeatherKeys: marketWeatherSave.savedKeys,
 marketWeatherSaved: Boolean(marketWeatherSave.ok),
+historicalMarketWeather: historicalMode ? marketWeatherSave.payload : undefined,
+historicalMarketUniverseSummary: historicalMode ? { count: marketUniverseRows.length, symbols: marketUniverseRows.slice(0, 60).map((row) => row.symbol).filter(Boolean) } : undefined,
 marketWeatherRole: 'CURRENT_FIT_INPUT',
 cryptoBreadthOnly: true,
 nonCryptoInstrumentsExcluded: true,
@@ -2640,6 +2628,7 @@ recentMomentumScoreBuilt: false,
 currentFitScoreBuilt: false,
 parentDiversificationBuilt: false
 };
+if (persist) {
 const ttlSec = snapshotTtlSec();
 await setScannerJson(
 redis,
@@ -2668,6 +2657,6 @@ snapshotKey,
 role: 'SHORT_SCAN_LATEST'
 }
 );
+}
 return snapshot;
 }
-
