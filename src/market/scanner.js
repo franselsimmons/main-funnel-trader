@@ -2452,10 +2452,12 @@ payload
 };
 }
 export async function runScanner(options = {}) {
-const redis = getVolatileRedis();
-const marketRedis = getDurableRedis();
 const historicalMode = options.historicalMode === true || options.persist === false || Boolean(options.dataProvider);
 const persist = options.persist !== false && !historicalMode;
+// Historical point-in-time replay is intentionally storage-free. Do not construct
+// Redis clients when persist=false, because GitHub replay workers only need market data.
+const redis = persist ? getVolatileRedis() : null;
+const marketRedis = persist ? getDurableRedis() : null;
 const startedAt = Math.max(1, Math.floor(safeNumber(options.asOfTs ?? options.startedAt, now())));
 const snapshotId = String(options.snapshotIdOverride || options.snapshotId || randomId('scan_short'));
 const injectedCandleFetcher = options.fetchCandles || options.dataProvider?.fetchCandles;
@@ -2529,7 +2531,7 @@ const snapshot = {
 ok: true,
 persisted: persist,
 historicalReplay: historicalMode,
-historicalReplayProviderVersion: historicalMode ? 'SHORT_SCANNER_HISTORICAL_PROVIDER_V1' : null,
+historicalReplayProviderVersion: historicalMode ? 'SHORT_SCANNER_HISTORICAL_PROVIDER_STORAGE_FREE_V2' : null,
 ...sideFlags(),
 ...scopeFlags(),
 force: Boolean(options.force || options.forced),
