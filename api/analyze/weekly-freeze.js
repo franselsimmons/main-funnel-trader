@@ -19,7 +19,7 @@ import {
 } from '../../src/analyze/rotationEngine.js';
 
 export const config = {
-  maxDuration: 60
+  maxDuration: 300
 };
 
 const TARGET_TRADE_SIDE = 'SHORT';
