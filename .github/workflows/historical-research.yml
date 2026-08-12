@@ -6,7 +6,7 @@ on:
       days:
         description: Initial/backfill lookback in days
         required: true
-        default: '180'
+        default: '730'
       chunk_days:
         description: Days per parallel shard (safety-clamped to max 5)
         required: true
@@ -25,9 +25,6 @@ on:
         required: true
         type: boolean
         default: true
-  schedule:
-    # Weekly incremental refresh well before Sunday 22:00 UTC freeze.
-    - cron: '15 3 * * 0'
 
 concurrency:
   group: historical-smart-selection-short
@@ -39,8 +36,8 @@ permissions:
 env:
   BITGET_BASE_URL: https://api.bitget.com
   HISTORICAL_API_CONCURRENCY: '8'
-  HISTORICAL_MAX_DAYS: '365'
-  HISTORICAL_MAX_OUTCOMES_PER_FAMILY: '600'
+  HISTORICAL_MAX_DAYS: '730'
+  HISTORICAL_MAX_OUTCOMES_PER_FAMILY: '800'
 
 jobs:
   plan:
