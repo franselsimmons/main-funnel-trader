@@ -1459,7 +1459,8 @@ async function persistShortScannerPayload(redis, payload = {}) {
          await setJson(
                redis,
                SHORT_KEYS.scan.snapshot(snapshotId),
-               latestPayload
+               latestPayload,
+               { ex: 48 * 60 * 60 }
          ).catch(() => null);
     }
     return {
