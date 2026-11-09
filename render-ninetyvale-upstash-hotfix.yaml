@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: ninetyvale-engine
+    runtime: image
+    autoDeployTrigger: off
+    image:
+      url: docker.io/ninetyvale/ninetyvale-engine@sha256:1b91bf98193d878faf23f22f2250574ac516c317079852874f717ade64c884f4
+    healthCheckPath: /api/heartbeat
+    envVars:
+      - key: NINETYVALE_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: ninetyvale-kv-free-2
+          property: connectionString
+      - key: INTERNAL_SCHEDULER_ENABLED
+        value: "true"
