@@ -4,7 +4,7 @@ services:
     runtime: image
     autoDeployTrigger: off
     image:
-      url: docker.io/ninetyvale/ninetyvale-engine@sha256:7e10804797e2f39c3897355f187b104d28ab948f3f587d4a9b3e0c200e187bd3
+      url: docker.io/ninetyvale/ninetyvale-engine@sha256:27059e673abddd7bdfc58a1ce7d9a48b1f663fefd96a1904b7829415286b8f7e
     healthCheckPath: /api/heartbeat
     envVars:
       - key: NINETYVALE_REDIS_URL
